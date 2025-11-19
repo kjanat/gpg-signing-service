@@ -101,9 +101,11 @@ fi
 # Get the key ID
 KEY_ID=$(gpg --list-keys --keyid-format long "${KEY_EMAIL}" | grep -E "^pub" | awk '{print $2}' | cut -d'/' -f2)
 
-echo ""
-echo "Key generated successfully!"
-echo "  Key ID: $KEY_ID"
+{
+	echo ""
+	echo "Key generated successfully!"
+	echo "  Key ID: $KEY_ID"
+}
 
 # Export private key
 PRIVATE_KEY_FILE="${KEYS_DIR}/private-key.asc"
@@ -120,22 +122,24 @@ gpg --armor --export "$KEY_ID" >"$PUBLIC_KEY_FILE"
 # Get fingerprint
 FINGERPRINT=$(gpg --fingerprint "$KEY_ID" | grep -A1 "pub" | tail -1 | tr -d ' ')
 
-echo ""
-echo "Keys exported to:"
-echo "  Private: $PRIVATE_KEY_FILE"
-echo "  Public:  $PUBLIC_KEY_FILE"
-echo ""
-echo "Fingerprint: $FINGERPRINT"
-echo ""
-echo "Next steps:"
-echo "  1. Set passphrase as secret: wrangler secret put KEY_PASSPHRASE"
-echo "  2. Upload key to service:"
-# shellcheck disable=SC1003
-echo '     curl -X POST https://your-worker.workers.dev/admin/keys \'
-# shellcheck disable=SC1003
-echo '       -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \'
-# shellcheck disable=SC1003
-echo '       -H "Content-Type: application/json" \'
-echo "       -d '{\"armoredPrivateKey\": \"$(cat "$PRIVATE_KEY_FILE" | sed ':a;N;$!ba;s/\n/\\n/g')\", \"keyId\": \"signing-key-v1\"}'"
-echo ""
-echo "IMPORTANT: Keep $PRIVATE_KEY_FILE secure and add .keys/ to .gitignore!"
+{
+	echo ""
+	echo "Keys exported to:"
+	echo "  Private: $PRIVATE_KEY_FILE"
+	echo "  Public:  $PUBLIC_KEY_FILE"
+	echo ""
+	echo "Fingerprint: $FINGERPRINT"
+	echo ""
+	echo "Next steps:"
+	echo "  1. Set passphrase as secret: wrangler secret put KEY_PASSPHRASE"
+	echo "  2. Upload key to service:"
+	# shellcheck disable=SC1003
+	echo '     curl -X POST https://your-worker.workers.dev/admin/keys \'
+	# shellcheck disable=SC1003
+	echo '       -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \'
+	# shellcheck disable=SC1003
+	echo '       -H "Content-Type: application/json" \'
+	echo "       -d '{\"armoredPrivateKey\": \"$(cat "$PRIVATE_KEY_FILE" | sed ':a;N;$!ba;s/\n/\\n/g')\", \"keyId\": \"signing-key-v1\"}'"
+	echo ""
+	echo "IMPORTANT: Keep $PRIVATE_KEY_FILE secure and add .keys/ to .gitignore!"
+}
