@@ -1,6 +1,8 @@
 {
   "name": "gpg-signing-service",
+  "version": "1.0.0",
   "type": "module",
+  "description": "Edge-deployed Git commit signing API using Hono on Cloudflare Workers with GPG-compatible signatures",
   "private": true,
   "module": "src/index.ts",
   "scripts": {
