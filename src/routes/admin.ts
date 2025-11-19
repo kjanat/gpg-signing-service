@@ -98,36 +98,49 @@ app.post('/keys', async (c) => {
 
 // List all keys (metadata only)
 app.get('/keys', async (c) => {
-  const keyStorageId = c.env.KEY_STORAGE.idFromName('global');
-  const keyStorage = c.env.KEY_STORAGE.get(keyStorageId);
+  try {
+    const keyStorageId = c.env.KEY_STORAGE.idFromName('global');
+    const keyStorage = c.env.KEY_STORAGE.get(keyStorageId);
 
-  const response = await keyStorage.fetch(new Request('http://internal/list-keys'));
-  const result = await response.json();
+    const response = await keyStorage.fetch(new Request('http://internal/list-keys'));
+    if (!response.ok) {
+      throw new Error(`Key storage returned ${response.status}`);
+    }
 
-  return c.json(result);
+    const result = await response.json();
+    return c.json(result);
+  } catch (error) {
+    console.error('Failed to list keys:', error);
+    return c.json({ error: 'Failed to retrieve keys', code: 'KEY_LIST_ERROR' }, 500);
+  }
 });
 
 // Get public key for a specific key ID
 app.get('/keys/:keyId/public', async (c) => {
   const keyId = c.req.param('keyId');
 
-  const keyStorageId = c.env.KEY_STORAGE.idFromName('global');
-  const keyStorage = c.env.KEY_STORAGE.get(keyStorageId);
+  try {
+    const keyStorageId = c.env.KEY_STORAGE.idFromName('global');
+    const keyStorage = c.env.KEY_STORAGE.get(keyStorageId);
 
-  const keyResponse = await keyStorage.fetch(
-    new Request(`http://internal/get-key?keyId=${encodeURIComponent(keyId)}`)
-  );
+    const keyResponse = await keyStorage.fetch(
+      new Request(`http://internal/get-key?keyId=${encodeURIComponent(keyId)}`)
+    );
 
-  if (!keyResponse.ok) {
-    return c.json({ error: 'Key not found', code: 'KEY_NOT_FOUND' }, 404);
+    if (!keyResponse.ok) {
+      return c.json({ error: 'Key not found', code: 'KEY_NOT_FOUND' }, 404);
+    }
+
+    const storedKey = await keyResponse.json() as StoredKey;
+    const publicKey = await extractPublicKey(storedKey.armoredPrivateKey);
+
+    return c.text(publicKey, 200, {
+      'Content-Type': 'application/pgp-keys',
+    });
+  } catch (error) {
+    console.error('Failed to get public key:', { keyId, error });
+    return c.json({ error: 'Failed to process key', code: 'KEY_PROCESSING_ERROR' }, 500);
   }
-
-  const storedKey = await keyResponse.json() as StoredKey;
-  const publicKey = await extractPublicKey(storedKey.armoredPrivateKey);
-
-  return c.text(publicKey, 200, {
-    'Content-Type': 'application/pgp-keys',
-  });
 });
 
 // Delete a key
@@ -135,49 +148,83 @@ app.delete('/keys/:keyId', async (c) => {
   const keyId = c.req.param('keyId');
   const requestId = c.req.header('X-Request-ID') || crypto.randomUUID();
 
-  const keyStorageId = c.env.KEY_STORAGE.idFromName('global');
-  const keyStorage = c.env.KEY_STORAGE.get(keyStorageId);
+  try {
+    const keyStorageId = c.env.KEY_STORAGE.idFromName('global');
+    const keyStorage = c.env.KEY_STORAGE.get(keyStorageId);
 
-  const response = await keyStorage.fetch(
-    new Request(`http://internal/delete-key?keyId=${encodeURIComponent(keyId)}`, {
-      method: 'DELETE',
-    })
-  );
+    const response = await keyStorage.fetch(
+      new Request(`http://internal/delete-key?keyId=${encodeURIComponent(keyId)}`, {
+        method: 'DELETE',
+      })
+    );
 
-  const result = await response.json() as { success: boolean; deleted: boolean };
+    if (!response.ok) {
+      throw new Error(`Key storage returned ${response.status}`);
+    }
 
-  // Log key deletion
-  await logAuditEvent(c.env.AUDIT_DB, {
-    requestId,
-    action: 'key_rotate',
-    issuer: 'admin',
-    subject: 'admin',
-    keyId,
-    success: result.deleted,
-  });
+    const result = await response.json() as { success: boolean; deleted: boolean };
 
-  return c.json(result);
+    // Log key deletion
+    await logAuditEvent(c.env.AUDIT_DB, {
+      requestId,
+      action: 'key_rotate',
+      issuer: 'admin',
+      subject: 'admin',
+      keyId,
+      success: result.deleted,
+    });
+
+    return c.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Delete failed';
+    console.error('Failed to delete key:', { keyId, error });
+
+    // Audit failed deletion attempt
+    await logAuditEvent(c.env.AUDIT_DB, {
+      requestId,
+      action: 'key_rotate',
+      issuer: 'admin',
+      subject: 'admin',
+      keyId,
+      success: false,
+      errorCode: 'KEY_DELETE_ERROR',
+      metadata: JSON.stringify({ error: message }),
+    });
+
+    return c.json({ error: 'Failed to delete key', code: 'KEY_DELETE_ERROR' }, 500);
+  }
 });
 
 // Get audit logs
 app.get('/audit', async (c) => {
-  const limit = parseInt(c.req.query('limit') || '100');
-  const offset = parseInt(c.req.query('offset') || '0');
-  const action = c.req.query('action');
-  const subject = c.req.query('subject');
-  const startDate = c.req.query('startDate');
-  const endDate = c.req.query('endDate');
+  try {
+    const limit = parseInt(c.req.query('limit') || '100');
+    const offset = parseInt(c.req.query('offset') || '0');
 
-  const logs = await getAuditLogs(c.env.AUDIT_DB, {
-    limit,
-    offset,
-    action,
-    subject,
-    startDate,
-    endDate,
-  });
+    // Validate pagination parameters
+    if (isNaN(limit) || isNaN(offset) || limit < 1 || limit > 1000 || offset < 0) {
+      return c.json({ error: 'Invalid pagination parameters', code: 'INVALID_REQUEST' }, 400);
+    }
 
-  return c.json({ logs, count: logs.length });
+    const action = c.req.query('action');
+    const subject = c.req.query('subject');
+    const startDate = c.req.query('startDate');
+    const endDate = c.req.query('endDate');
+
+    const logs = await getAuditLogs(c.env.AUDIT_DB, {
+      limit,
+      offset,
+      action,
+      subject,
+      startDate,
+      endDate,
+    });
+
+    return c.json({ logs, count: logs.length });
+  } catch (error) {
+    console.error('Failed to get audit logs:', error);
+    return c.json({ error: 'Failed to retrieve audit logs', code: 'AUDIT_ERROR' }, 500);
+  }
 });
 
 export default app;
