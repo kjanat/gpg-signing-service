@@ -30,6 +30,11 @@ binding = "JWKS_CACHE"
 # Set after `wrangler kv namespace create JWKS_CACHE`
 id = "b4e1807f785b4b66b012004b14316d6a"
 
+# Custom domain
+[[routes]]
+pattern = "gpg.kajkowalski.nl"
+custom_domain = true
+
 # Environment variables (non-sensitive)
 [vars]
 ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com"
