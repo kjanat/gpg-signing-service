@@ -1,0 +1,866 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "GPG Signing Service API",
+    "description": "Edge-deployed Git commit signing API using OpenPGP signatures.\n\nThis service provides OIDC-based signing capabilities for CI/CD pipelines (GitHub Actions, GitLab CI)\nand administrative key management with comprehensive audit logging.\n\n## Authentication\n\n### Public Endpoints\n- No authentication required\n- Rate limiting: Per-endpoint defaults\n\n### Protected Endpoints (/sign)\n- **OIDC Bearer Token** (from GitHub Actions or GitLab CI)\n- Required header: `Authorization: Bearer <oidc-token>`\n- Rate limiting: 100 requests per minute per OIDC identity\n\n### Admin Endpoints (/admin/*)\n- **Bearer Token** (ADMIN_TOKEN)\n- Required header: `Authorization: Bearer <admin-token>`\n- Rate limiting: 60 requests per minute\n\n## Error Handling\n\nAll error responses include:\n- `error`: Human-readable error message\n- `code`: Machine-readable error code (see error codes below)\n- `requestId`: Unique request identifier for debugging (optional)\n\nError codes indicate specific issues:\n- **AUTH_MISSING**: Authorization header missing\n- **AUTH_INVALID**: Invalid or expired token\n- **KEY_NOT_FOUND**: Requested key does not exist\n- **KEY_PROCESSING_ERROR**: Error processing key data\n- **KEY_UPLOAD_ERROR**: Error uploading new key\n- **KEY_DELETE_ERROR**: Error deleting key\n- **SIGN_ERROR**: Signing operation failed\n- **RATE_LIMITED**: Rate limit exceeded (includes retryAfter)\n- **INVALID_REQUEST**: Malformed request\n- **AUDIT_ERROR**: Audit log retrieval failed\n- **INTERNAL_ERROR**: Unexpected server error\n\n## Rate Limiting\n\nRate limiting uses token bucket algorithm. Rate limit status returned in response headers:\n- `X-RateLimit-Remaining`: Requests remaining in current window\n- `X-RateLimit-Reset`: Unix timestamp when limit resets\n\nWhen rate limited, HTTP 429 includes `retryAfter` (seconds until retry possible).\n",
+    "version": "1.0.0",
+    "contact": {
+      "name": "API Support",
+      "url": "https://github.com/kjanat/gpg-signing-service"
+    },
+    "license": {
+      "name": "MIT",
+      "url": "https://github.com/kjanat/gpg-signing-service/blob/master/LICENSE"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://gpg.kajkowalski.nl",
+      "description": "Production environment"
+    },
+    {
+      "url": "http://localhost:8787",
+      "description": "Local development environment"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Health & Public",
+      "description": "Public health check and key retrieval endpoints (no authentication)"
+    },
+    {
+      "name": "Signing",
+      "description": "OIDC-protected commit signing operations"
+    },
+    {
+      "name": "Admin",
+      "description": "Administrative key management and audit log access (bearer token required)"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["Health & Public"],
+        "summary": "Health check endpoint",
+        "description": "Performs health checks on key service dependencies (key storage and database).\nReturns detailed status of all subsystems.\n",
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "All systems healthy",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HealthResponse" },
+                "example": {
+                  "status": "healthy",
+                  "timestamp": "2024-01-15T10:30:45.123Z",
+                  "version": "1.0.0",
+                  "checks": { "keyStorage": true, "database": true }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "One or more systems degraded",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HealthResponse" },
+                "example": {
+                  "status": "degraded",
+                  "timestamp": "2024-01-15T10:30:45.123Z",
+                  "version": "1.0.0",
+                  "checks": { "keyStorage": false, "database": true }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/public-key": {
+      "get": {
+        "tags": ["Health & Public"],
+        "summary": "Retrieve public signing key",
+        "description": "Retrieves the armored public key for a given key ID.\nUsed by Git to verify signatures created by the signing service.\nReturns PGP-formatted public key suitable for importing into Git configuration.\n",
+        "operationId": "getPublicKey",
+        "parameters": [
+          {
+            "name": "keyId",
+            "in": "query",
+            "description": "Key identifier. If not specified, uses the default KEY_ID from service configuration.\nFormat: alphanumeric identifier (e.g., \"signing-key-v1\", \"A1B2C3D4\")\n",
+            "schema": { "type": "string" },
+            "example": "signing-key-v1"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Public key retrieved successfully",
+            "content": {
+              "application/pgp-keys": {
+                "schema": { "type": "string", "format": "pgp-key" },
+                "example": "-----BEGIN PGP PUBLIC KEY BLOCK-----\nVersion: OpenPGP.js v6.0.0\nComment: https://openpgpjs.org\n\nxjMEZbI4sRYJKwYBBAHaM...\n-----END PGP PUBLIC KEY BLOCK-----\n"
+              }
+            }
+          },
+          "404": {
+            "description": "Key not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": { "error": "Key not found", "code": "KEY_NOT_FOUND" }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": {
+                  "error": "Failed to process key",
+                  "code": "KEY_PROCESSING_ERROR",
+                  "requestId": "550e8400-e29b-41d4-a716-446655440000"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sign": {
+      "post": {
+        "tags": ["Signing"],
+        "summary": "Sign commit data",
+        "description": "Signs provided commit data using the private key and returns an OpenPGP signature.\n\nRequires valid OIDC token from GitHub Actions or GitLab CI.\nSignature is compatible with Git's GPG signature verification.\n\nThe request body should contain the exact commit data to sign (typically created with `git hash-object`).\n\nResponse headers include rate limit information and a unique request ID for auditing.\n",
+        "operationId": "signCommit",
+        "parameters": [
+          {
+            "name": "keyId",
+            "in": "query",
+            "description": "Key identifier to use for signing. If not specified, uses the default KEY_ID.\nMust match a key previously uploaded via POST /admin/keys.\n",
+            "schema": { "type": "string" },
+            "example": "signing-key-v1"
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "Optional request identifier. If provided, will be returned in response for correlation.\nIf not provided, a random UUID is generated by the service.\n",
+            "schema": { "type": "string", "format": "uuid" },
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          }
+        ],
+        "security": [{ "OIDCBearer": [] }],
+        "requestBody": {
+          "required": true,
+          "description": "Raw commit data to sign. Typically the output of `git hash-object`.",
+          "content": {
+            "text/plain": {
+              "schema": { "type": "string" },
+              "example": "tree abc123\nparent def456\nauthor Name <email@example.com> 1234567890 +0000\ncommitter Name <email@example.com> 1234567890 +0000\n\nCommit message"
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signature created successfully",
+            "headers": {
+              "X-RateLimit-Remaining": {
+                "description": "Number of requests remaining in rate limit window",
+                "schema": { "type": "integer", "minimum": 0 }
+              },
+              "X-RateLimit-Reset": {
+                "description": "Unix timestamp when rate limit window resets",
+                "schema": { "type": "integer" }
+              },
+              "X-Request-ID": {
+                "description": "Unique identifier for this request (for auditing)",
+                "schema": { "type": "string", "format": "uuid" }
+              }
+            },
+            "content": {
+              "text/plain": {
+                "schema": { "type": "string", "format": "pgp-signature" },
+                "example": "-----BEGIN PGP SIGNATURE-----\nVersion: OpenPGP.js v6.0.0\nComment: https://openpgpjs.org\n\nwpYEAREBAgAGBQJlsji1AAoJEP...\n-----END PGP SIGNATURE-----\n"
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (missing data)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": {
+                  "error": "No commit data provided",
+                  "code": "INVALID_REQUEST",
+                  "requestId": "550e8400-e29b-41d4-a716-446655440000"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": { "error": "Unauthorized", "code": "AUTH_INVALID" }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying",
+                "schema": { "type": "integer" }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "example": "Rate limit exceeded"
+                    },
+                    "code": { "type": "string", "enum": ["RATE_LIMITED"] },
+                    "retryAfter": {
+                      "type": "integer",
+                      "description": "Seconds until rate limit resets",
+                      "example": 45
+                    }
+                  }
+                },
+                "example": {
+                  "error": "Rate limit exceeded",
+                  "code": "RATE_LIMITED",
+                  "retryAfter": 45
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Signing operation failed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": {
+                  "error": "Failed to create signature",
+                  "code": "SIGN_ERROR",
+                  "requestId": "550e8400-e29b-41d4-a716-446655440000"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service temporarily unavailable (rate limiter offline)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": {
+                  "error": "Service temporarily unavailable",
+                  "code": "RATE_LIMIT_ERROR",
+                  "requestId": "550e8400-e29b-41d4-a716-446655440000"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/keys": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Upload a new signing key",
+        "description": "Uploads an armored private key to the service for use in signing operations.\n\nThe key is validated and stored securely in Durable Objects.\nKey metadata (fingerprint, algorithm) is returned and logged in audit trail.\n\nRequires administrator authentication.\n",
+        "operationId": "uploadKey",
+        "security": [{ "AdminBearer": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/KeyUploadRequest" },
+              "example": {
+                "keyId": "signing-key-v1",
+                "armoredPrivateKey": "-----BEGIN PGP PRIVATE KEY BLOCK-----\n...\n-----END PGP PRIVATE KEY BLOCK-----"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Key uploaded successfully",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/KeyUploadResponse" },
+                "example": {
+                  "success": true,
+                  "keyId": "signing-key-v1",
+                  "fingerprint": "1234567890ABCDEF1234567890ABCDEF12345678",
+                  "algorithm": "rsa4096",
+                  "userId": "Signing Service <signer@example.com>"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (missing fields)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": {
+                  "error": "Missing armoredPrivateKey or keyId",
+                  "code": "INVALID_REQUEST"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": { "error": "Unauthorized", "code": "AUTH_INVALID" }
+              }
+            }
+          },
+          "500": {
+            "description": "Key upload failed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": {
+                  "error": "Invalid key format",
+                  "code": "KEY_UPLOAD_ERROR",
+                  "requestId": "550e8400-e29b-41d4-a716-446655440000"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": ["Admin"],
+        "summary": "List all signing keys",
+        "description": "Returns metadata for all signing keys currently stored in the service.\nPrivate key material is never exposed. Includes creation timestamps and key identifiers.\nRequires administrator authentication.\n",
+        "operationId": "listKeys",
+        "security": [{ "AdminBearer": [] }],
+        "responses": {
+          "200": {
+            "description": "Keys retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "keys": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/KeyMetadata" }
+                    }
+                  }
+                },
+                "example": {
+                  "keys": [
+                    {
+                      "keyId": "signing-key-v1",
+                      "fingerprint": "1234567890ABCDEF1234567890ABCDEF12345678",
+                      "algorithm": "rsa4096",
+                      "createdAt": "2024-01-15T10:30:45.123Z"
+                    },
+                    {
+                      "keyId": "signing-key-v2",
+                      "fingerprint": "ABCDEF1234567890ABCDEF1234567890ABCDEF12",
+                      "algorithm": "ed25519",
+                      "createdAt": "2024-01-10T14:20:30.456Z"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to retrieve keys",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": {
+                  "error": "Failed to retrieve keys",
+                  "code": "KEY_LIST_ERROR"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/keys/{keyId}/public": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Get public key for a specific key ID",
+        "description": "Retrieves the public key component of a stored private key.\nUseful for verification and key distribution purposes.\nRequires administrator authentication.\n",
+        "operationId": "getAdminPublicKey",
+        "parameters": [
+          {
+            "name": "keyId",
+            "in": "path",
+            "required": true,
+            "description": "The key identifier",
+            "schema": { "type": "string" },
+            "example": "signing-key-v1"
+          }
+        ],
+        "security": [{ "AdminBearer": [] }],
+        "responses": {
+          "200": {
+            "description": "Public key retrieved successfully",
+            "content": {
+              "application/pgp-keys": {
+                "schema": { "type": "string", "format": "pgp-key" }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "404": {
+            "description": "Key not found",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": { "error": "Key not found", "code": "KEY_NOT_FOUND" }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to process key",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/keys/{keyId}": {
+      "delete": {
+        "tags": ["Admin"],
+        "summary": "Delete a signing key",
+        "description": "Permanently deletes a signing key from the service.\nThis operation cannot be undone. Key deletion is logged in the audit trail.\nRequires administrator authentication.\n",
+        "operationId": "deleteKey",
+        "parameters": [
+          {
+            "name": "keyId",
+            "in": "path",
+            "required": true,
+            "description": "The key identifier to delete",
+            "schema": { "type": "string" },
+            "example": "signing-key-v1"
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "description": "Optional request identifier for correlation",
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "security": [{ "AdminBearer": [] }],
+        "responses": {
+          "200": {
+            "description": "Key deleted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "deleted": { "type": "boolean" }
+                  }
+                },
+                "example": { "success": true, "deleted": true }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to delete key",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/audit": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Query audit logs",
+        "description": "Retrieves audit log entries with optional filtering by action, subject, and date range.\nPagination is required (limit parameter).\nRequires administrator authentication.\n",
+        "operationId": "getAuditLogs",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum number of entries to return (1-1000, default 100)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 100
+            },
+            "example": 50
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "description": "Number of entries to skip (for pagination, default 0)",
+            "schema": { "type": "integer", "minimum": 0, "default": 0 },
+            "example": 0
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "description": "Filter by audit action type",
+            "schema": {
+              "type": "string",
+              "enum": ["sign", "key_upload", "key_rotate"]
+            },
+            "example": "sign"
+          },
+          {
+            "name": "subject",
+            "in": "query",
+            "required": false,
+            "description": "Filter by subject (OIDC subject claim or \"admin\")",
+            "schema": { "type": "string" },
+            "example": "myrepo"
+          },
+          {
+            "name": "startDate",
+            "in": "query",
+            "required": false,
+            "description": "ISO 8601 timestamp for range start (inclusive)",
+            "schema": { "type": "string", "format": "date-time" },
+            "example": "2024-01-01T00:00:00Z"
+          },
+          {
+            "name": "endDate",
+            "in": "query",
+            "required": false,
+            "description": "ISO 8601 timestamp for range end (inclusive)",
+            "schema": { "type": "string", "format": "date-time" },
+            "example": "2024-01-31T23:59:59Z"
+          }
+        ],
+        "security": [{ "AdminBearer": [] }],
+        "responses": {
+          "200": {
+            "description": "Audit logs retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "logs": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/AuditLogEntry" }
+                    },
+                    "count": {
+                      "type": "integer",
+                      "description": "Number of entries in this response"
+                    }
+                  }
+                },
+                "example": {
+                  "logs": [
+                    {
+                      "id": "audit-001",
+                      "timestamp": "2024-01-15T10:30:45.123Z",
+                      "requestId": "550e8400-e29b-41d4-a716-446655440000",
+                      "action": "sign",
+                      "issuer": "https://token.actions.githubusercontent.com",
+                      "subject": "owner/repo",
+                      "keyId": "signing-key-v1",
+                      "success": true,
+                      "metadata": "{\"repository\":\"owner/repo\",\"dataLength\":542}"
+                    }
+                  ],
+                  "count": 1
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid pagination parameters",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": {
+                  "error": "Invalid pagination parameters",
+                  "code": "INVALID_REQUEST"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid authentication",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to retrieve audit logs",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "required": ["error", "code"],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Human-readable error message"
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "AUTH_MISSING",
+              "AUTH_INVALID",
+              "KEY_NOT_FOUND",
+              "KEY_PROCESSING_ERROR",
+              "KEY_LIST_ERROR",
+              "KEY_UPLOAD_ERROR",
+              "KEY_DELETE_ERROR",
+              "SIGN_ERROR",
+              "RATE_LIMIT_ERROR",
+              "RATE_LIMITED",
+              "INVALID_REQUEST",
+              "AUDIT_ERROR",
+              "NOT_FOUND",
+              "INTERNAL_ERROR"
+            ],
+            "description": "Machine-readable error code"
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique identifier for this request (optional, included for errors from protected endpoints)"
+          }
+        },
+        "example": { "error": "Key not found", "code": "KEY_NOT_FOUND" }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "required": ["status", "timestamp", "version", "checks"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["healthy", "degraded", "unhealthy"],
+            "description": "Overall health status"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp when health check was performed"
+          },
+          "version": { "type": "string", "description": "Service version" },
+          "checks": {
+            "type": "object",
+            "required": ["keyStorage", "database"],
+            "properties": {
+              "keyStorage": {
+                "type": "boolean",
+                "description": "Status of Durable Object key storage"
+              },
+              "database": {
+                "type": "boolean",
+                "description": "Status of D1 audit database"
+              }
+            }
+          }
+        }
+      },
+      "KeyUploadRequest": {
+        "type": "object",
+        "required": ["keyId", "armoredPrivateKey"],
+        "properties": {
+          "keyId": {
+            "type": "string",
+            "description": "Identifier for this key (used in signing requests)"
+          },
+          "armoredPrivateKey": {
+            "type": "string",
+            "description": "PGP-armored private key in ASCII format"
+          }
+        }
+      },
+      "KeyUploadResponse": {
+        "type": "object",
+        "required": ["success", "keyId", "fingerprint", "algorithm", "userId"],
+        "properties": {
+          "success": { "type": "boolean", "enum": [true] },
+          "keyId": {
+            "type": "string",
+            "description": "The uploaded key identifier"
+          },
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^[A-F0-9]{40}$",
+            "description": "40-character hex fingerprint of the key"
+          },
+          "algorithm": {
+            "type": "string",
+            "example": "rsa4096",
+            "description": "Key algorithm and bit length"
+          },
+          "userId": {
+            "type": "string",
+            "example": "Signing Service <signer@example.com>",
+            "description": "User ID associated with the key"
+          }
+        }
+      },
+      "KeyMetadata": {
+        "type": "object",
+        "required": ["keyId", "fingerprint", "algorithm", "createdAt"],
+        "properties": {
+          "keyId": { "type": "string", "description": "Key identifier" },
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^[A-F0-9]{40}$",
+            "description": "40-character hex fingerprint"
+          },
+          "algorithm": {
+            "type": "string",
+            "example": "rsa4096",
+            "description": "Key algorithm"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp when key was uploaded"
+          }
+        }
+      },
+      "AuditLogEntry": {
+        "type": "object",
+        "required": [
+          "id",
+          "timestamp",
+          "requestId",
+          "action",
+          "issuer",
+          "subject",
+          "keyId",
+          "success"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique audit log entry identifier"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp of the action"
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Request identifier for correlation"
+          },
+          "action": {
+            "type": "string",
+            "enum": ["sign", "key_upload", "key_rotate"],
+            "description": "Type of action performed"
+          },
+          "issuer": {
+            "type": "string",
+            "description": "OIDC issuer URL or \"admin\""
+          },
+          "subject": {
+            "type": "string",
+            "description": "OIDC subject claim or \"admin\""
+          },
+          "keyId": {
+            "type": "string",
+            "description": "Key identifier involved in the action"
+          },
+          "success": {
+            "type": "boolean",
+            "description": "Whether the action succeeded"
+          },
+          "errorCode": {
+            "type": "string",
+            "description": "Error code if action failed (omitted on success)"
+          },
+          "metadata": {
+            "type": "string",
+            "format": "json",
+            "description": "Additional context as JSON string (optional)"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "OIDCBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "OIDC token from GitHub Actions or GitLab CI.\n\nGitHub Actions: Token available as `${{ secrets.GITHUB_TOKEN }}` (requires `id-token: write` permission)\n\nGitLab CI: Token available as `$CI_JOB_JWT` or `$CI_JOB_JWT_V2`\n\nThe token is validated by checking:\n1. Signature against JWKS endpoints (cached in KV)\n2. Issuer is in allowed list (ALLOWED_ISSUERS)\n3. Token is not expired (exp claim)\n4. Audience matches expected value (EXPECTED_AUDIENCE)\n"
+      },
+      "AdminBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "token",
+        "description": "Static bearer token for administrative operations.\nSet via `wrangler secret put ADMIN_TOKEN`.\n\nInclude in Authorization header: `Authorization: Bearer <token>`\n"
+      }
+    }
+  },
+  "security": [{}],
+  "examples": {
+    "GitHubActionsUsage": {
+      "summary": "Sign commits in GitHub Actions",
+      "value": "name: Sign Commits\non: [push]\njobs:\n  sign:\n    runs-on: ubuntu-latest\n    permissions:\n      id-token: write\n    steps:\n      - uses: actions/checkout@v4\n      - name: Sign commits\n        run: |\n          OIDC_TOKEN=$(curl -H \"Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN\" \\\n            \"$ACTIONS_ID_TOKEN_REQUEST_URL\" | jq -r '.token')\n\n          SIGNATURE=$(curl -X POST \\\n            -H \"Authorization: Bearer $OIDC_TOKEN\" \\\n            --data-raw \"$(git cat-file commit HEAD)\" \\\n            https://gpg.kajkowalski.nl/sign)\n\n          git config user.signingkey $SIGNATURE\n          git commit --amend -S --no-edit\n"
+    },
+    "GitLabCIUsage": {
+      "summary": "Sign commits in GitLab CI",
+      "value": "sign_commits:\n  stage: build\n  script:\n    - |\n      SIGNATURE=$(curl -X POST \\\n        -H \"Authorization: Bearer $CI_JOB_JWT\" \\\n        --data-raw \"$(git cat-file commit HEAD)\" \\\n        https://gpg.kajkowalski.nl/sign)\n\n      git config commit.gpgsign true\n      git commit --amend -S --no-edit\n"
+    }
+  }
+}

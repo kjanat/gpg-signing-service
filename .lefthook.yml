@@ -22,3 +22,9 @@ pre-push:
   jobs:
     - name: test
       run: bun run test
+
+# Validate commit messages
+commit-msg:
+  commands:
+    "lint commit message":
+      run: bunx commitlint --config .commitlint.ts --edit {1}

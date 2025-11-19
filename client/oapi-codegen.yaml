@@ -1,0 +1,10 @@
+# oapi-codegen configuration
+package: api
+output: pkg/api/api.gen.go
+generate:
+  client: true
+  models: true
+  embedded-spec: true
+output-options:
+  skip-prune: false
+  skip-fmt: false

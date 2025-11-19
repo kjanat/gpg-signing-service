@@ -1,5 +1,11 @@
-.wrangler/**
-coverage/**
-dist/**
-node_modules/**
+**/*.go
+**/*.mod
+**/*.sum
+.keys/
+.serena/memories
+.wrangler/
+coverage/
+dist/
+node_modules/
+openapi.{yaml,json}
 worker-configuration.d.ts

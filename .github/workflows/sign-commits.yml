@@ -2,7 +2,7 @@ name: Sign Commits
 
 on:
   push:
-    branches: [main, master]
+    branches: [master, main]
   workflow_dispatch:
 
 permissions:

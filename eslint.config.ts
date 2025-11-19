@@ -67,7 +67,9 @@ export default tseslint.config(
   },
   {
     ignores: [
+      ".serena/**",
       ".wrangler/**",
+      "client/**",
       "coverage/**",
       "dist/**",
       "node_modules/**",
