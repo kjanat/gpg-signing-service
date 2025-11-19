@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
-import type { Env, Variables, StoredKey, OIDCClaims, RateLimitResult } from '../types';
+import type { Env, Variables, StoredKey, ValidatedOIDCClaims, RateLimitResult, Identity, ErrorCode } from '../types';
+import { createKeyId } from '../types';
 import { signCommitData } from '../utils/signing';
 import { logAuditEvent } from '../utils/audit';
 
@@ -7,8 +8,8 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 app.post('/', async (c) => {
   const requestId = c.req.header('X-Request-ID') || crypto.randomUUID();
-  const claims = c.get('oidcClaims') as OIDCClaims;
-  const identity = c.get('identity') as string;
+  const claims = c.get('oidcClaims') as ValidatedOIDCClaims;
+  const identity = c.get('identity') as Identity;
 
   // Check rate limit - FAIL CLOSED if rate limiter unavailable
   let rateLimit: RateLimitResult;
@@ -30,7 +31,7 @@ app.post('/', async (c) => {
     // FAIL CLOSED - deny request when rate limiting is unavailable
     return c.json({
       error: 'Service temporarily unavailable',
-      code: 'RATE_LIMIT_ERROR',
+      code: 'RATE_LIMIT_ERROR' satisfies ErrorCode,
       requestId,
     }, 503);
   }
@@ -38,7 +39,7 @@ app.post('/', async (c) => {
   if (!rateLimit.allowed) {
     return c.json({
       error: 'Rate limit exceeded',
-      code: 'RATE_LIMITED',
+      code: 'RATE_LIMITED' satisfies ErrorCode,
       retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / 1000),
     }, 429);
   }
@@ -49,13 +50,14 @@ app.post('/', async (c) => {
   if (!commitData) {
     return c.json({
       error: 'No commit data provided',
-      code: 'INVALID_REQUEST',
+      code: 'INVALID_REQUEST' satisfies ErrorCode,
       requestId,
     }, 400);
   }
 
   // Get key ID from query param or use default
-  const keyId = c.req.query('keyId') || c.env.KEY_ID;
+  const keyIdParam = c.req.query('keyId') || c.env.KEY_ID;
+  const keyId = createKeyId(keyIdParam);
 
   try {
     // Fetch private key from Durable Object
@@ -63,7 +65,7 @@ app.post('/', async (c) => {
     const keyStorage = c.env.KEY_STORAGE.get(keyStorageId);
 
     const keyResponse = await keyStorage.fetch(
-      new Request(`http://internal/get-key?keyId=${encodeURIComponent(keyId)}`)
+      new Request(`http://internal/get-key?keyId=${encodeURIComponent(keyIdParam)}`)
     );
 
     if (!keyResponse.ok) {
@@ -86,7 +88,7 @@ app.post('/', async (c) => {
       action: 'sign',
       issuer: claims.iss,
       subject: claims.sub,
-      keyId: result.keyId,
+      keyId: keyIdParam,
       success: true,
       metadata: JSON.stringify({
         repository: claims.repository || claims.project_path,
@@ -110,7 +112,7 @@ app.post('/', async (c) => {
       action: 'sign',
       issuer: claims.iss,
       subject: claims.sub,
-      keyId,
+      keyId: keyIdParam,
       success: false,
       errorCode: 'SIGN_ERROR',
       metadata: JSON.stringify({ error: message }),
@@ -118,7 +120,7 @@ app.post('/', async (c) => {
 
     return c.json({
       error: message,
-      code: 'SIGN_ERROR',
+      code: 'SIGN_ERROR' satisfies ErrorCode,
       requestId,
     }, 500);
   }

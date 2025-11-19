@@ -1,12 +1,9 @@
 import * as openpgp from 'openpgp';
-import type { StoredKey } from '../types';
+import type { StoredKey, SigningResult, ParsedKeyInfo, KeyId, KeyFingerprint, ArmoredPrivateKey } from '../types';
+import { createKeyId, createKeyFingerprint, createArmoredPrivateKey } from '../types';
 
-export interface SigningResult {
-  signature: string;
-  keyId: string;
-  algorithm: string;
-  fingerprint: string;
-}
+// Re-export types for convenience
+export type { SigningResult, ParsedKeyInfo };
 
 export async function signCommitData(
   commitData: string,
@@ -49,12 +46,7 @@ export async function signCommitData(
 export async function parseAndValidateKey(
   armoredKey: string,
   passphrase?: string
-): Promise<{
-  keyId: string;
-  fingerprint: string;
-  algorithm: string;
-  userId: string;
-}> {
+): Promise<ParsedKeyInfo> {
   const privateKey = await openpgp.readPrivateKey({ armoredKey });
 
   // Verify we can decrypt if passphrase provided
@@ -63,8 +55,8 @@ export async function parseAndValidateKey(
   }
 
   const keyPacket = privateKey.keyPacket;
-  const fingerprint = privateKey.getFingerprint().toUpperCase();
-  const keyId = privateKey.getKeyID().toHex().toUpperCase();
+  const fingerprint = createKeyFingerprint(privateKey.getFingerprint());
+  const keyId = createKeyId(privateKey.getKeyID().toHex().toUpperCase());
 
   // Get algorithm name
   const algorithmMap: Record<number, string> = {
@@ -92,7 +84,25 @@ export async function parseAndValidateKey(
   };
 }
 
-export function extractPublicKey(armoredPrivateKey: string): Promise<string> {
+export function extractPublicKey(armoredPrivateKey: ArmoredPrivateKey | string): Promise<string> {
   return openpgp.readPrivateKey({ armoredKey: armoredPrivateKey })
     .then(privateKey => privateKey.toPublic().armor());
+}
+
+/**
+ * Create a StoredKey from raw input data
+ */
+export function createStoredKey(
+  armoredPrivateKey: string,
+  keyId: string,
+  fingerprint: string,
+  algorithm: string
+): StoredKey {
+  return {
+    armoredPrivateKey: createArmoredPrivateKey(armoredPrivateKey),
+    keyId: createKeyId(keyId),
+    fingerprint: createKeyFingerprint(fingerprint),
+    createdAt: new Date().toISOString(),
+    algorithm,
+  };
 }

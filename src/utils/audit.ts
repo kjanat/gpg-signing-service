@@ -1,4 +1,4 @@
-import type { Env, AuditLogEntry } from '../types';
+import type { AuditLogEntry, ErrorCode, AuditAction } from '../types';
 
 export async function logAuditEvent(
   db: D1Database,
@@ -78,12 +78,12 @@ export async function getAuditLogs(
     id: row.id as string,
     timestamp: row.timestamp as string,
     requestId: row.request_id as string,
-    action: row.action as AuditLogEntry['action'],
+    action: row.action as AuditAction,
     issuer: row.issuer as string,
     subject: row.subject as string,
     keyId: row.key_id as string,
     success: Boolean(row.success),
-    errorCode: row.error_code as string | undefined,
+    errorCode: row.error_code as ErrorCode | undefined,
     metadata: row.metadata as string | undefined,
   }));
 }

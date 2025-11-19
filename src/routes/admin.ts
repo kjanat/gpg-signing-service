@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
-import type { Env, StoredKey, KeyUploadRequest } from '../types';
+import type { Env, StoredKey, KeyUploadRequest, ErrorCode } from '../types';
+import { createArmoredPrivateKey, createKeyId, createKeyFingerprint } from '../types';
 import { parseAndValidateKey, extractPublicKey } from '../utils/signing';
 import { logAuditEvent, getAuditLogs } from '../utils/audit';
 
@@ -15,7 +16,7 @@ app.post('/keys', async (c) => {
     if (!body.armoredPrivateKey || !body.keyId) {
       return c.json({
         error: 'Missing armoredPrivateKey or keyId',
-        code: 'INVALID_REQUEST',
+        code: 'INVALID_REQUEST' satisfies ErrorCode,
       }, 400);
     }
 
@@ -26,8 +27,8 @@ app.post('/keys', async (c) => {
     );
 
     const storedKey: StoredKey = {
-      armoredPrivateKey: body.armoredPrivateKey,
-      keyId: body.keyId,
+      armoredPrivateKey: createArmoredPrivateKey(body.armoredPrivateKey),
+      keyId: createKeyId(body.keyId),
       fingerprint: keyInfo.fingerprint,
       createdAt: new Date().toISOString(),
       algorithm: keyInfo.algorithm,
@@ -90,7 +91,7 @@ app.post('/keys', async (c) => {
 
     return c.json({
       error: message,
-      code: 'KEY_UPLOAD_ERROR',
+      code: 'KEY_UPLOAD_ERROR' satisfies ErrorCode,
       requestId,
     }, 500);
   }
@@ -111,7 +112,7 @@ app.get('/keys', async (c) => {
     return c.json(result);
   } catch (error) {
     console.error('Failed to list keys:', error);
-    return c.json({ error: 'Failed to retrieve keys', code: 'KEY_LIST_ERROR' }, 500);
+    return c.json({ error: 'Failed to retrieve keys', code: 'KEY_LIST_ERROR' satisfies ErrorCode }, 500);
   }
 });
 
@@ -128,7 +129,7 @@ app.get('/keys/:keyId/public', async (c) => {
     );
 
     if (!keyResponse.ok) {
-      return c.json({ error: 'Key not found', code: 'KEY_NOT_FOUND' }, 404);
+      return c.json({ error: 'Key not found', code: 'KEY_NOT_FOUND' satisfies ErrorCode }, 404);
     }
 
     const storedKey = await keyResponse.json() as StoredKey;
@@ -139,7 +140,7 @@ app.get('/keys/:keyId/public', async (c) => {
     });
   } catch (error) {
     console.error('Failed to get public key:', { keyId, error });
-    return c.json({ error: 'Failed to process key', code: 'KEY_PROCESSING_ERROR' }, 500);
+    return c.json({ error: 'Failed to process key', code: 'KEY_PROCESSING_ERROR' satisfies ErrorCode }, 500);
   }
 });
 
@@ -191,7 +192,7 @@ app.delete('/keys/:keyId', async (c) => {
       metadata: JSON.stringify({ error: message }),
     });
 
-    return c.json({ error: 'Failed to delete key', code: 'KEY_DELETE_ERROR' }, 500);
+    return c.json({ error: 'Failed to delete key', code: 'KEY_DELETE_ERROR' satisfies ErrorCode }, 500);
   }
 });
 
@@ -203,7 +204,7 @@ app.get('/audit', async (c) => {
 
     // Validate pagination parameters
     if (isNaN(limit) || isNaN(offset) || limit < 1 || limit > 1000 || offset < 0) {
-      return c.json({ error: 'Invalid pagination parameters', code: 'INVALID_REQUEST' }, 400);
+      return c.json({ error: 'Invalid pagination parameters', code: 'INVALID_REQUEST' satisfies ErrorCode }, 400);
     }
 
     const action = c.req.query('action');
@@ -223,7 +224,7 @@ app.get('/audit', async (c) => {
     return c.json({ logs, count: logs.length });
   } catch (error) {
     console.error('Failed to get audit logs:', error);
-    return c.json({ error: 'Failed to retrieve audit logs', code: 'AUDIT_ERROR' }, 500);
+    return c.json({ error: 'Failed to retrieve audit logs', code: 'AUDIT_ERROR' satisfies ErrorCode }, 500);
   }
 });
 

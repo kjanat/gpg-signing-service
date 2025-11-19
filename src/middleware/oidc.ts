@@ -1,5 +1,6 @@
 import type { MiddlewareHandler } from 'hono';
-import type { Env, Variables, OIDCClaims, JWKSResponse } from '../types';
+import type { Env, Variables, OIDCClaims, LegacyJWKSResponse, LegacyJWK } from '../types';
+import { markClaimsAsValidated, createIdentity } from '../types';
 
 // OIDC validation middleware
 export const oidcAuth: MiddlewareHandler<{ Bindings: Env; Variables: Variables }> = async (c, next) => {
@@ -13,10 +14,11 @@ export const oidcAuth: MiddlewareHandler<{ Bindings: Env; Variables: Variables }
 
   try {
     const claims = await validateOIDCToken(token, c.env);
+    const validatedClaims = markClaimsAsValidated(claims);
 
-    // Store claims in context for downstream use
-    c.set('oidcClaims', claims);
-    c.set('identity', `${claims.iss}:${claims.sub}`);
+    // Store validated claims in context for downstream use
+    c.set('oidcClaims', validatedClaims);
+    c.set('identity', createIdentity(claims.iss, claims.sub));
 
     await next();
   } catch (error) {
@@ -95,7 +97,7 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
 
   // Fetch JWKS and verify signature
   const jwks = await getJWKS(payload.iss, env);
-  const key = jwks.keys.find((k: JWKSResponse['keys'][0]) => k.kid === header.kid);
+  const key = jwks.keys.find((k: LegacyJWK) => k.kid === header.kid);
 
   if (!key) {
     throw new Error('Key not found in JWKS');
@@ -119,13 +121,13 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
   return payload;
 }
 
-async function getJWKS(issuer: string, env: Env): Promise<JWKSResponse> {
+async function getJWKS(issuer: string, env: Env): Promise<LegacyJWKSResponse> {
   const cacheKey = `jwks:${issuer}`;
 
   // Check cache first
   const cached = await env.JWKS_CACHE.get(cacheKey, 'json');
   if (cached) {
-    return cached as JWKSResponse;
+    return cached as LegacyJWKSResponse;
   }
 
   // Fetch JWKS from issuer
@@ -143,7 +145,7 @@ async function getJWKS(issuer: string, env: Env): Promise<JWKSResponse> {
     throw new Error(`Failed to fetch JWKS from ${config.jwks_uri}`);
   }
 
-  const jwks = await jwksResponse.json() as JWKSResponse;
+  const jwks = await jwksResponse.json() as LegacyJWKSResponse;
 
   // Cache for 5 minutes (non-critical, don't fail on cache errors)
   try {
@@ -156,7 +158,7 @@ async function getJWKS(issuer: string, env: Env): Promise<JWKSResponse> {
   return jwks;
 }
 
-async function importJWK(jwk: JWKSResponse['keys'][0], alg: string): Promise<CryptoKey> {
+async function importJWK(jwk: LegacyJWK, alg: string): Promise<CryptoKey> {
   const algorithm = getAlgorithm(alg);
 
   return crypto.subtle.importKey(

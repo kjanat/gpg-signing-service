@@ -1,4 +1,5 @@
 import type { RateLimitResult } from '../types';
+import { createRateLimitAllowed, createRateLimitDenied } from '../types';
 
 interface TokenBucket {
   tokens: number;
@@ -49,11 +50,11 @@ export class RateLimiter implements DurableObject {
 
   private async checkLimit(identity: string): Promise<Response> {
     const bucket = await this.getBucket(identity);
-    const result: RateLimitResult = {
-      allowed: bucket.tokens > 0,
-      remaining: Math.floor(bucket.tokens),
-      resetAt: bucket.lastRefill + this.windowMs,
-    };
+    const resetAt = bucket.lastRefill + this.windowMs;
+
+    const result: RateLimitResult = bucket.tokens > 0
+      ? createRateLimitAllowed(Math.floor(bucket.tokens), resetAt)
+      : createRateLimitDenied(resetAt);
 
     return new Response(JSON.stringify(result), {
       status: 200,
@@ -63,19 +64,16 @@ export class RateLimiter implements DurableObject {
 
   private async consumeToken(identity: string): Promise<Response> {
     const bucket = await this.getBucket(identity);
+    const resetAt = bucket.lastRefill + this.windowMs;
 
     if (bucket.tokens < 1) {
-      const result: RateLimitResult = {
-        allowed: false,
-        remaining: 0,
-        resetAt: bucket.lastRefill + this.windowMs,
-      };
+      const result: RateLimitResult = createRateLimitDenied(resetAt);
 
       return new Response(JSON.stringify(result), {
         status: 429,
         headers: {
           'Content-Type': 'application/json',
-          'Retry-After': String(Math.ceil((bucket.lastRefill + this.windowMs - Date.now()) / 1000)),
+          'Retry-After': String(Math.ceil((resetAt - Date.now()) / 1000)),
         },
       });
     }
@@ -84,11 +82,10 @@ export class RateLimiter implements DurableObject {
     bucket.tokens -= 1;
     await this.state.storage.put(`bucket:${identity}`, bucket);
 
-    const result: RateLimitResult = {
-      allowed: true,
-      remaining: Math.floor(bucket.tokens),
-      resetAt: bucket.lastRefill + this.windowMs,
-    };
+    const result: RateLimitResult = createRateLimitAllowed(
+      Math.floor(bucket.tokens),
+      resetAt
+    );
 
     return new Response(JSON.stringify(result), {
       status: 200,
