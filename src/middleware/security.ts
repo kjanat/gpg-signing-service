@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from "hono";
-import type { Env } from "~/types";
+import type { Env, RateLimitResult, ErrorCode } from "~/types";
 
 /**
  * Security headers middleware for production hardening
@@ -13,13 +13,17 @@ export const securityHeaders: MiddlewareHandler<{ Bindings: Env }> = async (
   // Security headers
   c.header("X-Content-Type-Options", "nosniff");
   c.header("X-Frame-Options", "DENY");
-  c.header("X-XSS-Protection", "1; mode=block");
   c.header("Referrer-Policy", "strict-origin-when-cross-origin");
   c.header(
     "Content-Security-Policy",
     "default-src 'none'; frame-ancestors 'none'",
   );
   c.header("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+  // HSTS: enforce HTTPS for 1 year, include subdomains
+  c.header(
+    "Strict-Transport-Security",
+    "max-age=31536000; includeSubDomains; preload",
+  );
 
   // Remove server identification
   c.res.headers.delete("Server");
@@ -76,4 +80,66 @@ export const productionCors: MiddlewareHandler<{ Bindings: Env }> = async (
   }
 
   return;
+};
+
+/**
+ * Rate limiting middleware for admin endpoints (IP-based)
+ * Stricter limits to prevent brute force attacks on admin token
+ */
+export const adminRateLimit: MiddlewareHandler<{ Bindings: Env }> = async (
+  c,
+  next,
+) => {
+  // Get client IP from CF headers or fallback
+  const clientIp =
+    c.req.header("CF-Connecting-IP") ||
+    c.req.header("X-Forwarded-For")?.split(",")[0]?.trim() ||
+    "unknown";
+
+  // Use IP-based identity for admin rate limiting
+  const identity = `admin:${clientIp}`;
+
+  try {
+    const rateLimiterId = c.env.RATE_LIMITER.idFromName("admin");
+    const rateLimiter = c.env.RATE_LIMITER.get(rateLimiterId);
+
+    const rateLimitResponse = await rateLimiter.fetch(
+      new Request(
+        `http://internal/consume?identity=${encodeURIComponent(identity)}`,
+      ),
+    );
+
+    if (!rateLimitResponse.ok) {
+      throw new Error(`Rate limiter returned ${rateLimitResponse.status}`);
+    }
+
+    const rateLimit = (await rateLimitResponse.json()) as RateLimitResult;
+
+    if (!rateLimit.allowed) {
+      return c.json(
+        {
+          error: "Rate limit exceeded",
+          code: "RATE_LIMITED" satisfies ErrorCode,
+          retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / 1000),
+        },
+        429,
+      );
+    }
+
+    // Add rate limit headers
+    c.header("X-RateLimit-Remaining", String(rateLimit.remaining));
+    c.header("X-RateLimit-Reset", String(Math.ceil(rateLimit.resetAt / 1000)));
+
+    return next();
+  } catch (error) {
+    console.error("Admin rate limiter failed:", error);
+    // FAIL CLOSED - deny request when rate limiting is unavailable
+    return c.json(
+      {
+        error: "Service temporarily unavailable",
+        code: "RATE_LIMIT_ERROR" satisfies ErrorCode,
+      },
+      503,
+    );
+  }
 };

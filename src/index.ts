@@ -1,10 +1,13 @@
 import { Hono } from "hono";
-import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import * as openpgp from "openpgp";
 import type { Env, Variables, HealthResponse } from "~/types";
 import { oidcAuth, adminAuth } from "~/middleware/oidc";
-import { securityHeaders } from "~/middleware/security";
+import {
+  securityHeaders,
+  productionCors,
+  adminRateLimit,
+} from "~/middleware/security";
 import signRoutes from "~/routes/sign";
 import adminRoutes from "~/routes/admin";
 
@@ -17,14 +20,7 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 // Global middleware
 app.use("*", logger());
 app.use("*", securityHeaders);
-app.use(
-  "*",
-  cors({
-    origin: "*",
-    allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
-    allowHeaders: ["Authorization", "Content-Type", "X-Request-ID"],
-  }),
-);
+app.use("*", productionCors);
 
 // Health check endpoint (no auth)
 app.get("/health", async (c) => {
@@ -106,10 +102,11 @@ app.route(
     .route("/", signRoutes),
 );
 
-// Admin endpoints with admin auth
+// Admin endpoints with rate limiting and admin auth
 app.route(
   "/admin",
   new Hono<{ Bindings: Env; Variables: Variables }>()
+    .use("*", adminRateLimit) // Rate limit before auth to prevent brute force
     .use("*", adminAuth)
     .route("/", adminRoutes),
 );

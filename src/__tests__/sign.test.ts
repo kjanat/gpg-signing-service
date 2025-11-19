@@ -152,14 +152,31 @@ describe("Error Handler", () => {
 });
 
 describe("CORS", () => {
-  it("should include CORS headers", async () => {
+  it("should include CORS headers when origin is allowed", async () => {
+    // productionCors only sets CORS headers when Origin header is present
+    // and either ALLOWED_ORIGINS is empty or origin is in the list
+    const response = await makeRequest("/health", {
+      headers: { Origin: "https://example.com" },
+    });
+
+    // With no ALLOWED_ORIGINS configured, any origin is allowed
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(
+      "https://example.com",
+    );
+  });
+
+  it("should not set CORS headers without Origin", async () => {
     const response = await makeRequest("/health");
 
-    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    // No Origin header = no CORS response headers
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
   });
 
   it("should handle OPTIONS preflight", async () => {
-    const response = await makeRequest("/sign", { method: "OPTIONS" });
+    const response = await makeRequest("/sign", {
+      method: "OPTIONS",
+      headers: { Origin: "https://example.com" },
+    });
 
     // OPTIONS requests typically return 204 or 200
     expect([200, 204]).toContain(response.status);

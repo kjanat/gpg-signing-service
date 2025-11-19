@@ -52,9 +52,11 @@ describe("Security Headers Middleware", () => {
     expect(response.headers.get("X-Frame-Options")).toBe("DENY");
   });
 
-  it("should set X-XSS-Protection", async () => {
+  it("should set HSTS header", async () => {
     const response = await makeRequest("/health");
-    expect(response.headers.get("X-XSS-Protection")).toBe("1; mode=block");
+    expect(response.headers.get("Strict-Transport-Security")).toBe(
+      "max-age=31536000; includeSubDomains; preload",
+    );
   });
 
   it("should set Referrer-Policy", async () => {

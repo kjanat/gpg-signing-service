@@ -100,6 +100,8 @@ export interface Env {
   KEY_ID: string;
   /** Optional: comma-separated list of allowed CORS origins */
   ALLOWED_ORIGINS?: string;
+  /** Optional: expected JWT audience (defaults to "gpg-signing-service") */
+  EXPECTED_AUDIENCE?: string;
 
   // Secrets
   KEY_PASSPHRASE: string;

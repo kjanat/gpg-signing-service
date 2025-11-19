@@ -68,7 +68,9 @@ export async function getAuditLogs(
 
   if (subject) {
     query += " AND subject LIKE ?";
-    params.push(`%${subject}%`);
+    // Escape LIKE wildcards to prevent pattern injection
+    const escapedSubject = subject.replace(/[%_]/g, "\\$&");
+    params.push(`%${escapedSubject}%`);
   }
 
   if (startDate) {

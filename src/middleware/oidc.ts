@@ -57,12 +57,30 @@ export const adminAuth: MiddlewareHandler<{ Bindings: Env }> = async (
 
   const token = authHeader.slice(7);
 
-  if (token !== c.env.ADMIN_TOKEN) {
+  // Use constant-time comparison to prevent timing attacks
+  const isValid = await timingSafeEqual(token, c.env.ADMIN_TOKEN);
+  if (!isValid) {
     return c.json({ error: "Invalid admin token", code: "AUTH_INVALID" }, 401);
   }
 
   return next();
 };
+
+// Constant-time string comparison to prevent timing attacks
+async function timingSafeEqual(a: string, b: string): Promise<boolean> {
+  const encoder = new TextEncoder();
+  const aBytes = encoder.encode(a);
+  const bBytes = encoder.encode(b);
+
+  // If lengths differ, compare against dummy to maintain constant time
+  if (aBytes.length !== bBytes.length) {
+    const dummy = encoder.encode("0".repeat(aBytes.length));
+    await crypto.subtle.timingSafeEqual(aBytes, dummy);
+    return false;
+  }
+
+  return crypto.subtle.timingSafeEqual(aBytes, bBytes);
+}
 
 // Allowed JWT signing algorithms
 const ALLOWED_ALGORITHMS = ["RS256", "RS384", "RS512", "ES256", "ES384"];
@@ -95,21 +113,22 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
     throw new Error(`Issuer not allowed: ${payload.iss}`);
   }
 
-  // Check timing claims
+  // Check timing claims with 60-second clock skew tolerance
   const now = Math.floor(Date.now() / 1000);
+  const CLOCK_SKEW_SECONDS = 60;
 
-  // Check not-before (nbf)
-  if (payload.nbf && payload.nbf > now) {
+  // Check not-before (nbf) with skew tolerance
+  if (payload.nbf && payload.nbf > now + CLOCK_SKEW_SECONDS) {
     throw new Error("Token not yet valid");
   }
 
-  // Check expiration
-  if (payload.exp < now) {
+  // Check expiration with skew tolerance
+  if (payload.exp < now - CLOCK_SKEW_SECONDS) {
     throw new Error("Token expired");
   }
 
-  // Validate audience
-  const expectedAudience = "gpg-signing-service";
+  // Validate audience (configurable via env, defaults to service name)
+  const expectedAudience = env.EXPECTED_AUDIENCE || "gpg-signing-service";
   const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
   if (!audiences.includes(expectedAudience)) {
     throw new Error("Invalid token audience");
@@ -121,6 +140,11 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
 
   if (!key) {
     throw new Error("Key not found in JWKS");
+  }
+
+  // Validate key is intended for signatures (if use claim present)
+  if (key.use && key.use !== "sig") {
+    throw new Error("Key not intended for signatures");
   }
 
   // Import the public key
