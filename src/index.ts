@@ -34,7 +34,8 @@ app.get('/health', async (c) => {
     const keyStorage = c.env.KEY_STORAGE.get(keyStorageId);
     const keyHealthResponse = await keyStorage.fetch(new Request('http://internal/health'));
     checks.keyStorage = keyHealthResponse.ok;
-  } catch {
+  } catch (error) {
+    console.error('Key storage health check failed:', error);
     checks.keyStorage = false;
   }
 
@@ -42,7 +43,8 @@ app.get('/health', async (c) => {
     // Check database
     const result = await c.env.AUDIT_DB.prepare('SELECT 1').first();
     checks.database = result !== null;
-  } catch {
+  } catch (error) {
+    console.error('Database health check failed:', error);
     checks.database = false;
   }
 
@@ -73,13 +75,18 @@ app.get('/public-key', async (c) => {
     return c.json({ error: 'Key not found', code: 'KEY_NOT_FOUND' }, 404);
   }
 
-  const storedKey = await keyResponse.json() as { armoredPrivateKey: string };
-  const privateKey = await openpgp.readPrivateKey({ armoredKey: storedKey.armoredPrivateKey });
-  const publicKey = privateKey.toPublic().armor();
+  try {
+    const storedKey = await keyResponse.json() as { armoredPrivateKey: string };
+    const privateKey = await openpgp.readPrivateKey({ armoredKey: storedKey.armoredPrivateKey });
+    const publicKey = privateKey.toPublic().armor();
 
-  return c.text(publicKey, 200, {
-    'Content-Type': 'application/pgp-keys',
-  });
+    return c.text(publicKey, 200, {
+      'Content-Type': 'application/pgp-keys',
+    });
+  } catch (error) {
+    console.error('Failed to extract public key:', { keyId, error });
+    return c.json({ error: 'Failed to process key', code: 'KEY_PROCESSING_ERROR' }, 500);
+  }
 });
 
 // Sign endpoint with OIDC auth
@@ -95,11 +102,12 @@ app.notFound((c) => {
 
 // Error handler
 app.onError((err, c) => {
-  console.error('Unhandled error:', err);
+  const requestId = crypto.randomUUID();
+  console.error('Unhandled error:', { requestId, error: err });
   return c.json({
     error: 'Internal server error',
     code: 'INTERNAL_ERROR',
-    message: err.message,
+    requestId,
   }, 500);
 });
 

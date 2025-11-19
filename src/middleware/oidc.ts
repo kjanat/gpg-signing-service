@@ -42,6 +42,9 @@ export const adminAuth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) =
   await next();
 };
 
+// Allowed JWT signing algorithms
+const ALLOWED_ALGORITHMS = ['RS256', 'RS384', 'RS512', 'ES256', 'ES384'];
+
 async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
   // Decode JWT header and payload (without verification first)
   const parts = token.split('.');
@@ -49,8 +52,20 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
     throw new Error('Invalid token format');
   }
 
-  const header = JSON.parse(atob(parts[0])) as { kid: string; alg: string };
-  const payload = JSON.parse(atob(parts[1])) as OIDCClaims;
+  // Parse header and payload with explicit error handling
+  let header: { kid: string; alg: string };
+  let payload: OIDCClaims;
+  try {
+    header = JSON.parse(atob(parts[0])) as { kid: string; alg: string };
+    payload = JSON.parse(atob(parts[1])) as OIDCClaims;
+  } catch {
+    throw new Error('Invalid token encoding');
+  }
+
+  // Validate algorithm against whitelist
+  if (!ALLOWED_ALGORITHMS.includes(header.alg)) {
+    throw new Error(`Algorithm not allowed: ${header.alg}`);
+  }
 
   // Validate issuer
   const allowedIssuers = env.ALLOWED_ISSUERS.split(',');
@@ -58,10 +73,24 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
     throw new Error(`Issuer not allowed: ${payload.iss}`);
   }
 
-  // Check expiration
+  // Check timing claims
   const now = Math.floor(Date.now() / 1000);
+
+  // Check not-before (nbf)
+  if (payload.nbf && payload.nbf > now) {
+    throw new Error('Token not yet valid');
+  }
+
+  // Check expiration
   if (payload.exp < now) {
     throw new Error('Token expired');
+  }
+
+  // Validate audience
+  const expectedAudience = 'gpg-signing-service';
+  const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
+  if (!audiences.includes(expectedAudience)) {
+    throw new Error('Invalid token audience');
   }
 
   // Fetch JWKS and verify signature
@@ -116,8 +145,13 @@ async function getJWKS(issuer: string, env: Env): Promise<JWKSResponse> {
 
   const jwks = await jwksResponse.json() as JWKSResponse;
 
-  // Cache for 5 minutes
-  await env.JWKS_CACHE.put(cacheKey, JSON.stringify(jwks), { expirationTtl: 300 });
+  // Cache for 5 minutes (non-critical, don't fail on cache errors)
+  try {
+    await env.JWKS_CACHE.put(cacheKey, JSON.stringify(jwks), { expirationTtl: 300 });
+  } catch (error) {
+    console.error('Failed to cache JWKS:', error);
+    // Continue - caching is optimization, not critical path
+  }
 
   return jwks;
 }

@@ -76,6 +76,18 @@ app.post('/keys', async (c) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Key upload failed';
 
+    // Audit failed key upload attempt
+    await logAuditEvent(c.env.AUDIT_DB, {
+      requestId,
+      action: 'key_upload',
+      issuer: 'admin',
+      subject: 'admin',
+      keyId: 'unknown',
+      success: false,
+      errorCode: 'KEY_UPLOAD_ERROR',
+      metadata: JSON.stringify({ error: message }),
+    });
+
     return c.json({
       error: message,
       code: 'KEY_UPLOAD_ERROR',

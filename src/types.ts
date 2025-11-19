@@ -37,6 +37,7 @@ export interface OIDCClaims {
   aud: string | string[]; // Audience
   exp: number;           // Expiration
   iat: number;           // Issued at
+  nbf?: number;          // Not before
 
   // GitHub-specific
   repository?: string;

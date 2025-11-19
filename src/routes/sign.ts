@@ -10,15 +10,30 @@ app.post('/', async (c) => {
   const claims = c.get('oidcClaims') as OIDCClaims;
   const identity = c.get('identity') as string;
 
-  // Check rate limit
-  const rateLimiterId = c.env.RATE_LIMITER.idFromName('global');
-  const rateLimiter = c.env.RATE_LIMITER.get(rateLimiterId);
+  // Check rate limit - FAIL CLOSED if rate limiter unavailable
+  let rateLimit: RateLimitResult;
+  try {
+    const rateLimiterId = c.env.RATE_LIMITER.idFromName('global');
+    const rateLimiter = c.env.RATE_LIMITER.get(rateLimiterId);
 
-  const rateLimitResponse = await rateLimiter.fetch(
-    new Request(`http://internal/consume?identity=${encodeURIComponent(identity)}`)
-  );
+    const rateLimitResponse = await rateLimiter.fetch(
+      new Request(`http://internal/consume?identity=${encodeURIComponent(identity)}`)
+    );
 
-  const rateLimit = await rateLimitResponse.json() as RateLimitResult;
+    if (!rateLimitResponse.ok) {
+      throw new Error(`Rate limiter returned ${rateLimitResponse.status}`);
+    }
+
+    rateLimit = await rateLimitResponse.json() as RateLimitResult;
+  } catch (error) {
+    console.error('Rate limiter failed:', error);
+    // FAIL CLOSED - deny request when rate limiting is unavailable
+    return c.json({
+      error: 'Service temporarily unavailable',
+      code: 'RATE_LIMIT_ERROR',
+      requestId,
+    }, 503);
+  }
 
   if (!rateLimit.allowed) {
     return c.json({
