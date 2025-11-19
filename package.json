@@ -14,7 +14,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "generate-key": "bash scripts/generate-key.sh",
-    "kv:create": "wrangler kv:namespace create JWKS_CACHE",
+    "kv:create": "wrangler kv namespace create JWKS_CACHE",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "test": "vitest run",

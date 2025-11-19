@@ -21,12 +21,14 @@ new_classes = ["KeyStorage", "RateLimiter"]
 [[d1_databases]]
 binding = "AUDIT_DB"
 database_name = "gpg-signing-audit"
-database_id = ""                    # Set after `wrangler d1 create gpg-signing-audit`
+# Set after `wrangler d1 create gpg-signing-audit`
+database_id = "46e29014-341c-47d1-adbb-e644ae28691c"
 
 # KV for JWKS caching
 [[kv_namespaces]]
 binding = "JWKS_CACHE"
-id = ""                # Set after `wrangler kv:namespace create JWKS_CACHE`
+# Set after `wrangler kv namespace create JWKS_CACHE`
+id = "b4e1807f785b4b66b012004b14316d6a"
 
 # Environment variables (non-sensitive)
 [vars]
