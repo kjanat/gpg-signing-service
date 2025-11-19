@@ -1,0 +1,38 @@
+name = "gpg-signing-service"
+main = "src/index.ts"
+compatibility_date = "2025-11-19"
+compatibility_flags = ["nodejs_compat"]
+
+# Durable Objects
+[[durable_objects.bindings]]
+name = "KEY_STORAGE"
+class_name = "KeyStorage"
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiter"
+
+# Migrations for Durable Objects
+[[migrations]]
+tag = "v1"
+new_classes = ["KeyStorage", "RateLimiter"]
+
+# D1 Database for audit logs
+[[d1_databases]]
+binding = "AUDIT_DB"
+database_name = "gpg-signing-audit"
+database_id = "" # Set after `wrangler d1 create gpg-signing-audit`
+
+# KV for JWKS caching
+[[kv_namespaces]]
+binding = "JWKS_CACHE"
+id = "" # Set after `wrangler kv:namespace create JWKS_CACHE`
+
+# Environment variables (non-sensitive)
+[vars]
+ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com"
+KEY_ID = "signing-key-v1"
+
+# Secrets (set via `wrangler secret put`)
+# - KEY_PASSPHRASE: Passphrase for encrypted private key
+# - ADMIN_TOKEN: Token for admin endpoints

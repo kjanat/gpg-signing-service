@@ -1,0 +1,63 @@
+# GitLab CI configuration for commit signing
+
+variables:
+  SIGNING_SERVICE_URL: ${SIGNING_SERVICE_URL}
+
+sign-commit:
+  stage: deploy
+  image: alpine:latest
+  id_tokens:
+    GITLAB_OIDC_TOKEN:
+      aud: gpg-signing-service
+  before_script:
+    - apk add --no-cache curl git gnupg jq
+  script:
+    # Get commit data
+    - COMMIT_DATA=$(git cat-file commit HEAD)
+
+    # Request signature from signing service
+    - |
+      SIGNATURE=$(curl -s -X POST "${SIGNING_SERVICE_URL}/sign" \
+        -H "Authorization: Bearer ${GITLAB_OIDC_TOKEN}" \
+        -H "Content-Type: text/plain" \
+        -H "X-Request-ID: ${CI_PIPELINE_ID}-${CI_JOB_ID}" \
+        --data "$COMMIT_DATA")
+
+    # Verify we got a valid signature
+    - |
+      if ! echo "$SIGNATURE" | grep -q "BEGIN PGP SIGNATURE"; then
+        echo "Error: Invalid signature response"
+        echo "$SIGNATURE"
+        exit 1
+      fi
+
+    # Store signature
+    - echo "$SIGNATURE" > /tmp/signature.asc
+
+    # Get commit components
+    - TREE=$(git cat-file -p HEAD | grep ^tree | cut -d' ' -f2)
+    - PARENT=$(git cat-file -p HEAD | grep ^parent | cut -d' ' -f2)
+    - AUTHOR=$(git cat-file -p HEAD | grep ^author)
+    - COMMITTER=$(git cat-file -p HEAD | grep ^committer)
+    - MESSAGE=$(git log -1 --format=%B)
+
+    # Create signed commit
+    - |
+      {
+        echo "tree $TREE"
+        [ -n "$PARENT" ] && echo "parent $PARENT"
+        echo "$AUTHOR"
+        echo "$COMMITTER"
+        echo "gpgsig $(cat /tmp/signature.asc | sed '2,$s/^/ /')"
+        echo ""
+        echo "$MESSAGE"
+      } | git hash-object -t commit --stdin -w > /tmp/new_commit
+
+    # Update reference
+    - git update-ref HEAD $(cat /tmp/new_commit)
+
+    # Import public key and verify
+    - curl -s "${SIGNING_SERVICE_URL}/public-key" | gpg --import
+    - git verify-commit HEAD || true
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"

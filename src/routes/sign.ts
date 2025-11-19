@@ -1,0 +1,112 @@
+import { Hono } from 'hono';
+import type { Env, Variables, StoredKey, OIDCClaims, RateLimitResult } from '../types';
+import { signCommitData } from '../utils/signing';
+import { logAuditEvent } from '../utils/audit';
+
+const app = new Hono<{ Bindings: Env; Variables: Variables }>();
+
+app.post('/', async (c) => {
+  const requestId = c.req.header('X-Request-ID') || crypto.randomUUID();
+  const claims = c.get('oidcClaims') as OIDCClaims;
+  const identity = c.get('identity') as string;
+
+  // Check rate limit
+  const rateLimiterId = c.env.RATE_LIMITER.idFromName('global');
+  const rateLimiter = c.env.RATE_LIMITER.get(rateLimiterId);
+
+  const rateLimitResponse = await rateLimiter.fetch(
+    new Request(`http://internal/consume?identity=${encodeURIComponent(identity)}`)
+  );
+
+  const rateLimit = await rateLimitResponse.json() as RateLimitResult;
+
+  if (!rateLimit.allowed) {
+    return c.json({
+      error: 'Rate limit exceeded',
+      code: 'RATE_LIMITED',
+      retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / 1000),
+    }, 429);
+  }
+
+  // Get commit data from request body
+  const commitData = await c.req.text();
+
+  if (!commitData) {
+    return c.json({
+      error: 'No commit data provided',
+      code: 'INVALID_REQUEST',
+      requestId,
+    }, 400);
+  }
+
+  // Get key ID from query param or use default
+  const keyId = c.req.query('keyId') || c.env.KEY_ID;
+
+  try {
+    // Fetch private key from Durable Object
+    const keyStorageId = c.env.KEY_STORAGE.idFromName('global');
+    const keyStorage = c.env.KEY_STORAGE.get(keyStorageId);
+
+    const keyResponse = await keyStorage.fetch(
+      new Request(`http://internal/get-key?keyId=${encodeURIComponent(keyId)}`)
+    );
+
+    if (!keyResponse.ok) {
+      const error = await keyResponse.json() as { error: string };
+      throw new Error(error.error || 'Key not found');
+    }
+
+    const storedKey = await keyResponse.json() as StoredKey;
+
+    // Sign the commit data
+    const result = await signCommitData(
+      commitData,
+      storedKey,
+      c.env.KEY_PASSPHRASE
+    );
+
+    // Log successful signing
+    await logAuditEvent(c.env.AUDIT_DB, {
+      requestId,
+      action: 'sign',
+      issuer: claims.iss,
+      subject: claims.sub,
+      keyId: result.keyId,
+      success: true,
+      metadata: JSON.stringify({
+        repository: claims.repository || claims.project_path,
+        dataLength: commitData.length,
+      }),
+    });
+
+    // Set rate limit headers
+    c.header('X-RateLimit-Remaining', String(rateLimit.remaining));
+    c.header('X-RateLimit-Reset', String(Math.ceil(rateLimit.resetAt / 1000)));
+    c.header('X-Request-ID', requestId);
+
+    return c.text(result.signature, 200);
+
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Signing failed';
+
+    // Log failed signing attempt
+    await logAuditEvent(c.env.AUDIT_DB, {
+      requestId,
+      action: 'sign',
+      issuer: claims.iss,
+      subject: claims.sub,
+      keyId,
+      success: false,
+      errorCode: 'SIGN_ERROR',
+      metadata: JSON.stringify({ error: message }),
+    });
+
+    return c.json({
+      error: message,
+      code: 'SIGN_ERROR',
+      requestId,
+    }, 500);
+  }
+});
+
+export default app;
