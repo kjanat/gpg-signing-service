@@ -1,5 +1,5 @@
-import type { RateLimitResult } from "../types";
-import { createRateLimitAllowed, createRateLimitDenied } from "../types";
+import type { RateLimitResult } from "~/types";
+import { createRateLimitAllowed, createRateLimitDenied } from "~/types";
 
 interface TokenBucket {
   tokens: number;

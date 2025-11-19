@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { logAuditEvent, getAuditLogs } from "../utils/audit";
-import type { AuditLogEntry } from "../types";
+import { logAuditEvent, getAuditLogs } from "~/utils/audit";
+import type { AuditLogEntry } from "~/types";
 
 // Mock D1Database
 function createMockDb() {
@@ -40,7 +40,9 @@ describe("logAuditEvent", () => {
       success: true,
     });
 
-    expect(db.prepare).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO audit_logs"));
+    expect(db.prepare).toHaveBeenCalledWith(
+      expect.stringContaining("INSERT INTO audit_logs"),
+    );
     expect(db._mockBind).toHaveBeenCalledWith(
       "test-uuid-1234",
       expect.any(String), // timestamp
@@ -66,7 +68,7 @@ describe("logAuditEvent", () => {
       subject: "repo:owner/repo",
       keyId: "KEY123",
       success: false,
-      errorCode: "INVALID_TOKEN",
+      errorCode: "AUTH_INVALID",
     });
 
     expect(db._mockBind).toHaveBeenCalledWith(
@@ -78,7 +80,7 @@ describe("logAuditEvent", () => {
       "repo:owner/repo",
       "KEY123",
       0, // success = false
-      "INVALID_TOKEN",
+      "AUTH_INVALID",
       null,
     );
   });
@@ -130,9 +132,7 @@ describe("logAuditEvent", () => {
 
     expect(consoleSpy).toHaveBeenCalledWith(
       "Failed to write audit log:",
-      expect.objectContaining({
-        error: "Database error",
-      }),
+      expect.objectContaining({ error: "Database error" }),
     );
 
     consoleSpy.mockRestore();
@@ -173,8 +173,10 @@ describe("getAuditLogs", () => {
     );
     expect(db._mockBind).toHaveBeenCalledWith(100, 0); // default limit and offset
     expect(logs).toHaveLength(1);
-    expect(logs[0].requestId).toBe("req-1");
-    expect(logs[0].success).toBe(true);
+    const firstLog = logs[0];
+    expect(firstLog).toBeDefined();
+    expect(firstLog!.requestId).toBe("req-1");
+    expect(firstLog!.success).toBe(true);
   });
 
   it("should apply action filter", async () => {
@@ -205,10 +207,7 @@ describe("getAuditLogs", () => {
     const db = createMockDb();
     db._mockAll.mockResolvedValue({ results: [] });
 
-    await getAuditLogs(db, {
-      startDate: "2024-01-01",
-      endDate: "2024-12-31",
-    });
+    await getAuditLogs(db, { startDate: "2024-01-01", endDate: "2024-12-31" });
 
     expect(db.prepare).toHaveBeenCalledWith(
       expect.stringContaining("AND timestamp >= ?"),
@@ -216,7 +215,12 @@ describe("getAuditLogs", () => {
     expect(db.prepare).toHaveBeenCalledWith(
       expect.stringContaining("AND timestamp <= ?"),
     );
-    expect(db._mockBind).toHaveBeenCalledWith("2024-01-01", "2024-12-31", 100, 0);
+    expect(db._mockBind).toHaveBeenCalledWith(
+      "2024-01-01",
+      "2024-12-31",
+      100,
+      0,
+    );
   });
 
   it("should apply custom limit and offset", async () => {

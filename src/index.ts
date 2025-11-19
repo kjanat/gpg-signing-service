@@ -2,15 +2,15 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import * as openpgp from "openpgp";
-import type { Env, Variables, HealthResponse } from "./types";
-import { oidcAuth, adminAuth } from "./middleware/oidc";
-import { securityHeaders } from "./middleware/security";
-import signRoutes from "./routes/sign";
-import adminRoutes from "./routes/admin";
+import type { Env, Variables, HealthResponse } from "~/types";
+import { oidcAuth, adminAuth } from "~/middleware/oidc";
+import { securityHeaders } from "~/middleware/security";
+import signRoutes from "~/routes/sign";
+import adminRoutes from "~/routes/admin";
 
 // Export Durable Objects
-export { KeyStorage } from "./durable-objects/key-storage";
-export { RateLimiter } from "./durable-objects/rate-limiter";
+export { KeyStorage } from "~/durable-objects/key-storage";
+export { RateLimiter } from "~/durable-objects/rate-limiter";
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 

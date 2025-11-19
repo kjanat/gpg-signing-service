@@ -2,8 +2,8 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck - cloudflare:test types are provided at runtime by vitest-pool-workers
 import { env } from "cloudflare:test";
-import { describe, it, expect, beforeEach } from "vitest";
-import type { RateLimitResult } from "../types";
+import { describe, it, expect } from "vitest";
+import type { RateLimitResult } from "~/types";
 
 describe("RateLimiter Durable Object", () => {
   // Get a fresh DO stub for each test
@@ -15,7 +15,9 @@ describe("RateLimiter Durable Object", () => {
   describe("/check endpoint", () => {
     it("should return allowed for new identity", async () => {
       const stub = getRateLimiter("check-new");
-      const response = await stub.fetch("http://localhost/check?identity=new-user");
+      const response = await stub.fetch(
+        "http://localhost/check?identity=new-user",
+      );
 
       expect(response.status).toBe(200);
 
@@ -40,7 +42,9 @@ describe("RateLimiter Durable Object", () => {
   describe("/consume endpoint", () => {
     it("should consume token and return remaining", async () => {
       const stub = getRateLimiter("consume-basic");
-      const response = await stub.fetch("http://localhost/consume?identity=user1");
+      const response = await stub.fetch(
+        "http://localhost/consume?identity=user1",
+      );
 
       expect(response.status).toBe(200);
 
@@ -55,7 +59,9 @@ describe("RateLimiter Durable Object", () => {
       const stub = getRateLimiter("consume-multiple");
 
       // First consume
-      let response = await stub.fetch("http://localhost/consume?identity=user2");
+      let response = await stub.fetch(
+        "http://localhost/consume?identity=user2",
+      );
       let result = (await response.json()) as RateLimitResult;
       expect(result.allowed && result.remaining).toBe(99);
 
@@ -79,7 +85,9 @@ describe("RateLimiter Durable Object", () => {
       }
 
       // Next request should be denied
-      const response = await stub.fetch("http://localhost/consume?identity=exhausted");
+      const response = await stub.fetch(
+        "http://localhost/consume?identity=exhausted",
+      );
 
       expect(response.status).toBe(429);
       expect(response.headers.get("Retry-After")).toBeTruthy();
@@ -108,14 +116,17 @@ describe("RateLimiter Durable Object", () => {
       await stub.fetch("http://localhost/consume?identity=reset-user");
 
       // Verify tokens consumed
-      let response = await stub.fetch("http://localhost/check?identity=reset-user");
+      let response = await stub.fetch(
+        "http://localhost/check?identity=reset-user",
+      );
       let result = (await response.json()) as RateLimitResult;
       expect(result.allowed && result.remaining).toBeLessThan(100);
 
       // Reset
-      response = await stub.fetch("http://localhost/reset?identity=reset-user", {
-        method: "POST",
-      });
+      response = await stub.fetch(
+        "http://localhost/reset?identity=reset-user",
+        { method: "POST" },
+      );
       expect(response.status).toBe(200);
 
       const resetResult = (await response.json()) as { success: boolean };
@@ -140,9 +151,10 @@ describe("RateLimiter Durable Object", () => {
 
     it("should return 405 for non-POST requests", async () => {
       const stub = getRateLimiter("reset-method");
-      const response = await stub.fetch("http://localhost/reset?identity=test", {
-        method: "GET",
-      });
+      const response = await stub.fetch(
+        "http://localhost/reset?identity=test",
+        { method: "GET" },
+      );
 
       expect(response.status).toBe(405);
     });

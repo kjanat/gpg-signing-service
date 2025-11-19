@@ -1,8 +1,8 @@
 import { Hono } from "hono";
-import type { Env, StoredKey, KeyUploadRequest, ErrorCode } from "../types";
-import { createArmoredPrivateKey, createKeyId } from "../types";
-import { parseAndValidateKey, extractPublicKey } from "../utils/signing";
-import { logAuditEvent, getAuditLogs } from "../utils/audit";
+import type { Env, StoredKey, KeyUploadRequest, ErrorCode } from "~/types";
+import { createArmoredPrivateKey, createKeyId } from "~/types";
+import { parseAndValidateKey, extractPublicKey } from "~/utils/signing";
+import { logAuditEvent, getAuditLogs } from "~/utils/audit";
 
 const app = new Hono<{ Bindings: Env }>();
 

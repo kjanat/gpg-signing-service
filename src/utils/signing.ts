@@ -4,12 +4,12 @@ import type {
   SigningResult,
   ParsedKeyInfo,
   ArmoredPrivateKey,
-} from "../types";
+} from "~/types";
 import {
   createKeyId,
   createKeyFingerprint,
   createArmoredPrivateKey,
-} from "../types";
+} from "~/types";
 
 // Re-export types for convenience
 export type { SigningResult, ParsedKeyInfo };

@@ -8,7 +8,7 @@ import {
 } from "cloudflare:test";
 import { describe, it, expect, beforeAll } from "vitest";
 import * as openpgp from "openpgp";
-import app from "../index";
+import app from "gpg-signing-service";
 
 // Helper to make requests
 async function makeRequest(
@@ -43,10 +43,7 @@ async function uploadTestKey(keyId: string) {
         Authorization: `Bearer ${env.ADMIN_TOKEN}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        armoredPrivateKey: privateKey,
-        keyId,
-      }),
+      body: JSON.stringify({ armoredPrivateKey: privateKey, keyId }),
     }),
     env,
     ctx,
@@ -102,9 +99,7 @@ describe("Sign Endpoint Authentication", () => {
   it("should reject requests with invalid Authorization header", async () => {
     const response = await makeRequest("/sign", {
       method: "POST",
-      headers: {
-        Authorization: "InvalidFormat",
-      },
+      headers: { Authorization: "InvalidFormat" },
       body: "commit data",
     });
 
@@ -114,9 +109,7 @@ describe("Sign Endpoint Authentication", () => {
   it("should reject requests with malformed JWT", async () => {
     const response = await makeRequest("/sign", {
       method: "POST",
-      headers: {
-        Authorization: "Bearer not.a.valid.jwt",
-      },
+      headers: { Authorization: "Bearer not.a.valid.jwt" },
       body: "commit data",
     });
 
@@ -166,9 +159,7 @@ describe("CORS", () => {
   });
 
   it("should handle OPTIONS preflight", async () => {
-    const response = await makeRequest("/sign", {
-      method: "OPTIONS",
-    });
+    const response = await makeRequest("/sign", { method: "OPTIONS" });
 
     // OPTIONS requests typically return 204 or 200
     expect([200, 204]).toContain(response.status);

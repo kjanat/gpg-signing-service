@@ -7,7 +7,7 @@ import {
   waitOnExecutionContext,
 } from "cloudflare:test";
 import { describe, it, expect } from "vitest";
-import app from "../index";
+import app from "gpg-signing-service";
 
 describe("Health Endpoint", () => {
   it("should respond to health check", async () => {

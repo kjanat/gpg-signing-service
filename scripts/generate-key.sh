@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Generate a new GPG key for the signing service
 # This script creates keys in .keys/ directory - NOT in ~/.gnupg
 
@@ -86,8 +86,11 @@ echo ""
 echo "Next steps:"
 echo "  1. Set passphrase as secret: wrangler secret put KEY_PASSPHRASE"
 echo "  2. Upload key to service:"
+# shellcheck disable=SC1003
 echo '     curl -X POST https://your-worker.workers.dev/admin/keys \'
+# shellcheck disable=SC1003
 echo '       -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \'
+# shellcheck disable=SC1003
 echo '       -H "Content-Type: application/json" \'
 echo "       -d '{\"armoredPrivateKey\": \"$(cat "$PRIVATE_KEY_FILE" | sed ':a;N;$!ba;s/\n/\\n/g')\", \"keyId\": \"signing-key-v1\"}'"
 echo ""

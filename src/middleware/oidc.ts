@@ -5,9 +5,9 @@ import type {
   OIDCClaims,
   LegacyJWKSResponse,
   LegacyJWK,
-} from "../types";
-import { markClaimsAsValidated, createIdentity } from "../types";
-import { fetchWithTimeout } from "../utils/fetch";
+} from "~/types";
+import { markClaimsAsValidated, createIdentity } from "~/types";
+import { fetchWithTimeout } from "~/utils/fetch";
 
 // OIDC validation middleware
 export const oidcAuth: MiddlewareHandler<{

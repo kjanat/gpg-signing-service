@@ -1,4 +1,4 @@
-import type { StoredKey } from "../types";
+import type { StoredKey } from "~/types";
 
 export class KeyStorage implements DurableObject {
   private state: DurableObjectState;

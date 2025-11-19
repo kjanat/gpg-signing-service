@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from "hono";
-import type { Env } from "../types";
+import type { Env } from "~/types";
 
 /**
  * Security headers middleware for production hardening

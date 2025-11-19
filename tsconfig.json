@@ -27,6 +27,9 @@
     "noUnusedParameters": true,
     "noPropertyAccessFromIndexSignature": false, // Enable after D1 result typing is fixed
     "exactOptionalPropertyTypes": false, // Enable after codebase refactoring
-    "noImplicitReturns": true
+    "noImplicitReturns": true,
+
+    // Aliases
+    "paths": { "~/*": ["./src/*"], "gpg-signing-service": ["./src/index.ts"] }
   }
 }

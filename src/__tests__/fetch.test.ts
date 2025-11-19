@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { fetchWithTimeout, fetchJsonWithTimeout } from "../utils/fetch";
+import { fetchWithTimeout, fetchJsonWithTimeout } from "~/utils/fetch";
 
 describe("fetchWithTimeout", () => {
   beforeEach(() => {
@@ -55,7 +55,9 @@ describe("fetchWithTimeout", () => {
 
     await expect(
       fetchWithTimeout("https://example.com/slow", {}, 5000),
-    ).rejects.toThrow("Request to https://example.com/slow timed out after 5000ms");
+    ).rejects.toThrow(
+      "Request to https://example.com/slow timed out after 5000ms",
+    );
   });
 
   it("should re-throw non-abort errors", async () => {

@@ -98,7 +98,8 @@ export interface Env {
   // Environment variables
   ALLOWED_ISSUERS: string;
   KEY_ID: string;
-  ALLOWED_ORIGINS?: string; // Optional: comma-separated list of allowed CORS origins
+  /** Optional: comma-separated list of allowed CORS origins */
+  ALLOWED_ORIGINS?: string;
 
   // Secrets
   KEY_PASSPHRASE: string;
@@ -252,8 +253,10 @@ interface JWKBase {
 export interface RSAPublicKeyJWK extends JWKBase {
   kty: "RSA";
   alg: "RS256" | "RS384" | "RS512";
-  n: string; // Modulus
-  e: string; // Exponent
+  /** Modulus */
+  n: string;
+  /** Exponent */
+  e: string;
 }
 
 /** EC public key in JWK format */
@@ -261,8 +264,10 @@ export interface ECPublicKeyJWK extends JWKBase {
   kty: "EC";
   alg: "ES256" | "ES384" | "ES512";
   crv: "P-256" | "P-384" | "P-521";
-  x: string; // X coordinate
-  y: string; // Y coordinate
+  /** X coordinate */
+  x: string;
+  /** Y coordinate */
+  y: string;
 }
 
 /** JWK type as discriminated union */

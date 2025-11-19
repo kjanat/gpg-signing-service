@@ -6,9 +6,9 @@ import {
   createExecutionContext,
   waitOnExecutionContext,
 } from "cloudflare:test";
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import * as openpgp from "openpgp";
-import app from "../index";
+import app from "gpg-signing-service";
 
 // Helper to make authenticated requests
 async function adminRequest(
@@ -74,9 +74,7 @@ describe("Admin Routes", () => {
     it("should return 400 for missing armoredPrivateKey", async () => {
       const response = await adminRequest("/keys", {
         method: "POST",
-        body: JSON.stringify({
-          keyId: "test-key",
-        }),
+        body: JSON.stringify({ keyId: "test-key" }),
       });
 
       expect(response.status).toBe(400);
@@ -89,9 +87,7 @@ describe("Admin Routes", () => {
 
       const response = await adminRequest("/keys", {
         method: "POST",
-        body: JSON.stringify({
-          armoredPrivateKey: privateKey,
-        }),
+        body: JSON.stringify({ armoredPrivateKey: privateKey }),
       });
 
       expect(response.status).toBe(400);
@@ -296,9 +292,7 @@ describe("Admin Routes", () => {
       const ctx = createExecutionContext();
       const response = await app.fetch(
         new Request("http://localhost/admin/keys", {
-          headers: {
-            Authorization: "Bearer invalid-token",
-          },
+          headers: { Authorization: "Bearer invalid-token" },
         }),
         env,
         ctx,

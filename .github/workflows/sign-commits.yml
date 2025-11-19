@@ -2,7 +2,7 @@ name: Sign Commits
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   workflow_dispatch:
 
 permissions:
@@ -13,13 +13,12 @@ jobs:
   sign:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 0 }
 
       - name: Get OIDC Token
         id: oidc
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const token = await core.getIDToken('gpg-signing-service');

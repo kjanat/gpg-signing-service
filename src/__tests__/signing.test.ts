@@ -5,15 +5,19 @@ import {
   parseAndValidateKey,
   extractPublicKey,
   createStoredKey,
-} from "../utils/signing";
-import type { StoredKey } from "../types";
-import { createKeyId, createKeyFingerprint, createArmoredPrivateKey } from "../types";
+} from "~/utils/signing";
+import type { StoredKey } from "~/types";
+import {
+  createKeyId,
+  createKeyFingerprint,
+  createArmoredPrivateKey,
+} from "~/types";
 
 // Generate a test key for use in tests
 async function generateTestKey(passphrase?: string) {
   const { privateKey, publicKey } = await openpgp.generateKey({
     type: "ecc",
-    curve: "ed25519",
+    curve: "ed25519Legacy",
     userIDs: [{ name: "Test User", email: "test@example.com" }],
     passphrase,
     format: "armored",
@@ -63,7 +67,7 @@ describe("parseAndValidateKey", () => {
 
 describe("extractPublicKey", () => {
   it("should extract public key from private key", async () => {
-    const { privateKey, publicKey } = await generateTestKey();
+    const { privateKey } = await generateTestKey();
 
     const extracted = await extractPublicKey(privateKey);
 
@@ -97,7 +101,8 @@ describe("signCommitData", () => {
       algorithm: "EdDSA",
     };
 
-    const commitData = "tree abc123\nparent def456\nauthor Test <test@test.com> 1234567890 +0000\n\nTest commit";
+    const commitData =
+      "tree abc123\nparent def456\nauthor Test <test@test.com> 1234567890 +0000\n\nTest commit";
 
     const result = await signCommitData(commitData, storedKey, "");
 
@@ -110,7 +115,8 @@ describe("signCommitData", () => {
 
   it("should sign commit data with encrypted key", async () => {
     const passphrase = "secure-pass-456";
-    const { privateKey, keyId, fingerprint } = await generateTestKey(passphrase);
+    const { privateKey, keyId, fingerprint } =
+      await generateTestKey(passphrase);
 
     const storedKey: StoredKey = {
       armoredPrivateKey: createArmoredPrivateKey(privateKey),
@@ -128,7 +134,8 @@ describe("signCommitData", () => {
   });
 
   it("should create verifiable signature", async () => {
-    const { privateKey, publicKey, keyId, fingerprint } = await generateTestKey();
+    const { privateKey, publicKey, keyId, fingerprint } =
+      await generateTestKey();
 
     const storedKey: StoredKey = {
       armoredPrivateKey: createArmoredPrivateKey(privateKey),
@@ -145,7 +152,9 @@ describe("signCommitData", () => {
     // Verify the signature
     const pubKey = await openpgp.readKey({ armoredKey: publicKey });
     const message = await openpgp.createMessage({ text: commitData });
-    const signature = await openpgp.readSignature({ armoredSignature: result.signature });
+    const signature = await openpgp.readSignature({
+      armoredSignature: result.signature,
+    });
 
     const verification = await openpgp.verify({
       message,
@@ -153,7 +162,9 @@ describe("signCommitData", () => {
       verificationKeys: pubKey,
     });
 
-    const { verified } = verification.signatures[0];
+    const firstSignature = verification.signatures[0];
+    expect(firstSignature).toBeDefined();
+    const { verified } = firstSignature!;
     await expect(verified).resolves.toBeTruthy();
   });
 
@@ -168,9 +179,7 @@ describe("signCommitData", () => {
       algorithm: "EdDSA",
     };
 
-    await expect(
-      signCommitData("test", storedKey, "wrong"),
-    ).rejects.toThrow();
+    await expect(signCommitData("test", storedKey, "wrong")).rejects.toThrow();
   });
 });
 
@@ -183,7 +192,9 @@ describe("createStoredKey", () => {
       "RSA",
     );
 
-    expect(result.armoredPrivateKey).toContain("-----BEGIN PGP PRIVATE KEY-----");
+    expect(result.armoredPrivateKey).toContain(
+      "-----BEGIN PGP PRIVATE KEY-----",
+    );
     expect(result.keyId).toBe("ABCD1234");
     expect(result.fingerprint).toBe("1234567890ABCDEF");
     expect(result.algorithm).toBe("RSA");
