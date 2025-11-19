@@ -14,7 +14,7 @@ export default defineWorkersConfig({
       reporter: ["text", "json", "html"],
       include: ["src/**/*.ts"],
       exclude: ["src/**/*.{test,spec}.ts", "src/__tests__/**", "src/types/**"],
-      thresholds: { lines: 10, functions: 10, branches: 0, statements: 10 },
+      thresholds: { lines: 60, functions: 70, branches: 50, statements: 60 },
     },
   },
 });
