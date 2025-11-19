@@ -8,9 +8,53 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 KEYS_DIR="${PROJECT_DIR}/.keys"
 
+# Show help by default
+show_help() {
+	cat <<EOF
+Usage: $(basename "$0") <name> <email> [comment] [passphrase]
+
+Generate a GPG signing key for the GPG Signing Service.
+Keys are created in .keys/ directory (NOT in ~/.gnupg).
+
+Arguments:
+  name        Real name for the key (required)
+  email       Email address for the key (required)
+  comment     Key comment (default: "Cloudflare Worker Signing Key")
+  passphrase  Passphrase to protect the key (optional, recommended)
+
+Examples:
+  $(basename "$0") "My Company" "signing@company.com"
+  $(basename "$0") "My Company" "signing@company.com" "Production Key" "secret123"
+
+Output:
+  .keys/private-key.asc  - Armored private key (keep secure!)
+  .keys/public-key.asc   - Armored public key
+  .keys/gnupg/           - GPG keyring directory
+
+Next steps after generation:
+  1. Set passphrase: wrangler secret put KEY_PASSPHRASE
+  2. Set admin token: wrangler secret put ADMIN_TOKEN
+  3. Upload key via /admin/keys endpoint
+
+EOF
+	exit 0
+}
+
+# Show help if no arguments or help flag
+if [ $# -eq 0 ] || [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+	show_help
+fi
+
+# Require at least name and email
+if [ $# -lt 2 ]; then
+	echo "Error: name and email are required" >&2
+	echo "Run '$(basename "$0") --help' for usage information" >&2
+	exit 1
+fi
+
 # Key parameters
-KEY_NAME="${1:-GPG Signing Service}"
-KEY_EMAIL="${2:-signing@example.com}"
+KEY_NAME="$1"
+KEY_EMAIL="$2"
 KEY_COMMENT="${3:-Cloudflare Worker Signing Key}"
 PASSPHRASE="${4:-}"
 
@@ -29,7 +73,7 @@ echo "  GNUPGHOME: $GNUPGHOME (NOT ~/.gnupg)"
 
 # Generate key using batch mode
 if [ -n "$PASSPHRASE" ]; then
-  gpg --batch --gen-key << EOF
+	gpg --batch --gen-key <<EOF
 Key-Type: EDDSA
 Key-Curve: ed25519
 Key-Usage: sign
@@ -41,7 +85,7 @@ Passphrase: ${PASSPHRASE}
 %commit
 EOF
 else
-  gpg --batch --gen-key << EOF
+	gpg --batch --gen-key <<EOF
 Key-Type: EDDSA
 Key-Curve: ed25519
 Key-Usage: sign
@@ -64,14 +108,14 @@ echo "  Key ID: $KEY_ID"
 # Export private key
 PRIVATE_KEY_FILE="${KEYS_DIR}/private-key.asc"
 if [ -n "$PASSPHRASE" ]; then
-  gpg --batch --pinentry-mode loopback --passphrase "$PASSPHRASE" --armor --export-secret-keys "$KEY_ID" > "$PRIVATE_KEY_FILE"
+	gpg --batch --pinentry-mode loopback --passphrase "$PASSPHRASE" --armor --export-secret-keys "$KEY_ID" >"$PRIVATE_KEY_FILE"
 else
-  gpg --armor --export-secret-keys "$KEY_ID" > "$PRIVATE_KEY_FILE"
+	gpg --armor --export-secret-keys "$KEY_ID" >"$PRIVATE_KEY_FILE"
 fi
 
 # Export public key
 PUBLIC_KEY_FILE="${KEYS_DIR}/public-key.asc"
-gpg --armor --export "$KEY_ID" > "$PUBLIC_KEY_FILE"
+gpg --armor --export "$KEY_ID" >"$PUBLIC_KEY_FILE"
 
 # Get fingerprint
 FINGERPRINT=$(gpg --fingerprint "$KEY_ID" | grep -A1 "pub" | tail -1 | tr -d ' ')
