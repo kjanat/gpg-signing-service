@@ -1,33 +1,38 @@
-import type { AuditLogEntry, ErrorCode, AuditAction } from '../types';
+import type { AuditLogEntry, ErrorCode, AuditAction } from "../types";
 
 export async function logAuditEvent(
   db: D1Database,
-  entry: Omit<AuditLogEntry, 'id' | 'timestamp'>
+  entry: Omit<AuditLogEntry, "id" | "timestamp">,
 ): Promise<void> {
   const id = crypto.randomUUID();
   const timestamp = new Date().toISOString();
 
   try {
-    await db.prepare(`
+    await db
+      .prepare(
+        `
       INSERT INTO audit_logs (id, timestamp, request_id, action, issuer, subject, key_id, success, error_code, metadata)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(
-      id,
-      timestamp,
-      entry.requestId,
-      entry.action,
-      entry.issuer,
-      entry.subject,
-      entry.keyId,
-      entry.success ? 1 : 0,
-      entry.errorCode || null,
-      entry.metadata || null
-    ).run();
+    `,
+      )
+      .bind(
+        id,
+        timestamp,
+        entry.requestId,
+        entry.action,
+        entry.issuer,
+        entry.subject,
+        entry.keyId,
+        entry.success ? 1 : 0,
+        entry.errorCode || null,
+        entry.metadata || null,
+      )
+      .run();
   } catch (error) {
     // Log failure but don't crash the request - audit is important but not critical path
-    console.error('Failed to write audit log:', {
+    console.error("Failed to write audit log:", {
       entry,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? error.message : "Unknown error",
     });
     // Note: In production, this should trigger an alert
   }
@@ -42,39 +47,49 @@ export async function getAuditLogs(
     subject?: string;
     startDate?: string;
     endDate?: string;
-  } = {}
+  } = {},
 ): Promise<AuditLogEntry[]> {
-  const { limit = 100, offset = 0, action, subject, startDate, endDate } = options;
+  const {
+    limit = 100,
+    offset = 0,
+    action,
+    subject,
+    startDate,
+    endDate,
+  } = options;
 
-  let query = 'SELECT * FROM audit_logs WHERE 1=1';
+  let query = "SELECT * FROM audit_logs WHERE 1=1";
   const params: (string | number)[] = [];
 
   if (action) {
-    query += ' AND action = ?';
+    query += " AND action = ?";
     params.push(action);
   }
 
   if (subject) {
-    query += ' AND subject LIKE ?';
+    query += " AND subject LIKE ?";
     params.push(`%${subject}%`);
   }
 
   if (startDate) {
-    query += ' AND timestamp >= ?';
+    query += " AND timestamp >= ?";
     params.push(startDate);
   }
 
   if (endDate) {
-    query += ' AND timestamp <= ?';
+    query += " AND timestamp <= ?";
     params.push(endDate);
   }
 
-  query += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
+  query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?";
   params.push(limit, offset);
 
-  const result = await db.prepare(query).bind(...params).all();
+  const result = await db
+    .prepare(query)
+    .bind(...params)
+    .all();
 
-  return result.results.map(row => ({
+  return result.results.map((row) => ({
     id: row.id as string,
     timestamp: row.timestamp as string,
     requestId: row.request_id as string,

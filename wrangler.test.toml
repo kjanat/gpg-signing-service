@@ -1,4 +1,4 @@
-name = "gpg-signing-service"
+name = "gpg-signing-service-test"
 main = "src/index.ts"
 compatibility_date = "2025-11-19"
 compatibility_flags = ["nodejs_compat"]
@@ -17,22 +17,20 @@ class_name = "RateLimiter"
 tag = "v1"
 new_classes = ["KeyStorage", "RateLimiter"]
 
-# D1 Database for audit logs
+# D1 Database for audit logs (use local database for tests)
 [[d1_databases]]
 binding = "AUDIT_DB"
-database_name = "gpg-signing-audit"
-database_id = ""                    # Set after `wrangler d1 create gpg-signing-audit`
+database_name = "gpg-signing-audit-test"
+database_id = "test-database-id"
 
-# KV for JWKS caching
+# KV for JWKS caching (use local KV for tests)
 [[kv_namespaces]]
 binding = "JWKS_CACHE"
-id = ""                # Set after `wrangler kv:namespace create JWKS_CACHE`
+id = "test-kv-id"
 
-# Environment variables (non-sensitive)
+# Environment variables for testing
 [vars]
 ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com"
-KEY_ID = "signing-key-v1"
-
-# Secrets (set via `wrangler secret put`)
-# - KEY_PASSPHRASE: Passphrase for encrypted private key
-# - ADMIN_TOKEN: Token for admin endpoints
+KEY_ID = "test-key-v1"
+ADMIN_TOKEN = "test-admin-token"
+KEY_PASSPHRASE = "test-passphrase"

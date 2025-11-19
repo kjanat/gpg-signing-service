@@ -1,6 +1,15 @@
-import * as openpgp from 'openpgp';
-import type { StoredKey, SigningResult, ParsedKeyInfo, KeyId, KeyFingerprint, ArmoredPrivateKey } from '../types';
-import { createKeyId, createKeyFingerprint, createArmoredPrivateKey } from '../types';
+import * as openpgp from "openpgp";
+import type {
+  StoredKey,
+  SigningResult,
+  ParsedKeyInfo,
+  ArmoredPrivateKey,
+} from "../types";
+import {
+  createKeyId,
+  createKeyFingerprint,
+  createArmoredPrivateKey,
+} from "../types";
 
 // Re-export types for convenience
 export type { SigningResult, ParsedKeyInfo };
@@ -8,7 +17,7 @@ export type { SigningResult, ParsedKeyInfo };
 export async function signCommitData(
   commitData: string,
   storedKey: StoredKey,
-  passphrase: string
+  passphrase: string,
 ): Promise<SigningResult> {
   // Read the encrypted private key
   const privateKey = await openpgp.readPrivateKey({
@@ -18,10 +27,7 @@ export async function signCommitData(
   // Decrypt if passphrase protected
   let decryptedKey = privateKey;
   if (!privateKey.isDecrypted()) {
-    decryptedKey = await openpgp.decryptKey({
-      privateKey,
-      passphrase,
-    });
+    decryptedKey = await openpgp.decryptKey({ privateKey, passphrase });
   }
 
   // Create message from commit data
@@ -32,7 +38,7 @@ export async function signCommitData(
     message,
     signingKeys: decryptedKey,
     detached: true,
-    format: 'armored',
+    format: "armored",
   });
 
   return {
@@ -45,7 +51,7 @@ export async function signCommitData(
 
 export async function parseAndValidateKey(
   armoredKey: string,
-  passphrase?: string
+  passphrase?: string,
 ): Promise<ParsedKeyInfo> {
   const privateKey = await openpgp.readPrivateKey({ armoredKey });
 
@@ -60,33 +66,32 @@ export async function parseAndValidateKey(
 
   // Get algorithm name
   const algorithmMap: Record<number, string> = {
-    1: 'RSA',
-    2: 'RSA-E',
-    3: 'RSA-S',
-    16: 'Elgamal',
-    17: 'DSA',
-    18: 'ECDH',
-    19: 'ECDSA',
-    22: 'EdDSA',
+    1: "RSA",
+    2: "RSA-E",
+    3: "RSA-S",
+    16: "Elgamal",
+    17: "DSA",
+    18: "ECDH",
+    19: "ECDSA",
+    22: "EdDSA",
   };
 
-  const algorithm = algorithmMap[keyPacket.algorithm] || `Unknown(${keyPacket.algorithm})`;
+  const algorithm =
+    algorithmMap[keyPacket.algorithm] || `Unknown(${keyPacket.algorithm})`;
 
   // Get user ID
   const userIds = privateKey.getUserIDs();
-  const userId = userIds[0] || 'Unknown';
+  const userId = userIds[0] || "Unknown";
 
-  return {
-    keyId,
-    fingerprint,
-    algorithm,
-    userId,
-  };
+  return { keyId, fingerprint, algorithm, userId };
 }
 
-export function extractPublicKey(armoredPrivateKey: ArmoredPrivateKey | string): Promise<string> {
-  return openpgp.readPrivateKey({ armoredKey: armoredPrivateKey })
-    .then(privateKey => privateKey.toPublic().armor());
+export function extractPublicKey(
+  armoredPrivateKey: ArmoredPrivateKey | string,
+): Promise<string> {
+  return openpgp
+    .readPrivateKey({ armoredKey: armoredPrivateKey })
+    .then((privateKey) => privateKey.toPublic().armor());
 }
 
 /**
@@ -96,7 +101,7 @@ export function createStoredKey(
   armoredPrivateKey: string,
   keyId: string,
   fingerprint: string,
-  algorithm: string
+  algorithm: string,
 ): StoredKey {
   return {
     armoredPrivateKey: createArmoredPrivateKey(armoredPrivateKey),

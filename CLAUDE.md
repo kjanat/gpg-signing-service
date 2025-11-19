@@ -1,9 +1,12 @@
 # GPG Signing Service
 
 ## Project Overview
-Edge-deployed Git commit signing API using Hono on Cloudflare Workers with openpgp.js for GPG-compatible signatures.
+
+Edge-deployed Git commit signing API using Hono on Cloudflare Workers with
+openpgp.js for GPG-compatible signatures.
 
 ## Tech Stack
+
 - **Runtime**: Cloudflare Workers
 - **Framework**: Hono
 - **Crypto**: openpgp.js v6
@@ -11,6 +14,7 @@ Edge-deployed Git commit signing API using Hono on Cloudflare Workers with openp
 - **Auth**: OIDC (GitHub Actions, GitLab CI)
 
 ## Development Commands
+
 ```bash
 bun run dev          # Local development
 bun run deploy       # Deploy to Cloudflare
@@ -20,6 +24,7 @@ bun run generate-key # Generate GPG key in .keys/
 ```
 
 ## Project Structure
+
 ```
 src/
   index.ts              # Main Hono app
@@ -38,10 +43,12 @@ src/
 ```
 
 ## Key Files
+
 - `wrangler.toml` - Cloudflare bindings (DO, D1, KV)
 - `migrations/` - D1 schema migrations
 - `scripts/generate-key.sh` - GPG key generation (uses .keys/, NOT ~/.gnupg)
 
 ## Secrets (via wrangler secret put)
+
 - `KEY_PASSPHRASE` - Passphrase for encrypted private key
 - `ADMIN_TOKEN` - Token for admin endpoints

@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  id-token: write  # Required for OIDC token
-  contents: write  # Required to push signed commits
+  id-token: write # Required for OIDC token
+  contents: write # Required to push signed commits
 
 jobs:
   sign:

@@ -22,9 +22,11 @@
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
 
-    // Some stricter flags (disabled by default)
-    "noUnusedLocals": false,
-    "noUnusedParameters": false,
-    "noPropertyAccessFromIndexSignature": false
+    // Stricter flags
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noPropertyAccessFromIndexSignature": false, // Enable after D1 result typing is fixed
+    "exactOptionalPropertyTypes": false, // Enable after codebase refactoring
+    "noImplicitReturns": true
   }
 }

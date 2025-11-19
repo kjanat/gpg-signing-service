@@ -29,7 +29,7 @@ echo "  GNUPGHOME: $GNUPGHOME (NOT ~/.gnupg)"
 
 # Generate key using batch mode
 if [ -n "$PASSPHRASE" ]; then
-  gpg --batch --gen-key <<EOF
+  gpg --batch --gen-key << EOF
 Key-Type: EDDSA
 Key-Curve: ed25519
 Key-Usage: sign
@@ -41,7 +41,7 @@ Passphrase: ${PASSPHRASE}
 %commit
 EOF
 else
-  gpg --batch --gen-key <<EOF
+  gpg --batch --gen-key << EOF
 Key-Type: EDDSA
 Key-Curve: ed25519
 Key-Usage: sign

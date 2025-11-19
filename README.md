@@ -1,6 +1,7 @@
 # GPG Signing Service
 
-Edge-deployed Git commit signing API using Hono on Cloudflare Workers with openpgp.js.
+Edge-deployed Git commit signing API using Hono on Cloudflare Workers with
+openpgp.js.
 
 ## Features
 
@@ -132,9 +133,9 @@ bun run typecheck
 
 ## Environment Variables
 
-| Variable | Description |
-|----------|-------------|
+| Variable          | Description                      |
+| ----------------- | -------------------------------- |
 | `ALLOWED_ISSUERS` | Comma-separated OIDC issuer URLs |
-| `KEY_ID` | Default signing key ID |
-| `KEY_PASSPHRASE` | Secret: Key passphrase |
-| `ADMIN_TOKEN` | Secret: Admin API token |
+| `KEY_ID`          | Default signing key ID           |
+| `KEY_PASSPHRASE`  | Secret: Key passphrase           |
+| `ADMIN_TOKEN`     | Secret: Admin API token          |

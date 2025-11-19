@@ -1,4 +1,4 @@
-import type { Context } from 'hono';
+import type { Context } from "hono";
 
 // =============================================================================
 // Branded Types for Security-Critical Strings
@@ -11,16 +11,16 @@ declare const __brand: unique symbol;
 type Brand<T, B> = T & { readonly [__brand]: B };
 
 /** GPG Key identifier (e.g., "A1B2C3D4E5F6G7H8") */
-export type KeyId = Brand<string, 'KeyId'>;
+export type KeyId = Brand<string, "KeyId">;
 
 /** GPG Key fingerprint (40-char hex string) */
-export type KeyFingerprint = Brand<string, 'KeyFingerprint'>;
+export type KeyFingerprint = Brand<string, "KeyFingerprint">;
 
 /** PGP armored private key string */
-export type ArmoredPrivateKey = Brand<string, 'ArmoredPrivateKey'>;
+export type ArmoredPrivateKey = Brand<string, "ArmoredPrivateKey">;
 
 /** OIDC identity string in format "{iss}:{sub}" */
-export type Identity = Brand<string, 'Identity'>;
+export type Identity = Brand<string, "Identity">;
 
 // Helper functions for creating branded types
 export function createKeyId(value: string): KeyId {
@@ -46,24 +46,24 @@ export function createIdentity(issuer: string, subject: string): Identity {
 /** All valid error codes used in the codebase */
 export type ErrorCode =
   // Authentication errors
-  | 'AUTH_MISSING'
-  | 'AUTH_INVALID'
+  | "AUTH_MISSING"
+  | "AUTH_INVALID"
   // Key management errors
-  | 'KEY_NOT_FOUND'
-  | 'KEY_PROCESSING_ERROR'
-  | 'KEY_LIST_ERROR'
-  | 'KEY_UPLOAD_ERROR'
-  | 'KEY_DELETE_ERROR'
+  | "KEY_NOT_FOUND"
+  | "KEY_PROCESSING_ERROR"
+  | "KEY_LIST_ERROR"
+  | "KEY_UPLOAD_ERROR"
+  | "KEY_DELETE_ERROR"
   // Signing errors
-  | 'SIGN_ERROR'
+  | "SIGN_ERROR"
   // Rate limiting
-  | 'RATE_LIMIT_ERROR'
-  | 'RATE_LIMITED'
+  | "RATE_LIMIT_ERROR"
+  | "RATE_LIMITED"
   // General errors
-  | 'INVALID_REQUEST'
-  | 'AUDIT_ERROR'
-  | 'NOT_FOUND'
-  | 'INTERNAL_ERROR';
+  | "INVALID_REQUEST"
+  | "AUDIT_ERROR"
+  | "NOT_FOUND"
+  | "INTERNAL_ERROR";
 
 // =============================================================================
 // Context Variables
@@ -98,6 +98,7 @@ export interface Env {
   // Environment variables
   ALLOWED_ISSUERS: string;
   KEY_ID: string;
+  ALLOWED_ORIGINS?: string; // Optional: comma-separated list of allowed CORS origins
 
   // Secrets
   KEY_PASSPHRASE: string;
@@ -113,12 +114,12 @@ export type AppContext = Context<{ Bindings: Env; Variables: Variables }>;
 
 /** OIDC token claims (unvalidated) */
 export interface OIDCClaims {
-  iss: string;           // Issuer URL
-  sub: string;           // Subject (repository or project)
+  iss: string; // Issuer URL
+  sub: string; // Subject (repository or project)
   aud: string | string[]; // Audience
-  exp: number;           // Expiration
-  iat: number;           // Issued at
-  nbf?: number;          // Not before
+  exp: number; // Expiration
+  iat: number; // Issued at
+  nbf?: number; // Not before
 
   // GitHub-specific
   repository?: string;
@@ -153,7 +154,7 @@ export interface ErrorResponse {
 // =============================================================================
 
 /** Audit action types */
-export type AuditAction = 'sign' | 'key_upload' | 'key_rotate';
+export type AuditAction = "sign" | "key_upload" | "key_rotate";
 
 /** Audit log entry */
 export interface AuditLogEntry {
@@ -210,7 +211,10 @@ interface RateLimitDenied {
 export type RateLimitResult = RateLimitAllowed | RateLimitDenied;
 
 /** Helper to create allowed rate limit result */
-export function createRateLimitAllowed(remaining: number, resetAt: number): RateLimitAllowed {
+export function createRateLimitAllowed(
+  remaining: number,
+  resetAt: number,
+): RateLimitAllowed {
   return { allowed: true, remaining, resetAt };
 }
 
@@ -224,17 +228,14 @@ export function createRateLimitDenied(resetAt: number): RateLimitDenied {
 // =============================================================================
 
 /** Health status levels */
-export type HealthStatus = 'healthy' | 'degraded' | 'unhealthy';
+export type HealthStatus = "healthy" | "degraded" | "unhealthy";
 
 /** Health check response */
 export interface HealthResponse {
   status: HealthStatus;
   timestamp: string;
   version: string;
-  checks: {
-    keyStorage: boolean;
-    database: boolean;
-  };
+  checks: { keyStorage: boolean; database: boolean };
 }
 
 // =============================================================================
@@ -243,25 +244,25 @@ export interface HealthResponse {
 
 /** Base JWK fields common to all key types */
 interface JWKBase {
-  use: 'sig';
+  use: "sig";
   kid: string;
 }
 
 /** RSA public key in JWK format */
 export interface RSAPublicKeyJWK extends JWKBase {
-  kty: 'RSA';
-  alg: 'RS256' | 'RS384' | 'RS512';
-  n: string;  // Modulus
-  e: string;  // Exponent
+  kty: "RSA";
+  alg: "RS256" | "RS384" | "RS512";
+  n: string; // Modulus
+  e: string; // Exponent
 }
 
 /** EC public key in JWK format */
 export interface ECPublicKeyJWK extends JWKBase {
-  kty: 'EC';
-  alg: 'ES256' | 'ES384' | 'ES512';
-  crv: 'P-256' | 'P-384' | 'P-521';
-  x: string;  // X coordinate
-  y: string;  // Y coordinate
+  kty: "EC";
+  alg: "ES256" | "ES384" | "ES512";
+  crv: "P-256" | "P-384" | "P-521";
+  x: string; // X coordinate
+  y: string; // Y coordinate
 }
 
 /** JWK type as discriminated union */
