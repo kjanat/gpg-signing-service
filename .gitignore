@@ -39,3 +39,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # GPG keys - NEVER commit private keys
 .keys/
+
+# Swagger UI
+swagger-ui
+redoc-static.html

@@ -31,5 +31,12 @@
 
     // Aliases
     "paths": { "~/*": ["./src/*"], "gpg-signing-service": ["./src/index.ts"] }
-  }
+  },
+  "include": [
+    "src",
+    ".commitlint.ts",
+    "eslint.config.ts",
+    "vitest.config.ts",
+    "worker-configuration.d.ts"
+  ]
 }

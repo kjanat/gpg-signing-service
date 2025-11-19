@@ -102,7 +102,9 @@ type WorkerGlobalScopeEventMap = {
   unhandledrejection: PromiseRejectionEvent;
   rejectionhandled: PromiseRejectionEvent;
 };
-declare abstract class WorkerGlobalScope extends EventTarget<WorkerGlobalScopeEventMap> {
+declare abstract class WorkerGlobalScope
+  extends EventTarget<WorkerGlobalScopeEventMap>
+{
   EventTarget: typeof EventTarget;
 }
 /* The **`console`** object provides access to the debugging console (e.g., the Web console in Firefox). *
@@ -111,7 +113,7 @@ declare abstract class WorkerGlobalScope extends EventTarget<WorkerGlobalScopeEv
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/console)
  */
 interface Console {
-  "assert"(condition?: boolean, ...data: any[]): void;
+  assert(condition?: boolean, ...data: any[]): void;
   /**
    * The **`console.clear()`** static method clears the console if possible.
    *
@@ -499,7 +501,7 @@ declare const performance: Performance;
 declare const Cloudflare: Cloudflare;
 declare const origin: string;
 declare const navigator: Navigator;
-interface TestController {}
+type TestController = {};
 interface ExecutionContext<Props = unknown> {
   waitUntil(promise: Promise<any>): void;
   passThroughOnException(): void;
@@ -598,10 +600,12 @@ interface DurableObject {
 }
 type DurableObjectStub<
   T extends Rpc.DurableObjectBranded | undefined = undefined,
-> = Fetcher<
-  T,
-  "alarm" | "webSocketMessage" | "webSocketClose" | "webSocketError"
-> & { readonly id: DurableObjectId; readonly name?: string };
+> =
+  & Fetcher<
+    T,
+    "alarm" | "webSocketMessage" | "webSocketClose" | "webSocketError"
+  >
+  & { readonly id: DurableObjectId; readonly name?: string };
 interface DurableObjectId {
   toString(): string;
   equals(other: DurableObjectId): boolean;
@@ -644,9 +648,9 @@ type DurableObjectLocationHint =
 interface DurableObjectNamespaceGetDurableObjectOptions {
   locationHint?: DurableObjectLocationHint;
 }
-interface DurableObjectClass<
+type DurableObjectClass<
   _T extends Rpc.DurableObjectBranded | undefined = undefined,
-> {}
+> = {};
 interface DurableObjectState<Props = unknown> {
   waitUntil(promise: Promise<any>): void;
   readonly props: Props;
@@ -1956,7 +1960,7 @@ declare abstract class Body {
  */
 declare var Response: {
   prototype: Response;
-  new (body?: BodyInit | null, init?: ResponseInit): Response;
+  new(body?: BodyInit | null, init?: ResponseInit): Response;
   error(): Response;
   redirect(url: string, status?: number): Response;
   json(any: any, maybeInit?: ResponseInit | Response): Response;
@@ -2036,7 +2040,7 @@ type RequestInfo<CfHostMetadata = unknown, Cf = CfProperties<CfHostMetadata>> =
  */
 declare var Request: {
   prototype: Request;
-  new <CfHostMetadata = unknown, Cf = CfProperties<CfHostMetadata>>(
+  new<CfHostMetadata = unknown, Cf = CfProperties<CfHostMetadata>>(
     input: RequestInfo<CfProperties> | URL,
     init?: RequestInit<Cf>,
   ): Request<CfHostMetadata, Cf>;
@@ -2047,7 +2051,8 @@ declare var Request: {
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Request)
  */
 interface Request<CfHostMetadata = unknown, Cf = CfProperties<CfHostMetadata>>
-  extends Body {
+  extends Body
+{
   /**
    * The **`clone()`** method of the Request interface creates a copy of the current `Request` object.
    *
@@ -2126,26 +2131,30 @@ interface RequestInit<Cf = CfProperties> {
 }
 type Service<
   T extends
-    | (new (...args: any[]) => Rpc.WorkerEntrypointBranded)
+    | (new(
+      ...args: any[]
+    ) => Rpc.WorkerEntrypointBranded)
     | Rpc.WorkerEntrypointBranded
     | ExportedHandler<any, any, any>
     | undefined = undefined,
-> =
-  T extends new (...args: any[]) => Rpc.WorkerEntrypointBranded ?
-    Fetcher<InstanceType<T>>
+> = T extends new(
+  ...args: any[]
+) => Rpc.WorkerEntrypointBranded ? Fetcher<InstanceType<T>>
   : T extends Rpc.WorkerEntrypointBranded ? Fetcher<T>
-  : T extends Exclude<Rpc.EntrypointBranded, Rpc.WorkerEntrypointBranded> ?
-    never
+  : T extends Exclude<Rpc.EntrypointBranded, Rpc.WorkerEntrypointBranded>
+    ? never
   : Fetcher<undefined>;
 type Fetcher<
   T extends Rpc.EntrypointBranded | undefined = undefined,
   Reserved extends string = never,
-> = (T extends Rpc.EntrypointBranded ?
-  Rpc.Provider<T, Reserved | "fetch" | "connect">
-: unknown) & {
-  fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
-  connect(address: SocketAddress | string, options?: SocketOptions): Socket;
-};
+> =
+  & (T extends Rpc.EntrypointBranded
+    ? Rpc.Provider<T, Reserved | "fetch" | "connect">
+    : unknown)
+  & {
+    fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+    connect(address: SocketAddress | string, options?: SocketOptions): Socket;
+  };
 interface KVNamespaceListKey<Metadata, Key extends string = string> {
   name: Key;
   expiration?: number;
@@ -2153,16 +2162,16 @@ interface KVNamespaceListKey<Metadata, Key extends string = string> {
 }
 type KVNamespaceListResult<Metadata, Key extends string = string> =
   | {
-      list_complete: false;
-      keys: KVNamespaceListKey<Metadata, Key>[];
-      cursor: string;
-      cacheStatus: string | null;
-    }
+    list_complete: false;
+    keys: KVNamespaceListKey<Metadata, Key>[];
+    cursor: string;
+    cacheStatus: string | null;
+  }
   | {
-      list_complete: true;
-      keys: KVNamespaceListKey<Metadata, Key>[];
-      cacheStatus: string | null;
-    };
+    list_complete: true;
+    keys: KVNamespaceListKey<Metadata, Key>[];
+    cacheStatus: string | null;
+  };
 interface KVNamespace<Key extends string = string> {
   get(
     key: Key,
@@ -2488,10 +2497,12 @@ interface R2HTTPMetadata {
   cacheControl?: string;
   cacheExpiry?: Date;
 }
-type R2Objects = { objects: R2Object[]; delimitedPrefixes: string[] } & (
-  | { truncated: true; cursor: string }
-  | { truncated: false }
-);
+type R2Objects =
+  & { objects: R2Object[]; delimitedPrefixes: string[] }
+  & (
+    | { truncated: true; cursor: string }
+    | { truncated: false }
+  );
 interface R2UploadPartOptions {
   ssecKey?: ArrayBuffer | string;
 }
@@ -2645,11 +2656,11 @@ interface ReadableStream<R = any> {
  */
 declare const ReadableStream: {
   prototype: ReadableStream;
-  new (
+  new(
     underlyingSource: UnderlyingByteSource,
     strategy?: QueuingStrategy<Uint8Array>,
   ): ReadableStream<Uint8Array>;
-  new <R = any>(
+  new<R = any>(
     underlyingSource?: UnderlyingSource<R>,
     strategy?: QueuingStrategy<R>,
   ): ReadableStream<R>;
@@ -3098,16 +3109,16 @@ declare abstract class TailEvent extends ExtendableEvent {
 interface TraceItem {
   readonly event:
     | (
-        | TraceItemFetchEventInfo
-        | TraceItemJsRpcEventInfo
-        | TraceItemScheduledEventInfo
-        | TraceItemAlarmEventInfo
-        | TraceItemQueueEventInfo
-        | TraceItemEmailEventInfo
-        | TraceItemTailEventInfo
-        | TraceItemCustomEventInfo
-        | TraceItemHibernatableWebSocketEventInfo
-      )
+      | TraceItemFetchEventInfo
+      | TraceItemJsRpcEventInfo
+      | TraceItemScheduledEventInfo
+      | TraceItemAlarmEventInfo
+      | TraceItemQueueEventInfo
+      | TraceItemEmailEventInfo
+      | TraceItemTailEventInfo
+      | TraceItemCustomEventInfo
+      | TraceItemHibernatableWebSocketEventInfo
+    )
     | null;
   readonly eventTimestamp: number | null;
   readonly logs: TraceLog[];
@@ -3128,7 +3139,7 @@ interface TraceItem {
 interface TraceItemAlarmEventInfo {
   readonly scheduledTime: Date;
 }
-interface TraceItemCustomEventInfo {}
+type TraceItemCustomEventInfo = {};
 interface TraceItemScheduledEventInfo {
   readonly scheduledTime: number;
   readonly cron: string;
@@ -3547,7 +3558,7 @@ type WebSocketEventMap = {
  */
 declare var WebSocket: {
   prototype: WebSocket;
-  new (url: string, protocols?: string[] | string): WebSocket;
+  new(url: string, protocols?: string[] | string): WebSocket;
   readonly READY_STATE_CONNECTING: number;
   readonly CONNECTING: number;
   readonly READY_STATE_OPEN: number;
@@ -3603,7 +3614,7 @@ interface WebSocket extends EventTarget<WebSocketEventMap> {
    */
   extensions: string | null;
 }
-declare const WebSocketPair: { new (): { 0: WebSocket; 1: WebSocket } };
+declare const WebSocketPair: { new(): { 0: WebSocket; 1: WebSocket } };
 interface SqlStorage {
   exec<T extends Record<string, SqlStorageValue>>(
     query: string,
@@ -3775,28 +3786,33 @@ interface MessagePortPostMessageOptions {
 }
 type LoopbackForExport<
   T extends
-    | (new (...args: any[]) => Rpc.EntrypointBranded)
+    | (new(
+      ...args: any[]
+    ) => Rpc.EntrypointBranded)
     | ExportedHandler<any, any, any>
     | undefined = undefined,
-> =
-  T extends new (...args: any[]) => Rpc.WorkerEntrypointBranded ?
-    LoopbackServiceStub<InstanceType<T>>
-  : T extends new (...args: any[]) => Rpc.DurableObjectBranded ?
-    LoopbackDurableObjectClass<InstanceType<T>>
+> = T extends new(
+  ...args: any[]
+) => Rpc.WorkerEntrypointBranded ? LoopbackServiceStub<InstanceType<T>>
+  : T extends new(
+    ...args: any[]
+  ) => Rpc.DurableObjectBranded ? LoopbackDurableObjectClass<InstanceType<T>>
   : T extends ExportedHandler<any, any, any> ? LoopbackServiceStub<undefined>
   : undefined;
 type LoopbackServiceStub<
   T extends Rpc.WorkerEntrypointBranded | undefined = undefined,
-> = Fetcher<T> &
-  (T extends CloudflareWorkersModule.WorkerEntrypoint<any, infer Props> ?
-    (opts: { props?: Props }) => Fetcher<T>
-  : (opts: { props?: any }) => Fetcher<T>);
+> =
+  & Fetcher<T>
+  & (T extends CloudflareWorkersModule.WorkerEntrypoint<any, infer Props>
+    ? (opts: { props?: Props }) => Fetcher<T>
+    : (opts: { props?: any }) => Fetcher<T>);
 type LoopbackDurableObjectClass<
   T extends Rpc.DurableObjectBranded | undefined = undefined,
-> = DurableObjectClass<T> &
-  (T extends CloudflareWorkersModule.DurableObject<any, infer Props> ?
-    (opts: { props?: Props }) => DurableObjectClass<T>
-  : (opts: { props?: any }) => DurableObjectClass<T>);
+> =
+  & DurableObjectClass<T>
+  & (T extends CloudflareWorkersModule.DurableObject<any, infer Props>
+    ? (opts: { props?: Props }) => DurableObjectClass<T>
+    : (opts: { props?: any }) => DurableObjectClass<T>);
 interface SyncKvStorage {
   get<T = unknown>(key: string): T | undefined;
   list<T = unknown>(options?: SyncKvListOptions): Iterable<[string, T]>;
@@ -4015,8 +4031,9 @@ type UsageTags = {
 };
 type AiTextGenerationOutput = {
   response?: string;
-  tool_calls?: AiTextGenerationToolLegacyOutput[] &
-    AiTextGenerationToolOutput[];
+  tool_calls?:
+    & AiTextGenerationToolLegacyOutput[]
+    & AiTextGenerationToolOutput[];
   usage?: UsageTags;
 };
 declare abstract class BaseAiTextGeneration {
@@ -4059,36 +4076,36 @@ declare abstract class BaseAiTranslation {
 }
 type Ai_Cf_Baai_Bge_Base_En_V1_5_Input =
   | {
+    text: string | string[];
+    /**
+     * The pooling method used in the embedding process. `cls` pooling will generate more accurate embeddings on larger inputs - however, embeddings created with cls pooling are not compatible with embeddings generated with mean pooling. The default pooling method is `mean` in order for this to not be a breaking change, but we highly suggest using the new `cls` pooling for better accuracy.
+     */
+    pooling?: "mean" | "cls";
+  }
+  | {
+    /**
+     * Batch of the embeddings requests to run using async-queue
+     */
+    requests: {
       text: string | string[];
       /**
        * The pooling method used in the embedding process. `cls` pooling will generate more accurate embeddings on larger inputs - however, embeddings created with cls pooling are not compatible with embeddings generated with mean pooling. The default pooling method is `mean` in order for this to not be a breaking change, but we highly suggest using the new `cls` pooling for better accuracy.
        */
       pooling?: "mean" | "cls";
-    }
-  | {
-      /**
-       * Batch of the embeddings requests to run using async-queue
-       */
-      requests: {
-        text: string | string[];
-        /**
-         * The pooling method used in the embedding process. `cls` pooling will generate more accurate embeddings on larger inputs - however, embeddings created with cls pooling are not compatible with embeddings generated with mean pooling. The default pooling method is `mean` in order for this to not be a breaking change, but we highly suggest using the new `cls` pooling for better accuracy.
-         */
-        pooling?: "mean" | "cls";
-      }[];
-    };
+    }[];
+  };
 type Ai_Cf_Baai_Bge_Base_En_V1_5_Output =
   | {
-      shape?: number[];
-      /**
-       * Embeddings of the requested text values
-       */
-      data?: number[][];
-      /**
-       * The pooling method used in the embedding process.
-       */
-      pooling?: "mean" | "cls";
-    }
+    shape?: number[];
+    /**
+     * Embeddings of the requested text values
+     */
+    data?: number[][];
+    /**
+     * The pooling method used in the embedding process.
+     */
+    pooling?: "mean" | "cls";
+  }
   | AsyncResponse;
 interface AsyncResponse {
   /**
@@ -4103,11 +4120,11 @@ declare abstract class Base_Ai_Cf_Baai_Bge_Base_En_V1_5 {
 type Ai_Cf_Openai_Whisper_Input =
   | string
   | {
-      /**
-       * An array of integers that represent the audio data constrained to 8-bit unsigned integer values
-       */
-      audio: number[];
-    };
+    /**
+     * An array of integers that represent the audio data constrained to 8-bit unsigned integer values
+     */
+    audio: number[];
+  };
 interface Ai_Cf_Openai_Whisper_Output {
   /**
    * The transcription
@@ -4133,6 +4150,24 @@ declare abstract class Base_Ai_Cf_Openai_Whisper {
 }
 type Ai_Cf_Meta_M2M100_1_2B_Input =
   | {
+    /**
+     * The text to be translated
+     */
+    text: string;
+    /**
+     * The language code of the source text (e.g., 'en' for English). Defaults to 'en' if not specified
+     */
+    source_lang?: string;
+    /**
+     * The language code to translate the text into (e.g., 'es' for Spanish)
+     */
+    target_lang: string;
+  }
+  | {
+    /**
+     * Batch of the embeddings requests to run using async-queue
+     */
+    requests: {
       /**
        * The text to be translated
        */
@@ -4145,33 +4180,15 @@ type Ai_Cf_Meta_M2M100_1_2B_Input =
        * The language code to translate the text into (e.g., 'es' for Spanish)
        */
       target_lang: string;
-    }
-  | {
-      /**
-       * Batch of the embeddings requests to run using async-queue
-       */
-      requests: {
-        /**
-         * The text to be translated
-         */
-        text: string;
-        /**
-         * The language code of the source text (e.g., 'en' for English). Defaults to 'en' if not specified
-         */
-        source_lang?: string;
-        /**
-         * The language code to translate the text into (e.g., 'es' for Spanish)
-         */
-        target_lang: string;
-      }[];
-    };
+    }[];
+  };
 type Ai_Cf_Meta_M2M100_1_2B_Output =
   | {
-      /**
-       * The translated text in the target language
-       */
-      translated_text?: string;
-    }
+    /**
+     * The translated text in the target language
+     */
+    translated_text?: string;
+  }
   | AsyncResponse;
 declare abstract class Base_Ai_Cf_Meta_M2M100_1_2B {
   inputs: Ai_Cf_Meta_M2M100_1_2B_Input;
@@ -4179,36 +4196,36 @@ declare abstract class Base_Ai_Cf_Meta_M2M100_1_2B {
 }
 type Ai_Cf_Baai_Bge_Small_En_V1_5_Input =
   | {
+    text: string | string[];
+    /**
+     * The pooling method used in the embedding process. `cls` pooling will generate more accurate embeddings on larger inputs - however, embeddings created with cls pooling are not compatible with embeddings generated with mean pooling. The default pooling method is `mean` in order for this to not be a breaking change, but we highly suggest using the new `cls` pooling for better accuracy.
+     */
+    pooling?: "mean" | "cls";
+  }
+  | {
+    /**
+     * Batch of the embeddings requests to run using async-queue
+     */
+    requests: {
       text: string | string[];
       /**
        * The pooling method used in the embedding process. `cls` pooling will generate more accurate embeddings on larger inputs - however, embeddings created with cls pooling are not compatible with embeddings generated with mean pooling. The default pooling method is `mean` in order for this to not be a breaking change, but we highly suggest using the new `cls` pooling for better accuracy.
        */
       pooling?: "mean" | "cls";
-    }
-  | {
-      /**
-       * Batch of the embeddings requests to run using async-queue
-       */
-      requests: {
-        text: string | string[];
-        /**
-         * The pooling method used in the embedding process. `cls` pooling will generate more accurate embeddings on larger inputs - however, embeddings created with cls pooling are not compatible with embeddings generated with mean pooling. The default pooling method is `mean` in order for this to not be a breaking change, but we highly suggest using the new `cls` pooling for better accuracy.
-         */
-        pooling?: "mean" | "cls";
-      }[];
-    };
+    }[];
+  };
 type Ai_Cf_Baai_Bge_Small_En_V1_5_Output =
   | {
-      shape?: number[];
-      /**
-       * Embeddings of the requested text values
-       */
-      data?: number[][];
-      /**
-       * The pooling method used in the embedding process.
-       */
-      pooling?: "mean" | "cls";
-    }
+    shape?: number[];
+    /**
+     * Embeddings of the requested text values
+     */
+    data?: number[][];
+    /**
+     * The pooling method used in the embedding process.
+     */
+    pooling?: "mean" | "cls";
+  }
   | AsyncResponse;
 declare abstract class Base_Ai_Cf_Baai_Bge_Small_En_V1_5 {
   inputs: Ai_Cf_Baai_Bge_Small_En_V1_5_Input;
@@ -4216,36 +4233,36 @@ declare abstract class Base_Ai_Cf_Baai_Bge_Small_En_V1_5 {
 }
 type Ai_Cf_Baai_Bge_Large_En_V1_5_Input =
   | {
+    text: string | string[];
+    /**
+     * The pooling method used in the embedding process. `cls` pooling will generate more accurate embeddings on larger inputs - however, embeddings created with cls pooling are not compatible with embeddings generated with mean pooling. The default pooling method is `mean` in order for this to not be a breaking change, but we highly suggest using the new `cls` pooling for better accuracy.
+     */
+    pooling?: "mean" | "cls";
+  }
+  | {
+    /**
+     * Batch of the embeddings requests to run using async-queue
+     */
+    requests: {
       text: string | string[];
       /**
        * The pooling method used in the embedding process. `cls` pooling will generate more accurate embeddings on larger inputs - however, embeddings created with cls pooling are not compatible with embeddings generated with mean pooling. The default pooling method is `mean` in order for this to not be a breaking change, but we highly suggest using the new `cls` pooling for better accuracy.
        */
       pooling?: "mean" | "cls";
-    }
-  | {
-      /**
-       * Batch of the embeddings requests to run using async-queue
-       */
-      requests: {
-        text: string | string[];
-        /**
-         * The pooling method used in the embedding process. `cls` pooling will generate more accurate embeddings on larger inputs - however, embeddings created with cls pooling are not compatible with embeddings generated with mean pooling. The default pooling method is `mean` in order for this to not be a breaking change, but we highly suggest using the new `cls` pooling for better accuracy.
-         */
-        pooling?: "mean" | "cls";
-      }[];
-    };
+    }[];
+  };
 type Ai_Cf_Baai_Bge_Large_En_V1_5_Output =
   | {
-      shape?: number[];
-      /**
-       * Embeddings of the requested text values
-       */
-      data?: number[][];
-      /**
-       * The pooling method used in the embedding process.
-       */
-      pooling?: "mean" | "cls";
-    }
+    shape?: number[];
+    /**
+     * Embeddings of the requested text values
+     */
+    data?: number[][];
+    /**
+     * The pooling method used in the embedding process.
+     */
+    pooling?: "mean" | "cls";
+  }
   | AsyncResponse;
 declare abstract class Base_Ai_Cf_Baai_Bge_Large_En_V1_5 {
   inputs: Ai_Cf_Baai_Bge_Large_En_V1_5_Input;
@@ -4254,44 +4271,44 @@ declare abstract class Base_Ai_Cf_Baai_Bge_Large_En_V1_5 {
 type Ai_Cf_Unum_Uform_Gen2_Qwen_500M_Input =
   | string
   | {
-      /**
-       * The input text prompt for the model to generate a response.
-       */
-      prompt?: string;
-      /**
-       * If true, a chat template is not applied and you must adhere to the specific model's expected formatting.
-       */
-      raw?: boolean;
-      /**
-       * Controls the creativity of the AI's responses by adjusting how many possible words it considers. Lower values make outputs more predictable; higher values allow for more varied and creative responses.
-       */
-      top_p?: number;
-      /**
-       * Limits the AI to choose from the top 'k' most probable words. Lower values make responses more focused; higher values introduce more variety and potential surprises.
-       */
-      top_k?: number;
-      /**
-       * Random seed for reproducibility of the generation.
-       */
-      seed?: number;
-      /**
-       * Penalty for repeated tokens; higher values discourage repetition.
-       */
-      repetition_penalty?: number;
-      /**
-       * Decreases the likelihood of the model repeating the same lines verbatim.
-       */
-      frequency_penalty?: number;
-      /**
-       * Increases the likelihood of the model introducing new topics.
-       */
-      presence_penalty?: number;
-      image: number[] | (string & NonNullable<unknown>);
-      /**
-       * The maximum number of tokens to generate in the response.
-       */
-      max_tokens?: number;
-    };
+    /**
+     * The input text prompt for the model to generate a response.
+     */
+    prompt?: string;
+    /**
+     * If true, a chat template is not applied and you must adhere to the specific model's expected formatting.
+     */
+    raw?: boolean;
+    /**
+     * Controls the creativity of the AI's responses by adjusting how many possible words it considers. Lower values make outputs more predictable; higher values allow for more varied and creative responses.
+     */
+    top_p?: number;
+    /**
+     * Limits the AI to choose from the top 'k' most probable words. Lower values make responses more focused; higher values introduce more variety and potential surprises.
+     */
+    top_k?: number;
+    /**
+     * Random seed for reproducibility of the generation.
+     */
+    seed?: number;
+    /**
+     * Penalty for repeated tokens; higher values discourage repetition.
+     */
+    repetition_penalty?: number;
+    /**
+     * Decreases the likelihood of the model repeating the same lines verbatim.
+     */
+    frequency_penalty?: number;
+    /**
+     * Increases the likelihood of the model introducing new topics.
+     */
+    presence_penalty?: number;
+    image: number[] | (string & NonNullable<unknown>);
+    /**
+     * The maximum number of tokens to generate in the response.
+     */
+    max_tokens?: number;
+  };
 interface Ai_Cf_Unum_Uform_Gen2_Qwen_500M_Output {
   description?: string;
 }
@@ -4302,11 +4319,11 @@ declare abstract class Base_Ai_Cf_Unum_Uform_Gen2_Qwen_500M {
 type Ai_Cf_Openai_Whisper_Tiny_En_Input =
   | string
   | {
-      /**
-       * An array of integers that represent the audio data constrained to 8-bit unsigned integer values
-       */
-      audio: number[];
-    };
+    /**
+     * An array of integers that represent the audio data constrained to 8-bit unsigned integer values
+     */
+    audio: number[];
+  };
 interface Ai_Cf_Openai_Whisper_Tiny_En_Output {
   /**
    * The transcription
@@ -4440,11 +4457,11 @@ type Ai_Cf_Baai_Bge_M3_Input =
   | BGEM3InputQueryAndContexts
   | BGEM3InputEmbedding
   | {
-      /**
-       * Batch of the embeddings requests to run using async-queue
-       */
-      requests: (BGEM3InputQueryAndContexts1 | BGEM3InputEmbedding1)[];
-    };
+    /**
+     * Batch of the embeddings requests to run using async-queue
+     */
+    requests: (BGEM3InputQueryAndContexts1 | BGEM3InputEmbedding1)[];
+  };
 interface BGEM3InputQueryAndContexts {
   /**
    * A query you wish to perform against the provided contexts. If no query is provided the model with respond with embeddings for contexts
@@ -4625,31 +4642,31 @@ interface Messages {
     content?:
       | string
       | {
+        /**
+         * Type of the content provided
+         */
+        type?: string;
+        text?: string;
+        image_url?: {
           /**
-           * Type of the content provided
+           * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
            */
-          type?: string;
-          text?: string;
-          image_url?: {
-            /**
-             * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
-             */
-            url?: string;
-          };
-        }[]
-      | {
-          /**
-           * Type of the content provided
-           */
-          type?: string;
-          text?: string;
-          image_url?: {
-            /**
-             * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
-             */
-            url?: string;
-          };
+          url?: string;
         };
+      }[]
+      | {
+        /**
+         * Type of the content provided
+         */
+        type?: string;
+        text?: string;
+        image_url?: {
+          /**
+           * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
+           */
+          url?: string;
+        };
+      };
   }[];
   image?: number[] | (string & NonNullable<unknown>);
   functions?: { name: string; code: string }[];
@@ -4658,16 +4675,62 @@ interface Messages {
    */
   tools?: (
     | {
+      /**
+       * The name of the tool. More descriptive the better.
+       */
+      name: string;
+      /**
+       * A brief description of what the tool does.
+       */
+      description: string;
+      /**
+       * Schema defining the parameters accepted by the tool.
+       */
+      parameters: {
         /**
-         * The name of the tool. More descriptive the better.
+         * The type of the parameters object (usually 'object').
+         */
+        type: string;
+        /**
+         * List of required parameter names.
+         */
+        required?: string[];
+        /**
+         * Definitions of each parameter.
+         */
+        properties: {
+          [k: string]: {
+            /**
+             * The data type of the parameter.
+             */
+            type: string;
+            /**
+             * A description of the expected parameter.
+             */
+            description: string;
+          };
+        };
+      };
+    }
+    | {
+      /**
+       * Specifies the type of tool (e.g., 'function').
+       */
+      type: string;
+      /**
+       * Details of the function tool.
+       */
+      function: {
+        /**
+         * The name of the function.
          */
         name: string;
         /**
-         * A brief description of what the tool does.
+         * A brief description of what the function does.
          */
         description: string;
         /**
-         * Schema defining the parameters accepted by the tool.
+         * Schema defining the parameters accepted by the function.
          */
         parameters: {
           /**
@@ -4694,54 +4757,8 @@ interface Messages {
             };
           };
         };
-      }
-    | {
-        /**
-         * Specifies the type of tool (e.g., 'function').
-         */
-        type: string;
-        /**
-         * Details of the function tool.
-         */
-        function: {
-          /**
-           * The name of the function.
-           */
-          name: string;
-          /**
-           * A brief description of what the function does.
-           */
-          description: string;
-          /**
-           * Schema defining the parameters accepted by the function.
-           */
-          parameters: {
-            /**
-             * The type of the parameters object (usually 'object').
-             */
-            type: string;
-            /**
-             * List of required parameter names.
-             */
-            required?: string[];
-            /**
-             * Definitions of each parameter.
-             */
-            properties: {
-              [k: string]: {
-                /**
-                 * The data type of the parameter.
-                 */
-                type: string;
-                /**
-                 * A description of the expected parameter.
-                 */
-                description: string;
-              };
-            };
-          };
-        };
-      }
+      };
+    }
   )[];
   /**
    * If true, the response will be streamed back incrementally.
@@ -4882,16 +4899,62 @@ interface Meta_Llama_3_3_70B_Instruct_Fp8_Fast_Messages {
    */
   tools?: (
     | {
+      /**
+       * The name of the tool. More descriptive the better.
+       */
+      name: string;
+      /**
+       * A brief description of what the tool does.
+       */
+      description: string;
+      /**
+       * Schema defining the parameters accepted by the tool.
+       */
+      parameters: {
         /**
-         * The name of the tool. More descriptive the better.
+         * The type of the parameters object (usually 'object').
+         */
+        type: string;
+        /**
+         * List of required parameter names.
+         */
+        required?: string[];
+        /**
+         * Definitions of each parameter.
+         */
+        properties: {
+          [k: string]: {
+            /**
+             * The data type of the parameter.
+             */
+            type: string;
+            /**
+             * A description of the expected parameter.
+             */
+            description: string;
+          };
+        };
+      };
+    }
+    | {
+      /**
+       * Specifies the type of tool (e.g., 'function').
+       */
+      type: string;
+      /**
+       * Details of the function tool.
+       */
+      function: {
+        /**
+         * The name of the function.
          */
         name: string;
         /**
-         * A brief description of what the tool does.
+         * A brief description of what the function does.
          */
         description: string;
         /**
-         * Schema defining the parameters accepted by the tool.
+         * Schema defining the parameters accepted by the function.
          */
         parameters: {
           /**
@@ -4918,54 +4981,8 @@ interface Meta_Llama_3_3_70B_Instruct_Fp8_Fast_Messages {
             };
           };
         };
-      }
-    | {
-        /**
-         * Specifies the type of tool (e.g., 'function').
-         */
-        type: string;
-        /**
-         * Details of the function tool.
-         */
-        function: {
-          /**
-           * The name of the function.
-           */
-          name: string;
-          /**
-           * A brief description of what the function does.
-           */
-          description: string;
-          /**
-           * Schema defining the parameters accepted by the function.
-           */
-          parameters: {
-            /**
-             * The type of the parameters object (usually 'object').
-             */
-            type: string;
-            /**
-             * List of required parameter names.
-             */
-            required?: string[];
-            /**
-             * Definitions of each parameter.
-             */
-            properties: {
-              [k: string]: {
-                /**
-                 * The data type of the parameter.
-                 */
-                type: string;
-                /**
-                 * A description of the expected parameter.
-                 */
-                description: string;
-              };
-            };
-          };
-        };
-      }
+      };
+    }
   )[];
   response_format?: JSONMode;
   /**
@@ -5056,41 +5073,41 @@ interface AsyncBatch {
 }
 type Ai_Cf_Meta_Llama_3_3_70B_Instruct_Fp8_Fast_Output =
   | {
+    /**
+     * The generated text response from the model
+     */
+    response: string;
+    /**
+     * Usage statistics for the inference request
+     */
+    usage?: {
       /**
-       * The generated text response from the model
+       * Total number of tokens in input
        */
-      response: string;
+      prompt_tokens?: number;
       /**
-       * Usage statistics for the inference request
+       * Total number of tokens in output
        */
-      usage?: {
-        /**
-         * Total number of tokens in input
-         */
-        prompt_tokens?: number;
-        /**
-         * Total number of tokens in output
-         */
-        completion_tokens?: number;
-        /**
-         * Total number of input and output tokens
-         */
-        total_tokens?: number;
-      };
+      completion_tokens?: number;
       /**
-       * An array of tool calls requests made during the response generation
+       * Total number of input and output tokens
        */
-      tool_calls?: {
-        /**
-         * The arguments passed to be passed to the tool call request
-         */
-        arguments?: object;
-        /**
-         * The name of the tool to be called
-         */
-        name?: string;
-      }[];
-    }
+      total_tokens?: number;
+    };
+    /**
+     * An array of tool calls requests made during the response generation
+     */
+    tool_calls?: {
+      /**
+       * The arguments passed to be passed to the tool call request
+       */
+      arguments?: object;
+      /**
+       * The name of the tool to be called
+       */
+      name?: string;
+    }[];
+  }
   | string
   | AsyncResponse;
 declare abstract class Base_Ai_Cf_Meta_Llama_3_3_70B_Instruct_Fp8_Fast {
@@ -5133,15 +5150,15 @@ interface Ai_Cf_Meta_Llama_Guard_3_8B_Output {
   response?:
     | string
     | {
-        /**
-         * Whether the conversation is safe or not.
-         */
-        safe?: boolean;
-        /**
-         * A list of what hazard categories predicted for the conversation, if the conversation is deemed unsafe.
-         */
-        categories?: string[];
-      };
+      /**
+       * Whether the conversation is safe or not.
+       */
+      safe?: boolean;
+      /**
+       * A list of what hazard categories predicted for the conversation, if the conversation is deemed unsafe.
+       */
+      categories?: string[];
+    };
   /**
    * Usage statistics for the inference request
    */
@@ -5272,16 +5289,62 @@ interface Qwen2_5_Coder_32B_Instruct_Messages {
    */
   tools?: (
     | {
+      /**
+       * The name of the tool. More descriptive the better.
+       */
+      name: string;
+      /**
+       * A brief description of what the tool does.
+       */
+      description: string;
+      /**
+       * Schema defining the parameters accepted by the tool.
+       */
+      parameters: {
         /**
-         * The name of the tool. More descriptive the better.
+         * The type of the parameters object (usually 'object').
+         */
+        type: string;
+        /**
+         * List of required parameter names.
+         */
+        required?: string[];
+        /**
+         * Definitions of each parameter.
+         */
+        properties: {
+          [k: string]: {
+            /**
+             * The data type of the parameter.
+             */
+            type: string;
+            /**
+             * A description of the expected parameter.
+             */
+            description: string;
+          };
+        };
+      };
+    }
+    | {
+      /**
+       * Specifies the type of tool (e.g., 'function').
+       */
+      type: string;
+      /**
+       * Details of the function tool.
+       */
+      function: {
+        /**
+         * The name of the function.
          */
         name: string;
         /**
-         * A brief description of what the tool does.
+         * A brief description of what the function does.
          */
         description: string;
         /**
-         * Schema defining the parameters accepted by the tool.
+         * Schema defining the parameters accepted by the function.
          */
         parameters: {
           /**
@@ -5308,54 +5371,8 @@ interface Qwen2_5_Coder_32B_Instruct_Messages {
             };
           };
         };
-      }
-    | {
-        /**
-         * Specifies the type of tool (e.g., 'function').
-         */
-        type: string;
-        /**
-         * Details of the function tool.
-         */
-        function: {
-          /**
-           * The name of the function.
-           */
-          name: string;
-          /**
-           * A brief description of what the function does.
-           */
-          description: string;
-          /**
-           * Schema defining the parameters accepted by the function.
-           */
-          parameters: {
-            /**
-             * The type of the parameters object (usually 'object').
-             */
-            type: string;
-            /**
-             * List of required parameter names.
-             */
-            required?: string[];
-            /**
-             * Definitions of each parameter.
-             */
-            properties: {
-              [k: string]: {
-                /**
-                 * The data type of the parameter.
-                 */
-                type: string;
-                /**
-                 * A description of the expected parameter.
-                 */
-                description: string;
-              };
-            };
-          };
-        };
-      }
+      };
+    }
   )[];
   response_format?: JSONMode;
   /**
@@ -5506,31 +5523,31 @@ interface Qwen_Qwq_32B_Messages {
     content?:
       | string
       | {
+        /**
+         * Type of the content provided
+         */
+        type?: string;
+        text?: string;
+        image_url?: {
           /**
-           * Type of the content provided
+           * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
            */
-          type?: string;
-          text?: string;
-          image_url?: {
-            /**
-             * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
-             */
-            url?: string;
-          };
-        }[]
-      | {
-          /**
-           * Type of the content provided
-           */
-          type?: string;
-          text?: string;
-          image_url?: {
-            /**
-             * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
-             */
-            url?: string;
-          };
+          url?: string;
         };
+      }[]
+      | {
+        /**
+         * Type of the content provided
+         */
+        type?: string;
+        text?: string;
+        image_url?: {
+          /**
+           * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
+           */
+          url?: string;
+        };
+      };
   }[];
   functions?: { name: string; code: string }[];
   /**
@@ -5538,16 +5555,62 @@ interface Qwen_Qwq_32B_Messages {
    */
   tools?: (
     | {
+      /**
+       * The name of the tool. More descriptive the better.
+       */
+      name: string;
+      /**
+       * A brief description of what the tool does.
+       */
+      description: string;
+      /**
+       * Schema defining the parameters accepted by the tool.
+       */
+      parameters: {
         /**
-         * The name of the tool. More descriptive the better.
+         * The type of the parameters object (usually 'object').
+         */
+        type: string;
+        /**
+         * List of required parameter names.
+         */
+        required?: string[];
+        /**
+         * Definitions of each parameter.
+         */
+        properties: {
+          [k: string]: {
+            /**
+             * The data type of the parameter.
+             */
+            type: string;
+            /**
+             * A description of the expected parameter.
+             */
+            description: string;
+          };
+        };
+      };
+    }
+    | {
+      /**
+       * Specifies the type of tool (e.g., 'function').
+       */
+      type: string;
+      /**
+       * Details of the function tool.
+       */
+      function: {
+        /**
+         * The name of the function.
          */
         name: string;
         /**
-         * A brief description of what the tool does.
+         * A brief description of what the function does.
          */
         description: string;
         /**
-         * Schema defining the parameters accepted by the tool.
+         * Schema defining the parameters accepted by the function.
          */
         parameters: {
           /**
@@ -5574,54 +5637,8 @@ interface Qwen_Qwq_32B_Messages {
             };
           };
         };
-      }
-    | {
-        /**
-         * Specifies the type of tool (e.g., 'function').
-         */
-        type: string;
-        /**
-         * Details of the function tool.
-         */
-        function: {
-          /**
-           * The name of the function.
-           */
-          name: string;
-          /**
-           * A brief description of what the function does.
-           */
-          description: string;
-          /**
-           * Schema defining the parameters accepted by the function.
-           */
-          parameters: {
-            /**
-             * The type of the parameters object (usually 'object').
-             */
-            type: string;
-            /**
-             * List of required parameter names.
-             */
-            required?: string[];
-            /**
-             * Definitions of each parameter.
-             */
-            properties: {
-              [k: string]: {
-                /**
-                 * The data type of the parameter.
-                 */
-                type: string;
-                /**
-                 * A description of the expected parameter.
-                 */
-                description: string;
-              };
-            };
-          };
-        };
-      }
+      };
+    }
   )[];
   /**
    * JSON schema that should be fufilled for the response.
@@ -5777,31 +5794,31 @@ interface Mistral_Small_3_1_24B_Instruct_Messages {
     content?:
       | string
       | {
+        /**
+         * Type of the content provided
+         */
+        type?: string;
+        text?: string;
+        image_url?: {
           /**
-           * Type of the content provided
+           * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
            */
-          type?: string;
-          text?: string;
-          image_url?: {
-            /**
-             * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
-             */
-            url?: string;
-          };
-        }[]
-      | {
-          /**
-           * Type of the content provided
-           */
-          type?: string;
-          text?: string;
-          image_url?: {
-            /**
-             * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
-             */
-            url?: string;
-          };
+          url?: string;
         };
+      }[]
+      | {
+        /**
+         * Type of the content provided
+         */
+        type?: string;
+        text?: string;
+        image_url?: {
+          /**
+           * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
+           */
+          url?: string;
+        };
+      };
   }[];
   functions?: { name: string; code: string }[];
   /**
@@ -5809,16 +5826,62 @@ interface Mistral_Small_3_1_24B_Instruct_Messages {
    */
   tools?: (
     | {
+      /**
+       * The name of the tool. More descriptive the better.
+       */
+      name: string;
+      /**
+       * A brief description of what the tool does.
+       */
+      description: string;
+      /**
+       * Schema defining the parameters accepted by the tool.
+       */
+      parameters: {
         /**
-         * The name of the tool. More descriptive the better.
+         * The type of the parameters object (usually 'object').
+         */
+        type: string;
+        /**
+         * List of required parameter names.
+         */
+        required?: string[];
+        /**
+         * Definitions of each parameter.
+         */
+        properties: {
+          [k: string]: {
+            /**
+             * The data type of the parameter.
+             */
+            type: string;
+            /**
+             * A description of the expected parameter.
+             */
+            description: string;
+          };
+        };
+      };
+    }
+    | {
+      /**
+       * Specifies the type of tool (e.g., 'function').
+       */
+      type: string;
+      /**
+       * Details of the function tool.
+       */
+      function: {
+        /**
+         * The name of the function.
          */
         name: string;
         /**
-         * A brief description of what the tool does.
+         * A brief description of what the function does.
          */
         description: string;
         /**
-         * Schema defining the parameters accepted by the tool.
+         * Schema defining the parameters accepted by the function.
          */
         parameters: {
           /**
@@ -5845,54 +5908,8 @@ interface Mistral_Small_3_1_24B_Instruct_Messages {
             };
           };
         };
-      }
-    | {
-        /**
-         * Specifies the type of tool (e.g., 'function').
-         */
-        type: string;
-        /**
-         * Details of the function tool.
-         */
-        function: {
-          /**
-           * The name of the function.
-           */
-          name: string;
-          /**
-           * A brief description of what the function does.
-           */
-          description: string;
-          /**
-           * Schema defining the parameters accepted by the function.
-           */
-          parameters: {
-            /**
-             * The type of the parameters object (usually 'object').
-             */
-            type: string;
-            /**
-             * List of required parameter names.
-             */
-            required?: string[];
-            /**
-             * Definitions of each parameter.
-             */
-            properties: {
-              [k: string]: {
-                /**
-                 * The data type of the parameter.
-                 */
-                type: string;
-                /**
-                 * A description of the expected parameter.
-                 */
-                description: string;
-              };
-            };
-          };
-        };
-      }
+      };
+    }
   )[];
   /**
    * JSON schema that should be fufilled for the response.
@@ -6044,31 +6061,31 @@ interface Google_Gemma_3_12B_It_Messages {
     content?:
       | string
       | {
+        /**
+         * Type of the content provided
+         */
+        type?: string;
+        text?: string;
+        image_url?: {
           /**
-           * Type of the content provided
+           * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
            */
-          type?: string;
-          text?: string;
-          image_url?: {
-            /**
-             * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
-             */
-            url?: string;
-          };
-        }[]
-      | {
-          /**
-           * Type of the content provided
-           */
-          type?: string;
-          text?: string;
-          image_url?: {
-            /**
-             * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
-             */
-            url?: string;
-          };
+          url?: string;
         };
+      }[]
+      | {
+        /**
+         * Type of the content provided
+         */
+        type?: string;
+        text?: string;
+        image_url?: {
+          /**
+           * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
+           */
+          url?: string;
+        };
+      };
   }[];
   functions?: { name: string; code: string }[];
   /**
@@ -6076,16 +6093,62 @@ interface Google_Gemma_3_12B_It_Messages {
    */
   tools?: (
     | {
+      /**
+       * The name of the tool. More descriptive the better.
+       */
+      name: string;
+      /**
+       * A brief description of what the tool does.
+       */
+      description: string;
+      /**
+       * Schema defining the parameters accepted by the tool.
+       */
+      parameters: {
         /**
-         * The name of the tool. More descriptive the better.
+         * The type of the parameters object (usually 'object').
+         */
+        type: string;
+        /**
+         * List of required parameter names.
+         */
+        required?: string[];
+        /**
+         * Definitions of each parameter.
+         */
+        properties: {
+          [k: string]: {
+            /**
+             * The data type of the parameter.
+             */
+            type: string;
+            /**
+             * A description of the expected parameter.
+             */
+            description: string;
+          };
+        };
+      };
+    }
+    | {
+      /**
+       * Specifies the type of tool (e.g., 'function').
+       */
+      type: string;
+      /**
+       * Details of the function tool.
+       */
+      function: {
+        /**
+         * The name of the function.
          */
         name: string;
         /**
-         * A brief description of what the tool does.
+         * A brief description of what the function does.
          */
         description: string;
         /**
-         * Schema defining the parameters accepted by the tool.
+         * Schema defining the parameters accepted by the function.
          */
         parameters: {
           /**
@@ -6112,54 +6175,8 @@ interface Google_Gemma_3_12B_It_Messages {
             };
           };
         };
-      }
-    | {
-        /**
-         * Specifies the type of tool (e.g., 'function').
-         */
-        type: string;
-        /**
-         * Details of the function tool.
-         */
-        function: {
-          /**
-           * The name of the function.
-           */
-          name: string;
-          /**
-           * A brief description of what the function does.
-           */
-          description: string;
-          /**
-           * Schema defining the parameters accepted by the function.
-           */
-          parameters: {
-            /**
-             * The type of the parameters object (usually 'object').
-             */
-            type: string;
-            /**
-             * List of required parameter names.
-             */
-            required?: string[];
-            /**
-             * Definitions of each parameter.
-             */
-            properties: {
-              [k: string]: {
-                /**
-                 * The data type of the parameter.
-                 */
-                type: string;
-                /**
-                 * A description of the expected parameter.
-                 */
-                description: string;
-              };
-            };
-          };
-        };
-      }
+      };
+    }
   )[];
   /**
    * JSON schema that should be fufilled for the response.
@@ -6317,31 +6334,31 @@ interface Ai_Cf_Meta_Llama_4_Messages {
     content?:
       | string
       | {
+        /**
+         * Type of the content provided
+         */
+        type?: string;
+        text?: string;
+        image_url?: {
           /**
-           * Type of the content provided
+           * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
            */
-          type?: string;
-          text?: string;
-          image_url?: {
-            /**
-             * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
-             */
-            url?: string;
-          };
-        }[]
-      | {
-          /**
-           * Type of the content provided
-           */
-          type?: string;
-          text?: string;
-          image_url?: {
-            /**
-             * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
-             */
-            url?: string;
-          };
+          url?: string;
         };
+      }[]
+      | {
+        /**
+         * Type of the content provided
+         */
+        type?: string;
+        text?: string;
+        image_url?: {
+          /**
+           * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
+           */
+          url?: string;
+        };
+      };
   }[];
   functions?: { name: string; code: string }[];
   /**
@@ -6349,16 +6366,62 @@ interface Ai_Cf_Meta_Llama_4_Messages {
    */
   tools?: (
     | {
+      /**
+       * The name of the tool. More descriptive the better.
+       */
+      name: string;
+      /**
+       * A brief description of what the tool does.
+       */
+      description: string;
+      /**
+       * Schema defining the parameters accepted by the tool.
+       */
+      parameters: {
         /**
-         * The name of the tool. More descriptive the better.
+         * The type of the parameters object (usually 'object').
+         */
+        type: string;
+        /**
+         * List of required parameter names.
+         */
+        required?: string[];
+        /**
+         * Definitions of each parameter.
+         */
+        properties: {
+          [k: string]: {
+            /**
+             * The data type of the parameter.
+             */
+            type: string;
+            /**
+             * A description of the expected parameter.
+             */
+            description: string;
+          };
+        };
+      };
+    }
+    | {
+      /**
+       * Specifies the type of tool (e.g., 'function').
+       */
+      type: string;
+      /**
+       * Details of the function tool.
+       */
+      function: {
+        /**
+         * The name of the function.
          */
         name: string;
         /**
-         * A brief description of what the tool does.
+         * A brief description of what the function does.
          */
         description: string;
         /**
-         * Schema defining the parameters accepted by the tool.
+         * Schema defining the parameters accepted by the function.
          */
         parameters: {
           /**
@@ -6385,54 +6448,8 @@ interface Ai_Cf_Meta_Llama_4_Messages {
             };
           };
         };
-      }
-    | {
-        /**
-         * Specifies the type of tool (e.g., 'function').
-         */
-        type: string;
-        /**
-         * Details of the function tool.
-         */
-        function: {
-          /**
-           * The name of the function.
-           */
-          name: string;
-          /**
-           * A brief description of what the function does.
-           */
-          description: string;
-          /**
-           * Schema defining the parameters accepted by the function.
-           */
-          parameters: {
-            /**
-             * The type of the parameters object (usually 'object').
-             */
-            type: string;
-            /**
-             * List of required parameter names.
-             */
-            required?: string[];
-            /**
-             * Definitions of each parameter.
-             */
-            properties: {
-              [k: string]: {
-                /**
-                 * The data type of the parameter.
-                 */
-                type: string;
-                /**
-                 * A description of the expected parameter.
-                 */
-                description: string;
-              };
-            };
-          };
-        };
-      }
+      };
+    }
   )[];
   response_format?: JSONMode;
   /**
@@ -6553,31 +6570,31 @@ interface Ai_Cf_Meta_Llama_4_Messages_Inner {
     content?:
       | string
       | {
+        /**
+         * Type of the content provided
+         */
+        type?: string;
+        text?: string;
+        image_url?: {
           /**
-           * Type of the content provided
+           * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
            */
-          type?: string;
-          text?: string;
-          image_url?: {
-            /**
-             * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
-             */
-            url?: string;
-          };
-        }[]
-      | {
-          /**
-           * Type of the content provided
-           */
-          type?: string;
-          text?: string;
-          image_url?: {
-            /**
-             * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
-             */
-            url?: string;
-          };
+          url?: string;
         };
+      }[]
+      | {
+        /**
+         * Type of the content provided
+         */
+        type?: string;
+        text?: string;
+        image_url?: {
+          /**
+           * image uri with data (e.g. data:image/jpeg;base64,/9j/...). HTTP URL will not be accepted
+           */
+          url?: string;
+        };
+      };
   }[];
   functions?: { name: string; code: string }[];
   /**
@@ -6585,16 +6602,62 @@ interface Ai_Cf_Meta_Llama_4_Messages_Inner {
    */
   tools?: (
     | {
+      /**
+       * The name of the tool. More descriptive the better.
+       */
+      name: string;
+      /**
+       * A brief description of what the tool does.
+       */
+      description: string;
+      /**
+       * Schema defining the parameters accepted by the tool.
+       */
+      parameters: {
         /**
-         * The name of the tool. More descriptive the better.
+         * The type of the parameters object (usually 'object').
+         */
+        type: string;
+        /**
+         * List of required parameter names.
+         */
+        required?: string[];
+        /**
+         * Definitions of each parameter.
+         */
+        properties: {
+          [k: string]: {
+            /**
+             * The data type of the parameter.
+             */
+            type: string;
+            /**
+             * A description of the expected parameter.
+             */
+            description: string;
+          };
+        };
+      };
+    }
+    | {
+      /**
+       * Specifies the type of tool (e.g., 'function').
+       */
+      type: string;
+      /**
+       * Details of the function tool.
+       */
+      function: {
+        /**
+         * The name of the function.
          */
         name: string;
         /**
-         * A brief description of what the tool does.
+         * A brief description of what the function does.
          */
         description: string;
         /**
-         * Schema defining the parameters accepted by the tool.
+         * Schema defining the parameters accepted by the function.
          */
         parameters: {
           /**
@@ -6621,54 +6684,8 @@ interface Ai_Cf_Meta_Llama_4_Messages_Inner {
             };
           };
         };
-      }
-    | {
-        /**
-         * Specifies the type of tool (e.g., 'function').
-         */
-        type: string;
-        /**
-         * Details of the function tool.
-         */
-        function: {
-          /**
-           * The name of the function.
-           */
-          name: string;
-          /**
-           * A brief description of what the function does.
-           */
-          description: string;
-          /**
-           * Schema defining the parameters accepted by the function.
-           */
-          parameters: {
-            /**
-             * The type of the parameters object (usually 'object').
-             */
-            type: string;
-            /**
-             * List of required parameter names.
-             */
-            required?: string[];
-            /**
-             * Definitions of each parameter.
-             */
-            properties: {
-              [k: string]: {
-                /**
-                 * The data type of the parameter.
-                 */
-                type: string;
-                /**
-                 * A description of the expected parameter.
-                 */
-                description: string;
-              };
-            };
-          };
-        };
-      }
+      };
+    }
   )[];
   response_format?: JSONMode;
   /**
@@ -6953,25 +6970,25 @@ declare abstract class Base_Ai_Cf_Deepgram_Nova_3 {
 }
 type Ai_Cf_Pipecat_Ai_Smart_Turn_V2_Input =
   | {
-      /**
-       * readable stream with audio data and content-type specified for that data
-       */
-      audio: { body: object; contentType: string };
-      /**
-       * type of data PCM data that's sent to the inference server as raw array
-       */
-      dtype?: "uint8" | "float32" | "float64";
-    }
+    /**
+     * readable stream with audio data and content-type specified for that data
+     */
+    audio: { body: object; contentType: string };
+    /**
+     * type of data PCM data that's sent to the inference server as raw array
+     */
+    dtype?: "uint8" | "float32" | "float64";
+  }
   | {
-      /**
-       * base64 encoded audio data
-       */
-      audio: string;
-      /**
-       * type of data PCM data that's sent to the inference server as raw array
-       */
-      dtype?: "uint8" | "float32" | "float64";
-    };
+    /**
+     * base64 encoded audio data
+     */
+    audio: string;
+    /**
+     * type of data PCM data that's sent to the inference server as raw array
+     */
+    dtype?: "uint8" | "float32" | "float64";
+  };
 interface Ai_Cf_Pipecat_Ai_Smart_Turn_V2_Output {
   /**
    * if true, end-of-turn was detected
@@ -7254,16 +7271,22 @@ interface AiModels {
   "@cf/openai/whisper-tiny-en": Base_Ai_Cf_Openai_Whisper_Tiny_En;
   "@cf/openai/whisper-large-v3-turbo": Base_Ai_Cf_Openai_Whisper_Large_V3_Turbo;
   "@cf/baai/bge-m3": Base_Ai_Cf_Baai_Bge_M3;
-  "@cf/black-forest-labs/flux-1-schnell": Base_Ai_Cf_Black_Forest_Labs_Flux_1_Schnell;
-  "@cf/meta/llama-3.2-11b-vision-instruct": Base_Ai_Cf_Meta_Llama_3_2_11B_Vision_Instruct;
-  "@cf/meta/llama-3.3-70b-instruct-fp8-fast": Base_Ai_Cf_Meta_Llama_3_3_70B_Instruct_Fp8_Fast;
+  "@cf/black-forest-labs/flux-1-schnell":
+    Base_Ai_Cf_Black_Forest_Labs_Flux_1_Schnell;
+  "@cf/meta/llama-3.2-11b-vision-instruct":
+    Base_Ai_Cf_Meta_Llama_3_2_11B_Vision_Instruct;
+  "@cf/meta/llama-3.3-70b-instruct-fp8-fast":
+    Base_Ai_Cf_Meta_Llama_3_3_70B_Instruct_Fp8_Fast;
   "@cf/meta/llama-guard-3-8b": Base_Ai_Cf_Meta_Llama_Guard_3_8B;
   "@cf/baai/bge-reranker-base": Base_Ai_Cf_Baai_Bge_Reranker_Base;
-  "@cf/qwen/qwen2.5-coder-32b-instruct": Base_Ai_Cf_Qwen_Qwen2_5_Coder_32B_Instruct;
+  "@cf/qwen/qwen2.5-coder-32b-instruct":
+    Base_Ai_Cf_Qwen_Qwen2_5_Coder_32B_Instruct;
   "@cf/qwen/qwq-32b": Base_Ai_Cf_Qwen_Qwq_32B;
-  "@cf/mistralai/mistral-small-3.1-24b-instruct": Base_Ai_Cf_Mistralai_Mistral_Small_3_1_24B_Instruct;
+  "@cf/mistralai/mistral-small-3.1-24b-instruct":
+    Base_Ai_Cf_Mistralai_Mistral_Small_3_1_24B_Instruct;
   "@cf/google/gemma-3-12b-it": Base_Ai_Cf_Google_Gemma_3_12B_It;
-  "@cf/meta/llama-4-scout-17b-16e-instruct": Base_Ai_Cf_Meta_Llama_4_Scout_17B_16E_Instruct;
+  "@cf/meta/llama-4-scout-17b-16e-instruct":
+    Base_Ai_Cf_Meta_Llama_4_Scout_17B_16E_Instruct;
   "@cf/deepgram/nova-3": Base_Ai_Cf_Deepgram_Nova_3;
   "@cf/pipecat-ai/smart-turn-v2": Base_Ai_Cf_Pipecat_Ai_Smart_Turn_V2;
   "@cf/openai/gpt-oss-120b": Base_Ai_Cf_Openai_Gpt_Oss_120B;
@@ -7322,8 +7345,8 @@ declare abstract class Ai<AiModelList extends AiModelListType = AiModels> {
     options?: Options,
   ): Promise<
     Options extends { returnRawResponse: true } | { websocket: true } ? Response
-    : InputOptions extends { stream: true } ? ReadableStream
-    : AiModelList[Name]["postProcessedOutputs"]
+      : InputOptions extends { stream: true } ? ReadableStream
+      : AiModelList[Name]["postProcessedOutputs"]
   >;
   models(params?: AiModelsSearchParams): Promise<AiModelsSearchObject[]>;
   toMarkdown(): ToMarkdownService;
@@ -7471,10 +7494,12 @@ type AutoRagAiSearchRequest = AutoRagSearchRequest & {
   stream?: boolean;
   system_prompt?: string;
 };
-type AutoRagAiSearchRequestStreaming = Omit<
-  AutoRagAiSearchRequest,
-  "stream"
-> & { stream: true };
+type AutoRagAiSearchRequestStreaming =
+  & Omit<
+    AutoRagAiSearchRequest,
+    "stream"
+  >
+  & { stream: true };
 type AutoRagSearchResponse = {
   object: "vector_store.search_results.page";
   search_query: string;
@@ -7709,16 +7734,16 @@ interface RequestInitCfPropertiesImage extends BasicImageTransformations {
   trim?:
     | "border"
     | {
-        top?: number;
-        bottom?: number;
-        left?: number;
-        right?: number;
-        width?: number;
-        height?: number;
-        border?:
-          | boolean
-          | { color?: string; tolerance?: number; keep?: number };
-      };
+      top?: number;
+      bottom?: number;
+      left?: number;
+      right?: number;
+      width?: number;
+      height?: number;
+      border?:
+        | boolean
+        | { color?: string; tolerance?: number; keep?: number };
+    };
   /**
    * Quality setting from 1-100 (useful values are in 60-90 range). Lower values
    * make images look worse, but load faster. The default is 85. It applies only
@@ -7798,12 +7823,12 @@ interface RequestInitCfPropertiesImage extends BasicImageTransformations {
   border?:
     | { color: string; width: number }
     | {
-        color: string;
-        top: number;
-        right: number;
-        bottom: number;
-        left: number;
-      };
+      color: string;
+      top: number;
+      right: number;
+      bottom: number;
+      left: number;
+    };
   /**
    * Increase brightness by a factor. A value of 1.0 equals no change, a value
    * of 0.5 equals half brightness, and a value of 2.0 equals twice as bright.
@@ -7858,11 +7883,11 @@ interface RequestInitCfPropertiesR2 {
  * Request metadata provided by Cloudflare's edge.
  */
 type IncomingRequestCfProperties<HostMetadata = unknown> =
-  IncomingRequestCfPropertiesBase &
-    IncomingRequestCfPropertiesBotManagementEnterprise &
-    IncomingRequestCfPropertiesCloudflareForSaaSEnterprise<HostMetadata> &
-    IncomingRequestCfPropertiesGeographicInformation &
-    IncomingRequestCfPropertiesCloudflareAccessOrApiShield;
+  & IncomingRequestCfPropertiesBase
+  & IncomingRequestCfPropertiesBotManagementEnterprise
+  & IncomingRequestCfPropertiesCloudflareForSaaSEnterprise<HostMetadata>
+  & IncomingRequestCfPropertiesGeographicInformation
+  & IncomingRequestCfPropertiesCloudflareAccessOrApiShield;
 interface IncomingRequestCfPropertiesBase extends Record<string, unknown> {
   /**
    * [ASN](https://www.iana.org/assignments/as-numbers/as-numbers.xhtml) of the incoming request.
@@ -7904,7 +7929,8 @@ interface IncomingRequestCfPropertiesBase extends Record<string, unknown> {
    *
    * @example 3
    */
-  edgeRequestKeepAliveStatus: IncomingRequestCfPropertiesEdgeRequestKeepAliveStatus;
+  edgeRequestKeepAliveStatus:
+    IncomingRequestCfPropertiesEdgeRequestKeepAliveStatus;
   /**
    * The HTTP Protocol the request used.
    *
@@ -7939,7 +7965,8 @@ interface IncomingRequestCfPropertiesBase extends Record<string, unknown> {
    *
    * If the incoming request was served over plaintext (without TLS) this field is undefined.
    */
-  tlsExportedAuthenticator?: IncomingRequestCfPropertiesExportedAuthenticatorMetadata;
+  tlsExportedAuthenticator?:
+    IncomingRequestCfPropertiesExportedAuthenticatorMetadata;
 }
 interface IncomingRequestCfPropertiesBotManagementBase {
   /**
@@ -7981,7 +8008,8 @@ interface IncomingRequestCfPropertiesBotManagement {
   clientTrustScore: number;
 }
 interface IncomingRequestCfPropertiesBotManagementEnterprise
-  extends IncomingRequestCfPropertiesBotManagement {
+  extends IncomingRequestCfPropertiesBotManagement
+{
   /**
    * Results of Cloudflare's Bot Management analysis
    */
@@ -8617,7 +8645,7 @@ declare abstract class D1PreparedStatement {
 // but this will ensure type checking on older versions still passes.
 // TypeScript's interface merging will ensure our empty interface is effectively
 // ignored when `Disposable` is included in the standard lib.
-interface Disposable {}
+type Disposable = {};
 /**
  * An email message that can be sent from a Worker.
  */
@@ -8684,9 +8712,9 @@ declare type EmailExportedHandler<Env = unknown> = (
 declare module "cloudflare:email" {
   let _EmailMessage: {
     prototype: EmailMessage;
-    new (from: string, to: string, raw: ReadableStream | string): EmailMessage;
+    new(from: string, to: string, raw: ReadableStream | string): EmailMessage;
   };
-  export { _EmailMessage as EmailMessage };
+  export type { _EmailMessage as EmailMessage };
 }
 /**
  * Hello World binding to serve as an explanatory example. DO NOT USE
@@ -8784,16 +8812,16 @@ type ImageTransform = {
   trim?:
     | "border"
     | {
-        top?: number;
-        bottom?: number;
-        left?: number;
-        right?: number;
-        width?: number;
-        height?: number;
-        border?:
-          | boolean
-          | { color?: string; tolerance?: number; keep?: number };
-      };
+      top?: number;
+      bottom?: number;
+      left?: number;
+      right?: number;
+      width?: number;
+      height?: number;
+      border?:
+        | boolean
+        | { color?: string; tolerance?: number; keep?: number };
+    };
 };
 type ImageDrawOptions = {
   opacity?: number;
@@ -9159,9 +9187,9 @@ declare namespace Rpc {
     | BaseType
     // Structured cloneable composites
     | Map<
-        T extends Map<infer U, unknown> ? Serializable<U> : never,
-        T extends Map<unknown, infer U> ? Serializable<U> : never
-      >
+      T extends Map<infer U, unknown> ? Serializable<U> : never,
+      T extends Map<unknown, infer U> ? Serializable<U> : never
+    >
     | Set<T extends Set<infer U> ? Serializable<U> : never>
     | ReadonlyArray<T extends ReadonlyArray<infer U> ? Serializable<U> : never>
     | { [K in keyof T]: K extends number | string ? Serializable<T[K]> : never }
@@ -9198,20 +9226,34 @@ declare namespace Rpc {
     | Headers;
   // Recursively rewrite all `Stubable` types with `Stub`s
   // prettier-ignore
-  type Stubify<T> = T extends Stubable ? Stub<T> : T extends Map<infer K, infer V> ? Map<Stubify<K>, Stubify<V>> : T extends Set<infer V> ? Set<Stubify<V>> : T extends Array<infer V> ? Array<Stubify<V>> : T extends ReadonlyArray<infer V> ? ReadonlyArray<Stubify<V>> : T extends BaseType ? T : T extends {
-        [key: string | number]: any;
+  type Stubify<T> = T extends Stubable ? Stub<T>
+    : T extends Map<infer K, infer V> ? Map<Stubify<K>, Stubify<V>>
+    : T extends Set<infer V> ? Set<Stubify<V>>
+    : T extends Array<infer V> ? Array<Stubify<V>>
+    : T extends ReadonlyArray<infer V> ? ReadonlyArray<Stubify<V>>
+    : T extends BaseType ? T
+    : T extends {
+      [key: string | number]: any;
     } ? {
         [K in keyof T]: Stubify<T[K]>;
-    } : T;
+      }
+    : T;
   // Recursively rewrite all `Stub<T>`s with the corresponding `T`s.
   // Note we use `StubBase` instead of `Stub` here to avoid circular dependencies:
   // `Stub` depends on `Provider`, which depends on `Unstubify`, which would depend on `Stub`.
   // prettier-ignore
-  type Unstubify<T> = T extends StubBase<infer V> ? V : T extends Map<infer K, infer V> ? Map<Unstubify<K>, Unstubify<V>> : T extends Set<infer V> ? Set<Unstubify<V>> : T extends Array<infer V> ? Array<Unstubify<V>> : T extends ReadonlyArray<infer V> ? ReadonlyArray<Unstubify<V>> : T extends BaseType ? T : T extends {
-        [key: string | number]: unknown;
+  type Unstubify<T> = T extends StubBase<infer V> ? V
+    : T extends Map<infer K, infer V> ? Map<Unstubify<K>, Unstubify<V>>
+    : T extends Set<infer V> ? Set<Unstubify<V>>
+    : T extends Array<infer V> ? Array<Unstubify<V>>
+    : T extends ReadonlyArray<infer V> ? ReadonlyArray<Unstubify<V>>
+    : T extends BaseType ? T
+    : T extends {
+      [key: string | number]: unknown;
     } ? {
         [K in keyof T]: Unstubify<T[K]>;
-    } : T;
+      }
+    : T;
   type UnstubifyAll<A extends any[]> = { [I in keyof A]: Unstubify<A[I]> };
   // Utility type for adding `Provider`/`Disposable`s to `object` types only.
   // Note `unknown & T` is equivalent to `T`.
@@ -9225,32 +9267,39 @@ declare namespace Rpc {
   // Technically, we use custom thenables here, but they quack like `Promise`s.
   // Intersecting with `(Maybe)Provider` allows pipelining.
   // prettier-ignore
-  type Result<R> = R extends Stubable ? Promise<Stub<R>> & Provider<R> : R extends Serializable<R> ? Promise<Stubify<R> & MaybeDisposable<R>> & MaybeProvider<R> : never;
+  type Result<R> = R extends Stubable ? Promise<Stub<R>> & Provider<R>
+    : R extends Serializable<R>
+      ? Promise<Stubify<R> & MaybeDisposable<R>> & MaybeProvider<R>
+    : never;
   // Type for method or property on an RPC interface.
   // For methods, unwrap `Stub`s in parameters, and rewrite returns to be `Result`s.
   // Unwrapping `Stub`s allows calling with `Stubable` arguments.
   // For properties, rewrite types to be `Result`s.
   // In each case, unwrap `Promise`s.
-  type MethodOrProperty<V> =
-    V extends (...args: infer P) => infer R ?
-      (...args: UnstubifyAll<P>) => Result<Awaited<R>>
+  type MethodOrProperty<V> = V extends (...args: infer P) => infer R
+    ? (...args: UnstubifyAll<P>) => Result<Awaited<R>>
     : Result<Awaited<V>>;
   // Type for the callable part of an `Provider` if `T` is callable.
   // This is intersected with methods/properties.
-  type MaybeCallableProvider<T> =
-    T extends (...args: any[]) => any ? MethodOrProperty<T> : unknown;
+  type MaybeCallableProvider<T> = T extends (...args: any[]) => any
+    ? MethodOrProperty<T>
+    : unknown;
   // Base type for all other types providing RPC-like interfaces.
   // Rewrites all methods/properties to be `MethodOrProperty`s, while preserving callable types.
   // `Reserved` names (e.g. stub method names like `dup()`) and symbols can't be accessed over RPC.
   export type Provider<
     T extends object,
     Reserved extends string = never,
-  > = MaybeCallableProvider<T> & {
-    [K in Exclude<
-      keyof T,
-      Reserved | symbol | keyof StubBase<never>
-    >]: MethodOrProperty<T[K]>;
-  };
+  > =
+    & MaybeCallableProvider<T>
+    & {
+      [
+        K in Exclude<
+          keyof T,
+          Reserved | symbol | keyof StubBase<never>
+        >
+      ]: MethodOrProperty<T[K]>;
+    };
 }
 declare namespace Cloudflare {
   // Type of `env`.
@@ -9259,7 +9308,7 @@ declare namespace Cloudflare {
   // will merge all declarations.
   //
   // You can use `wrangler types` to generate the `Env` type automatically.
-  interface Env {}
+  type Env = {};
   // Project-specific parameters used to inform types.
   //
   // This interface is, again, intended to be declared in project-specific files, and then that
@@ -9278,31 +9327,35 @@ declare namespace Cloudflare {
   //     }
   //
   // You can use `wrangler types` to generate `GlobalProps` automatically.
-  interface GlobalProps {}
+  type GlobalProps = {};
   // Evaluates to the type of a property in GlobalProps, defaulting to `Default` if it is not
   // present.
-  type GlobalProp<K extends string, Default> =
-    K extends keyof GlobalProps ? GlobalProps[K] : Default;
+  type GlobalProp<K extends string, Default> = K extends keyof GlobalProps
+    ? GlobalProps[K]
+    : Default;
   // The type of the program's main module exports, if known. Requires `GlobalProps` to declare the
   // `mainModule` property.
   type MainModule = GlobalProp<"mainModule", {}>;
   // The type of ctx.exports, which contains loopback bindings for all top-level exports.
   type Exports = {
-    [K in keyof MainModule]: LoopbackForExport<MainModule[K]> &
-      // If the export is listed in `durableNamespaces`, then it is also a
+    [K in keyof MainModule]:
+      & LoopbackForExport<MainModule[K]>
+      & // If the export is listed in `durableNamespaces`, then it is also a
       // DurableObjectNamespace.
-      (K extends GlobalProp<"durableNamespaces", never> ?
-        MainModule[K] extends new (...args: any[]) => infer DoInstance ?
-          DoInstance extends Rpc.DurableObjectBranded ?
-            DurableObjectNamespace<DoInstance>
+      (K extends GlobalProp<"durableNamespaces", never>
+        ? MainModule[K] extends new(
+          ...args: any[]
+        ) => infer DoInstance
+          ? DoInstance extends Rpc.DurableObjectBranded
+            ? DurableObjectNamespace<DoInstance>
           : DurableObjectNamespace<undefined>
         : DurableObjectNamespace<undefined>
-      : {});
+        : {});
   };
 }
 declare namespace CloudflareWorkersModule {
   export type RpcStub<T extends Rpc.Stubable> = Rpc.Stub<T>;
-  export const RpcStub: { new <T extends Rpc.Stubable>(value: T): Rpc.Stub<T> };
+  export const RpcStub: { new<T extends Rpc.Stubable>(value: T): Rpc.Stub<T> };
   export abstract class RpcTarget implements Rpc.RpcTargetBranded {
     [Rpc.__RPC_TARGET_BRAND]: never;
   }
@@ -9400,8 +9453,7 @@ declare namespace CloudflareWorkersModule {
   export abstract class WorkflowEntrypoint<
     Env = unknown,
     T extends Rpc.Serializable<T> | unknown = unknown,
-  > implements Rpc.WorkflowEntrypointBranded
-  {
+  > implements Rpc.WorkflowEntrypointBranded {
     [Rpc.__WORKFLOW_ENTRYPOINT_BRAND]: never;
     protected ctx: ExecutionContext;
     protected env: Env;
@@ -9429,12 +9481,14 @@ declare module "cloudflare:sockets" {
     address: string | SocketAddress,
     options?: SocketOptions,
   ): Socket;
-  export { _connect as connect };
+  export type { _connect as connect };
 }
-type ConversionResponse = { name: string; mimeType: string } & (
-  | { format: "markdown"; tokens: number; data: string }
-  | { format: "error"; error: string }
-);
+type ConversionResponse =
+  & { name: string; mimeType: string }
+  & (
+    | { format: "markdown"; tokens: number; data: string }
+    | { format: "error"; error: string }
+  );
 type SupportedFileFormat = { mimeType: string; extension: string };
 declare abstract class ToMarkdownService {
   transform(
@@ -9697,17 +9751,19 @@ type VectorizeVectorMetadataFilter = {
     | Exclude<VectorizeVectorMetadataValue, string[]>
     | null
     | {
-        [Op in VectorizeVectorMetadataFilterOp]?: Exclude<
+      [Op in VectorizeVectorMetadataFilterOp]?:
+        | Exclude<
           VectorizeVectorMetadataValue,
           string[]
-        > | null;
-      }
+        >
+        | null;
+    }
     | {
-        [Op in VectorizeVectorMetadataFilterCollectionOp]?: Exclude<
-          VectorizeVectorMetadataValue,
-          string[]
-        >[];
-      };
+      [Op in VectorizeVectorMetadataFilterCollectionOp]?: Exclude<
+        VectorizeVectorMetadataValue,
+        string[]
+      >[];
+    };
 };
 /**
  * Supported distance metrics for an index.
@@ -9737,8 +9793,8 @@ interface VectorizeQueryOptions {
 type VectorizeIndexConfig =
   | { dimensions: number; metric: VectorizeDistanceMetric }
   | {
-      preset: string; // keep this generic, as we'll be adding more presets in the future and this is only in a read capacity
-    };
+    preset: string; // keep this generic, as we'll be adding more presets in the future and this is only in a read capacity
+  };
 /**
  * Metadata about an existing index.
  *
@@ -9786,8 +9842,10 @@ interface VectorizeVector {
 /**
  * Represents a matched vector for a query along with its score and (if specified) the matching vector information.
  */
-type VectorizeMatch = Pick<Partial<VectorizeVector>, "values"> &
-  Omit<VectorizeVector, "values"> & {
+type VectorizeMatch =
+  & Pick<Partial<VectorizeVector>, "values">
+  & Omit<VectorizeVector, "values">
+  & {
     /** The score or rank for similarity, when returned as a result */
     score: number;
   };

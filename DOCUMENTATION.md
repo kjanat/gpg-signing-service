@@ -52,7 +52,7 @@ Service:
 
 ### Base URL
 
-```
+```text
 https://gpg.kajkowalski.nl
 ```
 
@@ -60,21 +60,21 @@ https://gpg.kajkowalski.nl
 
 #### Public Endpoints (no auth)
 
-- GET /health
-- GET /public-key
+- `GET /health`
+- `GET /public-key`
 
 #### Protected Endpoints (OIDC)
 
-- POST /sign (requires GitHub Actions or GitLab CI OIDC token)
+- `POST /sign` (requires GitHub Actions or GitLab CI OIDC token)
 - Rate limited: 100 req/minute per identity
 
 #### Admin Endpoints (Bearer token)
 
-- POST /admin/keys (upload key)
-- GET /admin/keys (list keys)
-- GET /admin/keys/{keyId}/public (get public key)
-- DELETE /admin/keys/{keyId} (delete key)
-- GET /admin/audit (audit logs)
+- `POST /admin/keys` (upload key)
+- `GET /admin/keys` (list keys)
+- `GET /admin/keys/{keyId}/public` (get public key)
+- `DELETE /admin/keys/{keyId}` (delete key)
+- `GET /admin/audit` (audit logs)
 - Rate limited: 60 req/minute
 
 ### Response Headers
@@ -93,11 +93,13 @@ Host the specification with Swagger UI:
 
 ```bash
 # Using npm
-npx swagger-ui-dist --config src/swagger-initializer.js
+bunx swagger-ui-dist --config src/swagger-initializer.js
 
 # Using Docker
-docker run -p 8080:8080 -v $(pwd)/openapi.yaml:/openapi.yaml:ro \
-  -e SWAGGER_JSON=/openapi.yaml swaggerapi/swagger-ui
+docker run -p 8080:8080 \
+  -v $(pwd)/openapi.yaml:/openapi.yaml:ro \
+  -e SWAGGER_JSON=/openapi.yaml \
+  swaggerapi/swagger-ui
 
 # Using custom HTML
 # Create index.html that loads openapi.yaml with SwaggerUI
@@ -105,14 +107,19 @@ docker run -p 8080:8080 -v $(pwd)/openapi.yaml:/openapi.yaml:ro \
 
 ### Postman
 
-1. File → Import → Enter `https://gpg.kajkowalski.nl/openapi.yaml`
+1. File → Import → Enter:
+
+   ```text
+   https://gpg.kajkowalski.nl/openapi.yaml
+   ```
+
 2. Create environment variables for authentication tokens
 3. Use generated examples for all endpoints
 
 ### ReDoc (Beautiful Documentation)
 
 ```bash
-npx @redocly/cli build-docs openapi.yaml
+bunx @redocly/cli build-docs openapi.yaml
 ```
 
 or
@@ -142,19 +149,19 @@ Generate client libraries in multiple languages:
 
 ```bash
 # Using openapi-generator-cli
-npx @openapitools/openapi-generator-cli generate \
+bunx @openapitools/openapi-generator-cli generate \
   -i openapi.yaml \
   -g python \
   -o ./python-client
 
 # JavaScript/TypeScript
-npx @openapitools/openapi-generator-cli generate \
+bunx @openapitools/openapi-generator-cli generate \
   -i openapi.yaml \
   -g typescript-fetch \
   -o ./typescript-client
 
 # Go
-npx @openapitools/openapi-generator-cli generate \
+bunx @openapitools/openapi-generator-cli generate \
   -i openapi.yaml \
   -g go \
   -o ./go-client
@@ -173,8 +180,11 @@ npx @openapitools/openapi-generator-cli generate \
     curl https://gpg.kajkowalski.nl/public-key | gpg --import
 
     # Get OIDC token
-    OIDC_TOKEN=$(curl -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-      "$ACTIONS_ID_TOKEN_REQUEST_URL" | jq -r '.token')
+    OIDC_TOKEN=$(
+      curl -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+      "$ACTIONS_ID_TOKEN_REQUEST_URL" \
+      | jq -r '.token'
+    )
 
     # Sign commit
     SIGNATURE=$(curl -X POST \
@@ -189,9 +199,9 @@ npx @openapitools/openapi-generator-cli generate \
 sign_commits:
   script:
     - curl https://gpg.kajkowalski.nl/public-key | gpg --import
-    - curl -X POST -H "Authorization:
-        Bearer $CI_JOB_JWT" \ --data-raw "$(git cat-file commit HEAD)" \
-        https://gpg.kajkowalski.nl/sign
+    - curl -X POST -H "Authorization{:} Bearer $CI_JOB_JWT" \
+    --data-raw "$(git cat-file commit HEAD)" \
+      https://gpg.kajkowalski.nl/sign
 ```
 
 ### Monitor Service Health
@@ -209,13 +219,14 @@ curl -s https://gpg.kajkowalski.nl/health \
 
 ```bash
 # Get all key uploads in last 7 days
-DAYS_AGO=$(date -u -d '7 days ago' +%Y-%m-%dT00:00:00Z)
-curl "https://gpg.kajkowalski.nl/admin/audit?action=key_upload&startDate=$DAYS_AGO" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | jq '.logs'
+DAYS_AGO="$(date -u -d '7 days ago' +%Y-%m-%dT00:00:00Z)"
+curl "https://gpg.kajkowalski.nl/admin/audit?action=key_upload&startDate=${DAYS_AGO}" \
+  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+  | jq '.logs'
 
 # Get failed signing attempts
 curl "https://gpg.kajkowalski.nl/admin/audit?action=sign" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
   | jq '.logs | map(select(.success == false))'
 ```
 
@@ -229,22 +240,25 @@ OLD_KEY_ID="signing-key-v1"
 NEW_KEY_ID="signing-key-v2"
 
 # Upload new key
-NEW_KEY=$(cat new-key.asc) # Armored private key
-curl -X POST https://gpg.kajkowalski.nl/admin/keys \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "{\"keyId\": \"$NEW_KEY_ID\", \"armoredPrivateKey\": \"$NEW_KEY\"}"
+NEW_KEY="$(cat new-key.asc)" # Armored private key
+curl -X POST \
+  https://gpg.kajkowalski.nl/admin/keys \
+  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d "{'keyId': \"${NEW_KEY_ID}\", 'armoredPrivateKey': \"${NEW_KEY}\"}"
 
 # Verify new key works
-curl https://gpg.kajkowalski.nl/public-key?keyId=$NEW_KEY_ID | gpg --import
+curl "https://gpg.kajkowalski.nl/public-key?keyId=${NEW_KEY_ID}" \
+  | gpg --import
 
 # Update CI/CD to use new key
 # ... (update workflows to use keyId=$NEW_KEY_ID) ...
 
 # Delete old key after transition period
 sleep 86400 # Wait 24 hours
-curl -X DELETE https://gpg.kajkowalski.nl/admin/keys/$OLD_KEY_ID \
-  -H "Authorization: Bearer $ADMIN_TOKEN"
+curl -X DELETE \
+  "https://gpg.kajkowalski.nl/admin/keys/${OLD_KEY_ID}" \
+  -H "Authorization: Bearer ${ADMIN_TOKEN}"
 ```
 
 ## Error Handling
@@ -259,7 +273,7 @@ All errors follow consistent format:
 }
 ```
 
-Reference error codes in the Error Codes section of API.md.
+Reference error codes in the Error Codes section of `API.md`.
 
 ## Rate Limiting Strategy
 
@@ -269,7 +283,7 @@ Each identity has a refillable bucket of tokens:
 
 - `/sign` endpoint: 100 tokens/minute per OIDC identity
 - `/admin/*` endpoints: 60 tokens/minute per bearer token
-- When bucket empty, requests rejected with HTTP 429
+- When bucket empty, requests rejected with `HTTP 429`
 
 ### Handling Rate Limits
 
@@ -288,10 +302,10 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
   HTTP_CODE=$(echo "$RESPONSE" | tail -1)
   BODY=$(echo "$RESPONSE" | head -n -1)
 
-  if [ "$HTTP_CODE" = "200" ]; then
+  if [[ "$HTTP_CODE" = "200" ]]; then
     echo "$BODY"
     exit 0
-  elif [ "$HTTP_CODE" = "429" ]; then
+  elif [[ "$HTTP_CODE" = "429" ]]; then
     RETRY_AFTER=$(echo "$BODY" | jq .retryAfter)
     echo "Rate limited, waiting ${RETRY_AFTER}s..."
     sleep $RETRY_AFTER
@@ -330,7 +344,7 @@ exit 1
 
 ## Troubleshooting
 
-### 401 Unauthorized
+### `401 Unauthorized`
 
 **Cause**: Invalid or missing authentication
 
@@ -342,15 +356,18 @@ exit 1
 
 ```bash
 # For OIDC
-OIDC_TOKEN=$(curl -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-  "$ACTIONS_ID_TOKEN_REQUEST_URL" | jq -r '.token')
+OIDC_TOKEN=$(
+  curl -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+    "$ACTIONS_ID_TOKEN_REQUEST_URL" \
+    | jq -r '.token'
+)
 
 # For Admin
 curl -X POST https://gpg.kajkowalski.nl/admin/keys \
   -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
-### 429 Rate Limited
+### `429 Rate Limited`
 
 **Cause**: Too many requests in short time
 
@@ -359,7 +376,7 @@ curl -X POST https://gpg.kajkowalski.nl/admin/keys \
 
 **Solution**: Implement exponential backoff with jitter
 
-### 503 Service Unavailable
+### `503 Service Unavailable`
 
 **Cause**: Rate limiter Durable Object offline
 
@@ -368,7 +385,7 @@ curl -X POST https://gpg.kajkowalski.nl/admin/keys \
 
 **Solution**: Retry after brief delay, use circuit breaker pattern
 
-### Key Not Found (404)
+### `Key Not Found (404)`
 
 **Cause**: Key ID doesn't exist or typo
 
@@ -381,7 +398,8 @@ curl -X POST https://gpg.kajkowalski.nl/admin/keys \
 ```bash
 # List all available keys
 curl https://gpg.kajkowalski.nl/admin/keys \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | jq '.keys[].keyId'
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  | jq '.keys[].keyId'
 ```
 
 ## API Versioning
@@ -396,8 +414,8 @@ Breaking changes will result in new version. Current approach:
 
 ## Support Resources
 
-- **Documentation**: See API.md for detailed examples
-- **OpenAPI Spec**: Import openapi.yaml into API tools
+- **Documentation**: See `API.md` for detailed examples
+- **OpenAPI Spec**: Import `openapi.yaml` into API tools
 - **Repository**: https://github.com/kjanat/gpg-signing-service
 - **Issues**: https://github.com/kjanat/gpg-signing-service/issues
 - **Security**: GitHub security advisory process

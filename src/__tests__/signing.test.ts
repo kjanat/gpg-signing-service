@@ -1,17 +1,18 @@
-import { describe, it, expect } from "vitest";
+/** biome-ignore-all lint/style/noNonNullAssertion: This is a test file */
 import * as openpgp from "openpgp";
-import {
-  signCommitData,
-  parseAndValidateKey,
-  extractPublicKey,
-  createStoredKey,
-} from "~/utils/signing";
+import { describe, expect, it } from "vitest";
 import type { StoredKey } from "~/types";
 import {
-  createKeyId,
-  createKeyFingerprint,
   createArmoredPrivateKey,
+  createKeyFingerprint,
+  createKeyId,
 } from "~/types";
+import {
+  createStoredKey,
+  extractPublicKey,
+  parseAndValidateKey,
+  signCommitData,
+} from "~/utils/signing";
 
 // Generate a test key for use in tests
 async function generateTestKey(passphrase?: string) {
@@ -115,8 +116,9 @@ describe("signCommitData", () => {
 
   it("should sign commit data with encrypted key", async () => {
     const passphrase = "secure-pass-456";
-    const { privateKey, keyId, fingerprint } =
-      await generateTestKey(passphrase);
+    const { privateKey, keyId, fingerprint } = await generateTestKey(
+      passphrase,
+    );
 
     const storedKey: StoredKey = {
       armoredPrivateKey: createArmoredPrivateKey(privateKey),

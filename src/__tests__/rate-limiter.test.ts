@@ -2,7 +2,7 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck - cloudflare:test types are provided at runtime by vitest-pool-workers
 import { env } from "cloudflare:test";
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { RateLimitResult } from "~/types";
 
 describe("RateLimiter Durable Object", () => {

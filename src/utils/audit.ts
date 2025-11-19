@@ -1,4 +1,4 @@
-import type { AuditLogEntry, ErrorCode, AuditAction } from "~/types";
+import type { AuditAction, AuditLogEntry, ErrorCode } from "~/types";
 
 export async function logAuditEvent(
   db: D1Database,

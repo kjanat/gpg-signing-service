@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { fetchWithTimeout, fetchJsonWithTimeout } from "~/utils/fetch";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fetchJsonWithTimeout, fetchWithTimeout } from "~/utils/fetch";
 
 describe("fetchWithTimeout", () => {
   beforeEach(() => {

@@ -5,19 +5,19 @@ Complete, working examples for integrating with the GPG Signing Service API.
 ## Directory Structure
 
 ```tree
-examples/
-├── bash/                    # Shell script examples
+gpg-signing-service/examples/
+├── bash/                  # Shell script examples
 │   ├── sign-commit.sh
 │   ├── manage-keys.sh
 │   └── query-audit.sh
-├── github-actions/          # GitHub Actions workflows
+├── github-actions/        # GitHub Actions workflows
 │   └── sign-commits.yml
-├── gitlab-ci/               # GitLab CI pipelines
+├── gitlab-ci/             # GitLab CI pipelines
 │   └── sign-commits.yml
-├── python/                  # Python SDK examples
+├── python/                # Python SDK examples
 │   ├── sign_commit.py
 │   └── manage_keys.py
-└── README.md               # This file
+└── README.md              << This file
 ```
 
 ## Quick Start
@@ -46,18 +46,23 @@ jobs:
           GPG_SERVICE_URL: https://gpg.kajkowalski.nl
         run: |
           # Get OIDC token
-          OIDC_TOKEN=$(curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL" | jq -r '.token')
+          OIDC_TOKEN=$(
+            curl -s \
+              -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL" \
+            | jq -r '.token'
+          )
 
           # Get public key
-          curl -s ${{ env.GPG_SERVICE_URL }}/public-key | gpg --import
+          curl -s "$GPG_SERVICE_URL/public-key" | gpg --import
 
           # Sign current commit
           COMMIT_DATA=$(git cat-file commit HEAD)
           SIGNATURE=$(curl -s -X POST \
             -H "Authorization: Bearer $OIDC_TOKEN" \
             --data-raw "$COMMIT_DATA" \
-            ${{ env.GPG_SERVICE_URL }}/sign)
+            "$GPG_SERVICE_URL/sign"
+          )
 
           # Display signature
           echo "Signature created successfully"
@@ -76,11 +81,11 @@ sign_commits:
     - curl https://gpg.kajkowalski.nl/public-key | gpg --import
     # Sign commit
     - |
-      SIGNATURE=$(curl -X POST \
-        -H "Authorization: Bearer $CI_JOB_JWT" \
-        --data-raw "$(git cat-file commit HEAD)" \
-        https://gpg.kajkowalski.nl/sign)
-      echo "Signed successfully"
+        SIGNATURE=$(curl -X POST \
+          -H "Authorization: Bearer $CI_JOB_JWT" \
+          --data-raw "$(git cat-file commit HEAD)" \
+          https://gpg.kajkowalski.nl/sign)
+        echo "Signed successfully"
 ```
 
 ### 3. Manage Keys (Admin)
@@ -94,8 +99,8 @@ BASE_URL="https://gpg.kajkowalski.nl"
 # Upload a new key
 echo "Uploading signing key..."
 RESPONSE=$(
-  curl -s -X POST $BASE_URL/admin/keys \
-    -H "Authorization: Bearer $ADMIN_TOKEN" \
+  curl -s -X POST "${BASE_URL}/admin/keys" \
+    -H "Authorization: Bearer ${ADMIN_TOKEN}" \
     -H "Content-Type: application/json" \
     -d @- << EOF
 {
@@ -111,7 +116,8 @@ echo "$RESPONSE" | jq .
 # List all keys
 echo "Available keys:"
 curl -s $BASE_URL/admin/keys \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | jq '.keys[] | {keyId, fingerprint, algorithm}'
+  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+  | jq '.keys[] | {keyId, fingerprint, algorithm}'
 ```
 
 ### 4. Query Audit Logs
@@ -125,20 +131,21 @@ BASE_URL="https://gpg.kajkowalski.nl"
 # Get signing operations from last 24 hours
 YESTERDAY=$(date -u -d '1 day ago' +%Y-%m-%dT00:00:00Z)
 echo "Signing operations (last 24 hours):"
-curl -s "$BASE_URL/admin/audit?action=sign&startDate=$YESTERDAY" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
+curl -s "${BASE_URL}/admin/audit?action=sign&startDate=${YESTERDAY}" \
+  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
   | jq '.logs[] | {timestamp, subject, success}'
 
 # Find failed operations
 echo "Failed operations:"
-curl -s "$BASE_URL/admin/audit" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
+curl -s "${BASE_URL}/admin/audit" \
+  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
   | jq '.logs[] | select(.success == false) | {timestamp, action, errorCode}'
 ```
 
 ## Complete Examples
 
-### Sign Commit with Error Handling (Bash)
+<details>
+<summary>Sign Commit with Error Handling (Bash)</summary>
 
 **File**: `bash/sign-commit.sh`
 
@@ -282,7 +289,10 @@ main() {
 main "$@"
 ```
 
-### Manage Keys (Python)
+</details>
+
+<details>
+<summary>Manage Keys (Python)</summary>
 
 **File**: `python/manage_keys.py`
 
@@ -305,10 +315,13 @@ from urllib3.util.retry import Retry
 class GPGSigningServiceClient:
     """Client for GPG Signing Service API."""
 
-    def __init__(self, base_url: str = "https://gpg.kajkowalski.nl",
-                 admin_token: Optional[str] = None):
-        self.base_url = base_url.rstrip('/')
-        self.admin_token = admin_token or os.environ.get('ADMIN_TOKEN')
+    def __init__(
+        self,
+        base_url: str = "https://gpg.kajkowalski.nl",
+        admin_token: Optional[str] = None,
+    ):
+        self.base_url = base_url.rstrip("/")
+        self.admin_token = admin_token or os.environ.get("ADMIN_TOKEN")
         self.session = self._create_session()
 
     def _create_session(self) -> requests.Session:
@@ -361,7 +374,7 @@ class GPGSigningServiceClient:
         )
         response.raise_for_status()
         data = response.json()
-        return data.get('keys', [])
+        return data.get("keys", [])
 
     def get_public_key(self, key_id: str) -> str:
         """Get public key for a specific key ID."""
@@ -381,25 +394,29 @@ class GPGSigningServiceClient:
         response.raise_for_status()
         return response.json()
 
-    def get_audit_logs(self, action: Optional[str] = None,
-                       subject: Optional[str] = None,
-                       start_date: Optional[str] = None,
-                       end_date: Optional[str] = None,
-                       limit: int = 100, offset: int = 0) -> dict:
+    def get_audit_logs(
+        self,
+        action: Optional[str] = None,
+        subject: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict:
         """Query audit logs."""
         params = {
-            'limit': limit,
-            'offset': offset,
+            "limit": limit,
+            "offset": offset,
         }
 
         if action:
-            params['action'] = action
+            params["action"] = action
         if subject:
-            params['subject'] = subject
+            params["subject"] = subject
         if start_date:
-            params['startDate'] = start_date
+            params["startDate"] = start_date
         if end_date:
-            params['endDate'] = end_date
+            params["endDate"] = end_date
 
         response = self.session.get(
             f"{self.base_url}/admin/audit",
@@ -409,15 +426,19 @@ class GPGSigningServiceClient:
         response.raise_for_status()
         return response.json()
 
-    def rotate_keys(self, new_key_id: str, armored_private_key: str,
-                    old_key_id: Optional[str] = None,
-                    grace_period_hours: int = 24) -> dict:
+    def rotate_keys(
+        self,
+        new_key_id: str,
+        armored_private_key: str,
+        old_key_id: Optional[str] = None,
+        grace_period_hours: int = 24,
+    ) -> dict:
         """Rotate signing keys (upload new, delete old after grace period)."""
         results = {}
 
         # Upload new key
         print(f"Uploading new key: {new_key_id}")
-        results['new_key'] = self.upload_key(new_key_id, armored_private_key)
+        results["new_key"] = self.upload_key(new_key_id, armored_private_key)
         print(f"✓ New key uploaded successfully")
         print(f"  Fingerprint: {results['new_key']['fingerprint']}")
         print(f"  Algorithm: {results['new_key']['algorithm']}")
@@ -433,7 +454,7 @@ class GPGSigningServiceClient:
 
             # Then delete old key
             print(f"\nDeleting old key: {old_key_id}")
-            results['deleted'] = self.delete_key(old_key_id)
+            results["deleted"] = self.delete_key(old_key_id)
             print(f"✓ Old key deleted successfully")
 
         return results
@@ -445,41 +466,47 @@ def main():
         description="Manage GPG signing keys via GPG Signing Service API"
     )
 
-    subparsers = parser.add_subparsers(dest='command', required=True)
+    subparsers = parser.add_subparsers(dest="command", required=True)
 
     # List command
-    subparsers.add_parser('list', help='List all signing keys')
+    subparsers.add_parser("list", help="List all signing keys")
 
     # Upload command
-    upload_parser = subparsers.add_parser('upload', help='Upload a new signing key')
-    upload_parser.add_argument('key_id', help='Key identifier')
-    upload_parser.add_argument('key_file', help='Path to armored private key file')
+    upload_parser = subparsers.add_parser("upload", help="Upload a new signing key")
+    upload_parser.add_argument("key_id", help="Key identifier")
+    upload_parser.add_argument("key_file", help="Path to armored private key file")
 
     # Delete command
-    delete_parser = subparsers.add_parser('delete', help='Delete a signing key')
-    delete_parser.add_argument('key_id', help='Key identifier to delete')
+    delete_parser = subparsers.add_parser("delete", help="Delete a signing key")
+    delete_parser.add_argument("key_id", help="Key identifier to delete")
 
     # Audit command
-    audit_parser = subparsers.add_parser('audit', help='Query audit logs')
-    audit_parser.add_argument('--action', help='Filter by action (sign, key_upload, key_rotate)')
-    audit_parser.add_argument('--subject', help='Filter by subject')
-    audit_parser.add_argument('--days', type=int, default=7, help='Days to include')
-    audit_parser.add_argument('--limit', type=int, default=50, help='Max entries')
+    audit_parser = subparsers.add_parser("audit", help="Query audit logs")
+    audit_parser.add_argument(
+        "--action", help="Filter by action (sign, key_upload, key_rotate)"
+    )
+    audit_parser.add_argument("--subject", help="Filter by subject")
+    audit_parser.add_argument("--days", type=int, default=7, help="Days to include")
+    audit_parser.add_argument("--limit", type=int, default=50, help="Max entries")
 
     # Rotate command
-    rotate_parser = subparsers.add_parser('rotate', help='Rotate signing keys')
-    rotate_parser.add_argument('new_key_id', help='New key identifier')
-    rotate_parser.add_argument('key_file', help='Path to armored private key file')
-    rotate_parser.add_argument('--old-key-id', help='Old key to delete')
-    rotate_parser.add_argument('--grace-hours', type=int, default=24,
-                               help='Grace period before deleting old key')
+    rotate_parser = subparsers.add_parser("rotate", help="Rotate signing keys")
+    rotate_parser.add_argument("new_key_id", help="New key identifier")
+    rotate_parser.add_argument("key_file", help="Path to armored private key file")
+    rotate_parser.add_argument("--old-key-id", help="Old key to delete")
+    rotate_parser.add_argument(
+        "--grace-hours",
+        type=int,
+        default=24,
+        help="Grace period before deleting old key",
+    )
 
     args = parser.parse_args()
 
     client = GPGSigningServiceClient()
 
     try:
-        if args.command == 'list':
+        if args.command == "list":
             keys = client.list_keys()
             if not keys:
                 print("No keys found")
@@ -494,21 +521,23 @@ def main():
                 print(f"   Created: {key['createdAt']}")
                 print()
 
-        elif args.command == 'upload':
-            with open(args.key_file, 'r') as f:
+        elif args.command == "upload":
+            with open(args.key_file, "r") as f:
                 armored_key = f.read()
 
             print(f"Uploading key: {args.key_id}")
             result = client.upload_key(args.key_id, armored_key)
             print(json.dumps(result, indent=2))
 
-        elif args.command == 'delete':
+        elif args.command == "delete":
             print(f"Deleting key: {args.key_id}")
             result = client.delete_key(args.key_id)
             print(json.dumps(result, indent=2))
 
-        elif args.command == 'audit':
-            start_date = (datetime.utcnow() - timedelta(days=args.days)).isoformat() + 'Z'
+        elif args.command == "audit":
+            start_date = (
+                datetime.utcnow() - timedelta(days=args.days)
+            ).isoformat() + "Z"
             result = client.get_audit_logs(
                 action=args.action,
                 subject=args.subject,
@@ -518,13 +547,14 @@ def main():
 
             print(f"Audit logs (last {args.days} days):")
             print("-" * 80)
-            for log in result['logs']:
-                print(f"{log['timestamp']} | {log['action']:12} | {log['subject']:20} | "
-                      f"{'✓' if log['success'] else '✗'}")
+            for log in result["logs"]:
+                print(
+                    f"{log['timestamp']} | {log['action']:12} | {log['subject']:20} | {'✓' if log['success'] else '✗'}"
+                )
             print(f"\nTotal: {result['count']} entries")
 
-        elif args.command == 'rotate':
-            with open(args.key_file, 'r') as f:
+        elif args.command == "rotate":
+            with open(args.key_file, "r") as f:
                 armored_key = f.read()
 
             result = client.rotate_keys(
@@ -543,11 +573,14 @@ def main():
         sys.exit(1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
 ```
 
-### Query Audit Logs (Bash)
+</details>
+
+<details>
+<summary>Query Audit Logs (Bash)</summary>
 
 **File**: `bash/query-audit.sh`
 
@@ -616,6 +649,8 @@ case "${1:-all}" in
 esac
 ```
 
+</details>
+
 ## Running the Examples
 
 ### Prerequisites
@@ -653,13 +688,16 @@ export ACTIONS_ID_TOKEN_REQUEST_URL="..."
 python3 python/manage_keys.py list
 
 # Upload a key
-python3 python/manage_keys.py upload my-key signing-key.asc
+python3 python/manage_keys.py upload \
+  my-key signing-key.asc
 
 # Query audit logs
 ./bash/query-audit.sh signing
 
 # Rotate keys
-python3 python/manage_keys.py rotate new-key-v2 signing-key-v2.asc --old-key-id old-key-v1
+python3 python/manage_keys.py rotate \
+  new-key-v2 signing-key-v2.asc \
+  --old-key-id old-key-v1
 ```
 
 ## Integration with Your Project
@@ -670,4 +708,4 @@ python3 python/manage_keys.py rotate new-key-v2 signing-key-v2.asc --old-key-id 
 4. Monitor audit logs for operations
 5. Implement error handling as needed
 
-For more details, see the main API.md and openapi.yaml files.
+For more details, see the main `API.md` and `openapi.yaml` files.

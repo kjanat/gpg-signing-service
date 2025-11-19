@@ -845,4 +845,3 @@ components:
 
 security:
   - {} # Public endpoints have no default security
-

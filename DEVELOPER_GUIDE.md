@@ -262,7 +262,7 @@ OpenAPI 3.1.0 with:
 
 ### Specification Compliance
 
-All endpoints and responses validate against `openapi.yaml` schema.  
+All endpoints and responses validate against `openapi.yaml` schema.\
 Use tools like:
 
 ```bash
@@ -305,7 +305,7 @@ DEVELOPER_GUIDE.md              - This file
 
 ### Examples (in examples/ directory)
 
-```
+```tree
 bash/
   sign-commit.sh      - Production-quality signing script
   manage-keys.sh      - Key management operations
@@ -331,6 +331,6 @@ gitlab-ci/
 
 ---
 
-Last updated: 2024-01-15  
-OpenAPI Version: `3.1.0`  
+Last updated: 2025-11-19\
+OpenAPI Version: `3.1.0`\
 API Version: `1.0.0`

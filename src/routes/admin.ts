@@ -1,8 +1,8 @@
 import { Hono } from "hono";
-import type { Env, StoredKey, KeyUploadRequest, ErrorCode } from "~/types";
+import type { Env, ErrorCode, KeyUploadRequest, StoredKey } from "~/types";
 import { createArmoredPrivateKey, createKeyId } from "~/types";
-import { parseAndValidateKey, extractPublicKey } from "~/utils/signing";
-import { logAuditEvent, getAuditLogs } from "~/utils/audit";
+import { getAuditLogs, logAuditEvent } from "~/utils/audit";
+import { extractPublicKey, parseAndValidateKey } from "~/utils/signing";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -80,8 +80,9 @@ app.post("/keys", async (c) => {
       201,
     );
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Key upload failed";
+    const message = error instanceof Error
+      ? error.message
+      : "Key upload failed";
 
     // Audit failed key upload attempt
     await logAuditEvent(c.env.AUDIT_DB, {
@@ -233,16 +234,16 @@ app.delete("/keys/:keyId", async (c) => {
 // Get audit logs
 app.get("/audit", async (c) => {
   try {
-    const limit = parseInt(c.req.query("limit") || "100");
-    const offset = parseInt(c.req.query("offset") || "0");
+    const limit = parseInt(c.req.query("limit") || "100", 10);
+    const offset = parseInt(c.req.query("offset") || "0", 10);
 
     // Validate pagination parameters
     if (
-      isNaN(limit) ||
-      isNaN(offset) ||
-      limit < 1 ||
-      limit > 1000 ||
-      offset < 0
+      Number.isNaN(limit)
+      || Number.isNaN(offset)
+      || limit < 1
+      || limit > 1000
+      || offset < 0
     ) {
       return c.json(
         {

@@ -1,12 +1,12 @@
 import type { MiddlewareHandler } from "hono";
 import type {
   Env,
-  Variables,
-  OIDCClaims,
-  LegacyJWKSResponse,
   LegacyJWK,
+  LegacyJWKSResponse,
+  OIDCClaims,
+  Variables,
 } from "~/types";
-import { markClaimsAsValidated, createIdentity } from "~/types";
+import { createIdentity, markClaimsAsValidated } from "~/types";
 import { fetchWithTimeout } from "~/utils/fetch";
 
 // OIDC validation middleware
@@ -35,8 +35,9 @@ export const oidcAuth: MiddlewareHandler<{
 
     return next();
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Token validation failed";
+    const message = error instanceof Error
+      ? error.message
+      : "Token validation failed";
     return c.json({ error: message, code: "AUTH_INVALID" }, 401);
   }
 };
@@ -243,9 +244,8 @@ async function verifySignature(
   // Base64url decode signature
   const signatureBuffer = base64UrlDecode(signature);
 
-  const algorithm =
-    alg.startsWith("ES") ?
-      { name: "ECDSA", hash: `SHA-${alg.slice(2)}` }
+  const algorithm = alg.startsWith("ES")
+    ? { name: "ECDSA", hash: `SHA-${alg.slice(2)}` }
     : { name: "RSASSA-PKCS1-v1_5" };
 
   return crypto.subtle.verify(algorithm, key, signatureBuffer, dataBuffer);

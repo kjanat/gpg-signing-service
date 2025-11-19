@@ -14,6 +14,22 @@ openpgp.js.
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    CI[CI Pipeline] -->|OIDC Token| SS[Signing Service]
+    SS -->|Signed Commit| SC[Signed Commit]
+
+    subgraph Storage
+        direction TB
+        DO[("Durable Object\n(Key Storage)")]
+        D1[("D1 Database\n(Audit Logs)")]
+    end
+
+    SS --> DO
+    SS --> D1
+```
+
+<!--
 ```
 CI Pipeline -> OIDC Token -> Signing Service -> Signed Commit
                                    |
@@ -22,6 +38,7 @@ CI Pipeline -> OIDC Token -> Signing Service -> Signed Commit
               Durable Object               D1 Database
               (Key Storage)               (Audit Logs)
 ```
+-->
 
 ## Setup
 

@@ -2,12 +2,12 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck - cloudflare:test types are provided at runtime by vitest-pool-workers
 import {
-  env,
   createExecutionContext,
+  env,
   waitOnExecutionContext,
 } from "cloudflare:test";
-import { describe, it, expect } from "vitest";
 import app from "gpg-signing-service";
+import { describe, expect, it } from "vitest";
 
 // Helper to make requests
 async function makeRequest(

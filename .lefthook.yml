@@ -1,13 +1,12 @@
 pre-commit:
   jobs:
-    - name: format
-      run: bun run format
-      glob: "*.{js,ts,json,md,yml,yaml}"
-      stage_fixed: true
-
     - name: lint
       run: bun run lint:fix
       glob: "*.{js,ts}"
+      stage_fixed: true
+
+    - name: format
+      run: dprint fmt --staged
       stage_fixed: true
 
     - name: typegen

@@ -1,18 +1,18 @@
 import * as openpgp from "openpgp";
 import type {
-  StoredKey,
-  SigningResult,
-  ParsedKeyInfo,
   ArmoredPrivateKey,
+  ParsedKeyInfo,
+  SigningResult,
+  StoredKey,
 } from "~/types";
 import {
-  createKeyId,
-  createKeyFingerprint,
   createArmoredPrivateKey,
+  createKeyFingerprint,
+  createKeyId,
 } from "~/types";
 
 // Re-export types for convenience
-export type { SigningResult, ParsedKeyInfo };
+export type { ParsedKeyInfo, SigningResult };
 
 export async function signCommitData(
   commitData: string,
@@ -76,8 +76,8 @@ export async function parseAndValidateKey(
     22: "EdDSA",
   };
 
-  const algorithm =
-    algorithmMap[keyPacket.algorithm] || `Unknown(${keyPacket.algorithm})`;
+  const algorithm = algorithmMap[keyPacket.algorithm]
+    || `Unknown(${keyPacket.algorithm})`;
 
   // Get user ID
   const userIds = privateKey.getUserIDs();

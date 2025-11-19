@@ -17,19 +17,19 @@ sign-commit:
 
     # Request signature from signing service
     - |
-      SIGNATURE=$(curl -s -X POST "${SIGNING_SERVICE_URL}/sign" \
-        -H "Authorization: Bearer ${GITLAB_OIDC_TOKEN}" \
-        -H "Content-Type: text/plain" \
-        -H "X-Request-ID: ${CI_PIPELINE_ID}-${CI_JOB_ID}" \
-        --data "$COMMIT_DATA")
+        SIGNATURE=$(curl -s -X POST "${SIGNING_SERVICE_URL}/sign" \
+          -H "Authorization: Bearer ${GITLAB_OIDC_TOKEN}" \
+          -H "Content-Type: text/plain" \
+          -H "X-Request-ID: ${CI_PIPELINE_ID}-${CI_JOB_ID}" \
+          --data "$COMMIT_DATA")
 
     # Verify we got a valid signature
     - |
-      if ! echo "$SIGNATURE" | grep -q "BEGIN PGP SIGNATURE"; then
-        echo "Error: Invalid signature response"
-        echo "$SIGNATURE"
-        exit 1
-      fi
+        if ! echo "$SIGNATURE" | grep -q "BEGIN PGP SIGNATURE"; then
+          echo "Error: Invalid signature response"
+          echo "$SIGNATURE"
+          exit 1
+        fi
 
     # Store signature
     - echo "$SIGNATURE" > /tmp/signature.asc
@@ -43,15 +43,15 @@ sign-commit:
 
     # Create signed commit
     - |
-      {
-        echo "tree $TREE"
-        [ -n "$PARENT" ] && echo "parent $PARENT"
-        echo "$AUTHOR"
-        echo "$COMMITTER"
-        echo "gpgsig $(cat /tmp/signature.asc | sed '2,$s/^/ /')"
-        echo ""
-        echo "$MESSAGE"
-      } | git hash-object -t commit --stdin -w > /tmp/new_commit
+        {
+          echo "tree $TREE"
+          [ -n "$PARENT" ] && echo "parent $PARENT"
+          echo "$AUTHOR"
+          echo "$COMMITTER"
+          echo "gpgsig $(cat /tmp/signature.asc | sed '2,$s/^/ /')"
+          echo ""
+          echo "$MESSAGE"
+        } | git hash-object -t commit --stdin -w > /tmp/new_commit
 
     # Update reference
     - git update-ref HEAD $(cat /tmp/new_commit)
@@ -60,4 +60,4 @@ sign-commit:
     - curl -s "${SIGNING_SERVICE_URL}/public-key" | gpg --import
     - git verify-commit HEAD || true
   rules:
-    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "master"

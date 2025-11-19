@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { logAuditEvent, getAuditLogs } from "~/utils/audit";
+/** biome-ignore-all lint/style/noNonNullAssertion: This is a test file */
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuditLogEntry } from "~/types";
+import { getAuditLogs, logAuditEvent } from "~/utils/audit";
 
 // Mock D1Database
 function createMockDb() {
@@ -35,7 +36,7 @@ describe("logAuditEvent", () => {
       requestId: "req-123",
       action: "sign",
       issuer: "https://github.com",
-      subject: "repo:owner/repo:ref:refs/heads/main",
+      subject: "repo:owner/repo:ref:refs/heads/master",
       keyId: "KEY123",
       success: true,
     });
@@ -49,7 +50,7 @@ describe("logAuditEvent", () => {
       "req-123",
       "sign",
       "https://github.com",
-      "repo:owner/repo:ref:refs/heads/main",
+      "repo:owner/repo:ref:refs/heads/master",
       "KEY123",
       1, // success = true
       null, // errorCode
@@ -95,7 +96,7 @@ describe("logAuditEvent", () => {
       subject: "admin-user",
       keyId: "KEY456",
       success: true,
-      metadata: '{"algorithm":"RSA"}',
+      metadata: "{\"algorithm\":\"RSA\"}",
     });
 
     expect(db._mockBind).toHaveBeenCalledWith(
@@ -108,7 +109,7 @@ describe("logAuditEvent", () => {
       "KEY456",
       1,
       null,
-      '{"algorithm":"RSA"}',
+      "{\"algorithm\":\"RSA\"}",
     );
   });
 
@@ -246,7 +247,7 @@ describe("getAuditLogs", () => {
           key_id: "KEY789",
           success: 0,
           error_code: "KEY_NOT_FOUND",
-          metadata: '{"reason":"expired"}',
+          metadata: "{\"reason\":\"expired\"}",
         },
       ],
     });
@@ -263,7 +264,7 @@ describe("getAuditLogs", () => {
       keyId: "KEY789",
       success: false,
       errorCode: "KEY_NOT_FOUND",
-      metadata: '{"reason":"expired"}',
+      metadata: "{\"reason\":\"expired\"}",
     });
   });
 });

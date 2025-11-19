@@ -54,9 +54,8 @@ export class RateLimiter implements DurableObject {
     const bucket = await this.getBucket(identity);
     const resetAt = bucket.lastRefill + this.windowMs;
 
-    const result: RateLimitResult =
-      bucket.tokens > 0 ?
-        createRateLimitAllowed(Math.floor(bucket.tokens), resetAt)
+    const result: RateLimitResult = bucket.tokens > 0
+      ? createRateLimitAllowed(Math.floor(bucket.tokens), resetAt)
       : createRateLimitDenied(resetAt);
 
     return new Response(JSON.stringify(result), {

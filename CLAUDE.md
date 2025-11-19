@@ -25,7 +25,7 @@ bun run generate-key # Generate GPG key in .keys/
 
 ## Project Structure
 
-```
+```tree
 src/
   index.ts              # Main Hono app
   types.ts              # TypeScript interfaces

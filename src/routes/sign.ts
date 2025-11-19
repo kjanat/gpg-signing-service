@@ -1,16 +1,16 @@
 import { Hono } from "hono";
 import type {
   Env,
-  Variables,
+  ErrorCode,
+  Identity,
+  RateLimitResult,
   StoredKey,
   ValidatedOIDCClaims,
-  RateLimitResult,
-  Identity,
-  ErrorCode,
+  Variables,
 } from "~/types";
 import { createKeyId } from "~/types";
-import { signCommitData } from "~/utils/signing";
 import { logAuditEvent } from "~/utils/audit";
+import { signCommitData } from "~/utils/signing";
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 

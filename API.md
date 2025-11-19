@@ -689,11 +689,11 @@ sign_commits:
     - git config user.email "ci@gitlab.com"
     - git config user.name "GitLab CI"
     - |
-      git config user.signingkey "$(
-        curl -s https://gpg.kajkowalski.nl/public-key |
-        gpg --import-options show-only --import --with-colons 2>/dev/null |
-        awk -F: '/^fpr:/{print $10; exit}'
-      )"
+        git config user.signingkey "$(
+          curl -s https://gpg.kajkowalski.nl/public-key |
+          gpg --import-options show-only --import --with-colons 2>/dev/null |
+          awk -F: '/^fpr:/{print $10; exit}'
+        )"
 
     # Sign and push
     - git commit --amend -S --no-edit || true
@@ -723,7 +723,9 @@ Example hosting:
 
 ```bash
 # Using Swagger UI Docker
-docker run -p 8080:8080 -e SWAGGER_JSON=/openapi.yaml \
+docker run \
+  -p 8080:8080 \
+  -e SWAGGER_JSON=/openapi.yaml \
   -v $(pwd)/openapi.yaml:/openapi.yaml \
   swaggerapi/swagger-ui
 ```
@@ -736,9 +738,11 @@ docker run -p 8080:8080 -e SWAGGER_JSON=/openapi.yaml \
 - Issues: [https://github.com/kjanat/gpg-signing-service/issues][repo:issues]
 - Security: Contact via GitHub security advisory
 
+<!-- prettier-ignore-start -->
+
 [repo]: https://github.com/kjanat/gpg-signing-service
 [repo:issues]: https://github.com/kjanat/gpg-signing-service/issues
-[repo:security]:
-  https://github.com/kjanat/gpg-signing-service/security/advisories
-[repo:license]:
-  https://github.com/kjanat/gpg-signing-service/blob/master/LICENSE
+[repo:security]: https://github.com/kjanat/gpg-signing-service/security/advisories
+[repo:license]: https://github.com/kjanat/gpg-signing-service/blob/master/LICENSE
+
+<!-- prettier-ignore-end -->
