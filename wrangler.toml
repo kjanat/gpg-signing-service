@@ -12,10 +12,10 @@ class_name = "KeyStorage"
 name = "RATE_LIMITER"
 class_name = "RateLimiter"
 
-# Migrations for Durable Objects
+# Migrations for Durable Objects (SQLite-backed for free plan)
 [[migrations]]
 tag = "v1"
-new_classes = ["KeyStorage", "RateLimiter"]
+new_sqlite_classes = ["KeyStorage", "RateLimiter"]
 
 # D1 Database for audit logs
 [[d1_databases]]
