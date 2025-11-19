@@ -469,3 +469,5 @@ go test -race ./...
 ## License
 
 [MIT License](../LICENSE).
+
+<!--    markdownlint-disable-file no-inline-html no-duplicate-heading -->
