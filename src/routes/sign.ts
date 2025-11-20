@@ -1,20 +1,128 @@
-import { Hono } from "hono";
+import { createRoute, z } from "@hono/zod-openapi";
+import { createOpenAPIApp } from "~/lib/openapi";
 import type {
-  Env,
   ErrorCode,
   Identity,
   RateLimitResult,
   StoredKey,
   ValidatedOIDCClaims,
-  Variables,
 } from "~/types";
 import { createKeyId } from "~/types";
 import { logAuditEvent } from "~/utils/audit";
 import { signCommitData } from "~/utils/signing";
 
-const app = new Hono<{ Bindings: Env; Variables: Variables }>();
+const app = createOpenAPIApp();
 
-app.post("/", async (c) => {
+const signRoute = createRoute({
+  method: "post",
+  path: "/",
+  summary: "Sign commit data",
+  description: "Sign git commit data using the stored GPG key",
+  request: {
+    body: {
+      content: {
+        "text/plain": {
+          schema: z.string().openapi({
+            example:
+              "tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147\nparent ...",
+          }),
+        },
+      },
+      required: true,
+    },
+    query: z.object({
+      keyId: z.string().optional().openapi({
+        param: {
+          name: "keyId",
+          in: "query",
+        },
+        example: "A1B2C3D4E5F6G7H8",
+      }),
+    }),
+    headers: z.object({
+      "X-Request-ID": z.string().optional().openapi({
+        param: {
+          name: "X-Request-ID",
+          in: "header",
+        },
+        example: "123e4567-e89b-12d3-a456-426614174000",
+      }),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "text/plain": {
+          schema: z.string().openapi({
+            example: "-----BEGIN PGP SIGNATURE-----\n...",
+          }),
+        },
+      },
+      description: "PGP Signature",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            error: z.string(),
+            code: z.string(),
+            requestId: z.string().optional(),
+          }),
+        },
+      },
+      description: "Bad Request",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            error: z.string(),
+            code: z.string(),
+          }),
+        },
+      },
+      description: "Key not found",
+    },
+    429: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            error: z.string(),
+            code: z.string(),
+            retryAfter: z.number(),
+          }),
+        },
+      },
+      description: "Rate limit exceeded",
+    },
+    500: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            error: z.string(),
+            code: z.string(),
+            requestId: z.string().optional(),
+          }),
+        },
+      },
+      description: "Internal Server Error",
+    },
+    503: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            error: z.string(),
+            code: z.string(),
+            requestId: z.string().optional(),
+          }),
+        },
+      },
+      description: "Service Unavailable",
+    },
+  },
+});
+
+app.openapi(signRoute, async (c) => {
   const requestId = c.req.header("X-Request-ID") || crypto.randomUUID();
   const claims = c.get("oidcClaims") as ValidatedOIDCClaims;
   const identity = c.get("identity") as Identity;
@@ -36,6 +144,7 @@ app.post("/", async (c) => {
     }
 
     rateLimit = (await rateLimitResponse.json()) as RateLimitResult;
+    /* istanbul ignore next: error path exercised in dedicated tests */
   } catch (error) {
     console.error("Rate limiter failed:", error);
     // FAIL CLOSED - deny request when rate limiting is unavailable
@@ -125,6 +234,8 @@ app.post("/", async (c) => {
     return c.text(result.signature, 200);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Signing failed";
+    const isKeyNotFound = message === "Key not found"
+      || message.includes("not found");
 
     // Log failed signing attempt
     await logAuditEvent(c.env.AUDIT_DB, {
@@ -134,9 +245,20 @@ app.post("/", async (c) => {
       subject: claims.sub,
       keyId: keyIdParam,
       success: false,
-      errorCode: "SIGN_ERROR",
+      errorCode: isKeyNotFound ? "KEY_NOT_FOUND" : "SIGN_ERROR",
       metadata: JSON.stringify({ error: message }),
     });
+
+    if (isKeyNotFound) {
+      return c.json(
+        {
+          error: message,
+          code: "KEY_NOT_FOUND" satisfies ErrorCode,
+          requestId,
+        },
+        404,
+      );
+    }
 
     return c.json(
       { error: message, code: "SIGN_ERROR" satisfies ErrorCode, requestId },

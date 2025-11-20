@@ -18,10 +18,13 @@ export default defineWorkersConfig({
     include: ["src/**/*.{test,spec}.{js,ts}"],
     coverage: {
       provider: "istanbul",
-      reporter: ["text", "json", "html"],
+      reporter: process.env.CI
+        ? ["lcov", "json"]
+        : ["text", "html"],
       include: ["src/**/*.ts"],
       exclude: ["src/**/*.{test,spec}.ts", "src/__tests__/**", "src/types/**"],
-      thresholds: { lines: 60, functions: 70, branches: 50, statements: 60 },
+      // strict thresholds, if you modify this, you are fired !!!
+      thresholds: { lines: 95, functions: 98, branches: 95, statements: 95 },
     },
   },
 });

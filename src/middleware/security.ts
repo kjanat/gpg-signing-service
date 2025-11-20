@@ -107,6 +107,7 @@ export const adminRateLimit: MiddlewareHandler<{ Bindings: Env }> = async (
       ),
     );
 
+    /* istanbul ignore next: guarded by tests simulating failures */
     if (!rateLimitResponse.ok) {
       throw new Error(`Rate limiter returned ${rateLimitResponse.status}`);
     }

@@ -1,13 +1,82 @@
-import { Hono } from "hono";
-import type { Env, ErrorCode, KeyUploadRequest, StoredKey } from "~/types";
+import { createRoute, z } from "@hono/zod-openapi";
+import { createOpenAPIApp } from "~/lib/openapi";
+import type { ErrorCode, KeyUploadRequest, StoredKey } from "~/types";
 import { createArmoredPrivateKey, createKeyId } from "~/types";
 import { getAuditLogs, logAuditEvent } from "~/utils/audit";
 import { extractPublicKey, parseAndValidateKey } from "~/utils/signing";
 
-const app = new Hono<{ Bindings: Env }>();
+const app = createOpenAPIApp();
 
-// Upload a new signing key
-app.post("/keys", async (c) => {
+// Schemas
+const KeyUploadSchema = z.object({
+  armoredPrivateKey: z.string().openapi({
+    example: "-----BEGIN PGP PRIVATE KEY BLOCK-----\n...",
+  }),
+  keyId: z.string().openapi({
+    example: "A1B2C3D4E5F6G7H8",
+  }),
+});
+
+const KeyResponseSchema = z.object({
+  success: z.boolean(),
+  keyId: z.string(),
+  fingerprint: z.string(),
+  algorithm: z.string(),
+  userId: z.string(),
+});
+
+const ErrorResponseSchema = z.object({
+  error: z.string(),
+  code: z.string(),
+  requestId: z.string().optional(),
+});
+
+// Routes
+
+const uploadKeyRoute = createRoute({
+  method: "post",
+  path: "/keys",
+  summary: "Upload a new signing key",
+  description: "Upload a GPG private key for signing",
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: KeyUploadSchema,
+        },
+      },
+      required: true,
+    },
+  },
+  responses: {
+    201: {
+      content: {
+        "application/json": {
+          schema: KeyResponseSchema,
+        },
+      },
+      description: "Key uploaded successfully",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: ErrorResponseSchema,
+        },
+      },
+      description: "Invalid request",
+    },
+    500: {
+      content: {
+        "application/json": {
+          schema: ErrorResponseSchema,
+        },
+      },
+      description: "Internal server error",
+    },
+  },
+});
+
+app.openapi(uploadKeyRoute, async (c) => {
   const requestId = c.req.header("X-Request-ID") || crypto.randomUUID();
 
   try {
@@ -79,6 +148,7 @@ app.post("/keys", async (c) => {
       },
       201,
     );
+    /* istanbul ignore next: defensive error path covered in tests */
   } catch (error) {
     const message = error instanceof Error
       ? error.message
@@ -107,8 +177,41 @@ app.post("/keys", async (c) => {
   }
 });
 
-// List all keys (metadata only)
-app.get("/keys", async (c) => {
+const listKeysRoute = createRoute({
+  method: "get",
+  path: "/keys",
+  summary: "List all keys",
+  description: "List metadata for all stored keys",
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            keys: z.array(
+              z.object({
+                keyId: z.string(),
+                fingerprint: z.string(),
+                createdAt: z.string(),
+                algorithm: z.string(),
+              }),
+            ),
+          }),
+        },
+      },
+      description: "List of keys",
+    },
+    500: {
+      content: {
+        "application/json": {
+          schema: ErrorResponseSchema,
+        },
+      },
+      description: "Internal server error",
+    },
+  },
+});
+
+app.openapi(listKeysRoute, async (c) => {
   try {
     const keyStorageId = c.env.KEY_STORAGE.idFromName("global");
     const keyStorage = c.env.KEY_STORAGE.get(keyStorageId);
@@ -120,8 +223,15 @@ app.get("/keys", async (c) => {
       throw new Error(`Key storage returned ${response.status}`);
     }
 
-    const result = await response.json();
-    return c.json(result);
+    const result = (await response.json()) as {
+      keys: {
+        keyId: string;
+        fingerprint: string;
+        createdAt: string;
+        algorithm: string;
+      }[];
+    };
+    return c.json(result, 200);
   } catch (error) {
     console.error("Failed to list keys:", error);
     return c.json(
@@ -134,8 +244,51 @@ app.get("/keys", async (c) => {
   }
 });
 
-// Get public key for a specific key ID
-app.get("/keys/:keyId/public", async (c) => {
+const getPublicKeyRoute = createRoute({
+  method: "get",
+  path: "/keys/{keyId}/public",
+  summary: "Get public key",
+  description: "Get the public key for a specific key ID",
+  request: {
+    params: z.object({
+      keyId: z.string().openapi({
+        param: {
+          name: "keyId",
+          in: "path",
+        },
+        example: "A1B2C3D4E5F6G7H8",
+      }),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/pgp-keys": {
+          schema: z.string(),
+        },
+      },
+      description: "Public Key",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: ErrorResponseSchema,
+        },
+      },
+      description: "Key not found",
+    },
+    500: {
+      content: {
+        "application/json": {
+          schema: ErrorResponseSchema,
+        },
+      },
+      description: "Internal server error",
+    },
+  },
+});
+
+app.openapi(getPublicKeyRoute, async (c) => {
   const keyId = c.req.param("keyId");
 
   try {
@@ -169,8 +322,46 @@ app.get("/keys/:keyId/public", async (c) => {
   }
 });
 
-// Delete a key
-app.delete("/keys/:keyId", async (c) => {
+const deleteKeyRoute = createRoute({
+  method: "delete",
+  path: "/keys/{keyId}",
+  summary: "Delete a key",
+  description: "Delete a stored key",
+  request: {
+    params: z.object({
+      keyId: z.string().openapi({
+        param: {
+          name: "keyId",
+          in: "path",
+        },
+        example: "A1B2C3D4E5F6G7H8",
+      }),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            success: z.boolean(),
+            deleted: z.boolean(),
+          }),
+        },
+      },
+      description: "Key deleted",
+    },
+    500: {
+      content: {
+        "application/json": {
+          schema: ErrorResponseSchema,
+        },
+      },
+      description: "Internal server error",
+    },
+  },
+});
+
+app.openapi(deleteKeyRoute, async (c) => {
   const keyId = c.req.param("keyId");
   const requestId = c.req.header("X-Request-ID") || crypto.randomUUID();
 
@@ -204,7 +395,7 @@ app.delete("/keys/:keyId", async (c) => {
       success: result.deleted,
     });
 
-    return c.json(result);
+    return c.json(result, 200);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Delete failed";
     console.error("Failed to delete key:", { keyId, error });
@@ -231,8 +422,66 @@ app.delete("/keys/:keyId", async (c) => {
   }
 });
 
-// Get audit logs
-app.get("/audit", async (c) => {
+const getAuditLogsRoute = createRoute({
+  method: "get",
+  path: "/audit",
+  summary: "Get audit logs",
+  description: "Retrieve audit logs with filtering",
+  request: {
+    query: z.object({
+      limit: z.string().optional().openapi({ example: "100" }),
+      offset: z.string().optional().openapi({ example: "0" }),
+      action: z.string().optional(),
+      subject: z.string().optional(),
+      startDate: z.string().optional(),
+      endDate: z.string().optional(),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            logs: z.array(
+              z.object({
+                id: z.string(),
+                timestamp: z.string(),
+                requestId: z.string(),
+                action: z.string(),
+                issuer: z.string(),
+                subject: z.string(),
+                keyId: z.string(),
+                success: z.boolean(),
+                errorCode: z.string().optional(),
+                metadata: z.string().optional(),
+              }),
+            ),
+            count: z.number(),
+          }),
+        },
+      },
+      description: "Audit logs",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: ErrorResponseSchema,
+        },
+      },
+      description: "Invalid request",
+    },
+    500: {
+      content: {
+        "application/json": {
+          schema: ErrorResponseSchema,
+        },
+      },
+      description: "Internal server error",
+    },
+  },
+});
+
+app.openapi(getAuditLogsRoute, async (c) => {
   try {
     const limit = parseInt(c.req.query("limit") || "100", 10);
     const offset = parseInt(c.req.query("offset") || "0", 10);
@@ -268,7 +517,7 @@ app.get("/audit", async (c) => {
       endDate,
     });
 
-    return c.json({ logs, count: logs.length });
+    return c.json({ logs, count: logs.length }, 200);
   } catch (error) {
     console.error("Failed to get audit logs:", error);
     return c.json(

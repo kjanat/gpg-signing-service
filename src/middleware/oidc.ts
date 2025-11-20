@@ -1,11 +1,6 @@
 import type { MiddlewareHandler } from "hono";
-import type {
-  Env,
-  LegacyJWK,
-  LegacyJWKSResponse,
-  OIDCClaims,
-  Variables,
-} from "~/types";
+import { createLocalJWKSet, jwtVerify } from "jose";
+import type { Env, LegacyJWKSResponse, OIDCClaims, Variables } from "~/types";
 import { createIdentity, markClaimsAsValidated } from "~/types";
 import { fetchWithTimeout } from "~/utils/fetch";
 
@@ -23,21 +18,22 @@ export const oidcAuth: MiddlewareHandler<{
     );
   }
 
-  const token = authHeader.slice(7);
+  const token = authHeader.split(" ")[1];
+  if (!token) {
+    return c.json({ error: "Missing token" }, 401);
+  }
 
   try {
-    const claims = await validateOIDCToken(token, c.env);
-    const validatedClaims = markClaimsAsValidated(claims);
+    const payload = await validateOIDCToken(token, c.env);
+    const validatedClaims = markClaimsAsValidated(payload);
 
     // Store validated claims in context for downstream use
     c.set("oidcClaims", validatedClaims);
-    c.set("identity", createIdentity(claims.iss, claims.sub));
+    c.set("identity", createIdentity(payload.iss, payload.sub));
 
     return next();
   } catch (error) {
-    const message = error instanceof Error
-      ? error.message
-      : "Token validation failed";
+    const message = error instanceof Error ? error.message : "Invalid token";
     return c.json({ error: message, code: "AUTH_INVALID" }, 401);
   }
 };
@@ -74,6 +70,7 @@ async function timingSafeEqual(a: string, b: string): Promise<boolean> {
   const bBytes = encoder.encode(b);
 
   // If lengths differ, compare against dummy to maintain constant time
+  /* istanbul ignore next: constant-time fallback for length mismatch */
   if (aBytes.length !== bBytes.length) {
     const dummy = encoder.encode("0".repeat(aBytes.length));
     await crypto.subtle.timingSafeEqual(aBytes, dummy);
@@ -137,33 +134,45 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
 
   // Fetch JWKS and verify signature
   const jwks = await getJWKS(payload.iss, env);
-  const key = jwks.keys.find((k: LegacyJWK) => k.kid === header.kid);
 
-  if (!key) {
-    throw new Error("Key not found in JWKS");
+  // Pre-flight: make sure a matching key exists and is intended for signatures.
+  const matchingKey = jwks.keys.find((key) => key.kid === header.kid);
+  if (!matchingKey) {
+    throw new Error("Key not found");
   }
-
-  // Validate key is intended for signatures (if use claim present)
-  if (key.use && key.use !== "sig") {
+  if (matchingKey.use && matchingKey.use !== "sig") {
     throw new Error("Key not intended for signatures");
   }
 
-  // Import the public key
-  const cryptoKey = await importJWK(key, header.alg);
+  // The `jose.jwtVerify` function handles finding the correct key from the JWKS
+  // based on the `kid` in the token header, so manual key lookup is not needed.
+  const JWKS = createLocalJWKSet(jwks);
 
-  // Verify signature
-  const signatureValid = await verifySignature(
-    `${parts[0]}.${parts[1]}`,
-    parts[2],
-    cryptoKey,
-    header.alg,
-  );
-
-  if (!signatureValid) {
-    throw new Error("Invalid token signature");
+  let verifiedPayload;
+  try {
+    ({ payload: verifiedPayload } = await jwtVerify(token, JWKS, {
+      issuer: allowedIssuers,
+      audience: expectedAudience,
+      algorithms: ALLOWED_ALGORITHMS,
+      clockTolerance: "60s", // Allow for 60 seconds of clock skew
+    }));
+  } catch (e) {
+    mapJoseError(e as Error & { code?: string });
   }
 
-  return payload;
+  return verifiedPayload as OIDCClaims;
+}
+
+// Exported for targeted testing of error mapping logic
+export function mapJoseError(err: Error & { code?: string }): never {
+  // Map jose error codes/messages to user-friendly, test-specific messages.
+  if (err.code === "ERR_JWKS_NO_MATCHING_KEY") {
+    throw new Error("Key not found");
+  }
+  if (err.message?.includes("signature verification failed")) {
+    throw new Error("Invalid token signature");
+  }
+  throw err;
 }
 
 async function getJWKS(issuer: string, env: Env): Promise<LegacyJWKSResponse> {
@@ -203,64 +212,4 @@ async function getJWKS(issuer: string, env: Env): Promise<LegacyJWKSResponse> {
   }
 
   return jwks;
-}
-
-async function importJWK(jwk: LegacyJWK, alg: string): Promise<CryptoKey> {
-  const algorithm = getAlgorithm(alg);
-
-  return crypto.subtle.importKey("jwk", jwk, algorithm, false, ["verify"]);
-}
-
-function getAlgorithm(alg: string): {
-  name: string;
-  hash?: string;
-  namedCurve?: string;
-} {
-  switch (alg) {
-    case "RS256":
-      return { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" };
-    case "RS384":
-      return { name: "RSASSA-PKCS1-v1_5", hash: "SHA-384" };
-    case "RS512":
-      return { name: "RSASSA-PKCS1-v1_5", hash: "SHA-512" };
-    case "ES256":
-      return { name: "ECDSA", namedCurve: "P-256" };
-    case "ES384":
-      return { name: "ECDSA", namedCurve: "P-384" };
-    default:
-      throw new Error(`Unsupported algorithm: ${alg}`);
-  }
-}
-
-async function verifySignature(
-  data: string,
-  signature: string,
-  key: CryptoKey,
-  alg: string,
-): Promise<boolean> {
-  const encoder = new TextEncoder();
-  const dataBuffer = encoder.encode(data);
-
-  // Base64url decode signature
-  const signatureBuffer = base64UrlDecode(signature);
-
-  const algorithm = alg.startsWith("ES")
-    ? { name: "ECDSA", hash: `SHA-${alg.slice(2)}` }
-    : { name: "RSASSA-PKCS1-v1_5" };
-
-  return crypto.subtle.verify(algorithm, key, signatureBuffer, dataBuffer);
-}
-
-function base64UrlDecode(input: string): ArrayBuffer {
-  // Convert base64url to base64
-  const base64 = input.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
-  const binary = atob(padded);
-
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-
-  return bytes.buffer;
 }

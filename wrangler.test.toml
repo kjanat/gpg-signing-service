@@ -30,7 +30,7 @@ id = "test-kv-id"
 
 # Environment variables for testing
 [vars]
-ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com"
+ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com,https://token.actions.githubusercontent.com/unique-test-issuer"
 KEY_ID = "test-key-v1"
 ADMIN_TOKEN = "test-admin-token"
 KEY_PASSPHRASE = "test-passphrase"

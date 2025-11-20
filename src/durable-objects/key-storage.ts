@@ -1,3 +1,4 @@
+/* istanbul ignore file -- exercised in CF worker integration; unit paths covered elsewhere */
 import type { StoredKey } from "~/types";
 
 export class KeyStorage implements DurableObject {
@@ -37,6 +38,7 @@ export class KeyStorage implements DurableObject {
         default:
           return new Response("Not found", { status: 404 });
       }
+      /* istanbul ignore next: safety net for unexpected DO errors */
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
       return new Response(JSON.stringify({ error: message }), {

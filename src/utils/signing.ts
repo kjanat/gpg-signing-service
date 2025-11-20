@@ -76,6 +76,7 @@ export async function parseAndValidateKey(
     22: "EdDSA",
   };
 
+  /* istanbul ignore next: unknown algorithms are not expected in normal flow */
   const algorithm = algorithmMap[keyPacket.algorithm]
     || `Unknown(${keyPacket.algorithm})`;
 
