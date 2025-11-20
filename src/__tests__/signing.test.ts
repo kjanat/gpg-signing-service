@@ -1,6 +1,6 @@
 /** biome-ignore-all lint/style/noNonNullAssertion: This is a test file */
 import * as openpgp from "openpgp";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { StoredKey } from "~/types";
 import {
   createArmoredPrivateKey,
@@ -13,6 +13,14 @@ import {
   parseAndValidateKey,
   signCommitData,
 } from "~/utils/signing";
+
+vi.mock("openpgp", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("openpgp")>();
+  return {
+    ...actual,
+    readPrivateKey: vi.fn(actual.readPrivateKey),
+  };
+});
 
 // Generate a test key for use in tests
 async function generateTestKey(passphrase?: string) {
@@ -63,6 +71,25 @@ describe("parseAndValidateKey", () => {
 
   it("should throw for invalid key format", async () => {
     await expect(parseAndValidateKey("not a valid key")).rejects.toThrow();
+  });
+  it("should handle unknown algorithm", async () => {
+    const { privateKey } = await generateTestKey();
+
+    // Mock openpgp.readPrivateKey to return a key with unknown algorithm
+    vi.mocked(openpgp.readPrivateKey).mockResolvedValueOnce({
+      keyPacket: { algorithm: 999 }, // Unknown algorithm ID
+      getFingerprint: () => "fingerprint",
+      getKeyID: () => ({ toHex: () => "KEYID" }),
+      getUserIDs: () => ["User"],
+      isDecrypted: () => true,
+    } as unknown as any);
+
+    try {
+      const info = await parseAndValidateKey(privateKey);
+      expect(info.algorithm).toBe("Unknown(999)");
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 });
 

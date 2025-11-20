@@ -138,6 +138,29 @@ describe("logAuditEvent", () => {
 
     consoleSpy.mockRestore();
   });
+
+  it("should handle DB run failure", async () => {
+    const db = createMockDb();
+    db._mockRun.mockImplementation(() => {
+      throw new Error("DB Run Error");
+    });
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await logAuditEvent(db, {
+      requestId: "req-fail",
+      action: "sign",
+      issuer: "test",
+      subject: "test",
+      keyId: "KEY",
+      success: true,
+    });
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      "Failed to write audit log:",
+      expect.objectContaining({ error: "DB Run Error" }),
+    );
+    consoleSpy.mockRestore();
+  });
 });
 
 describe("getAuditLogs", () => {

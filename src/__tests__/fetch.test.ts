@@ -60,6 +60,36 @@ describe("fetchWithTimeout", () => {
     );
   });
 
+  it("should abort request on timeout", async () => {
+    const abortSpy = vi.spyOn(AbortController.prototype, "abort");
+
+    // Mock fetch to respect abort signal
+    vi.spyOn(globalThis, "fetch").mockImplementation((_url, options) => {
+      return new Promise((_, reject) => {
+        const signal = options?.signal as AbortSignal;
+        if (signal?.aborted) {
+          reject(new DOMException("Aborted", "AbortError"));
+          return;
+        }
+        signal?.addEventListener("abort", () => {
+          reject(new DOMException("Aborted", "AbortError"));
+        });
+      });
+    });
+
+    const fetchPromise = fetchWithTimeout(
+      "https://example.com/timeout",
+      {},
+      1000,
+    );
+
+    // Advance time to trigger timeout
+    vi.advanceTimersByTime(1000);
+
+    await expect(fetchPromise).rejects.toThrow("timed out");
+    expect(abortSpy).toHaveBeenCalled();
+  });
+
   it("should re-throw non-abort errors", async () => {
     const networkError = new Error("Network failure");
     vi.spyOn(globalThis, "fetch").mockRejectedValue(networkError);

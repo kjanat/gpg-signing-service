@@ -8,7 +8,7 @@ import {
 } from "cloudflare:test";
 import app from "gpg-signing-service";
 import * as openpgp from "openpgp";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 // Helper to make authenticated requests
 async function adminRequest(
@@ -45,7 +45,48 @@ async function generateTestKey() {
   return privateKey;
 }
 
+const MIGRATION_SQL = `
+-- Audit logs table for tracking all signing operations
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id TEXT PRIMARY KEY,
+    timestamp TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('sign', 'key_upload', 'key_rotate')),
+    issuer TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    key_id TEXT NOT NULL,
+    success INTEGER NOT NULL DEFAULT 0,
+    error_code TEXT,
+    metadata TEXT
+);
+
+-- Indexes for common queries
+CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_logs (timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs (action);
+CREATE INDEX IF NOT EXISTS idx_audit_subject ON audit_logs (subject);
+CREATE INDEX IF NOT EXISTS idx_audit_request_id ON audit_logs (request_id);
+CREATE INDEX IF NOT EXISTS idx_audit_key_id ON audit_logs (key_id);
+
+-- Composite index for filtering by action and date range
+CREATE INDEX IF NOT EXISTS idx_audit_action_timestamp ON audit_logs (
+    action, timestamp DESC
+);
+`;
+
+async function applyMigrations() {
+  const statements = MIGRATION_SQL.split(";")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
+  for (const statement of statements) {
+    await env.AUDIT_DB.prepare(statement).run();
+  }
+}
+
 describe("Admin Routes", () => {
+  beforeAll(async () => {
+    await applyMigrations();
+  });
   describe("POST /admin/keys", () => {
     it("should upload a new key", async () => {
       const privateKey = await generateTestKey();
@@ -108,6 +149,34 @@ describe("Admin Routes", () => {
       const body = (await response.json()) as { code: string };
       expect(body.code).toBe("KEY_UPLOAD_ERROR");
     });
+
+    it("should return 500 when storage fails", async () => {
+      const privateKey = await generateTestKey();
+
+      // Mock KEY_STORAGE fetch to fail
+      vi.spyOn(env.KEY_STORAGE, "get").mockReturnValue({
+        fetch: async () =>
+          new Response(JSON.stringify({ error: "Storage error" }), {
+            status: 500,
+          }),
+      } as unknown as DurableObjectStub);
+
+      try {
+        const response = await adminRequest("/keys", {
+          method: "POST",
+          body: JSON.stringify({
+            armoredPrivateKey: privateKey,
+            keyId: "storage-fail-key",
+          }),
+        });
+
+        expect(response.status).toBe(500);
+        const body = (await response.json()) as { code: string };
+        expect(body.code).toBe("KEY_UPLOAD_ERROR");
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
   });
 
   describe("GET /admin/keys", () => {
@@ -127,6 +196,21 @@ describe("Admin Routes", () => {
       expect(response.status).toBe(200);
       const body = (await response.json()) as { keys: unknown[] };
       expect(Array.isArray(body.keys)).toBe(true);
+    });
+    it("should return 500 when storage list fails", async () => {
+      // Mock KEY_STORAGE fetch to fail
+      vi.spyOn(env.KEY_STORAGE, "get").mockReturnValue({
+        fetch: async () => new Response("Internal Error", { status: 500 }),
+      } as unknown as DurableObjectStub);
+
+      try {
+        const response = await adminRequest("/keys");
+        expect(response.status).toBe(500);
+        const body = (await response.json()) as { code: string };
+        expect(body.code).toBe("KEY_LIST_ERROR");
+      } finally {
+        vi.restoreAllMocks();
+      }
     });
   });
 
@@ -157,6 +241,31 @@ describe("Admin Routes", () => {
       expect(response.status).toBe(404);
       const body = (await response.json()) as { code: string };
       expect(body.code).toBe("KEY_NOT_FOUND");
+    });
+    it("should return 500 when processing fails", async () => {
+      // Mock KEY_STORAGE to return a key that fails processing (e.g. invalid armored content)
+      // or mock the processing function itself if possible.
+      // Here we mock the storage to return a valid-looking key but with invalid content
+
+      vi.spyOn(env.KEY_STORAGE, "get").mockReturnValue({
+        fetch: async () =>
+          new Response(
+            JSON.stringify({
+              armoredPrivateKey: "invalid-content",
+              keyId: "processing-fail-key",
+            }),
+            { status: 200 },
+          ),
+      } as unknown as DurableObjectStub);
+
+      try {
+        const response = await adminRequest("/keys/processing-fail-key/public");
+        expect(response.status).toBe(500);
+        const body = (await response.json()) as { code: string };
+        expect(body.code).toBe("KEY_PROCESSING_ERROR");
+      } finally {
+        vi.restoreAllMocks();
+      }
     });
   });
 
@@ -196,11 +305,26 @@ describe("Admin Routes", () => {
       };
       expect(body.deleted).toBe(false);
     });
+    it("should return 500 when storage delete fails", async () => {
+      vi.spyOn(env.KEY_STORAGE, "get").mockReturnValue({
+        fetch: async () => new Response("Storage Error", { status: 500 }),
+      } as unknown as DurableObjectStub);
+
+      try {
+        const response = await adminRequest("/keys/delete-fail-key", {
+          method: "DELETE",
+        });
+        expect(response.status).toBe(500);
+        const body = (await response.json()) as { code: string };
+        expect(body.code).toBe("KEY_DELETE_ERROR");
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
   });
 
   describe("GET /admin/audit", () => {
-    it.skip("should return audit logs with default pagination", async () => {
-      // Skip: D1 database not initialized with schema in test environment
+    it("should return audit logs with default pagination", async () => {
       const response = await adminRequest("/audit");
 
       expect(response.status).toBe(200);
@@ -212,8 +336,7 @@ describe("Admin Routes", () => {
       expect(typeof body.count).toBe("number");
     });
 
-    it.skip("should apply pagination parameters", async () => {
-      // Skip: D1 database not initialized with schema in test environment
+    it("should apply pagination parameters", async () => {
       const response = await adminRequest("/audit?limit=10&offset=0");
 
       expect(response.status).toBe(200);
@@ -248,8 +371,7 @@ describe("Admin Routes", () => {
       expect(body.code).toBe("INVALID_REQUEST");
     });
 
-    it.skip("should filter by action", async () => {
-      // Skip: D1 database not initialized with schema in test environment
+    it("should filter by action", async () => {
       const response = await adminRequest("/audit?action=key_upload");
 
       expect(response.status).toBe(200);
@@ -260,8 +382,7 @@ describe("Admin Routes", () => {
       expect(Array.isArray(body.logs)).toBe(true);
     });
 
-    it.skip("should filter by date range", async () => {
-      // Skip: D1 database not initialized with schema in test environment
+    it("should filter by date range", async () => {
       const response = await adminRequest(
         "/audit?startDate=2024-01-01&endDate=2024-12-31",
       );
@@ -272,6 +393,21 @@ describe("Admin Routes", () => {
         count: number;
       };
       expect(Array.isArray(body.logs)).toBe(true);
+    });
+    it("should return 500 when DB fails", async () => {
+      // Mock AUDIT_DB prepare to throw
+      vi.spyOn(env.AUDIT_DB, "prepare").mockImplementation(() => {
+        throw new Error("DB Error");
+      });
+
+      try {
+        const response = await adminRequest("/audit");
+        expect(response.status).toBe(500);
+        const body = (await response.json()) as { code: string };
+        expect(body.code).toBe("AUDIT_ERROR");
+      } finally {
+        vi.restoreAllMocks();
+      }
     });
   });
 
