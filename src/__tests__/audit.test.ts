@@ -161,6 +161,29 @@ describe("logAuditEvent", () => {
     );
     consoleSpy.mockRestore();
   });
+
+  it("should handle non-Error exceptions", async () => {
+    const db = createMockDb();
+    db._mockRun.mockImplementation(() => {
+      throw "String error";
+    });
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await logAuditEvent(db, {
+      requestId: "req-fail",
+      action: "sign",
+      issuer: "test",
+      subject: "test",
+      keyId: "KEY",
+      success: true,
+    });
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      "Failed to write audit log:",
+      expect.objectContaining({ error: "Unknown error" }),
+    );
+    consoleSpy.mockRestore();
+  });
 });
 
 describe("getAuditLogs", () => {

@@ -192,5 +192,14 @@ describe("RateLimiter Durable Object", () => {
       const body = await response.json();
       expect(body.error).toBe("Debug error");
     });
+
+    it("should handle non-Error exceptions", async () => {
+      const stub = getRateLimiter("error-string-test");
+      const response = await stub.fetch("http://localhost/_debug/throw-string");
+
+      expect(response.status).toBe(500);
+      const body = await response.json();
+      expect(body.error).toBe("Unknown error");
+    });
   });
 });

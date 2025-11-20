@@ -115,4 +115,28 @@ describe("KeyStorage Durable Object", () => {
     // The global handler returns { error: message }
     expect(body.error).toContain("Unexpected token"); // JSON parse error message
   });
+
+  it("should handle non-Error exceptions", async () => {
+    const id = env.KEY_STORAGE.idFromName("test-string-error");
+    const stub = env.KEY_STORAGE.get(id);
+
+    const response = await stub.fetch(
+      new Request("http://internal/_debug/throw-string"),
+    );
+
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(body.error).toBe("Unknown error");
+  });
+
+  it("should handle standard Error exceptions", async () => {
+    const id = env.KEY_STORAGE.idFromName("test-standard-error");
+    const stub = env.KEY_STORAGE.get(id);
+    const response = await stub.fetch(
+      new Request("http://internal/_debug/throw"),
+    );
+    expect(response.status).toBe(500);
+    const body = await response.json();
+    expect(body.error).toBe("Debug error");
+  });
 });

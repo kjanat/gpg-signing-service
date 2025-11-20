@@ -35,6 +35,12 @@ export class KeyStorage implements DurableObject {
         case "/health":
           return await this.healthCheck();
 
+        case "/_debug/throw":
+          throw new Error("Debug error");
+
+        case "/_debug/throw-string":
+          throw "Debug string error";
+
         default:
           return new Response("Not found", { status: 404 });
       }

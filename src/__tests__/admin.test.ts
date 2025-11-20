@@ -177,6 +177,57 @@ describe("Admin Routes", () => {
         vi.restoreAllMocks();
       }
     });
+
+    it("should use default error message when storage fails without detail", async () => {
+      const validKey = await generateTestKey(); // Generate a valid key for the request body
+      // Mock KEY_STORAGE failure with empty error
+      const originalGet = env.KEY_STORAGE.get;
+      env.KEY_STORAGE.get = () => ({
+        fetch: async () => new Response(JSON.stringify({}), { status: 500 }),
+      } as unknown as DurableObjectStub);
+
+      try {
+        const response = await adminRequest("/keys", { // Changed makeRequest to adminRequest
+          method: "POST",
+          // headers: { Authorization: `Bearer ${env.ADMIN_TOKEN}` }, // adminRequest already adds headers
+          body: JSON.stringify({
+            armoredPrivateKey: validKey,
+            keyId: "default-error-key",
+          }),
+        });
+
+        expect(response.status).toBe(500);
+        const body = (await response.json()) as { error: string };
+        expect(body.error).toBe("Failed to store key"); // Expecting the default error message
+      } finally {
+        env.KEY_STORAGE.get = originalGet;
+      }
+    });
+    it("should handle non-Error exceptions", async () => {
+      // Mock KEY_STORAGE to throw a string
+      const originalGet = env.KEY_STORAGE.get;
+      env.KEY_STORAGE.get = () => ({
+        fetch: async () => {
+          throw "String error";
+        },
+      } as unknown as DurableObjectStub);
+
+      try {
+        const response = await adminRequest("/keys", {
+          method: "POST",
+          body: JSON.stringify({
+            armoredPrivateKey: await generateTestKey(),
+            keyId: "string-error-key",
+          }),
+        });
+
+        expect(response.status).toBe(500);
+        const body = (await response.json()) as { error: string };
+        expect(body.error).toBe("Key upload failed");
+      } finally {
+        env.KEY_STORAGE.get = originalGet;
+      }
+    });
   });
 
   describe("GET /admin/keys", () => {
@@ -436,6 +487,27 @@ describe("Admin Routes", () => {
       await waitOnExecutionContext(ctx);
 
       expect(response.status).toBe(401);
+    });
+    it("should handle non-Error exceptions during deletion", async () => {
+      // Mock KEY_STORAGE to throw a string
+      const originalGet = env.KEY_STORAGE.get;
+      env.KEY_STORAGE.get = () => ({
+        fetch: async () => {
+          throw "Delete string error";
+        },
+      } as unknown as DurableObjectStub);
+
+      try {
+        const response = await adminRequest("/keys/delete-string-error", {
+          method: "DELETE",
+        });
+
+        expect(response.status).toBe(500);
+        const body = (await response.json()) as { error: string };
+        expect(body.error).toBe("Failed to delete key");
+      } finally {
+        env.KEY_STORAGE.get = originalGet;
+      }
     });
   });
 });

@@ -167,7 +167,6 @@ describe("Sign Route", () => {
     it("should return 404 if key not found", async () => {
       await setupJWKSMock();
       const token = await createToken();
-
       const response = await makeRequest("/sign?keyId=non-existent", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
@@ -175,13 +174,6 @@ describe("Sign Route", () => {
       });
 
       expect(response.status).toBe(404);
-      // The error comes from the route catching the "Key not found" error
-      // In sign.ts: throw new Error(error.error || "Key not found");
-      // Then caught and returned as 500 with code SIGN_ERROR if it's a generic error,
-      // OR if the key storage returns 404/error it might be handled differently.
-      // Looking at sign.ts:
-      // if (!keyResponse.ok) { ... throw new Error(...) }
-      // catch (error) { ... return c.json(..., 500) }
       // So it actually returns 500 for key not found in the current implementation!
       // Wait, let's check sign.ts again.
 
@@ -334,6 +326,60 @@ describe("Sign Route", () => {
         expect(response.status).toBe(500);
         const body = await response.json();
         expect(body.code).toBe("SIGN_ERROR");
+      } finally {
+        env.KEY_STORAGE.get = originalGet;
+      }
+    });
+
+    it("should handle non-Error exceptions", async () => {
+      await setupJWKSMock();
+      const token = await createToken();
+
+      // Mock KEY_STORAGE to throw a string
+      const originalGet = env.KEY_STORAGE.get;
+      env.KEY_STORAGE.get = () => ({
+        fetch: async () => {
+          throw "String error";
+        },
+      } as unknown as DurableObjectStub);
+
+      try {
+        const response = await makeRequest("/sign?keyId=string-error-key", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: "commit data",
+        });
+
+        expect(response.status).toBe(500);
+        const body = await response.json();
+        expect(body.error).toBe("Signing failed");
+      } finally {
+        env.KEY_STORAGE.get = originalGet;
+      }
+    });
+    it("should propagate explicit upstream error", async () => {
+      await setupJWKSMock();
+      const token = await createToken();
+
+      // Mock KEY_STORAGE to return 500 with explicit error
+      const originalGet = env.KEY_STORAGE.get;
+      env.KEY_STORAGE.get = () => ({
+        fetch: async () =>
+          new Response(JSON.stringify({ error: "Upstream failure" }), {
+            status: 500,
+          }),
+      } as unknown as DurableObjectStub);
+
+      try {
+        const response = await makeRequest("/sign?keyId=upstream-fail", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: "commit data",
+        });
+
+        expect(response.status).toBe(500);
+        const body = await response.json();
+        expect(body.error).toBe("Upstream failure");
       } finally {
         env.KEY_STORAGE.get = originalGet;
       }

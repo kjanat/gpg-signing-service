@@ -572,6 +572,51 @@ describe("Security Headers Middleware", () => {
       expect(body.error).toBe("Invalid token audience");
     });
 
+    it("should accept token with array audience containing correct audience", async () => {
+      const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+      const issuer = "https://token.actions.githubusercontent.com";
+      const kid = "test-key";
+
+      await setupJWKSMock(issuer, kid, publicKey);
+
+      const token = await createToken(
+        { aud: ["other-service", "gpg-signing-service"] },
+        { privateKey },
+        "ES256",
+        kid,
+      );
+
+      const response = await makeRequest("/sign", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: "commit data",
+      });
+      // 404 means OIDC passed
+      if (response.status === 401) {
+        const body = await response.json();
+        console.error("OIDC Array Audience Test Failed:", body);
+      }
+      expect(response.status).toBe(404);
+    });
+
+    it("should handle non-Error exceptions during validation", async () => {
+      const { privateKey } = await jose.generateKeyPair("ES256");
+      const token = await createToken({}, { privateKey });
+
+      // Mock JWKS_CACHE to throw a string
+      vi.spyOn(env.JWKS_CACHE, "get").mockRejectedValue("String error");
+
+      const response = await makeRequest("/sign", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: "commit data",
+      });
+
+      expect(response.status).toBe(401);
+      const body = await response.json();
+      expect(body.error).toBe("Invalid token");
+    });
+
     describe("Algorithm Support", () => {
       const algorithms = ["RS256", "RS384", "RS512", "ES384"];
 

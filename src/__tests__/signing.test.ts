@@ -91,6 +91,22 @@ describe("parseAndValidateKey", () => {
       vi.restoreAllMocks();
     }
   });
+
+  it("should handle key without User ID", async () => {
+    const { privateKey } = await generateTestKey();
+
+    // Mock openpgp.readPrivateKey to return a key with no User IDs
+    vi.mocked(openpgp.readPrivateKey).mockResolvedValueOnce({
+      keyPacket: { algorithm: 22 }, // EdDSA
+      getFingerprint: () => "fingerprint",
+      getKeyID: () => ({ toHex: () => "KEYID" }),
+      getUserIDs: () => [],
+      isDecrypted: () => true,
+    } as unknown as any);
+
+    const info = await parseAndValidateKey(privateKey);
+    expect(info.userId).toBe("Unknown");
+  });
 });
 
 describe("extractPublicKey", () => {
