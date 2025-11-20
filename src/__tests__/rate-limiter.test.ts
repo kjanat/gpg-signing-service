@@ -37,6 +37,24 @@ describe("RateLimiter Durable Object", () => {
       const result = (await response.json()) as RateLimitResult;
       expect(result.allowed).toBe(true);
     });
+
+    it("should return denied when tokens are exhausted", async () => {
+      const stub = getRateLimiter("check-exhausted");
+
+      // Consume all tokens first
+      for (let i = 0; i < 105; i++) {
+        await stub.fetch("http://localhost/consume?identity=exhausted-user");
+      }
+
+      // Now check
+      const response = await stub.fetch(
+        "http://localhost/check?identity=exhausted-user",
+      );
+      expect(response.status).toBe(200);
+      const result = (await response.json()) as RateLimitResult;
+      expect(result.allowed).toBe(false);
+      expect(result.remaining).toBe(0);
+    });
   });
 
   describe("/consume endpoint", () => {
@@ -90,8 +108,6 @@ describe("RateLimiter Durable Object", () => {
           break;
         }
       }
-
-      expect(hitLimit).toBe(true);
 
       expect(hitLimit).toBe(true);
     });
@@ -166,6 +182,15 @@ describe("RateLimiter Durable Object", () => {
       const response = await stub.fetch("http://localhost/unknown");
 
       expect(response.status).toBe(404);
+    });
+
+    it("should catch unexpected errors", async () => {
+      const stub = getRateLimiter("error-test");
+      const response = await stub.fetch("http://localhost/_debug/throw");
+
+      expect(response.status).toBe(500);
+      const body = await response.json();
+      expect(body.error).toBe("Debug error");
     });
   });
 });

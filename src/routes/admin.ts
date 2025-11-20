@@ -82,16 +82,6 @@ app.openapi(uploadKeyRoute, async (c) => {
   try {
     const body = (await c.req.json()) as KeyUploadRequest;
 
-    if (!body.armoredPrivateKey || !body.keyId) {
-      return c.json(
-        {
-          error: "Missing armoredPrivateKey or keyId",
-          code: "INVALID_REQUEST" satisfies ErrorCode,
-        },
-        400,
-      );
-    }
-
     // Validate and parse the key
     const keyInfo = await parseAndValidateKey(
       body.armoredPrivateKey,

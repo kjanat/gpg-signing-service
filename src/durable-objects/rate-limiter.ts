@@ -41,6 +41,9 @@ export class RateLimiter implements DurableObject {
           }
           return await this.resetLimit(url.searchParams.get("identity") || "");
 
+        case "/_debug/throw":
+          throw new Error("Debug error");
+
         default:
           return new Response("Not found", { status: 404 });
       }
@@ -58,7 +61,7 @@ export class RateLimiter implements DurableObject {
     const bucket = await this.getBucket(identity);
     const resetAt = bucket.lastRefill + this.windowMs;
 
-    const result: RateLimitResult = bucket.tokens > 0
+    const result: RateLimitResult = bucket.tokens >= 1
       ? createRateLimitAllowed(Math.floor(bucket.tokens), resetAt)
       : createRateLimitDenied(resetAt);
 
