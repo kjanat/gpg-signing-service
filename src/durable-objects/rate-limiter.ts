@@ -26,10 +26,12 @@ export class RateLimiter implements DurableObject {
     try {
       switch (path) {
         case "/check":
-          return this.checkLimit(url.searchParams.get("identity") || "default");
+          return await this.checkLimit(
+            url.searchParams.get("identity") || "default",
+          );
 
         case "/consume":
-          return this.consumeToken(
+          return await this.consumeToken(
             url.searchParams.get("identity") || "default",
           );
 
@@ -37,7 +39,7 @@ export class RateLimiter implements DurableObject {
           if (request.method !== "POST") {
             return new Response("Method not allowed", { status: 405 });
           }
-          return this.resetLimit(url.searchParams.get("identity") || "");
+          return await this.resetLimit(url.searchParams.get("identity") || "");
 
         default:
           return new Response("Not found", { status: 404 });

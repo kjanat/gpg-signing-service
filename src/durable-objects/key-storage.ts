@@ -15,25 +15,25 @@ export class KeyStorage implements DurableObject {
     try {
       switch (path) {
         case "/get-key":
-          return this.getKey(url.searchParams.get("keyId") || "default");
+          return await this.getKey(url.searchParams.get("keyId") || "default");
 
         case "/store-key":
           if (request.method !== "POST") {
             return new Response("Method not allowed", { status: 405 });
           }
-          return this.storeKey(await request.json());
+          return await this.storeKey(await request.json());
 
         case "/list-keys":
-          return this.listKeys();
+          return await this.listKeys();
 
         case "/delete-key":
           if (request.method !== "DELETE") {
             return new Response("Method not allowed", { status: 405 });
           }
-          return this.deleteKey(url.searchParams.get("keyId") || "");
+          return await this.deleteKey(url.searchParams.get("keyId") || "");
 
         case "/health":
-          return this.healthCheck();
+          return await this.healthCheck();
 
         default:
           return new Response("Not found", { status: 404 });

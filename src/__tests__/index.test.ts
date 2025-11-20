@@ -6,8 +6,55 @@ import {
   env,
   waitOnExecutionContext,
 } from "cloudflare:test";
+import * as openpgp from "openpgp";
 import { describe, expect, it } from "vitest";
 import app from "~/index";
+
+describe("Public Key Route", () => {
+  it("should return public key for valid keyId", async () => {
+    const ctx = createExecutionContext();
+    const keyId = "valid-test-key";
+
+    // 1. Generate a valid key
+    const { privateKey } = await openpgp.generateKey({
+      type: "ecc",
+      curve: "ed25519",
+      userIDs: [{ name: "Test", email: "test@example.com" }],
+      format: "armored",
+    });
+
+    // 2. Store the key
+    const keyStorageId = env.KEY_STORAGE.idFromName("global");
+    const keyStorage = env.KEY_STORAGE.get(keyStorageId);
+    await keyStorage.fetch(
+      new Request("http://internal/store-key", {
+        method: "POST",
+        body: JSON.stringify({
+          armoredPrivateKey: privateKey,
+          keyId,
+          fingerprint: "test-fingerprint",
+          createdAt: new Date().toISOString(),
+          algorithm: "EdDSA",
+        }),
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    // 3. Fetch public key
+    const response = await app.fetch(
+      new Request(`http://localhost/public-key?keyId=${keyId}`),
+      env,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+
+    // 4. Verify response
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("application/pgp-keys");
+    const body = await response.text();
+    expect(body).toContain("-----BEGIN PGP PUBLIC KEY BLOCK-----");
+  });
+});
 
 describe("Global Error Handling", () => {
   it("should handle errors in publicKeyRoute", async () => {

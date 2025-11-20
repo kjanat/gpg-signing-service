@@ -6,10 +6,49 @@ import {
   waitOnExecutionContext,
 } from "cloudflare:test";
 import app from "gpg-signing-service";
+import * as openpgp from "openpgp";
 import { describe, expect, it, vi } from "vitest";
 import { KeyStorage } from "~/durable-objects/key-storage";
 import { RateLimiter } from "~/durable-objects/rate-limiter";
 import { logAuditEvent } from "~/utils/audit";
+import * as signingUtils from "~/utils/signing";
+
+vi.mock("openpgp", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("openpgp")>();
+  return {
+    ...actual,
+    readPrivateKey: vi.fn(actual.readPrivateKey),
+  };
+});
+
+vi.mock("~/utils/signing", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/utils/signing")>();
+  return {
+    ...actual,
+    signCommitData: vi.fn(actual.signCommitData),
+    // We don't mock parseAndValidateKey because we want to test its internal logic
+    // relying on the mocked openpgp.readPrivateKey
+  };
+});
+
+vi.mock("~/middleware/oidc", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/middleware/oidc")>();
+  return {
+    ...actual,
+    oidcAuth: vi.fn(async (c, next) => {
+      if (c.req.header("Authorization") === "Bearer valid-token") {
+        c.set("oidcClaims", {
+          iss: "issuer",
+          sub: "subject",
+          project_path: "repo",
+        });
+        c.set("identity", "user");
+        return next();
+      }
+      return actual.oidcAuth(c, next);
+    }),
+  };
+});
 
 // Minimal in-memory DurableObjectState mock
 function createState(): DurableObjectState {
@@ -65,6 +104,17 @@ describe("Branch Coverage Helpers", () => {
       const res = await storage.fetch(new Request("http://do/unknown"));
       expect(res.status).toBe(404);
     });
+
+    it("handles health check errors", async () => {
+      const state = createState();
+      vi.spyOn(state.storage, "list").mockRejectedValue(
+        new Error("Storage fail"),
+      );
+      const storage = new KeyStorage(state);
+      const res = await storage.fetch(new Request("http://do/health"));
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual({ error: "Storage fail" });
+    });
   });
 
   describe("RateLimiter edge cases", () => {
@@ -103,6 +153,31 @@ describe("Branch Coverage Helpers", () => {
       const limiter = new RateLimiter(createState());
       const res = await limiter.fetch(new Request("http://do/unknown"));
       expect(res.status).toBe(404);
+    });
+
+    it("refills from 0 tokens when stale", async () => {
+      const state = createState();
+      await state.storage.put("bucket:user", {
+        tokens: 0,
+        lastRefill: Date.now() - 120_000,
+      });
+      const limiter = new RateLimiter(state);
+      const res = await limiter.fetch(
+        new Request("http://do/consume?identity=user"),
+      );
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.allowed).toBe(true);
+    });
+
+    it("handles storage errors", async () => {
+      const state = createState();
+      vi.spyOn(state.storage, "get").mockRejectedValue(
+        new Error("Storage fail"),
+      );
+      const limiter = new RateLimiter(state);
+      const res = await limiter.fetch(new Request("http://do/consume"));
+      expect(res.status).toBe(500);
     });
   });
 
@@ -231,6 +306,185 @@ describe("Branch Coverage Helpers", () => {
 
       const generic = new Error("other");
       expect(() => mapJoseError(generic)).toThrow("other");
+    });
+
+    it("returns 401 for Basic auth", async () => {
+      const json = vi.fn();
+      const context = {
+        req: { header: () => "Basic user:pass" },
+        json,
+      };
+      await import("~/middleware/oidc").then(({ oidcAuth }) =>
+        oidcAuth(context as any, () => Promise.resolve())
+      );
+      expect(json).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "AUTH_MISSING" }),
+        401,
+      );
+    });
+
+    it("fails closed when admin rate limiter fails", async () => {
+      const customEnv = {
+        ...env,
+        RATE_LIMITER: {
+          idFromName: () => ({}) as any,
+          get: () => ({
+            fetch: () =>
+              Promise.resolve(new Response("Error", { status: 503 })),
+          }),
+        },
+      };
+
+      const json = vi.fn();
+      const context = {
+        req: {
+          header: (name: string) =>
+            name === "Authorization" ? "Bearer admin" : "1.2.3.4",
+        },
+        env: customEnv,
+        json,
+      };
+
+      await import("~/middleware/security").then(({ adminRateLimit }) =>
+        adminRateLimit(context as any, () => Promise.resolve())
+      );
+
+      expect(json).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "RATE_LIMIT_ERROR" }),
+        503,
+      );
+    });
+  });
+
+  describe("Route error handling", () => {
+    it("triggers catch block in uploadKeyRoute with invalid key format", async () => {
+      // Sending garbage key triggers openpgp error, which is caught by the route handler
+      const ctx = createExecutionContext();
+      const res = await app.fetch(
+        new Request("http://localhost/admin/keys", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${env.ADMIN_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            armoredPrivateKey: "invalid-key-format",
+            keyId: "A1B2C3D4E5F6G7H8",
+          }),
+        }),
+        env,
+        ctx,
+      );
+      await waitOnExecutionContext(ctx);
+
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body.code).toBe("KEY_UPLOAD_ERROR");
+    });
+
+    it("handles signing key not found via storage", async () => {
+      const customEnv = {
+        ...env,
+        KEY_STORAGE: {
+          idFromName: () => ({}) as any,
+          get: () => ({
+            fetch: () =>
+              Promise.resolve(
+                new Response(JSON.stringify({ error: "Key not found" }), {
+                  status: 404,
+                }),
+              ),
+          }),
+        },
+        AUDIT_DB: {
+          prepare: () => ({ bind: () => ({ run: () => Promise.resolve() }) }),
+        },
+      };
+
+      const ctx = createExecutionContext();
+      const res = await app.fetch(
+        new Request("http://localhost/sign?keyId=A1B2C3D4E5F6G7H8", {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer valid-token",
+            "Content-Type": "text/plain",
+          },
+          body: "commit data",
+        }),
+        customEnv,
+        ctx,
+      );
+      await waitOnExecutionContext(ctx);
+
+      expect(res.status).toBe(404);
+      const body = await res.json();
+      expect(body.code).toBe("KEY_NOT_FOUND");
+    });
+
+    it("handles signing errors", async () => {
+      vi.mocked(signingUtils.signCommitData).mockRejectedValue(
+        new Error("Signing failed"),
+      );
+
+      const customEnv = {
+        ...env,
+        KEY_STORAGE: {
+          idFromName: () => ({}) as any,
+          get: () => ({
+            fetch: () =>
+              Promise.resolve(
+                new Response(
+                  JSON.stringify({
+                    armoredPrivateKey: "key",
+                    keyId: "id",
+                    fingerprint: "fp",
+                    algorithm: "RSA",
+                  }),
+                  { status: 200 },
+                ),
+              ),
+          }),
+        },
+        AUDIT_DB: {
+          prepare: () => ({ bind: () => ({ run: () => Promise.resolve() }) }),
+        },
+      };
+
+      const ctx = createExecutionContext();
+      const res = await app.fetch(
+        new Request("http://localhost/sign?keyId=A1B2C3D4E5F6G7H8", {
+          method: "POST",
+          headers: {
+            Authorization: "Bearer valid-token",
+            "Content-Type": "text/plain",
+          },
+          body: "commit data",
+        }),
+        customEnv,
+        ctx,
+      );
+      await waitOnExecutionContext(ctx);
+
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body.code).toBe("SIGN_ERROR");
+    });
+  });
+
+  describe("Utility edge cases", () => {
+    it("handles unknown key algorithms", async () => {
+      const mockKey = {
+        keyPacket: { algorithm: 99 },
+        getFingerprint: () => "fp",
+        getKeyID: () => ({ toHex: () => "id" }),
+        getUserIDs: () => ["user"],
+        isDecrypted: () => true,
+      };
+
+      vi.mocked(openpgp.readPrivateKey).mockResolvedValue(mockKey as any);
+
+      const info = await signingUtils.parseAndValidateKey("armored-key");
+      expect(info.algorithm).toBe("Unknown(99)");
     });
   });
 });
