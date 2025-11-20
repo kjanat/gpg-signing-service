@@ -15,235 +15,46 @@ import (
 	"net/url"
 	"path"
 	"strings"
-	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/oapi-codegen/runtime"
-	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
-const (
-	AdminBearerScopes = "AdminBearer.Scopes"
-	OIDCBearerScopes  = "OIDCBearer.Scopes"
-)
-
-// Defines values for AuditLogEntryAction.
-const (
-	AuditLogEntryActionKeyRotate AuditLogEntryAction = "key_rotate"
-	AuditLogEntryActionKeyUpload AuditLogEntryAction = "key_upload"
-	AuditLogEntryActionSign      AuditLogEntryAction = "sign"
-)
-
-// Defines values for ErrorResponseCode.
-const (
-	AUDITERROR         ErrorResponseCode = "AUDIT_ERROR"
-	AUTHINVALID        ErrorResponseCode = "AUTH_INVALID"
-	AUTHMISSING        ErrorResponseCode = "AUTH_MISSING"
-	INTERNALERROR      ErrorResponseCode = "INTERNAL_ERROR"
-	INVALIDREQUEST     ErrorResponseCode = "INVALID_REQUEST"
-	KEYDELETEERROR     ErrorResponseCode = "KEY_DELETE_ERROR"
-	KEYLISTERROR       ErrorResponseCode = "KEY_LIST_ERROR"
-	KEYNOTFOUND        ErrorResponseCode = "KEY_NOT_FOUND"
-	KEYPROCESSINGERROR ErrorResponseCode = "KEY_PROCESSING_ERROR"
-	KEYUPLOADERROR     ErrorResponseCode = "KEY_UPLOAD_ERROR"
-	NOTFOUND           ErrorResponseCode = "NOT_FOUND"
-	RATELIMITED        ErrorResponseCode = "RATE_LIMITED"
-	RATELIMITERROR     ErrorResponseCode = "RATE_LIMIT_ERROR"
-	SIGNERROR          ErrorResponseCode = "SIGN_ERROR"
-)
-
-// Defines values for HealthResponseStatus.
-const (
-	Degraded  HealthResponseStatus = "degraded"
-	Healthy   HealthResponseStatus = "healthy"
-	Unhealthy HealthResponseStatus = "unhealthy"
-)
-
-// Defines values for KeyUploadResponseSuccess.
-const (
-	True KeyUploadResponseSuccess = true
-)
-
-// Defines values for GetAuditLogsParamsAction.
-const (
-	GetAuditLogsParamsActionKeyRotate GetAuditLogsParamsAction = "key_rotate"
-	GetAuditLogsParamsActionKeyUpload GetAuditLogsParamsAction = "key_upload"
-	GetAuditLogsParamsActionSign      GetAuditLogsParamsAction = "sign"
-)
-
-// AuditLogEntry defines model for AuditLogEntry.
-type AuditLogEntry struct {
-	// Action Type of action performed
-	Action AuditLogEntryAction `json:"action"`
-
-	// ErrorCode Error code if action failed (omitted on success)
-	ErrorCode *string `json:"errorCode,omitempty"`
-
-	// Id Unique audit log entry identifier
-	Id string `json:"id"`
-
-	// Issuer OIDC issuer URL or "admin"
-	Issuer string `json:"issuer"`
-
-	// KeyId Key identifier involved in the action
-	KeyId string `json:"keyId"`
-
-	// Metadata Additional context as JSON string (optional)
-	Metadata json.RawMessage `json:"metadata,omitempty"`
-
-	// RequestId Request identifier for correlation
-	RequestId openapi_types.UUID `json:"requestId"`
-
-	// Subject OIDC subject claim or "admin"
-	Subject string `json:"subject"`
-
-	// Success Whether the action succeeded
-	Success bool `json:"success"`
-
-	// Timestamp ISO 8601 timestamp of the action
-	Timestamp time.Time `json:"timestamp"`
+// GetAdminAuditParams defines parameters for GetAdminAudit.
+type GetAdminAuditParams struct {
+	Limit     *string `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset    *string `form:"offset,omitempty" json:"offset,omitempty"`
+	Action    *string `form:"action,omitempty" json:"action,omitempty"`
+	Subject   *string `form:"subject,omitempty" json:"subject,omitempty"`
+	StartDate *string `form:"startDate,omitempty" json:"startDate,omitempty"`
+	EndDate   *string `form:"endDate,omitempty" json:"endDate,omitempty"`
 }
 
-// AuditLogEntryAction Type of action performed
-type AuditLogEntryAction string
-
-// ErrorResponse defines model for ErrorResponse.
-type ErrorResponse struct {
-	// Code Machine-readable error code
-	Code ErrorResponseCode `json:"code"`
-
-	// Error Human-readable error message
-	Error string `json:"error"`
-
-	// RequestId Unique identifier for this request (optional, included for errors from protected endpoints)
-	RequestId *openapi_types.UUID `json:"requestId,omitempty"`
-}
-
-// ErrorResponseCode Machine-readable error code
-type ErrorResponseCode string
-
-// HealthResponse defines model for HealthResponse.
-type HealthResponse struct {
-	Checks struct {
-		// Database Status of D1 audit database
-		Database bool `json:"database"`
-
-		// KeyStorage Status of Durable Object key storage
-		KeyStorage bool `json:"keyStorage"`
-	} `json:"checks"`
-
-	// Status Overall health status
-	Status HealthResponseStatus `json:"status"`
-
-	// Timestamp ISO 8601 timestamp when health check was performed
-	Timestamp time.Time `json:"timestamp"`
-
-	// Version Service version
-	Version string `json:"version"`
-}
-
-// HealthResponseStatus Overall health status
-type HealthResponseStatus string
-
-// KeyMetadata defines model for KeyMetadata.
-type KeyMetadata struct {
-	// Algorithm Key algorithm
-	Algorithm string `json:"algorithm"`
-
-	// CreatedAt ISO 8601 timestamp when key was uploaded
-	CreatedAt time.Time `json:"createdAt"`
-
-	// Fingerprint 40-character hex fingerprint
-	Fingerprint string `json:"fingerprint"`
-
-	// KeyId Key identifier
-	KeyId string `json:"keyId"`
-}
-
-// KeyUploadRequest defines model for KeyUploadRequest.
-type KeyUploadRequest struct {
-	// ArmoredPrivateKey PGP-armored private key in ASCII format
+// PostAdminKeysJSONBody defines parameters for PostAdminKeys.
+type PostAdminKeysJSONBody struct {
 	ArmoredPrivateKey string `json:"armoredPrivateKey"`
-
-	// KeyId Identifier for this key (used in signing requests)
-	KeyId string `json:"keyId"`
-}
-
-// KeyUploadResponse defines model for KeyUploadResponse.
-type KeyUploadResponse struct {
-	// Algorithm Key algorithm and bit length
-	Algorithm string `json:"algorithm"`
-
-	// Fingerprint 40-character hex fingerprint of the key
-	Fingerprint string `json:"fingerprint"`
-
-	// KeyId The uploaded key identifier
-	KeyId   string                   `json:"keyId"`
-	Success KeyUploadResponseSuccess `json:"success"`
-
-	// UserId User ID associated with the key
-	UserId string `json:"userId"`
-}
-
-// KeyUploadResponseSuccess defines model for KeyUploadResponse.Success.
-type KeyUploadResponseSuccess bool
-
-// GetAuditLogsParams defines parameters for GetAuditLogs.
-type GetAuditLogsParams struct {
-	// Limit Maximum number of entries to return (1-1000, default 100)
-	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
-
-	// Offset Number of entries to skip (for pagination, default 0)
-	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
-
-	// Action Filter by audit action type
-	Action *GetAuditLogsParamsAction `form:"action,omitempty" json:"action,omitempty"`
-
-	// Subject Filter by subject (OIDC subject claim or "admin")
-	Subject *string `form:"subject,omitempty" json:"subject,omitempty"`
-
-	// StartDate ISO 8601 timestamp for range start (inclusive)
-	StartDate *time.Time `form:"startDate,omitempty" json:"startDate,omitempty"`
-
-	// EndDate ISO 8601 timestamp for range end (inclusive)
-	EndDate *time.Time `form:"endDate,omitempty" json:"endDate,omitempty"`
-}
-
-// GetAuditLogsParamsAction defines parameters for GetAuditLogs.
-type GetAuditLogsParamsAction string
-
-// DeleteKeyParams defines parameters for DeleteKey.
-type DeleteKeyParams struct {
-	// XRequestID Optional request identifier for correlation
-	XRequestID *openapi_types.UUID `json:"X-Request-ID,omitempty"`
+	KeyId             string `json:"keyId"`
 }
 
 // GetPublicKeyParams defines parameters for GetPublicKey.
 type GetPublicKeyParams struct {
-	// KeyId Key identifier. If not specified, uses the default KEY_ID from service configuration.
-	// Format: alphanumeric identifier (e.g., "signing-key-v1", "A1B2C3D4")
 	KeyId *string `form:"keyId,omitempty" json:"keyId,omitempty"`
 }
 
-// SignCommitTextBody defines parameters for SignCommit.
-type SignCommitTextBody = string
+// PostSignTextBody defines parameters for PostSign.
+type PostSignTextBody = string
 
-// SignCommitParams defines parameters for SignCommit.
-type SignCommitParams struct {
-	// KeyId Key identifier to use for signing. If not specified, uses the default KEY_ID.
-	// Must match a key previously uploaded via POST /admin/keys.
-	KeyId *string `form:"keyId,omitempty" json:"keyId,omitempty"`
-
-	// XRequestID Optional request identifier. If provided, will be returned in response for correlation.
-	// If not provided, a random UUID is generated by the service.
-	XRequestID *openapi_types.UUID `json:"X-Request-ID,omitempty"`
+// PostSignParams defines parameters for PostSign.
+type PostSignParams struct {
+	KeyId      *string `form:"keyId,omitempty" json:"keyId,omitempty"`
+	XRequestID *string `json:"X-Request-ID,omitempty"`
 }
 
-// UploadKeyJSONRequestBody defines body for UploadKey for application/json ContentType.
-type UploadKeyJSONRequestBody = KeyUploadRequest
+// PostAdminKeysJSONRequestBody defines body for PostAdminKeys for application/json ContentType.
+type PostAdminKeysJSONRequestBody PostAdminKeysJSONBody
 
-// SignCommitTextRequestBody defines body for SignCommit for text/plain ContentType.
-type SignCommitTextRequestBody = SignCommitTextBody
+// PostSignTextRequestBody defines body for PostSign for text/plain ContentType.
+type PostSignTextRequestBody = PostSignTextBody
 
 // RequestEditorFn  is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -318,22 +129,22 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 
 // The interface specification for the client above.
 type ClientInterface interface {
-	// GetAuditLogs request
-	GetAuditLogs(ctx context.Context, params *GetAuditLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// GetAdminAudit request
+	GetAdminAudit(ctx context.Context, params *GetAdminAuditParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListKeys request
-	ListKeys(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// GetAdminKeys request
+	GetAdminKeys(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UploadKeyWithBody request with any body
-	UploadKeyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// PostAdminKeysWithBody request with any body
+	PostAdminKeysWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	UploadKey(ctx context.Context, body UploadKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostAdminKeys(ctx context.Context, body PostAdminKeysJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeleteKey request
-	DeleteKey(ctx context.Context, keyId string, params *DeleteKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// DeleteAdminKeysKeyId request
+	DeleteAdminKeysKeyId(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetAdminPublicKey request
-	GetAdminPublicKey(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// GetAdminKeysKeyIdPublic request
+	GetAdminKeysKeyIdPublic(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetHealth request
 	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -341,14 +152,14 @@ type ClientInterface interface {
 	// GetPublicKey request
 	GetPublicKey(ctx context.Context, params *GetPublicKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SignCommitWithBody request with any body
-	SignCommitWithBody(ctx context.Context, params *SignCommitParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// PostSignWithBody request with any body
+	PostSignWithBody(ctx context.Context, params *PostSignParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	SignCommitWithTextBody(ctx context.Context, params *SignCommitParams, body SignCommitTextRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	PostSignWithTextBody(ctx context.Context, params *PostSignParams, body PostSignTextRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
-func (c *Client) GetAuditLogs(ctx context.Context, params *GetAuditLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetAuditLogsRequest(c.Server, params)
+func (c *Client) GetAdminAudit(ctx context.Context, params *GetAdminAuditParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAdminAuditRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -359,8 +170,8 @@ func (c *Client) GetAuditLogs(ctx context.Context, params *GetAuditLogsParams, r
 	return c.Client.Do(req)
 }
 
-func (c *Client) ListKeys(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListKeysRequest(c.Server)
+func (c *Client) GetAdminKeys(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAdminKeysRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -371,8 +182,8 @@ func (c *Client) ListKeys(ctx context.Context, reqEditors ...RequestEditorFn) (*
 	return c.Client.Do(req)
 }
 
-func (c *Client) UploadKeyWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUploadKeyRequestWithBody(c.Server, contentType, body)
+func (c *Client) PostAdminKeysWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostAdminKeysRequestWithBody(c.Server, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -383,8 +194,8 @@ func (c *Client) UploadKeyWithBody(ctx context.Context, contentType string, body
 	return c.Client.Do(req)
 }
 
-func (c *Client) UploadKey(ctx context.Context, body UploadKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUploadKeyRequest(c.Server, body)
+func (c *Client) PostAdminKeys(ctx context.Context, body PostAdminKeysJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostAdminKeysRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -395,8 +206,8 @@ func (c *Client) UploadKey(ctx context.Context, body UploadKeyJSONRequestBody, r
 	return c.Client.Do(req)
 }
 
-func (c *Client) DeleteKey(ctx context.Context, keyId string, params *DeleteKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeleteKeyRequest(c.Server, keyId, params)
+func (c *Client) DeleteAdminKeysKeyId(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteAdminKeysKeyIdRequest(c.Server, keyId)
 	if err != nil {
 		return nil, err
 	}
@@ -407,8 +218,8 @@ func (c *Client) DeleteKey(ctx context.Context, keyId string, params *DeleteKeyP
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetAdminPublicKey(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetAdminPublicKeyRequest(c.Server, keyId)
+func (c *Client) GetAdminKeysKeyIdPublic(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAdminKeysKeyIdPublicRequest(c.Server, keyId)
 	if err != nil {
 		return nil, err
 	}
@@ -443,8 +254,8 @@ func (c *Client) GetPublicKey(ctx context.Context, params *GetPublicKeyParams, r
 	return c.Client.Do(req)
 }
 
-func (c *Client) SignCommitWithBody(ctx context.Context, params *SignCommitParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSignCommitRequestWithBody(c.Server, params, contentType, body)
+func (c *Client) PostSignWithBody(ctx context.Context, params *PostSignParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostSignRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -455,8 +266,8 @@ func (c *Client) SignCommitWithBody(ctx context.Context, params *SignCommitParam
 	return c.Client.Do(req)
 }
 
-func (c *Client) SignCommitWithTextBody(ctx context.Context, params *SignCommitParams, body SignCommitTextRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSignCommitRequestWithTextBody(c.Server, params, body)
+func (c *Client) PostSignWithTextBody(ctx context.Context, params *PostSignParams, body PostSignTextRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostSignRequestWithTextBody(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -467,8 +278,8 @@ func (c *Client) SignCommitWithTextBody(ctx context.Context, params *SignCommitP
 	return c.Client.Do(req)
 }
 
-// NewGetAuditLogsRequest generates requests for GetAuditLogs
-func NewGetAuditLogsRequest(server string, params *GetAuditLogsParams) (*http.Request, error) {
+// NewGetAdminAuditRequest generates requests for GetAdminAudit
+func NewGetAdminAuditRequest(server string, params *GetAdminAuditParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -596,8 +407,8 @@ func NewGetAuditLogsRequest(server string, params *GetAuditLogsParams) (*http.Re
 	return req, nil
 }
 
-// NewListKeysRequest generates requests for ListKeys
-func NewListKeysRequest(server string) (*http.Request, error) {
+// NewGetAdminKeysRequest generates requests for GetAdminKeys
+func NewGetAdminKeysRequest(server string) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -623,19 +434,19 @@ func NewListKeysRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
-// NewUploadKeyRequest calls the generic UploadKey builder with application/json body
-func NewUploadKeyRequest(server string, body UploadKeyJSONRequestBody) (*http.Request, error) {
+// NewPostAdminKeysRequest calls the generic PostAdminKeys builder with application/json body
+func NewPostAdminKeysRequest(server string, body PostAdminKeysJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewUploadKeyRequestWithBody(server, "application/json", bodyReader)
+	return NewPostAdminKeysRequestWithBody(server, "application/json", bodyReader)
 }
 
-// NewUploadKeyRequestWithBody generates requests for UploadKey with any type of body
-func NewUploadKeyRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+// NewPostAdminKeysRequestWithBody generates requests for PostAdminKeys with any type of body
+func NewPostAdminKeysRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -663,8 +474,8 @@ func NewUploadKeyRequestWithBody(server string, contentType string, body io.Read
 	return req, nil
 }
 
-// NewDeleteKeyRequest generates requests for DeleteKey
-func NewDeleteKeyRequest(server string, keyId string, params *DeleteKeyParams) (*http.Request, error) {
+// NewDeleteAdminKeysKeyIdRequest generates requests for DeleteAdminKeysKeyId
+func NewDeleteAdminKeysKeyIdRequest(server string, keyId string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -694,26 +505,11 @@ func NewDeleteKeyRequest(server string, keyId string, params *DeleteKeyParams) (
 		return nil, err
 	}
 
-	if params != nil {
-
-		if params.XRequestID != nil {
-			var headerParam0 string
-
-			headerParam0, err = runtime.StyleParamWithLocation("simple", false, "X-Request-ID", runtime.ParamLocationHeader, *params.XRequestID)
-			if err != nil {
-				return nil, err
-			}
-
-			req.Header.Set("X-Request-ID", headerParam0)
-		}
-
-	}
-
 	return req, nil
 }
 
-// NewGetAdminPublicKeyRequest generates requests for GetAdminPublicKey
-func NewGetAdminPublicKeyRequest(server string, keyId string) (*http.Request, error) {
+// NewGetAdminKeysKeyIdPublicRequest generates requests for GetAdminKeysKeyIdPublic
+func NewGetAdminKeysKeyIdPublicRequest(server string, keyId string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -822,15 +618,15 @@ func NewGetPublicKeyRequest(server string, params *GetPublicKeyParams) (*http.Re
 	return req, nil
 }
 
-// NewSignCommitRequestWithTextBody calls the generic SignCommit builder with text/plain body
-func NewSignCommitRequestWithTextBody(server string, params *SignCommitParams, body SignCommitTextRequestBody) (*http.Request, error) {
+// NewPostSignRequestWithTextBody calls the generic PostSign builder with text/plain body
+func NewPostSignRequestWithTextBody(server string, params *PostSignParams, body PostSignTextRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	bodyReader = strings.NewReader(string(body))
-	return NewSignCommitRequestWithBody(server, params, "text/plain", bodyReader)
+	return NewPostSignRequestWithBody(server, params, "text/plain", bodyReader)
 }
 
-// NewSignCommitRequestWithBody generates requests for SignCommit with any type of body
-func NewSignCommitRequestWithBody(server string, params *SignCommitParams, contentType string, body io.Reader) (*http.Request, error) {
+// NewPostSignRequestWithBody generates requests for PostSign with any type of body
+func NewPostSignRequestWithBody(server string, params *PostSignParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -938,22 +734,22 @@ func WithBaseURL(baseURL string) ClientOption {
 
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
-	// GetAuditLogsWithResponse request
-	GetAuditLogsWithResponse(ctx context.Context, params *GetAuditLogsParams, reqEditors ...RequestEditorFn) (*GetAuditLogsResponse, error)
+	// GetAdminAuditWithResponse request
+	GetAdminAuditWithResponse(ctx context.Context, params *GetAdminAuditParams, reqEditors ...RequestEditorFn) (*GetAdminAuditResponse, error)
 
-	// ListKeysWithResponse request
-	ListKeysWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListKeysResponse, error)
+	// GetAdminKeysWithResponse request
+	GetAdminKeysWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAdminKeysResponse, error)
 
-	// UploadKeyWithBodyWithResponse request with any body
-	UploadKeyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UploadKeyResponse, error)
+	// PostAdminKeysWithBodyWithResponse request with any body
+	PostAdminKeysWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostAdminKeysResponse, error)
 
-	UploadKeyWithResponse(ctx context.Context, body UploadKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*UploadKeyResponse, error)
+	PostAdminKeysWithResponse(ctx context.Context, body PostAdminKeysJSONRequestBody, reqEditors ...RequestEditorFn) (*PostAdminKeysResponse, error)
 
-	// DeleteKeyWithResponse request
-	DeleteKeyWithResponse(ctx context.Context, keyId string, params *DeleteKeyParams, reqEditors ...RequestEditorFn) (*DeleteKeyResponse, error)
+	// DeleteAdminKeysKeyIdWithResponse request
+	DeleteAdminKeysKeyIdWithResponse(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*DeleteAdminKeysKeyIdResponse, error)
 
-	// GetAdminPublicKeyWithResponse request
-	GetAdminPublicKeyWithResponse(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*GetAdminPublicKeyResponse, error)
+	// GetAdminKeysKeyIdPublicWithResponse request
+	GetAdminKeysKeyIdPublicWithResponse(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*GetAdminKeysKeyIdPublicResponse, error)
 
 	// GetHealthWithResponse request
 	GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error)
@@ -961,27 +757,44 @@ type ClientWithResponsesInterface interface {
 	// GetPublicKeyWithResponse request
 	GetPublicKeyWithResponse(ctx context.Context, params *GetPublicKeyParams, reqEditors ...RequestEditorFn) (*GetPublicKeyResponse, error)
 
-	// SignCommitWithBodyWithResponse request with any body
-	SignCommitWithBodyWithResponse(ctx context.Context, params *SignCommitParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SignCommitResponse, error)
+	// PostSignWithBodyWithResponse request with any body
+	PostSignWithBodyWithResponse(ctx context.Context, params *PostSignParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSignResponse, error)
 
-	SignCommitWithTextBodyWithResponse(ctx context.Context, params *SignCommitParams, body SignCommitTextRequestBody, reqEditors ...RequestEditorFn) (*SignCommitResponse, error)
+	PostSignWithTextBodyWithResponse(ctx context.Context, params *PostSignParams, body PostSignTextRequestBody, reqEditors ...RequestEditorFn) (*PostSignResponse, error)
 }
 
-type GetAuditLogsResponse struct {
+type GetAdminAuditResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *struct {
-		// Count Number of entries in this response
-		Count *int             `json:"count,omitempty"`
-		Logs  *[]AuditLogEntry `json:"logs,omitempty"`
+		Count float32 `json:"count"`
+		Logs  []struct {
+			Action    string  `json:"action"`
+			ErrorCode *string `json:"errorCode,omitempty"`
+			Id        string  `json:"id"`
+			Issuer    string  `json:"issuer"`
+			KeyId     string  `json:"keyId"`
+			Metadata  *string `json:"metadata,omitempty"`
+			RequestId string  `json:"requestId"`
+			Subject   string  `json:"subject"`
+			Success   bool    `json:"success"`
+			Timestamp string  `json:"timestamp"`
+		} `json:"logs"`
 	}
-	JSON400 *ErrorResponse
-	JSON401 *ErrorResponse
-	JSON500 *ErrorResponse
+	JSON400 *struct {
+		Code      string  `json:"code"`
+		Error     string  `json:"error"`
+		RequestId *string `json:"requestId,omitempty"`
+	}
+	JSON500 *struct {
+		Code      string  `json:"code"`
+		Error     string  `json:"error"`
+		RequestId *string `json:"requestId,omitempty"`
+	}
 }
 
 // Status returns HTTPResponse.Status
-func (r GetAuditLogsResponse) Status() string {
+func (r GetAdminAuditResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -989,25 +802,33 @@ func (r GetAuditLogsResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r GetAuditLogsResponse) StatusCode() int {
+func (r GetAdminAuditResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
 	return 0
 }
 
-type ListKeysResponse struct {
+type GetAdminKeysResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *struct {
-		Keys *[]KeyMetadata `json:"keys,omitempty"`
+		Keys []struct {
+			Algorithm   string `json:"algorithm"`
+			CreatedAt   string `json:"createdAt"`
+			Fingerprint string `json:"fingerprint"`
+			KeyId       string `json:"keyId"`
+		} `json:"keys"`
 	}
-	JSON401 *ErrorResponse
-	JSON500 *ErrorResponse
+	JSON500 *struct {
+		Code      string  `json:"code"`
+		Error     string  `json:"error"`
+		RequestId *string `json:"requestId,omitempty"`
+	}
 }
 
 // Status returns HTTPResponse.Status
-func (r ListKeysResponse) Status() string {
+func (r GetAdminKeysResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -1015,24 +836,37 @@ func (r ListKeysResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r ListKeysResponse) StatusCode() int {
+func (r GetAdminKeysResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
 	return 0
 }
 
-type UploadKeyResponse struct {
+type PostAdminKeysResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *KeyUploadResponse
-	JSON400      *ErrorResponse
-	JSON401      *ErrorResponse
-	JSON500      *ErrorResponse
+	JSON201      *struct {
+		Algorithm   string `json:"algorithm"`
+		Fingerprint string `json:"fingerprint"`
+		KeyId       string `json:"keyId"`
+		Success     bool   `json:"success"`
+		UserId      string `json:"userId"`
+	}
+	JSON400 *struct {
+		Code      string  `json:"code"`
+		Error     string  `json:"error"`
+		RequestId *string `json:"requestId,omitempty"`
+	}
+	JSON500 *struct {
+		Code      string  `json:"code"`
+		Error     string  `json:"error"`
+		RequestId *string `json:"requestId,omitempty"`
+	}
 }
 
 // Status returns HTTPResponse.Status
-func (r UploadKeyResponse) Status() string {
+func (r PostAdminKeysResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -1040,26 +874,29 @@ func (r UploadKeyResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r UploadKeyResponse) StatusCode() int {
+func (r PostAdminKeysResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
 	return 0
 }
 
-type DeleteKeyResponse struct {
+type DeleteAdminKeysKeyIdResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *struct {
-		Deleted *bool `json:"deleted,omitempty"`
-		Success *bool `json:"success,omitempty"`
+		Deleted bool `json:"deleted"`
+		Success bool `json:"success"`
 	}
-	JSON401 *ErrorResponse
-	JSON500 *ErrorResponse
+	JSON500 *struct {
+		Code      string  `json:"code"`
+		Error     string  `json:"error"`
+		RequestId *string `json:"requestId,omitempty"`
+	}
 }
 
 // Status returns HTTPResponse.Status
-func (r DeleteKeyResponse) Status() string {
+func (r DeleteAdminKeysKeyIdResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -1067,23 +904,30 @@ func (r DeleteKeyResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r DeleteKeyResponse) StatusCode() int {
+func (r DeleteAdminKeysKeyIdResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
 	return 0
 }
 
-type GetAdminPublicKeyResponse struct {
+type GetAdminKeysKeyIdPublicResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON401      *ErrorResponse
-	JSON404      *ErrorResponse
-	JSON500      *ErrorResponse
+	JSON404      *struct {
+		Code      string  `json:"code"`
+		Error     string  `json:"error"`
+		RequestId *string `json:"requestId,omitempty"`
+	}
+	JSON500 *struct {
+		Code      string  `json:"code"`
+		Error     string  `json:"error"`
+		RequestId *string `json:"requestId,omitempty"`
+	}
 }
 
 // Status returns HTTPResponse.Status
-func (r GetAdminPublicKeyResponse) Status() string {
+func (r GetAdminKeysKeyIdPublicResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -1091,7 +935,7 @@ func (r GetAdminPublicKeyResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r GetAdminPublicKeyResponse) StatusCode() int {
+func (r GetAdminKeysKeyIdPublicResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -1101,8 +945,24 @@ func (r GetAdminPublicKeyResponse) StatusCode() int {
 type GetHealthResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *HealthResponse
-	JSON503      *HealthResponse
+	JSON200      *struct {
+		Checks struct {
+			Database   bool `json:"database"`
+			KeyStorage bool `json:"keyStorage"`
+		} `json:"checks"`
+		Status    string `json:"status"`
+		Timestamp string `json:"timestamp"`
+		Version   string `json:"version"`
+	}
+	JSON503 *struct {
+		Checks struct {
+			Database   bool `json:"database"`
+			KeyStorage bool `json:"keyStorage"`
+		} `json:"checks"`
+		Status    string `json:"status"`
+		Timestamp string `json:"timestamp"`
+		Version   string `json:"version"`
+	}
 }
 
 // Status returns HTTPResponse.Status
@@ -1124,8 +984,14 @@ func (r GetHealthResponse) StatusCode() int {
 type GetPublicKeyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON404      *ErrorResponse
-	JSON500      *ErrorResponse
+	JSON404      *struct {
+		Code  string `json:"code"`
+		Error string `json:"error"`
+	}
+	JSON500 *struct {
+		Code  string `json:"code"`
+		Error string `json:"error"`
+	}
 }
 
 // Status returns HTTPResponse.Status
@@ -1144,25 +1010,37 @@ func (r GetPublicKeyResponse) StatusCode() int {
 	return 0
 }
 
-type SignCommitResponse struct {
+type PostSignResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON400      *ErrorResponse
-	JSON401      *ErrorResponse
-	JSON429      *struct {
-		Code  *SignCommit429Code `json:"code,omitempty"`
-		Error *string            `json:"error,omitempty"`
-
-		// RetryAfter Seconds until rate limit resets
-		RetryAfter *int `json:"retryAfter,omitempty"`
+	JSON400      *struct {
+		Code      string  `json:"code"`
+		Error     string  `json:"error"`
+		RequestId *string `json:"requestId,omitempty"`
 	}
-	JSON500 *ErrorResponse
-	JSON503 *ErrorResponse
+	JSON404 *struct {
+		Code  string `json:"code"`
+		Error string `json:"error"`
+	}
+	JSON429 *struct {
+		Code       string  `json:"code"`
+		Error      string  `json:"error"`
+		RetryAfter float32 `json:"retryAfter"`
+	}
+	JSON500 *struct {
+		Code      string  `json:"code"`
+		Error     string  `json:"error"`
+		RequestId *string `json:"requestId,omitempty"`
+	}
+	JSON503 *struct {
+		Code      string  `json:"code"`
+		Error     string  `json:"error"`
+		RequestId *string `json:"requestId,omitempty"`
+	}
 }
-type SignCommit429Code string
 
 // Status returns HTTPResponse.Status
-func (r SignCommitResponse) Status() string {
+func (r PostSignResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -1170,64 +1048,64 @@ func (r SignCommitResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r SignCommitResponse) StatusCode() int {
+func (r PostSignResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
 	return 0
 }
 
-// GetAuditLogsWithResponse request returning *GetAuditLogsResponse
-func (c *ClientWithResponses) GetAuditLogsWithResponse(ctx context.Context, params *GetAuditLogsParams, reqEditors ...RequestEditorFn) (*GetAuditLogsResponse, error) {
-	rsp, err := c.GetAuditLogs(ctx, params, reqEditors...)
+// GetAdminAuditWithResponse request returning *GetAdminAuditResponse
+func (c *ClientWithResponses) GetAdminAuditWithResponse(ctx context.Context, params *GetAdminAuditParams, reqEditors ...RequestEditorFn) (*GetAdminAuditResponse, error) {
+	rsp, err := c.GetAdminAudit(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseGetAuditLogsResponse(rsp)
+	return ParseGetAdminAuditResponse(rsp)
 }
 
-// ListKeysWithResponse request returning *ListKeysResponse
-func (c *ClientWithResponses) ListKeysWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListKeysResponse, error) {
-	rsp, err := c.ListKeys(ctx, reqEditors...)
+// GetAdminKeysWithResponse request returning *GetAdminKeysResponse
+func (c *ClientWithResponses) GetAdminKeysWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAdminKeysResponse, error) {
+	rsp, err := c.GetAdminKeys(ctx, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseListKeysResponse(rsp)
+	return ParseGetAdminKeysResponse(rsp)
 }
 
-// UploadKeyWithBodyWithResponse request with arbitrary body returning *UploadKeyResponse
-func (c *ClientWithResponses) UploadKeyWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UploadKeyResponse, error) {
-	rsp, err := c.UploadKeyWithBody(ctx, contentType, body, reqEditors...)
+// PostAdminKeysWithBodyWithResponse request with arbitrary body returning *PostAdminKeysResponse
+func (c *ClientWithResponses) PostAdminKeysWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostAdminKeysResponse, error) {
+	rsp, err := c.PostAdminKeysWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseUploadKeyResponse(rsp)
+	return ParsePostAdminKeysResponse(rsp)
 }
 
-func (c *ClientWithResponses) UploadKeyWithResponse(ctx context.Context, body UploadKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*UploadKeyResponse, error) {
-	rsp, err := c.UploadKey(ctx, body, reqEditors...)
+func (c *ClientWithResponses) PostAdminKeysWithResponse(ctx context.Context, body PostAdminKeysJSONRequestBody, reqEditors ...RequestEditorFn) (*PostAdminKeysResponse, error) {
+	rsp, err := c.PostAdminKeys(ctx, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseUploadKeyResponse(rsp)
+	return ParsePostAdminKeysResponse(rsp)
 }
 
-// DeleteKeyWithResponse request returning *DeleteKeyResponse
-func (c *ClientWithResponses) DeleteKeyWithResponse(ctx context.Context, keyId string, params *DeleteKeyParams, reqEditors ...RequestEditorFn) (*DeleteKeyResponse, error) {
-	rsp, err := c.DeleteKey(ctx, keyId, params, reqEditors...)
+// DeleteAdminKeysKeyIdWithResponse request returning *DeleteAdminKeysKeyIdResponse
+func (c *ClientWithResponses) DeleteAdminKeysKeyIdWithResponse(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*DeleteAdminKeysKeyIdResponse, error) {
+	rsp, err := c.DeleteAdminKeysKeyId(ctx, keyId, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseDeleteKeyResponse(rsp)
+	return ParseDeleteAdminKeysKeyIdResponse(rsp)
 }
 
-// GetAdminPublicKeyWithResponse request returning *GetAdminPublicKeyResponse
-func (c *ClientWithResponses) GetAdminPublicKeyWithResponse(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*GetAdminPublicKeyResponse, error) {
-	rsp, err := c.GetAdminPublicKey(ctx, keyId, reqEditors...)
+// GetAdminKeysKeyIdPublicWithResponse request returning *GetAdminKeysKeyIdPublicResponse
+func (c *ClientWithResponses) GetAdminKeysKeyIdPublicWithResponse(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*GetAdminKeysKeyIdPublicResponse, error) {
+	rsp, err := c.GetAdminKeysKeyIdPublic(ctx, keyId, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseGetAdminPublicKeyResponse(rsp)
+	return ParseGetAdminKeysKeyIdPublicResponse(rsp)
 }
 
 // GetHealthWithResponse request returning *GetHealthResponse
@@ -1248,32 +1126,32 @@ func (c *ClientWithResponses) GetPublicKeyWithResponse(ctx context.Context, para
 	return ParseGetPublicKeyResponse(rsp)
 }
 
-// SignCommitWithBodyWithResponse request with arbitrary body returning *SignCommitResponse
-func (c *ClientWithResponses) SignCommitWithBodyWithResponse(ctx context.Context, params *SignCommitParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SignCommitResponse, error) {
-	rsp, err := c.SignCommitWithBody(ctx, params, contentType, body, reqEditors...)
+// PostSignWithBodyWithResponse request with arbitrary body returning *PostSignResponse
+func (c *ClientWithResponses) PostSignWithBodyWithResponse(ctx context.Context, params *PostSignParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSignResponse, error) {
+	rsp, err := c.PostSignWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseSignCommitResponse(rsp)
+	return ParsePostSignResponse(rsp)
 }
 
-func (c *ClientWithResponses) SignCommitWithTextBodyWithResponse(ctx context.Context, params *SignCommitParams, body SignCommitTextRequestBody, reqEditors ...RequestEditorFn) (*SignCommitResponse, error) {
-	rsp, err := c.SignCommitWithTextBody(ctx, params, body, reqEditors...)
+func (c *ClientWithResponses) PostSignWithTextBodyWithResponse(ctx context.Context, params *PostSignParams, body PostSignTextRequestBody, reqEditors ...RequestEditorFn) (*PostSignResponse, error) {
+	rsp, err := c.PostSignWithTextBody(ctx, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseSignCommitResponse(rsp)
+	return ParsePostSignResponse(rsp)
 }
 
-// ParseGetAuditLogsResponse parses an HTTP response from a GetAuditLogsWithResponse call
-func ParseGetAuditLogsResponse(rsp *http.Response) (*GetAuditLogsResponse, error) {
+// ParseGetAdminAuditResponse parses an HTTP response from a GetAdminAuditWithResponse call
+func ParseGetAdminAuditResponse(rsp *http.Response) (*GetAdminAuditResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &GetAuditLogsResponse{
+	response := &GetAdminAuditResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -1281,9 +1159,19 @@ func ParseGetAuditLogsResponse(rsp *http.Response) (*GetAuditLogsResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest struct {
-			// Count Number of entries in this response
-			Count *int             `json:"count,omitempty"`
-			Logs  *[]AuditLogEntry `json:"logs,omitempty"`
+			Count float32 `json:"count"`
+			Logs  []struct {
+				Action    string  `json:"action"`
+				ErrorCode *string `json:"errorCode,omitempty"`
+				Id        string  `json:"id"`
+				Issuer    string  `json:"issuer"`
+				KeyId     string  `json:"keyId"`
+				Metadata  *string `json:"metadata,omitempty"`
+				RequestId string  `json:"requestId"`
+				Subject   string  `json:"subject"`
+				Success   bool    `json:"success"`
+				Timestamp string  `json:"timestamp"`
+			} `json:"logs"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
@@ -1291,21 +1179,22 @@ func ParseGetAuditLogsResponse(rsp *http.Response) (*GetAuditLogsResponse, error
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ErrorResponse
+		var dest struct {
+			Code      string  `json:"code"`
+			Error     string  `json:"error"`
+			RequestId *string `json:"requestId,omitempty"`
+		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ErrorResponse
+		var dest struct {
+			Code      string  `json:"code"`
+			Error     string  `json:"error"`
+			RequestId *string `json:"requestId,omitempty"`
+		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1316,15 +1205,15 @@ func ParseGetAuditLogsResponse(rsp *http.Response) (*GetAuditLogsResponse, error
 	return response, nil
 }
 
-// ParseListKeysResponse parses an HTTP response from a ListKeysWithResponse call
-func ParseListKeysResponse(rsp *http.Response) (*ListKeysResponse, error) {
+// ParseGetAdminKeysResponse parses an HTTP response from a GetAdminKeysWithResponse call
+func ParseGetAdminKeysResponse(rsp *http.Response) (*GetAdminKeysResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &ListKeysResponse{
+	response := &GetAdminKeysResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -1332,22 +1221,24 @@ func ParseListKeysResponse(rsp *http.Response) (*ListKeysResponse, error) {
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest struct {
-			Keys *[]KeyMetadata `json:"keys,omitempty"`
+			Keys []struct {
+				Algorithm   string `json:"algorithm"`
+				CreatedAt   string `json:"createdAt"`
+				Fingerprint string `json:"fingerprint"`
+				KeyId       string `json:"keyId"`
+			} `json:"keys"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON200 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ErrorResponse
+		var dest struct {
+			Code      string  `json:"code"`
+			Error     string  `json:"error"`
+			RequestId *string `json:"requestId,omitempty"`
+		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1358,43 +1249,50 @@ func ParseListKeysResponse(rsp *http.Response) (*ListKeysResponse, error) {
 	return response, nil
 }
 
-// ParseUploadKeyResponse parses an HTTP response from a UploadKeyWithResponse call
-func ParseUploadKeyResponse(rsp *http.Response) (*UploadKeyResponse, error) {
+// ParsePostAdminKeysResponse parses an HTTP response from a PostAdminKeysWithResponse call
+func ParsePostAdminKeysResponse(rsp *http.Response) (*PostAdminKeysResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &UploadKeyResponse{
+	response := &PostAdminKeysResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest KeyUploadResponse
+		var dest struct {
+			Algorithm   string `json:"algorithm"`
+			Fingerprint string `json:"fingerprint"`
+			KeyId       string `json:"keyId"`
+			Success     bool   `json:"success"`
+			UserId      string `json:"userId"`
+		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ErrorResponse
+		var dest struct {
+			Code      string  `json:"code"`
+			Error     string  `json:"error"`
+			RequestId *string `json:"requestId,omitempty"`
+		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ErrorResponse
+		var dest struct {
+			Code      string  `json:"code"`
+			Error     string  `json:"error"`
+			RequestId *string `json:"requestId,omitempty"`
+		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1405,15 +1303,15 @@ func ParseUploadKeyResponse(rsp *http.Response) (*UploadKeyResponse, error) {
 	return response, nil
 }
 
-// ParseDeleteKeyResponse parses an HTTP response from a DeleteKeyWithResponse call
-func ParseDeleteKeyResponse(rsp *http.Response) (*DeleteKeyResponse, error) {
+// ParseDeleteAdminKeysKeyIdResponse parses an HTTP response from a DeleteAdminKeysKeyIdWithResponse call
+func ParseDeleteAdminKeysKeyIdResponse(rsp *http.Response) (*DeleteAdminKeysKeyIdResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &DeleteKeyResponse{
+	response := &DeleteAdminKeysKeyIdResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -1421,23 +1319,20 @@ func ParseDeleteKeyResponse(rsp *http.Response) (*DeleteKeyResponse, error) {
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest struct {
-			Deleted *bool `json:"deleted,omitempty"`
-			Success *bool `json:"success,omitempty"`
+			Deleted bool `json:"deleted"`
+			Success bool `json:"success"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON200 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ErrorResponse
+		var dest struct {
+			Code      string  `json:"code"`
+			Error     string  `json:"error"`
+			RequestId *string `json:"requestId,omitempty"`
+		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1448,36 +1343,37 @@ func ParseDeleteKeyResponse(rsp *http.Response) (*DeleteKeyResponse, error) {
 	return response, nil
 }
 
-// ParseGetAdminPublicKeyResponse parses an HTTP response from a GetAdminPublicKeyWithResponse call
-func ParseGetAdminPublicKeyResponse(rsp *http.Response) (*GetAdminPublicKeyResponse, error) {
+// ParseGetAdminKeysKeyIdPublicResponse parses an HTTP response from a GetAdminKeysKeyIdPublicWithResponse call
+func ParseGetAdminKeysKeyIdPublicResponse(rsp *http.Response) (*GetAdminKeysKeyIdPublicResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &GetAdminPublicKeyResponse{
+	response := &GetAdminKeysKeyIdPublicResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ErrorResponse
+		var dest struct {
+			Code      string  `json:"code"`
+			Error     string  `json:"error"`
+			RequestId *string `json:"requestId,omitempty"`
+		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ErrorResponse
+		var dest struct {
+			Code      string  `json:"code"`
+			Error     string  `json:"error"`
+			RequestId *string `json:"requestId,omitempty"`
+		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1503,14 +1399,30 @@ func ParseGetHealthResponse(rsp *http.Response) (*GetHealthResponse, error) {
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest HealthResponse
+		var dest struct {
+			Checks struct {
+				Database   bool `json:"database"`
+				KeyStorage bool `json:"keyStorage"`
+			} `json:"checks"`
+			Status    string `json:"status"`
+			Timestamp string `json:"timestamp"`
+			Version   string `json:"version"`
+		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest HealthResponse
+		var dest struct {
+			Checks struct {
+				Database   bool `json:"database"`
+				KeyStorage bool `json:"keyStorage"`
+			} `json:"checks"`
+			Status    string `json:"status"`
+			Timestamp string `json:"timestamp"`
+			Version   string `json:"version"`
+		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1536,14 +1448,20 @@ func ParseGetPublicKeyResponse(rsp *http.Response) (*GetPublicKeyResponse, error
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest ErrorResponse
+		var dest struct {
+			Code  string `json:"code"`
+			Error string `json:"error"`
+		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ErrorResponse
+		var dest struct {
+			Code  string `json:"code"`
+			Error string `json:"error"`
+		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1554,41 +1472,46 @@ func ParseGetPublicKeyResponse(rsp *http.Response) (*GetPublicKeyResponse, error
 	return response, nil
 }
 
-// ParseSignCommitResponse parses an HTTP response from a SignCommitWithResponse call
-func ParseSignCommitResponse(rsp *http.Response) (*SignCommitResponse, error) {
+// ParsePostSignResponse parses an HTTP response from a PostSignWithResponse call
+func ParsePostSignResponse(rsp *http.Response) (*PostSignResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &SignCommitResponse{
+	response := &PostSignResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ErrorResponse
+		var dest struct {
+			Code      string  `json:"code"`
+			Error     string  `json:"error"`
+			RequestId *string `json:"requestId,omitempty"`
+		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
 
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest ErrorResponse
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest struct {
+			Code  string `json:"code"`
+			Error string `json:"error"`
+		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON401 = &dest
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
 		var dest struct {
-			Code  *SignCommit429Code `json:"code,omitempty"`
-			Error *string            `json:"error,omitempty"`
-
-			// RetryAfter Seconds until rate limit resets
-			RetryAfter *int `json:"retryAfter,omitempty"`
+			Code       string  `json:"code"`
+			Error      string  `json:"error"`
+			RetryAfter float32 `json:"retryAfter"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
@@ -1596,14 +1519,22 @@ func ParseSignCommitResponse(rsp *http.Response) (*SignCommitResponse, error) {
 		response.JSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ErrorResponse
+		var dest struct {
+			Code      string  `json:"code"`
+			Error     string  `json:"error"`
+			RequestId *string `json:"requestId,omitempty"`
+		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest ErrorResponse
+		var dest struct {
+			Code      string  `json:"code"`
+			Error     string  `json:"error"`
+			RequestId *string `json:"requestId,omitempty"`
+		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1617,93 +1548,30 @@ func ParseSignCommitResponse(rsp *http.Response) (*SignCommitResponse, error) {
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
-	"//+uvKS0zFAAAA==",
+	"H4sIAAAAAAAC/+xZW3PaOBT+Kxo9mwQIIQlv5LKUSafLJO3O7rR9EPYxqLElVzqm9WT47zuSMBgQ1DSd",
+	"XtLmJYOlc/P5ztWPNJRpJgUI1LT3OA8oF7GkvUeKHBOgPToYDcg9nwguJuQe1IyHQPqjIQ3oDJTmUtAe",
+	"bR01j5p0HlCZgWAZpz16Yh8FNGM4NZzpMYtSLo5ZHnE0vydg/0WgQ8UzdIzuABWHGRB7jSRyosknjlMS",
+	"8wRBcTGhVohihmAYGf0A+4Zz3zI2AhVLAUFp2nv7SLlh+zEHVdCACpYakxKe2qs6nELKjBbwmaWZNbfV",
+	"NFpjkZkfGq3I+TzwM5JxrGEXpwP4sNDaX+VTk1Ln4w8Q4leRIlN4zRC+hhhE9EXS9wFVoDMpNFgEtJtN",
+	"8y+UAkFY57MsS3hofXn8QRsEPFb4Zcp4GrmjDmXuiBZiRJ6OQRnQGZSYA46Q6m3CxcvdVjCgoJRUVzIC",
+	"7ymP/I+1zkF5jx6gGPqJUkAWMWTeQwUfc9C4g7R0sf8sDEHrytlYygSYMIfIU9DI0szrVyuVK4ho760x",
+	"tXq/qlKwQufC8qCCOmfxSpH3S8xLd2W+fMCUYsWWZOu8YOHdbWpzfT1F9JeZwfDuPBFTO1xvgXGwrzZM",
+	"c0wCJ6WOaUMxYwmPyEKGEXf6vOxDUIIlRIOagSKOwdziOE2ZKlw6ryR/e7ioHA9Q6J2F4yXXSMogI7FU",
+	"hCUJ0SgVRMRS7qobt+7wG2aqUtFd+SiZSMVxmnrff6iAIUR9f7zHXExAZYoLPCgBbXiujNoqu6rooKLk",
+	"wRFtza8DB+szGTv3/I5Yty/A4LR8A5nUHmy/yRLJIsKIacUyxWcMwZBYmGvXmm3BeyT1Br6trZcyKp7w",
+	"kplKTUSNnBK3UKy3PA3zd3kzGL4io8GIjO6G//Rf35Dbm//I5cu/r27t+TtxdHS03RtVwLti2G9dtq9O",
+	"rjs3p391B2cvzn0t1ZqfthUs+fqdtqJFlcN8Kw+0nvKy9gb614byF4p+rkHVAXTJJNiRDFbKL3nWgf0t",
+	"FCS3eIWILGTEeZIUf4r1M0xgy8wk4FOZiUxm2izbx48WZHOX2xJA2M5y1/Y5YZWivZXU3J1lWrtdINc3",
+	"8pm5czWulBhfD3f/3FYj53zbyca9kcgfz3uCfWdElwzrBmx5/3eE8BJ2e2B7nOXjhIc7m0/Ts+IUiLu2",
+	"LM2M6AxCHi8eDa/39qAWzCMn6KeHdDbJGmWbu3sBsOUQZx4xZdmWg87zwZqJIyGRxDIX0W87ua0iwMXS",
+	"FFiC052BczWF8MGGjrtopgHzS7s9oy9eXjiO33a1ZNTwTGpmlhwzDf7M/ADFPUrFJlAjOVcuByu+vtlK",
+	"I8Ncez28b6FTWcd+sfVzEtYXPiV1UL6NOrAo98FcLxxYOOSf/HHGD3VGBBNlOvCNCHWxQyxPF58uXk0q",
+	"P7S4mW6PYa6AzECZGscWS8KtiHVJ341iNZbzy43inzrmz/S/eqX6UbXIINaq712y3POJIBOOJJRpypHY",
+	"PWKuzUBjK5IbSgajgXcwGUmNhsN3gXj5SWYKLLLr+AXbfxt3rgVo2FbT+3WrfQKd0+5ZA84vxo1WOzpp",
+	"sM5pt9Fpd7utTuus0/R+/nq/b3+E8BmPs4TxDZispKICIO2LOG51w4uw1YF297Q9brfj8/HZ+XjcPGen",
+	"rHl2cdIMW52zdyJjCgQS75aozs6mebCCG3ur++HgVf/1m7ubffsqT1YwpGVafHb7jksWkbvVruNXT3qd",
+	"9sX39g2qoh/j2qfD8iPmPvPWSOvYescQiP3GTeBzCBA959H+3hWBG1cEntx8/lxWli3dG8FmjCdsnMBG",
+	"obNlq1KyDJf5/wEAAP//yu8TMtUhAAA=",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

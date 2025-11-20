@@ -6,12 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/kjanat/gpg-signing-service/client/pkg/api"
+	"github.com/kjanat/gpg-signing-service/client/pkg/client"
 	"github.com/spf13/cobra"
 )
 
@@ -90,31 +89,23 @@ func getAdminToken() string {
 }
 
 // newClient creates a new API client
-func newClient() (*api.ClientWithResponses, error) {
-	httpClient := &http.Client{Timeout: timeout}
-	return api.NewClientWithResponses(getBaseURL(), api.WithHTTPClient(httpClient))
+func newClient() (*client.Client, error) {
+	return client.New(getBaseURL(),
+		client.WithOIDCToken(getToken()),
+		client.WithTimeout(timeout),
+	)
 }
 
-// addOIDCAuth adds OIDC bearer token to request
-func addOIDCAuth(ctx context.Context, req *http.Request) error {
-	t := getToken()
-	if t != "" {
-		req.Header.Set("Authorization", "Bearer "+t)
-	}
-	return nil
-}
-
-// addAdminAuth adds admin bearer token to request
-func addAdminAuth(ctx context.Context, req *http.Request) error {
-	t := getAdminToken()
-	if t != "" {
-		req.Header.Set("Authorization", "Bearer "+t)
-	}
-	return nil
+// newAdminClient creates a client with admin auth
+func newAdminClient() (*client.Client, error) {
+	return client.New(getBaseURL(),
+		client.WithAdminToken(getAdminToken()),
+		client.WithTimeout(timeout),
+	)
 }
 
 // outputJSON prints the value as JSON
-func outputJSON(v interface{}) error {
+func outputJSON(v any) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
@@ -134,16 +125,15 @@ var healthCmd = &cobra.Command{
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
-		resp, err := c.GetHealthWithResponse(ctx)
+		health, err := c.Health(ctx)
 		if err != nil {
+			if client.IsServiceError(err) {
+				// Even if degraded, we might have health info
+				// But here we just return the error as the wrapper handles it
+				return fmt.Errorf("health check failed: %w", err)
+			}
 			return fmt.Errorf("health check failed: %w", err)
 		}
-
-		if resp.JSON200 == nil {
-			return fmt.Errorf("health check failed: status %d", resp.StatusCode())
-		}
-
-		health := resp.JSON200
 
 		if jsonOutput {
 			return outputJSON(health)
@@ -153,8 +143,8 @@ var healthCmd = &cobra.Command{
 		fmt.Printf("Version: %s\n", health.Version)
 		fmt.Printf("Timestamp: %s\n", health.Timestamp)
 		fmt.Printf("Checks:\n")
-		fmt.Printf("  Key Storage: %v\n", health.Checks.KeyStorage)
-		fmt.Printf("  Database: %v\n", health.Checks.Database)
+		fmt.Printf("  Key Storage: %v\n", health.KeyStorage)
+		fmt.Printf("  Database: %v\n", health.Database)
 
 		if health.Status != "healthy" {
 			return fmt.Errorf("service is not healthy: %s", health.Status)
@@ -180,25 +170,13 @@ var publicKeyCmd = &cobra.Command{
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
-		var keyIDPtr *string
-		if keyID != "" {
-			keyIDPtr = &keyID
-		}
-
-		resp, err := c.GetPublicKeyWithResponse(ctx, &api.GetPublicKeyParams{KeyId: keyIDPtr})
+		pubKey, err := c.PublicKey(ctx, keyID)
 		if err != nil {
+			if client.IsKeyNotFound(err) {
+				return fmt.Errorf("key not found")
+			}
 			return fmt.Errorf("failed to get public key: %w", err)
 		}
-
-		if resp.StatusCode() == 404 {
-			return fmt.Errorf("key not found")
-		}
-
-		if resp.StatusCode() != 200 {
-			return fmt.Errorf("failed to get public key: status %d", resp.StatusCode())
-		}
-
-		pubKey := string(resp.Body)
 
 		if jsonOutput {
 			return outputJSON(map[string]string{"publicKey": pubKey})
@@ -235,10 +213,7 @@ Example:
 			return fmt.Errorf("no data provided on stdin")
 		}
 
-		httpClient := &http.Client{Timeout: timeout}
-		c, err := api.NewClientWithResponses(getBaseURL(),
-			api.WithHTTPClient(httpClient),
-			api.WithRequestEditorFn(addOIDCAuth))
+		c, err := newClient()
 		if err != nil {
 			return fmt.Errorf("failed to create client: %w", err)
 		}
@@ -246,42 +221,30 @@ Example:
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
-		var keyIDPtr *string
-		if keyID != "" {
-			keyIDPtr = &keyID
-		}
-
-		resp, err := c.SignCommitWithBodyWithResponse(ctx, &api.SignCommitParams{KeyId: keyIDPtr}, "text/plain", strings.NewReader(string(data)))
+		result, err := c.Sign(ctx, string(data), keyID)
 		if err != nil {
+			if client.IsAuthError(err) {
+				return fmt.Errorf("authentication failed: %w", err)
+			}
+			if client.IsRateLimitError(err) {
+				// The wrapper already retried, so this is a final failure
+				return fmt.Errorf("rate limit exceeded: %w", err)
+			}
 			return fmt.Errorf("signing failed: %w", err)
 		}
 
-		if resp.JSON401 != nil {
-			return fmt.Errorf("authentication failed: %s", resp.JSON401.Error)
-		}
-
-		if resp.JSON429 != nil {
-			return fmt.Errorf("rate limited, retry after %d seconds", *resp.JSON429.RetryAfter)
-		}
-
-		if resp.StatusCode() != 200 {
-			return fmt.Errorf("signing failed: status %d", resp.StatusCode())
-		}
-
-		signature := string(resp.Body)
-
 		if jsonOutput {
-			result := map[string]interface{}{
-				"signature": signature,
+			// Convert result to map for JSON output to match previous structure
+			out := map[string]any{
+				"signature": result.Signature,
 			}
-			// Check for rate limit headers
-			if remaining := resp.HTTPResponse.Header.Get("X-RateLimit-Remaining"); remaining != "" {
-				result["rateLimitRemaining"] = remaining
+			if result.RateLimitRemaining != nil {
+				out["rateLimitRemaining"] = *result.RateLimitRemaining
 			}
-			return outputJSON(result)
+			return outputJSON(out)
 		}
 
-		fmt.Print(signature)
+		fmt.Print(result.Signature)
 		return nil
 	},
 }
@@ -303,14 +266,6 @@ func init() {
 	adminCmd.AddCommand(adminDeleteCmd)
 	adminCmd.AddCommand(adminPublicKeyCmd)
 	adminCmd.AddCommand(adminAuditCmd)
-}
-
-// newAdminClient creates a client with admin auth
-func newAdminClient() (*api.ClientWithResponses, error) {
-	httpClient := &http.Client{Timeout: timeout}
-	return api.NewClientWithResponses(getBaseURL(),
-		api.WithHTTPClient(httpClient),
-		api.WithRequestEditorFn(addAdminAuth))
 }
 
 // Admin upload command
@@ -343,36 +298,24 @@ var adminUploadCmd = &cobra.Command{
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
-		body := api.UploadKeyJSONRequestBody{
-			ArmoredPrivateKey: string(keyData),
-			KeyId:             keyID,
-		}
-
-		resp, err := c.UploadKeyWithResponse(ctx, body)
+		result, err := c.UploadKey(ctx, keyID, string(keyData))
 		if err != nil {
+			if client.IsAuthError(err) {
+				return fmt.Errorf("authentication failed: %w", err)
+			}
 			return fmt.Errorf("key upload failed: %w", err)
 		}
-
-		if resp.JSON401 != nil {
-			return fmt.Errorf("authentication failed: %s", resp.JSON401.Error)
-		}
-
-		if resp.JSON201 == nil {
-			return fmt.Errorf("key upload failed: status %d", resp.StatusCode())
-		}
-
-		result := resp.JSON201
 
 		if jsonOutput {
 			return outputJSON(result)
 		}
 
 		fmt.Printf("Key uploaded successfully\n")
-		fmt.Printf("  Key ID: %s\n", result.KeyId)
+		fmt.Printf("  Key ID: %s\n", result.KeyID)
 		fmt.Printf("  Fingerprint: %s\n", result.Fingerprint)
 		fmt.Printf("  Algorithm: %s\n", result.Algorithm)
-		if result.UserId != "" {
-			fmt.Printf("  User ID: %s\n", result.UserId)
+		if result.UserID != "" {
+			fmt.Printf("  User ID: %s\n", result.UserID)
 		}
 
 		return nil
@@ -398,34 +341,26 @@ var adminListCmd = &cobra.Command{
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
-		resp, err := c.ListKeysWithResponse(ctx)
+		keys, err := c.ListKeys(ctx)
 		if err != nil {
+			if client.IsAuthError(err) {
+				return fmt.Errorf("authentication failed: %w", err)
+			}
 			return fmt.Errorf("failed to list keys: %w", err)
 		}
 
-		if resp.JSON401 != nil {
-			return fmt.Errorf("authentication failed: %s", resp.JSON401.Error)
-		}
-
-		if resp.JSON200 == nil {
-			return fmt.Errorf("failed to list keys: status %d", resp.StatusCode())
-		}
-
-		result := resp.JSON200
-
 		if jsonOutput {
-			return outputJSON(result)
+			return outputJSON(map[string]any{"keys": keys})
 		}
 
-		if result.Keys == nil || len(*result.Keys) == 0 {
+		if len(keys) == 0 {
 			fmt.Println("No keys found")
 			return nil
 		}
 
-		keys := *result.Keys
 		fmt.Printf("Keys (%d):\n", len(keys))
 		for _, key := range keys {
-			fmt.Printf("\n  Key ID: %s\n", key.KeyId)
+			fmt.Printf("\n  Key ID: %s\n", key.KeyID)
 			fmt.Printf("    Fingerprint: %s\n", key.Fingerprint)
 			fmt.Printf("    Algorithm: %s\n", key.Algorithm)
 			fmt.Printf("    Created: %s\n", key.CreatedAt)
@@ -455,31 +390,26 @@ var adminDeleteCmd = &cobra.Command{
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
-		resp, err := c.DeleteKeyWithResponse(ctx, keyID, &api.DeleteKeyParams{})
+		err = c.DeleteKey(ctx, keyID)
 		if err != nil {
+			if client.IsAuthError(err) {
+				return fmt.Errorf("authentication failed: %w", err)
+			}
+			if client.IsKeyNotFound(err) {
+				fmt.Printf("Key '%s' was not found\n", keyID)
+				if jsonOutput {
+					return outputJSON(map[string]bool{"deleted": false})
+				}
+				return nil // Or should this be an error? Original code didn't error on not found for delete
+			}
 			return fmt.Errorf("failed to delete key: %w", err)
 		}
 
-		if resp.JSON401 != nil {
-			return fmt.Errorf("authentication failed: %s", resp.JSON401.Error)
-		}
-
-		if resp.JSON200 == nil {
-			return fmt.Errorf("failed to delete key: status %d", resp.StatusCode())
-		}
-
-		result := resp.JSON200
-
 		if jsonOutput {
-			return outputJSON(result)
+			return outputJSON(map[string]bool{"deleted": true})
 		}
 
-		if result.Deleted != nil && *result.Deleted {
-			fmt.Printf("Key '%s' deleted successfully\n", keyID)
-		} else {
-			fmt.Printf("Key '%s' was not found\n", keyID)
-		}
-
+		fmt.Printf("Key '%s' deleted successfully\n", keyID)
 		return nil
 	},
 }
@@ -508,24 +438,17 @@ var adminPublicKeyCmd = &cobra.Command{
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
-		resp, err := c.GetAdminPublicKeyWithResponse(ctx, keyID)
+		// Use the admin-specific endpoint to ensure admin auth is exercised
+		pubKey, err := c.AdminPublicKey(ctx, keyID)
 		if err != nil {
+			if client.IsAuthError(err) {
+				return fmt.Errorf("authentication failed: %w", err)
+			}
+			if client.IsKeyNotFound(err) {
+				return fmt.Errorf("key not found")
+			}
 			return fmt.Errorf("failed to get public key: %w", err)
 		}
-
-		if resp.JSON401 != nil {
-			return fmt.Errorf("authentication failed: %s", resp.JSON401.Error)
-		}
-
-		if resp.StatusCode() == 404 {
-			return fmt.Errorf("key not found")
-		}
-
-		if resp.StatusCode() != 200 {
-			return fmt.Errorf("failed to get public key: status %d", resp.StatusCode())
-		}
-
-		pubKey := string(resp.Body)
 
 		if jsonOutput {
 			return outputJSON(map[string]string{"publicKey": pubKey})
@@ -561,74 +484,63 @@ var adminAuditCmd = &cobra.Command{
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
-		params := &api.GetAuditLogsParams{}
-		if limit > 0 {
-			params.Limit = &limit
+		filter := client.AuditFilter{
+			Limit:   limit,
+			Offset:  offset,
+			Action:  action,
+			Subject: subject,
 		}
-		if offset > 0 {
-			params.Offset = &offset
-		}
-		if action != "" {
-			actionParam := api.GetAuditLogsParamsAction(action)
-			params.Action = &actionParam
-		}
-		if subject != "" {
-			params.Subject = &subject
-		}
+
 		if startDate != "" {
 			t, err := time.Parse(time.RFC3339, startDate)
 			if err != nil {
 				return fmt.Errorf("invalid start-date format (use RFC3339): %w", err)
 			}
-			params.StartDate = &t
+			filter.StartDate = t
 		}
 		if endDate != "" {
 			t, err := time.Parse(time.RFC3339, endDate)
 			if err != nil {
 				return fmt.Errorf("invalid end-date format (use RFC3339): %w", err)
 			}
-			params.EndDate = &t
+			filter.EndDate = t
 		}
 
-		resp, err := c.GetAuditLogsWithResponse(ctx, params)
+		result, err := c.AuditLogs(ctx, filter)
 		if err != nil {
+			if client.IsAuthError(err) {
+				return fmt.Errorf("authentication failed: %w", err)
+			}
 			return fmt.Errorf("failed to get audit logs: %w", err)
 		}
 
-		if resp.JSON401 != nil {
-			return fmt.Errorf("authentication failed: %s", resp.JSON401.Error)
-		}
-
-		if resp.JSON200 == nil {
-			return fmt.Errorf("failed to get audit logs: status %d", resp.StatusCode())
-		}
-
-		result := resp.JSON200
-
 		if jsonOutput {
+			// We need to match the structure of the original output if possible, or just dump the result
+			// The wrapper returns AuditResult which has Logs []AuditLog
+			// The original returned the raw JSON200 which had Logs *[]AuditLog
+			// It should be close enough.
 			return outputJSON(result)
 		}
 
-		if result.Logs == nil || len(*result.Logs) == 0 {
+		if len(result.Logs) == 0 {
 			fmt.Println("No audit logs found")
 			return nil
 		}
 
-		logs := *result.Logs
 		fmt.Printf("Audit logs (%d entries):\n", result.Count)
-		for _, log := range logs {
-			fmt.Printf("\n  ID: %s\n", log.Id)
+		for _, log := range result.Logs {
+			fmt.Printf("\n  ID: %s\n", log.ID)
 			fmt.Printf("    Timestamp: %s\n", log.Timestamp)
 			fmt.Printf("    Action: %s\n", log.Action)
 			fmt.Printf("    Subject: %s\n", log.Subject)
-			fmt.Printf("    Key ID: %s\n", log.KeyId)
+			fmt.Printf("    Key ID: %s\n", log.KeyID)
 			fmt.Printf("    Success: %v\n", log.Success)
 			if log.ErrorCode != nil {
 				fmt.Printf("    Error: %s\n", *log.ErrorCode)
 			}
 			if len(log.Metadata) > 0 {
 				// Pretty print metadata if it's valid JSON
-				var meta map[string]interface{}
+				var meta map[string]any
 				if err := json.Unmarshal(log.Metadata, &meta); err == nil {
 					parts := make([]string, 0, len(meta))
 					for k, v := range meta {
