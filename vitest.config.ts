@@ -15,14 +15,18 @@ export default defineWorkersConfig({
         isolatedStorage: false, // Disable isolated storage for simpler testing
       },
     },
-    include: ["src/**/*.{test,spec}.{js,ts}"],
+    sequence: { concurrent: false },
+    isolate: true,
+    reporters: process.env.GITHUB_ACTIONS
+      ? ["github-actions", "dot", "junit", "json"]
+      : ["dot", "default"],
+    include: ["src/__tests__/**/*.{ts,js}"],
     coverage: {
+      // enabled: true,
       provider: "istanbul",
-      reporter: process.env.CI
-        ? ["lcov", "json"]
-        : ["text", "html"],
-      include: ["src/**/*.ts"],
-      exclude: ["src/**/*.{test,spec}.ts", "src/__tests__/**", "src/types/**"],
+      reporter: ["text", "html", "clover", "json"],
+      // include: ["src/**/*.ts"],
+      exclude: ["scripts", "dist", ".commitlint.ts", "vitest.config.ts"],
       // strict thresholds, if you modify this, you are fired !!!
       thresholds: { lines: 95, functions: 98, branches: 95, statements: 95 },
     },

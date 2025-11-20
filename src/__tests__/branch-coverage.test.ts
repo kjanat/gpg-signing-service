@@ -6,11 +6,10 @@ import {
   waitOnExecutionContext,
 } from "cloudflare:test";
 import app from "gpg-signing-service";
+import { describe, expect, it, vi } from "vitest";
 import { KeyStorage } from "~/durable-objects/key-storage";
 import { RateLimiter } from "~/durable-objects/rate-limiter";
 import { logAuditEvent } from "~/utils/audit";
-import * as jose from "jose";
-import { describe, expect, it, vi } from "vitest";
 
 // Minimal in-memory DurableObjectState mock
 function createState(): DurableObjectState {
@@ -115,9 +114,9 @@ describe("Branch Coverage Helpers", () => {
         },
       } as unknown as D1Database;
 
-      const consoleSpy = vi.spyOn(console, "error").mockImplementation(
-        () => {},
-      );
+      const consoleSpy = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
 
       await logAuditEvent(db, {
         requestId: "req-1",
@@ -186,7 +185,7 @@ describe("Branch Coverage Helpers", () => {
         ...env,
         ADMIN_TOKEN: env.ADMIN_TOKEN,
         RATE_LIMITER: {
-          idFromName: () => ({} as any),
+          idFromName: () => ({}) as any,
           get: () => ({ fetch: () => allowResponse }),
         },
       };
@@ -218,10 +217,7 @@ describe("Branch Coverage Helpers", () => {
         oidcAuth(context as any, () => Promise.resolve())
       );
 
-      expect(json).toHaveBeenCalledWith(
-        { error: "Missing token" },
-        401,
-      );
+      expect(json).toHaveBeenCalledWith({ error: "Missing token" }, 401);
     });
 
     it("maps jose JWKS error to friendly message", async () => {

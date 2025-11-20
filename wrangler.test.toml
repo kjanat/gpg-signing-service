@@ -15,7 +15,7 @@ class_name = "RateLimiter"
 # Migrations for Durable Objects
 [[migrations]]
 tag = "v1"
-new_classes = ["KeyStorage", "RateLimiter"]
+new_sqlite_classes = ["KeyStorage", "RateLimiter"]
 
 # D1 Database for audit logs (use local database for tests)
 [[d1_databases]]
@@ -27,6 +27,11 @@ database_id = "test-database-id"
 [[kv_namespaces]]
 binding = "JWKS_CACHE"
 id = "test-kv-id"
+
+# Custom domain
+[[routes]]
+pattern = "test-gpg.kajkowalski.nl"
+custom_domain = true
 
 # Environment variables for testing
 [vars]

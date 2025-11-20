@@ -182,6 +182,7 @@ app.openapi(publicKeyRoute, async (c) => {
 
     return c.text(publicKey, 200, { "Content-Type": "application/pgp-keys" });
   } catch (error) {
+    console.error("Key processing error:", error);
     return c.json({
       error: "Key processing error",
       code: "KEY_PROCESSING_ERROR",
