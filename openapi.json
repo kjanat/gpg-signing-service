@@ -106,7 +106,10 @@
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/ErrorResponse" },
-                "example": { "error": "Key not found", "code": "KEY_NOT_FOUND" }
+                "example": {
+                  "error": "Key not found",
+                  "code": "KEY_NOT_FOUND"
+                }
               }
             }
           },
@@ -439,7 +442,10 @@
             "content": {
               "application/json": {
                 "schema": { "$ref": "#/components/schemas/ErrorResponse" },
-                "example": { "error": "Key not found", "code": "KEY_NOT_FOUND" }
+                "example": {
+                  "error": "Key not found",
+                  "code": "KEY_NOT_FOUND"
+                }
               }
             }
           },

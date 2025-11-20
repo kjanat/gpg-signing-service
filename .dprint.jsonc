@@ -7,7 +7,13 @@
     "lineWidth": 80,
     "module.sortImportDeclarations": "maintain",
   },
-  "json": { "trailingCommas": "jsonc" },
+  "json": {
+    "array.preferSingleLine": true,
+    "commentLine.forceSpaceAfterSlashes": true,
+    "object.preferSingleLine": true,
+    "trailingCommas": "jsonc",
+    "useTabs": false,
+  },
   "markdown": {
     "ignoreDirective": "prettier-ignore",
     "ignoreFileDirective": "prettier-ignore-file",
@@ -16,7 +22,12 @@
   },
   "toml": {},
   "dockerfile": {},
-  "biome": { "lineWidth": 80, "indentWidth": 2, "indentStyle": "space" },
+  "biome": {
+    "lineWidth": 80,
+    "indentWidth": 2,
+    "indentStyle": "space",
+    "json.indentStyle": "space",
+  },
   "ruff": { "indentWidth": 4, "lineLength": 88, "preview": true },
   "jupyter": {},
   "malva": {},
@@ -40,7 +51,6 @@
       },
     ],
   },
-  "prettier": {},
   "excludes": [
     "**/node_modules",
     "**/*-lock.json",

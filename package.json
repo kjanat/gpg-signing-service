@@ -11,9 +11,11 @@
     "db:migrate:local": "wrangler d1 execute gpg-signing-audit --local --file=./migrations/0001_initial.sql",
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
+    "fmt": "dprint fmt",
     "format": "dprint fmt",
     "format:check": "prettier --check .",
     "generate-key": "bash scripts/generate-key.sh",
+    "generate:api": "bun run scripts/generate-openapi.ts && cd client && oapi-codegen -config oapi-codegen.yaml openapi.json",
     "kv:create": "wrangler kv namespace create JWKS_CACHE",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
@@ -24,15 +26,16 @@
     "typecheck": "bunx @typescript/native-preview --noEmit",
     "typegen": "wrangler types"
   },
-  "peerDependencies": {
-    "typescript": "^5.9.3"
-  },
+  "peerDependencies": { "typescript": "^5.9.3" },
   "dependencies": {
+    "@hono/swagger-ui": "^0.5.2",
+    "@hono/zod-openapi": "^1.1.5",
     "hono": "^4.10.6",
-    "openpgp": "^6.2.2"
+    "openpgp": "^6.2.2",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.10.8",
+    "@cloudflare/vitest-pool-workers": "^0.10.9",
     "@commitlint/cli": "^20.1.0",
     "@commitlint/config-conventional": "^20.0.0",
     "@kjanat/prettier-config": "^1.1.0",
@@ -45,10 +48,11 @@
     "dprint": "^0.50.2",
     "eslint": "^9.39.1",
     "jiti": "^2.6.1",
+    "jose": "^6.1.2",
     "prettier": "^3.6.2",
     "typescript-eslint": "^8.47.0",
     "vitest": "~3.2.0",
-    "wrangler": "^4.49.0"
+    "wrangler": "^4.49.1"
   },
   "prettier": "@kjanat/prettier-config"
 }

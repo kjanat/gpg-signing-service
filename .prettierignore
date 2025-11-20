@@ -1,6 +1,8 @@
 **/*.go
 **/*.mod
 **/*.sum
+**/*.json
+**/*.jsonc
 .keys/
 .serena/memories
 .wrangler/

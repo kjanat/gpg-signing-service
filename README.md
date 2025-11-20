@@ -137,7 +137,30 @@ bun run dev
 
 # Type check
 bun run typecheck
+
+# Generate API schema and Go client
+bun run generate:api
 ```
+
+### API Documentation
+
+The service exposes API documentation at both:
+
+- `/doc` - OpenAPI 3.0 JSON spec
+- `/ui` - Swagger UI for interactive API exploration
+
+### API Generation
+
+The API uses `@hono/zod-openapi` to auto-generate an OpenAPI schema from the Hono route definitions. The Go client is then auto-generated from this schema using `oapi-codegen`.
+
+**Workflow:**
+
+1. Edit route files in `src/routes/` with Zod schemas
+2. Run `bun run generate:api` (or commit changes - pre-commit hook runs it automatically)
+3. OpenAPI spec is generated at `client/openapi.json`
+4. Go client code is generated at `client/pkg/api/api.gen.go`
+
+This ensures the client is always in sync with the server API.
 
 ## Security
 

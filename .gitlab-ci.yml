@@ -1,5 +1,5 @@
 # GitLab CI configuration for commit signing
-
+---
 variables:
   SIGNING_SERVICE_URL: ${SIGNING_SERVICE_URL}
 

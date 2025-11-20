@@ -2,7 +2,6 @@ pre-commit:
   jobs:
     - name: lint
       run: bun run lint:fix
-      glob: "*.{js,ts}"
       stage_fixed: true
 
     - name: format
@@ -11,11 +10,12 @@ pre-commit:
 
     - name: typegen
       run: bun run wrangler types
-      glob: "*.{ts,toml}"
 
     - name: typecheck
       run: bun run typecheck
-      glob: "*.ts"
+
+    - name: generate-api
+      run: bun run generate:api
 
 pre-push:
   jobs:
