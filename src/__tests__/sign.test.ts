@@ -16,6 +16,9 @@ import {
   vi,
 } from "vitest";
 
+const parseJson = async <T>(response: Response): Promise<T> =>
+  (await response.json()) as T;
+
 // Mock fetch for JWKS
 const { signFetchMock } = vi.hoisted(() => ({
   signFetchMock: vi.fn(),
@@ -49,7 +52,7 @@ async function makeRequest(
 async function uploadTestKey(keyId: string) {
   const { privateKey } = await openpgp.generateKey({
     type: "ecc",
-    curve: "ed25519",
+    curve: "ed25519Legacy",
     userIDs: [{ name: "Sign Test", email: "sign@test.com" }],
     passphrase: env.KEY_PASSPHRASE,
     format: "armored",
@@ -73,8 +76,8 @@ async function uploadTestKey(keyId: string) {
 }
 
 describe("Sign Route", () => {
-  let oidcPrivateKey: jose.KeyLike;
-  let oidcPublicKey: jose.KeyLike;
+  let oidcPrivateKey: CryptoKey;
+  let oidcPublicKey: CryptoKey;
   const issuer = "https://token.actions.githubusercontent.com";
   const kid = "test-key";
 
@@ -88,7 +91,7 @@ describe("Sign Route", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     // Mock cache to return null by default (cache miss)
-    vi.spyOn(env.JWKS_CACHE, "get").mockResolvedValue(null);
+    vi.spyOn(env.JWKS_CACHE, "get").mockResolvedValue(null as any);
     // Set allowed origins to ensure consistent behavior
     env.ALLOWED_ORIGINS = "https://allowed.com";
   });
@@ -221,7 +224,7 @@ describe("Sign Route", () => {
         });
 
         expect(response.status).toBe(503);
-        const body = await response.json();
+        const body = await parseJson<{ code: string }>(response);
         expect(body.code).toBe("RATE_LIMIT_ERROR");
       } finally {
         env.RATE_LIMITER.idFromName = originalIdFromName;
@@ -246,7 +249,7 @@ describe("Sign Route", () => {
         });
 
         expect(response.status).toBe(503);
-        const body = await response.json();
+        const body = await parseJson<{ code: string }>(response);
         expect(body.code).toBe("RATE_LIMIT_ERROR");
       } finally {
         env.RATE_LIMITER.get = originalGet;
@@ -276,7 +279,7 @@ describe("Sign Route", () => {
         });
 
         expect(response.status).toBe(429);
-        const body = await response.json();
+        const body = await parseJson<{ code: string }>(response);
         expect(body.code).toBe("RATE_LIMITED");
       } finally {
         env.RATE_LIMITER.get = originalGet;
@@ -321,7 +324,7 @@ describe("Sign Route", () => {
         });
 
         expect(response.status).toBe(500);
-        const body = await response.json();
+        const body = await parseJson<{ code: string }>(response);
         expect(body.code).toBe("SIGN_ERROR");
       } finally {
         env.KEY_STORAGE.get = originalGet;
@@ -348,7 +351,7 @@ describe("Sign Route", () => {
         });
 
         expect(response.status).toBe(500);
-        const body = await response.json();
+        const body = await parseJson<{ error: string }>(response);
         expect(body.error).toBe("Signing failed");
       } finally {
         env.KEY_STORAGE.get = originalGet;
@@ -375,7 +378,7 @@ describe("Sign Route", () => {
         });
 
         expect(response.status).toBe(500);
-        const body = await response.json();
+        const body = await parseJson<{ error: string }>(response);
         expect(body.error).toBe("Upstream failure");
       } finally {
         env.KEY_STORAGE.get = originalGet;

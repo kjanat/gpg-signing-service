@@ -1,6 +1,9 @@
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
+const parseJson = async <T>(response: Response): Promise<T> =>
+  (await response.json()) as T;
+
 describe("KeyStorage Durable Object", () => {
   it("should return 404 for unknown path", async () => {
     const id = env.KEY_STORAGE.idFromName("test-unknown-path");
@@ -28,7 +31,7 @@ describe("KeyStorage Durable Object", () => {
       }),
     );
     expect(response.status).toBe(400);
-    const body = await response.json();
+    const body = await parseJson<{ error: string }>(response);
     expect(body.error).toBe("Missing required fields");
   });
 
@@ -48,7 +51,7 @@ describe("KeyStorage Durable Object", () => {
       new Request("http://internal/delete-key", { method: "DELETE" }),
     );
     expect(response.status).toBe(400);
-    const body = await response.json();
+    const body = await parseJson<{ error: string }>(response);
     expect(body.error).toBe("Key ID required");
   });
 
@@ -71,7 +74,7 @@ describe("KeyStorage Durable Object", () => {
     );
 
     expect(response.status).toBe(500);
-    const body = await response.json();
+    const body = await parseJson<{ error: string }>(response);
     expect(body.error).toBeTruthy();
   });
 
@@ -85,7 +88,7 @@ describe("KeyStorage Durable Object", () => {
 
     // It should try to fetch "default" key and likely return 404 if not found
     expect(response.status).toBe(404);
-    const body = await response.json();
+    const body = await parseJson<{ error: string }>(response);
     expect(body.error).toBe("Key not found");
   });
 
@@ -108,7 +111,7 @@ describe("KeyStorage Durable Object", () => {
     );
 
     expect(response.status).toBe(500);
-    const body = await response.json();
+    const body = await parseJson<{ error: string }>(response);
     // The global handler returns { error: message }
     expect(body.error).toContain("Unexpected token"); // JSON parse error message
   });
@@ -122,7 +125,7 @@ describe("KeyStorage Durable Object", () => {
     );
 
     expect(response.status).toBe(500);
-    const body = await response.json();
+    const body = await parseJson<{ error: string }>(response);
     expect(body.error).toBe("Unknown error");
   });
 
@@ -133,7 +136,7 @@ describe("KeyStorage Durable Object", () => {
       new Request("http://internal/_debug/throw"),
     );
     expect(response.status).toBe(500);
-    const body = await response.json();
+    const body = await parseJson<{ error: string }>(response);
     expect(body.error).toBe("Debug error");
   });
 });

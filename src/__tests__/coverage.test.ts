@@ -6,6 +6,9 @@ import {
 import app from "gpg-signing-service";
 import { describe, expect, it } from "vitest";
 
+const parseJson = async <T>(response: Response): Promise<T> =>
+  (await response.json()) as T;
+
 describe("Coverage Tests", () => {
   describe("Health Check Errors", () => {
     it("should handle key storage failure", async () => {
@@ -25,7 +28,9 @@ describe("Coverage Tests", () => {
         await waitOnExecutionContext(ctx);
 
         expect(response.status).toBe(503);
-        const body = await response.json();
+        const body = await parseJson<{ checks: { keyStorage: unknown } }>(
+          response,
+        );
         expect(body.checks.keyStorage).toBe(false);
       } finally {
         // Restore
@@ -50,7 +55,9 @@ describe("Coverage Tests", () => {
         await waitOnExecutionContext(ctx);
 
         expect(response.status).toBe(503);
-        const body = await response.json();
+        const body = await parseJson<{ checks: { database: unknown } }>(
+          response,
+        );
         expect(body.checks.database).toBe(false);
       } finally {
         // Restore
@@ -79,7 +86,9 @@ describe("Coverage Tests", () => {
         await waitOnExecutionContext(ctx);
 
         expect(response.status).toBe(500);
-        const body = await response.json();
+        const body = await parseJson<{ code: string; requestId: string }>(
+          response,
+        );
         expect(body.code).toBe("INTERNAL_ERROR");
         expect(body.requestId).toBeTruthy();
       } finally {
@@ -100,7 +109,7 @@ describe("Coverage Tests", () => {
       await waitOnExecutionContext(ctx);
 
       expect(response.status).toBe(404);
-      const body = await response.json();
+      const body = await parseJson<{ code: string }>(response);
       expect(body.code).toBe("KEY_NOT_FOUND");
     });
   });

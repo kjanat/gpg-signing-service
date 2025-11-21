@@ -1,3 +1,5 @@
+/// <reference types="@cloudflare/vitest-pool-workers" />
+
 declare module "cloudflare:test" {
   // ProvidedEnv controls the type of `import("cloudflare:test").env`
   interface ProvidedEnv extends Env {
@@ -9,6 +11,9 @@ declare module "cloudflare:test" {
 
     /** Comma-separated list of allowed issuers */
     ALLOWED_ISSUERS: string;
+
+    /** Allowed origins for CORS */
+    ALLOWED_ORIGINS?: string;
 
     /** ID of the signing key */
     KEY_ID: string;

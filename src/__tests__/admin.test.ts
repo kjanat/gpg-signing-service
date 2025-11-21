@@ -34,7 +34,7 @@ async function adminRequest(
 async function generateTestKey() {
   const { privateKey } = await openpgp.generateKey({
     type: "ecc",
-    curve: "ed25519",
+    curve: "ed25519Legacy",
     userIDs: [{ name: "Admin Test", email: "admin@test.com" }],
     passphrase: env.KEY_PASSPHRASE,
     format: "armored",

@@ -15,7 +15,7 @@ describe("Public Key Route", () => {
     // 1. Generate a valid key
     const { privateKey } = await openpgp.generateKey({
       type: "ecc",
-      curve: "ed25519",
+      curve: "ed25519Legacy",
       userIDs: [{ name: "Test", email: "test@example.com" }],
       format: "armored",
     });

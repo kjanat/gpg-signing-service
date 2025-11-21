@@ -11,6 +11,9 @@ import { RateLimiter } from "~/durable-objects/rate-limiter";
 import { logAuditEvent } from "~/utils/audit";
 import * as signingUtils from "~/utils/signing";
 
+const parseJson = async <T>(response: Response): Promise<T> =>
+  (await response.json()) as T;
+
 vi.mock("openpgp", async (importOriginal) => {
   const actual = await importOriginal<typeof import("openpgp")>();
   return {
@@ -142,7 +145,9 @@ describe("Branch Coverage Helpers", () => {
         new Request("http://do/consume?identity=user"),
       );
       expect(res.status).toBe(200);
-      const body = await res.json();
+      const body = await parseJson<{ allowed: boolean; remaining: number }>(
+        res,
+      );
       expect(body.allowed).toBe(true);
       expect(body.remaining).toBeGreaterThan(0);
     });
@@ -164,7 +169,7 @@ describe("Branch Coverage Helpers", () => {
         new Request("http://do/consume?identity=user"),
       );
       expect(res.status).toBe(200);
-      const body = await res.json();
+      const body = await parseJson<{ allowed: boolean }>(res);
       expect(body.allowed).toBe(true);
     });
 
@@ -240,7 +245,7 @@ describe("Branch Coverage Helpers", () => {
       await waitOnExecutionContext(ctx);
 
       expect(res.status).toBe(429);
-      const body = await res.json();
+      const body = await parseJson<{ code: string }>(res);
       expect(body.code).toBe("RATE_LIMITED");
     });
 
@@ -376,7 +381,7 @@ describe("Branch Coverage Helpers", () => {
       await waitOnExecutionContext(ctx);
 
       expect(res.status).toBe(500);
-      const body = await res.json();
+      const body = await parseJson<{ code: string }>(res);
       expect(body.code).toBe("KEY_UPLOAD_ERROR");
     });
 
@@ -415,7 +420,7 @@ describe("Branch Coverage Helpers", () => {
       await waitOnExecutionContext(ctx);
 
       expect(res.status).toBe(404);
-      const body = await res.json();
+      const body = await parseJson<{ code: string }>(res);
       expect(body.code).toBe("KEY_NOT_FOUND");
     });
 
@@ -464,7 +469,7 @@ describe("Branch Coverage Helpers", () => {
       await waitOnExecutionContext(ctx);
 
       expect(res.status).toBe(500);
-      const body = await res.json();
+      const body = await parseJson<{ code: string }>(res);
       expect(body.code).toBe("SIGN_ERROR");
     });
   });

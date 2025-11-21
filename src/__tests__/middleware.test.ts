@@ -7,6 +7,9 @@ import app from "gpg-signing-service";
 import * as jose from "jose";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const parseJson = async <T>(response: Response): Promise<T> =>
+  (await response.json()) as T;
+
 // Mock fetch for JWKS
 const { middlewareFetchMock } = vi.hoisted(() => ({
   middlewareFetchMock: vi.fn(),
@@ -115,7 +118,7 @@ describe("Security Headers Middleware", () => {
     beforeEach(() => {
       vi.resetAllMocks();
       // Mock cache to return null by default (cache miss)
-      vi.spyOn(env.JWKS_CACHE, "get").mockResolvedValue(null);
+      vi.spyOn(env.JWKS_CACHE, "get").mockResolvedValue(null as any);
     });
 
     afterEach(() => {
@@ -125,7 +128,7 @@ describe("Security Headers Middleware", () => {
     async function setupJWKSMock(
       issuer: string,
       kid: string,
-      publicKey: jose.KeyLike,
+      publicKey: CryptoKey,
     ) {
       const jwk = await jose.exportJWK(publicKey);
       jwk.kid = kid;
@@ -565,7 +568,7 @@ describe("Security Headers Middleware", () => {
         body: "commit data",
       });
       expect(response.status).toBe(401);
-      const body = await response.json();
+      const body = await parseJson<{ error: string }>(response);
       expect(body.error).toBe("Invalid token audience");
     });
 
@@ -590,7 +593,7 @@ describe("Security Headers Middleware", () => {
       });
       // 404 means OIDC passed
       if (response.status === 401) {
-        const body = await response.json();
+        const body = await parseJson<unknown>(response);
         console.error("OIDC Array Audience Test Failed:", body);
       }
       expect(response.status).toBe(404);
@@ -610,7 +613,7 @@ describe("Security Headers Middleware", () => {
       });
 
       expect(response.status).toBe(401);
-      const body = await response.json();
+      const body = await parseJson<{ error: string }>(response);
       expect(body.error).toBe("Invalid token");
     });
 

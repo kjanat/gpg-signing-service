@@ -21,6 +21,7 @@ export default defineWorkersConfig({
       ? ["github-actions", "dot", "junit", "json"]
       : ["dot", "default"],
     include: ["src/__tests__/**/*.{ts,js}"],
+    exclude: ["**/*.d.ts", "node_modules/**"],
     coverage: {
       // enabled: true,
       provider: "istanbul",
