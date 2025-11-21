@@ -11,6 +11,8 @@ permissions:
 
 jobs:
   sign:
+    name: Sign Commits
+    if: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

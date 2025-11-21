@@ -136,7 +136,11 @@ func (c *Client) PublicKey(ctx context.Context, keyID string) (string, error) {
 	}
 
 	if resp.StatusCode() == 200 {
-		return string(resp.Body), nil
+		publicKey := string(resp.Body)
+		if !strings.HasPrefix(publicKey, "-----BEGIN PGP PUBLIC KEY BLOCK-----") {
+			return "", fmt.Errorf("invalid PGP key format")
+		}
+		return publicKey, nil
 	}
 
 	if resp.JSON404 != nil {
@@ -210,6 +214,14 @@ func (c *Client) Sign(ctx context.Context, commitData string, keyID string) (*Si
 		return nil, &ValidationError{
 			Code:    resp.JSON400.Code,
 			Message: resp.JSON400.Error,
+		}
+	}
+
+	if resp.JSON404 != nil {
+		return nil, &ServiceError{
+			Code:       resp.JSON404.Code,
+			Message:    resp.JSON404.Error,
+			StatusCode: 404,
 		}
 	}
 

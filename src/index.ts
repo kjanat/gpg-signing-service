@@ -207,7 +207,7 @@ app.route(
 
 // OpenAPI Docs
 app.doc("/doc", {
-  openapi: "3.0.0",
+  openapi: "3.1.0",
   info: {
     version: "1.0.0",
     title: "GPG Signing Service API",

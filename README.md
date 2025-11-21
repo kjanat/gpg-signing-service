@@ -44,8 +44,8 @@ CI Pipeline -> OIDC Token -> Signing Service -> Signed Commit
 
 ### 1. Prerequisites
 
-- [Cloudflare account](https://dash.cloudflare.com/)
-- [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/install-and-update/)
+- [Cloudflare account][cloudflare:dashboard]
+- [Wrangler CLI][wrangler:install]
 - GPG installed locally
 
 ### 2. Create Cloudflare Resources
@@ -68,7 +68,11 @@ wrangler secret put ADMIN_TOKEN
 
 ```bash
 # Generate key in .keys/ directory (NOT ~/.gnupg)
-bun run generate-key "Your Name" "your@email.com" "Signing Key" "your-passphrase"
+bun run generate-key \
+  "Your Name" \
+  "your@email.com" \
+  "Signing Key" \
+  "your-passphrase"
 ```
 
 ### 4. Deploy
@@ -88,7 +92,9 @@ curl -X POST https://your-worker.workers.dev/admin/keys \
   -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "armoredPrivateKey": "-----BEGIN PGP PRIVATE KEY BLOCK-----\n...\n-----END PGP PRIVATE KEY BLOCK-----",
+    "armoredPrivateKey": "-----BEGIN PGP PRIVATE KEY BLOCK-----
+    ...
+    -----END PGP PRIVATE KEY BLOCK-----",
     "keyId": "signing-key-v1"
   }'
 ```
@@ -97,33 +103,39 @@ curl -X POST https://your-worker.workers.dev/admin/keys \
 
 ### Public
 
-- `GET /health` - Health check
-- `GET /public-key` - Get public key for signature verification
+| Method | Path          | Description                               |
+| ------ | ------------- | ----------------------------------------- |
+| `GET`  | `/health`     | Health check                              |
+| `GET`  | `/public-key` | Get public key for signature verification |
 
 ### Protected (OIDC Auth)
 
-- `POST /sign` - Sign commit data
+| Method | Path    | Description      |
+| ------ | ------- | ---------------- |
+| `POST` | `/sign` | Sign commit data |
 
 ### Admin (Admin Token)
 
-- `POST /admin/keys` - Upload signing key
-- `GET /admin/keys` - List keys
-- `GET /admin/keys/:keyId/public` - Get public key
-- `DELETE /admin/keys/:keyId` - Delete key
-- `GET /admin/audit` - Get audit logs
+| Method   | Path                        | Description        |
+| -------- | --------------------------- | ------------------ |
+| `POST`   | `/admin/keys`               | Upload signing key |
+| `GET`    | `/admin/keys`               | List keys          |
+| `GET`    | `/admin/keys/:keyId/public` | Get public key     |
+| `DELETE` | `/admin/keys/:keyId`        | Delete key         |
+| `GET`    | `/admin/audit`              | Get audit logs     |
 
 ## CI Integration
 
 ### GitHub Actions
 
 1. Set repository variable `SIGNING_SERVICE_URL`
-2. Add workflow from `.github/workflows/sign-commits.yml`
+2. Add workflow from [`.github/workflows/sign-commits.yml`][actions:sign-commits]
 3. Configure OIDC audience in your worker's `ALLOWED_ISSUERS`
 
 ### GitLab CI
 
 1. Set CI variable `SIGNING_SERVICE_URL`
-2. Add pipeline from `.gitlab-ci.yml`
+2. Add pipeline from [`.gitlab-ci.yml`][gitlab:sign-commits]
 3. Configure OIDC audience
 
 ## Development
@@ -151,12 +163,15 @@ The service exposes API documentation at both:
 
 ### API Generation
 
-The API uses `@hono/zod-openapi` to auto-generate an OpenAPI schema from the Hono route definitions. The Go client is then auto-generated from this schema using `oapi-codegen`.
+The API uses `@hono/zod-openapi` to auto-generate an OpenAPI schema from the
+Hono route definitions.\
+The Go client is then auto-generated from this schema using `oapi-codegen`.
 
 **Workflow:**
 
 1. Edit route files in `src/routes/` with Zod schemas
-2. Run `bun run generate:api` (or commit changes - pre-commit hook runs it automatically)
+2. Run `bun run generate:api` (or commit changes - pre-commit hook runs it
+   automatically)
 3. OpenAPI spec is generated at `client/openapi.json`
 4. Go client code is generated at `client/pkg/api/api.gen.go`
 
@@ -179,3 +194,10 @@ This ensures the client is always in sync with the server API.
 | `KEY_ID`          | Default signing key ID           |
 | `KEY_PASSPHRASE`  | Secret: Key passphrase           |
 | `ADMIN_TOKEN`     | Secret: Admin API token          |
+
+<!-- link definitions -->
+
+[cloudflare:dashboard]: https://dash.cloudflare.com/
+[wrangler:install]: https://developers.cloudflare.com/workers/wrangler/install-and-update/
+[actions:sign-commits]: .github/workflows/sign-commits.yml
+[gitlab:sign-commits]: .gitlab-ci.yml

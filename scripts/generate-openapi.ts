@@ -2,7 +2,7 @@ import { writeFileSync } from "node:fs";
 import app from "gpg-signing-service";
 
 const doc = app.getOpenAPIDocument({
-  openapi: "3.0.0",
+  openapi: "3.1.0",
   info: {
     version: "1.0.0",
     title: "GPG Signing Service API",

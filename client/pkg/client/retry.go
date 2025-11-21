@@ -98,7 +98,8 @@ func (r *Retrier) shouldRetry(err error) bool {
 }
 
 func (r *Retrier) backoff(attempt int) time.Duration {
-	// Cap attempt to prevent overflow
+	// Cap attempt to prevent overflow in exponential calculation
+	// Note: attempts > 10 will use maximum backoff duration
 	if attempt > 10 {
 		attempt = 10
 	}
