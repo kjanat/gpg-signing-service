@@ -12,12 +12,12 @@ import (
 // TestNewClient tests the New() constructor with various scenarios
 func TestNewClient(t *testing.T) {
 	tests := []struct {
-		name      string
-		baseURL   string
-		opts      []Option
-		wantErr   bool
-		errMsg    string
-		validate  func(t *testing.T, c *Client)
+		name     string
+		baseURL  string
+		opts     []Option
+		wantErr  bool
+		errMsg   string
+		validate func(t *testing.T, c *Client)
 	}{
 		{
 			name:    "valid client with default options",

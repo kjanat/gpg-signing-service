@@ -184,11 +184,11 @@ func TestRetrier(t *testing.T) {
 		wantAttempts int
 	}{
 		{
-			name:       "success on first attempt",
-			maxRetries: 3,
-			attempts:   0,
-			returnErr:  func(i int) error { return nil },
-			wantErr:    false,
+			name:         "success on first attempt",
+			maxRetries:   3,
+			attempts:     0,
+			returnErr:    func(i int) error { return nil },
+			wantErr:      false,
 			wantAttempts: 1,
 		},
 		{

@@ -90,8 +90,8 @@ func ExampleClient_adminOperations() {
 
 	// Query audit logs
 	logs, err := admin.AuditLogs(ctx, client.AuditFilter{
-		Action: "sign",
-		Limit:  50,
+		Action:    "sign",
+		Limit:     50,
 		StartDate: time.Now().Add(-7 * 24 * time.Hour),
 	})
 	if err != nil {

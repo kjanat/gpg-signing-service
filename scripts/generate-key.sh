@@ -67,9 +67,11 @@ mkdir -p "$GNUPGHOME"
 chmod 700 "$GNUPGHOME"
 
 echo "Generating GPG key..."
-echo "  Name: $KEY_NAME"
-echo "  Email: $KEY_EMAIL"
-echo "  GNUPGHOME: $GNUPGHOME (NOT ~/.gnupg)"
+echo "  Name:       $KEY_NAME"
+echo "  Email:      $KEY_EMAIL"
+echo "  Comment:    $KEY_COMMENT"
+echo "  GNUPGHOME:  $GNUPGHOME (NOT ~/.gnupg)"
+echo "  Passphrase: ${PASSPHRASE:-none}"
 
 # Generate key using batch mode
 if [ -n "$PASSPHRASE" ]; then

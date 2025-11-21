@@ -1,5 +1,3 @@
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-nocheck - cloudflare:test provides types at runtime
 import {
   createExecutionContext,
   env,

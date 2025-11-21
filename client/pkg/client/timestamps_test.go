@@ -8,9 +8,9 @@ import (
 // TestParseTimestamp tests the parseTimestamp helper function
 func TestParseTimestamp(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   string
-		wantErr bool
+		name     string
+		input    string
+		wantErr  bool
 		wantZero bool
 	}{
 		{

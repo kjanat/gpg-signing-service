@@ -70,10 +70,10 @@ func TestOptionTokenOverwriting(t *testing.T) {
 // TestOptionRetryWaitValidation tests retry wait time relationships
 func TestOptionRetryWaitValidation(t *testing.T) {
 	tests := []struct {
-		name   string
-		min    time.Duration
-		max    time.Duration
-		valid  bool
+		name  string
+		min   time.Duration
+		max   time.Duration
+		valid bool
 	}{
 		{
 			name:  "min less than max",

@@ -2,7 +2,7 @@
 
 # Query audit logs with filtering and formatting
 
-BASE_URL="${BASE_URL:-"https://gpg.kajkowalski.nl"}"
+BASE_URL="${BASE_URL:-'https://gpg.kajkowalski.nl'}"
 ADMIN_TOKEN="${ADMIN_TOKEN:-}"
 
 if [[ -z "$ADMIN_TOKEN" ]]; then

@@ -4,7 +4,7 @@
     "lib": ["ESNext"],
     "target": "ESNext",
     "module": "ESNext",
-    "types": ["bun"],
+    "types": ["./worker-configuration.d.ts", "node"], // "bun",
     "moduleDetection": "force",
     "jsx": "react-jsx",
     "allowJs": true,
@@ -29,6 +29,7 @@
     "paths": { "~/*": ["./src/*"], "gpg-signing-service": ["./src/index.ts"] }
   },
   "include": [
+    "./**/*.ts",
     "src",
     "scripts",
     ".commitlint.ts",

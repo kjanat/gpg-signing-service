@@ -13,18 +13,18 @@ import (
 // TestHealth tests the Health() method
 func TestHealth(t *testing.T) {
 	tests := []struct {
-		name           string
-		serverStatus   int
-		responseBody   interface{}
-		wantErr        bool
-		validateResp   func(t *testing.T, status *HealthStatus)
+		name         string
+		serverStatus int
+		responseBody interface{}
+		wantErr      bool
+		validateResp func(t *testing.T, status *HealthStatus)
 	}{
 		{
 			name:         "healthy service",
 			serverStatus: 200,
 			responseBody: map[string]interface{}{
-				"status":   "healthy",
-				"version":  "1.0.0",
+				"status":    "healthy",
+				"version":   "1.0.0",
 				"timestamp": time.Now().Format(time.RFC3339),
 				"checks": map[string]interface{}{
 					"keyStorage": true,
@@ -115,11 +115,11 @@ test-key-data
 -----END PGP PUBLIC KEY BLOCK-----`
 
 	tests := []struct {
-		name          string
-		keyID         string
-		serverStatus  int
-		wantErr       bool
-		validateResp  func(t *testing.T, key string)
+		name         string
+		keyID        string
+		serverStatus int
+		wantErr      bool
+		validateResp func(t *testing.T, key string)
 	}{
 		{
 			name:         "get default public key",
@@ -245,7 +245,7 @@ func TestUploadKey(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(tt.serverStatus)
 				json.NewEncoder(w).Encode(map[string]string{
-					"keyId":      "key-123",
+					"keyId":       "key-123",
 					"fingerprint": "ABC123",
 					"algorithm":   "RSA",
 					"userId":      "test@example.com",

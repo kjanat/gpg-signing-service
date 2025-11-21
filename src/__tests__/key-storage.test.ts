@@ -1,6 +1,3 @@
-// These imports are provided by @cloudflare/vitest-pool-workers
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-nocheck - cloudflare:test types are provided at runtime by vitest-pool-workers
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 

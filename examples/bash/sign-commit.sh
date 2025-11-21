@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # Configuration
-BASE_URL="${BASE_URL:-"https://gpg.kajkowalski.nl"}"
+BASE_URL="${BASE_URL:-'https://gpg.kajkowalski.nl'}"
 OIDC_TOKEN="${OIDC_TOKEN:-}"
 MAX_RETRIES="${MAX_RETRIES:-3}"
 

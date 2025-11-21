@@ -1,4 +1,5 @@
 {
+  "$schema": "https://dprint.dev/schemas/v0.json",
   "lineWidth": 80,
   "useTabs": false,
   "indentWidth": 2,
@@ -20,7 +21,6 @@
     "ignoreStartDirective": "prettier-ignore-start",
     "ignoreEndDirective": "prettier-ignore-end"
   },
-  "toml": {},
   "dockerfile": {},
   "biome": {
     "lineWidth": 80,
@@ -44,26 +44,29 @@
     "commands": [
       {
         "cwd": "${configDir}/client",
-        "command": "golangci-lint fmt --config .golangci.yml --color never --stdin {{file_path}}",
+        "command": "golangci-lint fmt --color never --stdin {{file_path}}", // --config .golangci.yml
+        // "cacheKeyFiles": [".golangci.yml"],
         "exts": ["go"],
-        "cacheKeyFiles": [".golangci.yml"],
         "stdin": true
+      },
+      {
+        "command": "tombi format --stdin-filename {{file_path}} -",
+        "exts": ["toml"]
       }
     ]
   },
   "excludes": [
-    "**/node_modules",
-    "**/*-lock.json",
-    "**/.venv",
     "**/.keys",
-    "client/openapi.json",
-    "worker-configuration.d.ts"
+    "**/.venv",
+    "**/*-lock.json",
+    "**/node_modules",
+    "**/openapi.json",
+    "**/worker-configuration.d.ts"
   ],
   "plugins": [
     "https://plugins.dprint.dev/typescript-0.95.12.wasm",
     "https://plugins.dprint.dev/json-0.21.0.wasm",
     "https://plugins.dprint.dev/markdown-0.20.0.wasm",
-    "https://plugins.dprint.dev/toml-0.7.0.wasm",
     "https://plugins.dprint.dev/dockerfile-0.3.3.wasm",
     "https://plugins.dprint.dev/biome-0.11.5.wasm",
     "https://plugins.dprint.dev/ruff-0.6.5.wasm",

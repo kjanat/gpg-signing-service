@@ -1,7 +1,10 @@
+#:schema node_modules/wrangler/config-schema.json
+
 name = "gpg-signing-service-test"
 main = "src/index.ts"
 compatibility_date = "2025-11-13"
 compatibility_flags = ["nodejs_compat"]
+observability = { enabled = true }
 
 # Durable Objects
 [[durable_objects.bindings]]
