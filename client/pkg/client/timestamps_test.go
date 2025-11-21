@@ -153,7 +153,7 @@ func TestParseTimestampConcurrency(t *testing.T) {
 	results := make(chan time.Time, 100)
 
 	// Run 100 concurrent parses
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		go func() {
 			results <- parseTimestamp(timestamp)
 		}()
@@ -173,8 +173,7 @@ func TestParseTimestampConcurrency(t *testing.T) {
 func BenchmarkParseTimestamp(b *testing.B) {
 	timestamp := "2023-11-20T10:30:45Z"
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = parseTimestamp(timestamp)
 	}
 }
@@ -183,8 +182,7 @@ func BenchmarkParseTimestamp(b *testing.B) {
 func BenchmarkParseTimestampWithMillis(b *testing.B) {
 	timestamp := "2023-11-20T10:30:45.123456Z"
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = parseTimestamp(timestamp)
 	}
 }

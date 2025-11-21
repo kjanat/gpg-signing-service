@@ -15,18 +15,18 @@ func TestHealth(t *testing.T) {
 	tests := []struct {
 		name         string
 		serverStatus int
-		responseBody interface{}
+		responseBody any
 		wantErr      bool
 		validateResp func(t *testing.T, status *HealthStatus)
 	}{
 		{
 			name:         "healthy service",
 			serverStatus: 200,
-			responseBody: map[string]interface{}{
+			responseBody: map[string]any{
 				"status":    "healthy",
 				"version":   "1.0.0",
 				"timestamp": time.Now().Format(time.RFC3339),
-				"checks": map[string]interface{}{
+				"checks": map[string]any{
 					"keyStorage": true,
 					"database":   true,
 				},
@@ -56,11 +56,11 @@ func TestHealth(t *testing.T) {
 		{
 			name:         "degraded service (503)",
 			serverStatus: 503,
-			responseBody: map[string]interface{}{
+			responseBody: map[string]any{
 				"status":    "degraded",
 				"version":   "1.0.0",
 				"timestamp": time.Now().Format(time.RFC3339),
-				"checks": map[string]interface{}{
+				"checks": map[string]any{
 					"keyStorage": false,
 					"database":   true,
 				},
@@ -88,7 +88,7 @@ func TestHealth(t *testing.T) {
 				}
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(tt.serverStatus)
-				json.NewEncoder(w).Encode(tt.responseBody)
+				_ = json.NewEncoder(w).Encode(tt.responseBody)
 			}))
 			defer server.Close()
 
@@ -166,11 +166,11 @@ test-key-data
 				if tt.serverStatus == 200 {
 					w.Header().Set("Content-Type", "text/plain")
 					w.WriteHeader(http.StatusOK)
-					fmt.Fprint(w, publicKeyPEM)
+					_, _ = fmt.Fprint(w, publicKeyPEM)
 				} else {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(tt.serverStatus)
-					json.NewEncoder(w).Encode(map[string]string{
+					_ = json.NewEncoder(w).Encode(map[string]string{
 						"code":  "KEY_NOT_FOUND",
 						"error": "key not found",
 					})
@@ -244,7 +244,7 @@ func TestUploadKey(t *testing.T) {
 				}
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(tt.serverStatus)
-				json.NewEncoder(w).Encode(map[string]string{
+				_ = json.NewEncoder(w).Encode(map[string]string{
 					"keyId":       "key-123",
 					"fingerprint": "ABC123",
 					"algorithm":   "RSA",
@@ -277,8 +277,8 @@ func TestListKeys(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"keys": []map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"keys": []map[string]any{
 				{
 					"keyId":       "key-1",
 					"fingerprint": "AAAA",
@@ -353,7 +353,7 @@ func TestDeleteKey(t *testing.T) {
 				}
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(tt.serverStatus)
-				json.NewEncoder(w).Encode(map[string]bool{
+				_ = json.NewEncoder(w).Encode(map[string]bool{
 					"deleted": tt.deleted,
 				})
 			}))
@@ -387,8 +387,8 @@ func TestAuditLogs(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"logs": []map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"logs": []map[string]any{
 				{
 					"id":        "log-1",
 					"timestamp": time.Now().Format(time.RFC3339),
@@ -476,11 +476,11 @@ test-key
 				if tt.serverStatus == 200 {
 					w.Header().Set("Content-Type", "text/plain")
 					w.WriteHeader(http.StatusOK)
-					fmt.Fprint(w, publicKey)
+					_, _ = fmt.Fprint(w, publicKey)
 				} else {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(tt.serverStatus)
-					json.NewEncoder(w).Encode(map[string]string{
+					_ = json.NewEncoder(w).Encode(map[string]string{
 						"code":  "KEY_NOT_FOUND",
 						"error": "key not found",
 					})
@@ -512,8 +512,8 @@ func TestAuditFilterWithAllFields(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"logs":  []map[string]interface{}{},
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"logs":  []map[string]any{},
 			"count": 0,
 		})
 	}))
@@ -545,11 +545,11 @@ func BenchmarkHealth(b *testing.B) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status":    "healthy",
 			"version":   "1.0.0",
 			"timestamp": time.Now().Format(time.RFC3339),
-			"checks": map[string]interface{}{
+			"checks": map[string]any{
 				"keyStorage": true,
 				"database":   true,
 			},
@@ -559,8 +559,7 @@ func BenchmarkHealth(b *testing.B) {
 
 	client, _ := New(server.URL)
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = client.Health(context.Background())
 	}
 }
@@ -570,14 +569,13 @@ func BenchmarkPublicKey(b *testing.B) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "-----BEGIN PGP PUBLIC KEY-----\ntest\n-----END PGP PUBLIC KEY-----")
+		_, _ = fmt.Fprint(w, "-----BEGIN PGP PUBLIC KEY-----\ntest\n-----END PGP PUBLIC KEY-----")
 	}))
 	defer server.Close()
 
 	client, _ := New(server.URL)
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = client.PublicKey(context.Background(), "")
 	}
 }

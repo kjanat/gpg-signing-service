@@ -240,7 +240,7 @@ func TestNewClientWithHTTPServer(t *testing.T) {
 	// Create a simple test server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	}))
 	defer server.Close()
 
@@ -266,7 +266,7 @@ func TestClientConcurrency(t *testing.T) {
 
 	// Simulate concurrent access to client fields
 	done := make(chan bool, 10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			_ = c.opts.timeout
 			_ = c.opts.maxRetries
@@ -275,7 +275,7 @@ func TestClientConcurrency(t *testing.T) {
 		}()
 	}
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 }
@@ -327,7 +327,7 @@ func TestNewClientTimeout(t *testing.T) {
 
 // BenchmarkNewClient benchmarks client creation
 func BenchmarkNewClient(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := New("http://localhost:8080", WithTimeout(30*time.Second))
 		if err != nil {
 			b.Fatalf("failed to create client: %v", err)

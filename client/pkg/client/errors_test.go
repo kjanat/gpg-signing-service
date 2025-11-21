@@ -456,7 +456,7 @@ func TestErrorTypeAssertions(t *testing.T) {
 	tests := []struct {
 		name    string
 		err     error
-		errType interface{}
+		errType any
 	}{
 		{
 			name:    "ServiceError",
@@ -495,8 +495,6 @@ func TestStatusCodeInServiceError(t *testing.T) {
 
 	for _, code := range statusCodes {
 		err := &ServiceError{
-			Code:       fmt.Sprintf("CODE_%d", code),
-			Message:    fmt.Sprintf("error %d", code),
 			StatusCode: code,
 		}
 
@@ -549,8 +547,7 @@ func BenchmarkIsServiceError(b *testing.B) {
 		StatusCode: 500,
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = IsServiceError(err)
 	}
 }
@@ -562,8 +559,7 @@ func BenchmarkIsValidationError(b *testing.B) {
 		Message: "test",
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = IsValidationError(err)
 	}
 }

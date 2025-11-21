@@ -16,7 +16,7 @@ func TestSignValidation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "signature")
+		_, _ = fmt.Fprint(w, "signature")
 	}))
 	defer server.Close()
 
@@ -62,7 +62,7 @@ func TestSignSuccessResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, signature)
+		_, _ = fmt.Fprint(w, signature)
 	}))
 	defer server.Close()
 
@@ -89,7 +89,7 @@ func TestSignWithRateLimitHeaders(t *testing.T) {
 		w.Header().Set("X-RateLimit-Remaining", "95")
 		w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(resetTime, 10))
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "signature")
+		_, _ = fmt.Fprint(w, "signature")
 	}))
 	defer server.Close()
 
@@ -112,7 +112,7 @@ func TestSignWithKeyID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "signature")
+		_, _ = fmt.Fprint(w, "signature")
 	}))
 	defer server.Close()
 
@@ -132,7 +132,7 @@ func TestSignContextCancellation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(500 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "signature")
+		_, _ = fmt.Fprint(w, "signature")
 	}))
 	defer server.Close()
 
@@ -155,7 +155,7 @@ func TestSignContextDeadline(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(200 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "signature")
+		_, _ = fmt.Fprint(w, "signature")
 	}))
 	defer server.Close()
 
@@ -407,7 +407,7 @@ func TestRetrierBackoffMax(t *testing.T) {
 func BenchmarkSign(b *testing.B) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "signature")
+		_, _ = fmt.Fprint(w, "signature")
 	}))
 	defer server.Close()
 
@@ -416,8 +416,7 @@ func BenchmarkSign(b *testing.B) {
 		b.Fatalf("failed to create client: %v", err)
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = client.Sign(context.Background(), "commit data", "")
 	}
 }

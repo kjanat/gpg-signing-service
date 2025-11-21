@@ -247,8 +247,7 @@ func BenchmarkOptionApplication(b *testing.B) {
 		WithOIDCToken("test-token"),
 	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		options := defaultOptions()
 		for _, opt := range opts {
 			opt(options)
@@ -258,8 +257,8 @@ func BenchmarkOptionApplication(b *testing.B) {
 
 // BenchmarkDefaultOptions benchmarks creating default options
 func BenchmarkDefaultOptions(b *testing.B) {
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+
+	for b.Loop() {
 		_ = defaultOptions()
 	}
 }
