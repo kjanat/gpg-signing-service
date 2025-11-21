@@ -2,7 +2,7 @@ import { swaggerUI } from "@hono/swagger-ui";
 import { createRoute, z } from "@hono/zod-openapi";
 import { logger } from "hono/logger";
 import * as openpgp from "openpgp";
-import { createOpenAPIApp } from "~/lib/openapi";
+import { createOpenAPIApp, openApiConfig } from "~/lib/openapi";
 import { adminAuth, oidcAuth } from "~/middleware/oidc";
 import {
   adminRateLimit,
@@ -206,13 +206,7 @@ app.route(
 );
 
 // OpenAPI Docs
-app.doc("/doc", {
-  openapi: "3.1.0",
-  info: {
-    version: "1.0.0",
-    title: "GPG Signing Service API",
-  },
-});
+app.doc("/doc", openApiConfig);
 
 // Swagger UI
 app.get("/ui", swaggerUI({ url: "/doc" }));

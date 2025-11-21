@@ -11,14 +11,14 @@ pre-commit:
     - name: typegen
       run: bun run typegen
 
-    - name: typecheck
-      run: bun run typecheck
-
     - name: generate-api
       run: bun run generate:api
 
 pre-push:
   jobs:
+    - name: typecheck
+      run: bun run typecheck
+
     - name: test
       run: bun run test:coverage
 

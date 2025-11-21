@@ -13,12 +13,13 @@
     "dev": "wrangler dev",
     "fmt": "bun format",
     "format": "dprint fmt --config=.dprint.jsonc --config-discovery=false --allow-no-files",
+    "format:check": "dprint check --config=.dprint.jsonc --config-discovery=false --allow-no-files",
     "generate-key": "bash scripts/generate-key.sh",
     "generate:api": "bun run scripts/generate-openapi.ts && cd client && oapi-codegen -config oapi-codegen.yaml openapi.json",
     "kv:create": "wrangler kv namespace create JWKS_CACHE",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
-    "postinstall": "lefthook install; wrangler types &>/dev/null",
+    "postinstall": "bunx lefthook install; bunx wrangler types > /dev/null",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
@@ -54,5 +55,6 @@
     "vitest": ">=3.2.0 <4.0.0",
     "wrangler": "^4.49.1"
   },
+  "packageManager": "bun@1.3.2",
   "prettier": "@kjanat/prettier-config"
 }

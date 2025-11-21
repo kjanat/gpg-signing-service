@@ -1,0 +1,38 @@
+name: "Setup Go"
+description: "Setup Go with caching and install dependencies"
+
+inputs:
+  go-version:
+    description: "Go version"
+    required: false
+  check-latest:
+    description: "Check for latest Go version"
+    required: false
+    default: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Go
+      if: !inputs.go-version
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: client/go.mod
+        check-latest: ${{ inputs.check-latest }}
+        cache-dependency-path: |
+          client/go.mod
+          client/go.sum
+
+    - name: Setup Go
+      if: inputs.go-version
+      uses: actions/setup-go@v6
+      with:
+        go-version: ${{ inputs.go-version }}
+        check-latest: ${{ inputs.check-latest }}
+        cache-dependency-path: |
+          client/go.mod
+          client/go.sum
+
+    - name: Install dependencies
+      run: go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
+      shell: bash

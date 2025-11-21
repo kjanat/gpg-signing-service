@@ -1,0 +1,27 @@
+name: "Setup Bun"
+description: "Setup Bun with caching and install dependencies"
+author: https://github.com/sst/opencode/blob/e34df15ff521d27a659eb028491ce2963a0c3a28/.github/actions/setup-bun/action.yml
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Node.js (just in case)
+      uses: actions/setup-node@v6
+      with: { node-version: "latest" }
+
+    - name: Setup Bun
+      uses: oven-sh/setup-bun@v2
+      with: { bun-version-file: package.json }
+
+    - name: Cache ~/.bun
+      id: cache-bun
+      uses: actions/cache@v4
+      with:
+        path: ~/.bun
+        key: ${{ runner.os }}-bun-${{ hashFiles('package.json') }}-${{ hashFiles('bun.lockb', 'bun.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-bun-${{ hashFiles('package.json') }}-
+
+    - name: Install dependencies
+      run: bun install
+      shell: bash

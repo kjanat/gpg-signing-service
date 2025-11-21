@@ -15,30 +15,35 @@ openpgp.js.
 ## Architecture
 
 ```mermaid
-flowchart LR
-    CI[CI Pipeline] -->|OIDC Token| SS[Signing Service]
-    SS -->|Signed Commit| SC[Signed Commit]
+architecture-beta
+    group cf(cloud)[Cloudflare Platform]
+    service worker(server)[Signing Worker] in cf
+    service durable(database)[Durable Object Key Store] in cf
+    service d1(database)[Audit Log DB] in cf
+    service kv(disk)[Rate Limit KV] in cf
 
-    subgraph Storage
-        direction TB
-        DO[("Durable Object\n(Key Storage)")]
-        D1[("D1 Database\n(Audit Logs)")]
-    end
+    group ext(cloud)[Integrations]
 
-    SS --> DO
-    SS --> D1
-```
+    group ci(cloud)[CI Pipelines] in ext
+    service gha(cloud)[GitHub Actions] in ci
+    service gitlab(cloud)[GitLab CI] in ci
 
-<!--
+    group admin(cloud)[Admin Channel] in ext
+    service admincli(server)[Admin Client] in admin
+
+    service jwks(internet)[OIDC Issuers]
+
+    gha{group}:R -- L:worker{group}
+    gitlab{group}:R -- L:worker{group}
+  
+    admincli{group}:R -- L:worker{group}
+  
+    worker:T -- B:kv
+    worker:R -- L:d1
+    worker:B -- T:durable
+  
+    worker{group}:T -- B:jwks
 ```
-CI Pipeline -> OIDC Token -> Signing Service -> Signed Commit
-                                   |
-                    +--------------+--------------+
-                    |                             |
-              Durable Object               D1 Database
-              (Key Storage)               (Audit Logs)
-```
--->
 
 ## Setup
 
@@ -88,12 +93,12 @@ bun run deploy
 ### 5. Upload Key to Service
 
 ```bash
-curl -X POST https://your-worker.workers.dev/admin/keys \
+curl -X POST https://gpg.kajkowalski.nl/admin/keys \
   -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "armoredPrivateKey": "-----BEGIN PGP PRIVATE KEY BLOCK-----
-    ...
+    <<<...INSERT YOUR GPG KEY HERE...>>>
     -----END PGP PRIVATE KEY BLOCK-----",
     "keyId": "signing-key-v1"
   }'
@@ -104,23 +109,23 @@ curl -X POST https://your-worker.workers.dev/admin/keys \
 ### Public
 
 | Method | Path          | Description                               |
-| ------ | ------------- | ----------------------------------------- |
+| :----- | :------------ | :---------------------------------------- |
 | `GET`  | `/health`     | Health check                              |
 | `GET`  | `/public-key` | Get public key for signature verification |
 
 ### Protected (OIDC Auth)
 
 | Method | Path    | Description      |
-| ------ | ------- | ---------------- |
+| :----- | :------ | :--------------- |
 | `POST` | `/sign` | Sign commit data |
 
 ### Admin (Admin Token)
 
 | Method   | Path                        | Description        |
-| -------- | --------------------------- | ------------------ |
-| `POST`   | `/admin/keys`               | Upload signing key |
-| `GET`    | `/admin/keys`               | List keys          |
+| :------- | :-------------------------- | :----------------- |
 | `GET`    | `/admin/keys/:keyId/public` | Get public key     |
+| `GET`    | `/admin/keys`               | List keys          |
+| `POST`   | `/admin/keys`               | Upload signing key |
 | `DELETE` | `/admin/keys/:keyId`        | Delete key         |
 | `GET`    | `/admin/audit`              | Get audit logs     |
 
@@ -129,7 +134,7 @@ curl -X POST https://your-worker.workers.dev/admin/keys \
 ### GitHub Actions
 
 1. Set repository variable `SIGNING_SERVICE_URL`
-2. Add workflow from [`.github/workflows/sign-commits.yml`][actions:sign-commits]
+2. Add workflow from [`sign-commits.yml`][actions:sign-commits]
 3. Configure OIDC audience in your worker's `ALLOWED_ISSUERS`
 
 ### GitLab CI
@@ -158,14 +163,17 @@ bun run generate:api
 
 The service exposes API documentation at both:
 
-- `/doc` - OpenAPI 3.0 JSON spec
-- `/ui` - Swagger UI for interactive API exploration
+| Path   | Description                                |
+| :----- | :----------------------------------------- |
+| `/doc` | OpenAPI 3.0 JSON spec                      |
+| `/ui`  | Swagger UI for interactive API exploration |
 
 ### API Generation
 
-The API uses `@hono/zod-openapi` to auto-generate an OpenAPI schema from the
-Hono route definitions.\
-The Go client is then auto-generated from this schema using `oapi-codegen`.
+The API uses [`@hono/zod-openapi`][npm:@hono/zod-openapi] to auto-generate an
+OpenAPI schema from the Hono route definitions.\
+The Go client is then auto-generated from this schema using
+[`oapi-codegen`][github:oapi-codegen].
 
 **Workflow:**
 
@@ -189,15 +197,17 @@ This ensures the client is always in sync with the server API.
 ## Environment Variables
 
 | Variable          | Description                      |
-| ----------------- | -------------------------------- |
+| :---------------- | :------------------------------- |
+| `ADMIN_TOKEN`     | Secret: Admin API token          |
 | `ALLOWED_ISSUERS` | Comma-separated OIDC issuer URLs |
 | `KEY_ID`          | Default signing key ID           |
 | `KEY_PASSPHRASE`  | Secret: Key passphrase           |
-| `ADMIN_TOKEN`     | Secret: Admin API token          |
 
 <!-- link definitions -->
 
-[cloudflare:dashboard]: https://dash.cloudflare.com/
-[wrangler:install]: https://developers.cloudflare.com/workers/wrangler/install-and-update/
-[actions:sign-commits]: .github/workflows/sign-commits.yml
-[gitlab:sign-commits]: .gitlab-ci.yml
+[actions:sign-commits]: .github/workflows/sign-commits.yml "Example GitHub Actions workflow"
+[cloudflare:dashboard]: https://dash.cloudflare.com/ "Cloudflare Dashboard"
+[github:oapi-codegen]: https://github.com/oapi-codegen/oapi-codegen "oapi-codegen GitHub repository"
+[gitlab:sign-commits]: .gitlab-ci.yml "Example GitLab CI pipeline"
+[npm:@hono/zod-openapi]: https://www.npmjs.com/package/@hono/zod-openapi "npm package: @hono/zod-openapi"
+[wrangler:install]: https://developers.cloudflare.com/workers/wrangler/install-and-update/ "Install Wrangler CLI"
