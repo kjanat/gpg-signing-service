@@ -687,8 +687,11 @@
         "parameters": [
           {
             "schema": {
-              "type": "string",
-              "example": "100"
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 100,
+              "example": 100
             },
             "required": false,
             "name": "limit",
@@ -696,8 +699,11 @@
           },
           {
             "schema": {
-              "type": "string",
-              "example": "0"
+              "type": "integer",
+              "nullable": true,
+              "minimum": 0,
+              "default": 0,
+              "example": 0
             },
             "required": false,
             "name": "offset",

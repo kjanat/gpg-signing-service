@@ -123,7 +123,8 @@ const signRoute = createRoute({
 });
 
 app.openapi(signRoute, async (c) => {
-  const requestId = c.req.header("X-Request-ID") || crypto.randomUUID();
+  const { "X-Request-ID": requestIdHeader } = c.req.valid("header");
+  const requestId = requestIdHeader || crypto.randomUUID();
   const claims = c.get("oidcClaims") as ValidatedOIDCClaims;
   const identity = c.get("identity") as Identity;
 
@@ -183,7 +184,8 @@ app.openapi(signRoute, async (c) => {
   }
 
   // Get key ID from query param or use default
-  const keyIdParam = c.req.query("keyId") || c.env.KEY_ID;
+  const { keyId: keyIdQuery } = c.req.valid("query");
+  const keyIdParam = keyIdQuery || c.env.KEY_ID;
   createKeyId(keyIdParam); // Validate key ID format
 
   try {

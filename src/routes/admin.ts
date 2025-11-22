@@ -1,6 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { createOpenAPIApp } from "~/lib/openapi";
-import type { ErrorCode, KeyUploadRequest, StoredKey } from "~/types";
+import type { ErrorCode, StoredKey } from "~/types";
 import { createArmoredPrivateKey, createKeyId } from "~/types";
 import { getAuditLogs, logAuditEvent } from "~/utils/audit";
 import { extractPublicKey, parseAndValidateKey } from "~/utils/signing";
@@ -80,7 +80,7 @@ app.openapi(uploadKeyRoute, async (c) => {
   const requestId = c.req.header("X-Request-ID") || crypto.randomUUID();
 
   try {
-    const body = (await c.req.json()) as KeyUploadRequest;
+    const body = c.req.valid("json");
 
     // Validate and parse the key
     const keyInfo = await parseAndValidateKey(
@@ -278,7 +278,7 @@ const getPublicKeyRoute = createRoute({
 });
 
 app.openapi(getPublicKeyRoute, async (c) => {
-  const keyId = c.req.param("keyId");
+  const { keyId } = c.req.valid("param");
 
   try {
     const keyStorageId = c.env.KEY_STORAGE.idFromName("global");
@@ -351,7 +351,7 @@ const deleteKeyRoute = createRoute({
 });
 
 app.openapi(deleteKeyRoute, async (c) => {
-  const keyId = c.req.param("keyId");
+  const { keyId } = c.req.valid("param");
   const requestId = c.req.header("X-Request-ID") || crypto.randomUUID();
 
   try {
@@ -418,8 +418,19 @@ const getAuditLogsRoute = createRoute({
   description: "Retrieve audit logs with filtering",
   request: {
     query: z.object({
-      limit: z.string().optional().openapi({ example: "100" }),
-      offset: z.string().optional().openapi({ example: "0" }),
+      limit: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(1000)
+        .default(100)
+        .openapi({ example: 100 }),
+      offset: z.coerce
+        .number()
+        .int()
+        .min(0)
+        .default(0)
+        .openapi({ example: 0 }),
       action: z.string().optional(),
       subject: z.string().optional(),
       startDate: z.string().optional(),
@@ -472,30 +483,9 @@ const getAuditLogsRoute = createRoute({
 
 app.openapi(getAuditLogsRoute, async (c) => {
   try {
-    const limit = parseInt(c.req.query("limit") || "100", 10);
-    const offset = parseInt(c.req.query("offset") || "0", 10);
-
-    // Validate pagination parameters
-    if (
-      Number.isNaN(limit)
-      || Number.isNaN(offset)
-      || limit < 1
-      || limit > 1000
-      || offset < 0
-    ) {
-      return c.json(
-        {
-          error: "Invalid pagination parameters",
-          code: "INVALID_REQUEST" satisfies ErrorCode,
-        },
-        400,
-      );
-    }
-
-    const action = c.req.query("action");
-    const subject = c.req.query("subject");
-    const startDate = c.req.query("startDate");
-    const endDate = c.req.query("endDate");
+    const { limit, offset, action, subject, startDate, endDate } = c.req.valid(
+      "query",
+    );
 
     const logs = await getAuditLogs(c.env.AUDIT_DB, {
       limit,

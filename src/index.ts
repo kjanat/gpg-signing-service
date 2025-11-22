@@ -158,7 +158,8 @@ const publicKeyRoute = createRoute({
 });
 
 app.openapi(publicKeyRoute, async (c) => {
-  const keyId = c.req.query("keyId") || c.env.KEY_ID;
+  const { keyId: keyIdQuery } = c.req.valid("query");
+  const keyId = keyIdQuery || c.env.KEY_ID;
 
   const keyStorageId = c.env.KEY_STORAGE.idFromName("global");
   const keyStorage = c.env.KEY_STORAGE.get(keyStorageId);
