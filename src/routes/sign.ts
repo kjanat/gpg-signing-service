@@ -22,7 +22,7 @@ const signRoute = createRoute({
     body: {
       content: {
         "text/plain": {
-          schema: z.string().openapi({
+          schema: z.string().min(1).openapi({
             example:
               "tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147\nparent ...",
           }),
@@ -172,7 +172,11 @@ app.openapi(signRoute, async (c) => {
   // Get commit data from request body
   const commitData = await c.req.text();
 
-  if (!commitData) {
+  // Validate body content explicitly since we're using raw text
+  const bodySchema = z.string().min(1);
+  const bodyResult = bodySchema.safeParse(commitData);
+
+  if (!bodyResult.success) {
     return c.json(
       {
         error: "No commit data provided",

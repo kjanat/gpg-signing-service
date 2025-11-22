@@ -382,12 +382,12 @@ func (c *Client) AuditLogs(ctx context.Context, filter AuditFilter) (*AuditResul
 	params := &api.GetAdminAuditParams{}
 
 	if filter.Limit > 0 {
-		limitStr := strconv.Itoa(filter.Limit)
-		params.Limit = &limitStr
+		limit := filter.Limit
+		params.Limit = &limit
 	}
 	if filter.Offset > 0 {
-		offsetStr := strconv.Itoa(filter.Offset)
-		params.Offset = &offsetStr
+		offset := filter.Offset
+		params.Offset = &offset
 	}
 	if filter.Action != "" {
 		params.Action = &filter.Action

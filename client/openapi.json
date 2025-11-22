@@ -204,6 +204,7 @@
             "text/plain": {
               "schema": {
                 "type": "string",
+                "minLength": 1,
                 "example": "tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147\nparent ..."
               }
             }

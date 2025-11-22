@@ -7,35 +7,26 @@ export async function logAuditEvent(
   const id = crypto.randomUUID();
   const timestamp = new Date().toISOString();
 
-  try {
-    await db
-      .prepare(
-        `
+  await db
+    .prepare(
+      `
       INSERT INTO audit_logs (id, timestamp, request_id, action, issuer, subject, key_id, success, error_code, metadata)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
-      )
-      .bind(
-        id,
-        timestamp,
-        entry.requestId,
-        entry.action,
-        entry.issuer,
-        entry.subject,
-        entry.keyId,
-        entry.success ? 1 : 0,
-        entry.errorCode || null,
-        entry.metadata || null,
-      )
-      .run();
-  } catch (error) {
-    // Log failure but don't crash the request - audit is important but not critical path
-    console.error("Failed to write audit log:", {
-      entry,
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
-    // Note: In production, this should trigger an alert
-  }
+    )
+    .bind(
+      id,
+      timestamp,
+      entry.requestId,
+      entry.action,
+      entry.issuer,
+      entry.subject,
+      entry.keyId,
+      entry.success ? 1 : 0,
+      entry.errorCode || null,
+      entry.metadata || null,
+    )
+    .run();
 }
 
 export async function getAuditLogs(
