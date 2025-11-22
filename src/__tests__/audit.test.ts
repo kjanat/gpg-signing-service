@@ -113,13 +113,11 @@ describe("logAuditEvent", () => {
     );
   });
 
-  it("should not throw when database fails", async () => {
+  it("should throw when database fails (fail-closed)", async () => {
     const db = createMockDb();
     db._mockRun.mockRejectedValue(new Error("Database error"));
 
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-    // Should not throw
+    // Should throw - fail closed behavior
     await expect(
       logAuditEvent(db, {
         requestId: "req-999",
@@ -129,60 +127,43 @@ describe("logAuditEvent", () => {
         keyId: "KEY",
         success: true,
       }),
-    ).resolves.toBeUndefined();
-
-    expect(consoleSpy).toHaveBeenCalledWith(
-      "Failed to write audit log:",
-      expect.objectContaining({ error: "Database error" }),
-    );
-
-    consoleSpy.mockRestore();
+    ).rejects.toThrow("Database error");
   });
 
-  it("should handle DB run failure", async () => {
+  it("should throw on DB run failure (fail-closed)", async () => {
     const db = createMockDb();
     db._mockRun.mockImplementation(() => {
       throw new Error("DB Run Error");
     });
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    await logAuditEvent(db, {
-      requestId: "req-fail",
-      action: "sign",
-      issuer: "test",
-      subject: "test",
-      keyId: "KEY",
-      success: true,
-    });
-
-    expect(consoleSpy).toHaveBeenCalledWith(
-      "Failed to write audit log:",
-      expect.objectContaining({ error: "DB Run Error" }),
-    );
-    consoleSpy.mockRestore();
+    await expect(
+      logAuditEvent(db, {
+        requestId: "req-fail",
+        action: "sign",
+        issuer: "test",
+        subject: "test",
+        keyId: "KEY",
+        success: true,
+      }),
+    ).rejects.toThrow("DB Run Error");
   });
 
-  it("should handle non-Error exceptions", async () => {
+  it("should throw on non-Error exceptions (fail-closed)", async () => {
     const db = createMockDb();
     db._mockRun.mockImplementation(() => {
       throw "String error";
     });
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    await logAuditEvent(db, {
-      requestId: "req-fail",
-      action: "sign",
-      issuer: "test",
-      subject: "test",
-      keyId: "KEY",
-      success: true,
-    });
-
-    expect(consoleSpy).toHaveBeenCalledWith(
-      "Failed to write audit log:",
-      expect.objectContaining({ error: "Unknown error" }),
-    );
-    consoleSpy.mockRestore();
+    await expect(
+      logAuditEvent(db, {
+        requestId: "req-fail",
+        action: "sign",
+        issuer: "test",
+        subject: "test",
+        keyId: "KEY",
+        success: true,
+      }),
+    ).rejects.toThrow();
   });
 });
 

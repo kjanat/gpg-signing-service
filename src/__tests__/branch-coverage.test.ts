@@ -185,32 +185,23 @@ describe("Branch Coverage Helpers", () => {
   });
 
   describe("Audit logging failures", () => {
-    it("logs and swallows audit DB errors", async () => {
+    it("throws on audit DB errors (fail-closed)", async () => {
       const db = {
         prepare: () => {
           throw new Error("DB down");
         },
       } as unknown as D1Database;
 
-      const consoleSpy = vi
-        .spyOn(console, "error")
-        .mockImplementation(() => {});
-
-      await logAuditEvent(db, {
-        requestId: "req-1",
-        action: "test" as any,
-        issuer: "issuer",
-        subject: "subj",
-        keyId: "key",
-        success: true,
-      });
-
-      expect(consoleSpy).toHaveBeenCalledWith(
-        "Failed to write audit log:",
-        expect.objectContaining({ error: "DB down" }),
-      );
-
-      consoleSpy.mockRestore();
+      await expect(
+        logAuditEvent(db, {
+          requestId: "req-1",
+          action: "test" as any,
+          issuer: "issuer",
+          subject: "subj",
+          keyId: "key",
+          success: true,
+        }),
+      ).rejects.toThrow("DB down");
     });
   });
 
