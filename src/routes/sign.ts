@@ -1,6 +1,11 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { createOpenAPIApp } from "~/lib/openapi";
-import { ErrorResponseSchema, RequestHeadersSchema } from "~/schemas";
+import {
+  ErrorResponseSchema,
+  PublicKeyQuerySchema,
+  RateLimitErrorSchema,
+  RequestHeadersSchema,
+} from "~/schemas";
 import type {
   ErrorCode,
   Identity,
@@ -31,15 +36,7 @@ const signRoute = createRoute({
       },
       required: true,
     },
-    query: z.object({
-      keyId: z.string().optional().openapi({
-        param: {
-          name: "keyId",
-          in: "query",
-        },
-        example: "A1B2C3D4E5F6G7H8",
-      }),
-    }),
+    query: PublicKeyQuerySchema,
     headers: RequestHeadersSchema,
   },
   responses: {
@@ -72,11 +69,7 @@ const signRoute = createRoute({
     429: {
       content: {
         "application/json": {
-          schema: z.object({
-            error: z.string(),
-            code: z.string(),
-            retryAfter: z.number(),
-          }),
+          schema: RateLimitErrorSchema,
         },
       },
       description: "Rate limit exceeded",

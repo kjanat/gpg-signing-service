@@ -370,13 +370,32 @@
                   "type": "object",
                   "properties": {
                     "error": {
-                      "type": "string"
+                      "type": "string",
+                      "minLength": 1
                     },
                     "code": {
-                      "type": "string"
+                      "type": "string",
+                      "enum": [
+                        "AUTH_MISSING",
+                        "AUTH_INVALID",
+                        "KEY_NOT_FOUND",
+                        "KEY_PROCESSING_ERROR",
+                        "KEY_LIST_ERROR",
+                        "KEY_UPLOAD_ERROR",
+                        "KEY_DELETE_ERROR",
+                        "SIGN_ERROR",
+                        "RATE_LIMIT_ERROR",
+                        "RATE_LIMITED",
+                        "INVALID_REQUEST",
+                        "AUDIT_ERROR",
+                        "NOT_FOUND",
+                        "INTERNAL_ERROR"
+                      ]
                     },
                     "retryAfter": {
-                      "type": "number"
+                      "type": "integer",
+                      "minimum": 0,
+                      "exclusiveMinimum": true
                     }
                   },
                   "required": [

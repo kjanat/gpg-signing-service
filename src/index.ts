@@ -11,7 +11,11 @@ import {
 } from "~/middleware/security";
 import adminRoutes from "~/routes/admin";
 import signRoutes from "~/routes/sign";
-import { ErrorResponseSchema, HealthResponseSchema } from "~/schemas";
+import {
+  ErrorResponseSchema,
+  HealthResponseSchema,
+  PublicKeyQuerySchema,
+} from "~/schemas";
 import type { HealthResponse } from "~/types";
 
 // Export Durable Objects
@@ -95,18 +99,7 @@ const publicKeyRoute = createRoute({
   summary: "Get public key",
   description: "Get the public key for signature verification",
   request: {
-    query: z.object({
-      keyId: z
-        .string()
-        .optional()
-        .openapi({
-          param: {
-            name: "keyId",
-            in: "query",
-          },
-          example: "A1B2C3D4E5F6G7H8",
-        }),
-    }),
+    query: PublicKeyQuerySchema,
   },
   responses: {
     200: {

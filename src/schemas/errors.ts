@@ -27,5 +27,15 @@ export const ErrorCodeSchema = z.enum([
 export const ErrorResponseSchema = z.object({
   error: z.string().min(1, "Error message cannot be empty"),
   code: ErrorCodeSchema,
-  requestId: z.uuid().optional(),
+  requestId: z.string().uuid().optional(),
+});
+
+/**
+ * Rate limit error response schema
+ * Includes retryAfter timestamp for 429 responses
+ */
+export const RateLimitErrorSchema = z.object({
+  error: z.string().min(1, "Error message cannot be empty"),
+  code: ErrorCodeSchema,
+  retryAfter: z.number().int().positive(),
 });
