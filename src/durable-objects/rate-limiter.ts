@@ -1,4 +1,3 @@
-/* istanbul ignore file -- covered in integration tests; omit from unit coverage */
 import type { RateLimitResult } from "~/types";
 import { createRateLimitAllowed, createRateLimitDenied } from "~/types";
 
@@ -50,7 +49,6 @@ export class RateLimiter implements DurableObject {
         default:
           return new Response("Not found", { status: 404 });
       }
-      /* istanbul ignore next: defensive catch for DO runtime */
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
       return new Response(JSON.stringify({ error: message }), {

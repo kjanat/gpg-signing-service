@@ -28,7 +28,6 @@ export async function logAuditEvent(
         entry.metadata || null,
       )
       .run();
-    /* istanbul ignore next: logging-only failure path */
   } catch (error) {
     // Log failure but don't crash the request - audit is important but not critical path
     console.error("Failed to write audit log:", {

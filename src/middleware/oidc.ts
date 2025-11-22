@@ -70,10 +70,9 @@ async function timingSafeEqual(a: string, b: string): Promise<boolean> {
   const bBytes = encoder.encode(b);
 
   // If lengths differ, compare against dummy to maintain constant time
-  /* istanbul ignore next: constant-time fallback for length mismatch */
   if (aBytes.length !== bBytes.length) {
     const dummy = encoder.encode("0".repeat(aBytes.length));
-    await crypto.subtle.timingSafeEqual(aBytes, dummy);
+    crypto.subtle.timingSafeEqual(aBytes, dummy);
     return false;
   }
 

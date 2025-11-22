@@ -144,7 +144,6 @@ app.openapi(signRoute, async (c) => {
     }
 
     rateLimit = (await rateLimitResponse.json()) as RateLimitResult;
-    /* istanbul ignore next: error path exercised in dedicated tests */
   } catch (error) {
     console.error("Rate limiter failed:", error);
     // FAIL CLOSED - deny request when rate limiting is unavailable

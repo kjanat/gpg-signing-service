@@ -138,7 +138,6 @@ app.openapi(uploadKeyRoute, async (c) => {
       },
       201,
     );
-    /* istanbul ignore next: defensive error path covered in tests */
   } catch (error) {
     const message = error instanceof Error
       ? error.message
