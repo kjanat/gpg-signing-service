@@ -1,10 +1,11 @@
 import { z } from "@hono/zod-openapi";
 
 /**
- * ISO8601 datetime validation
+ * ISO8601 datetime validation with timezone offset
  */
 export const TimestampSchema = z.iso.datetime({
-  message: "Must be valid ISO8601 timestamp",
+  offset: true,
+  message: "Must be valid ISO8601 timestamp with timezone",
 });
 
 /**
@@ -39,6 +40,6 @@ export const AuditQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).default(0).openapi({ example: 0 }),
   action: z.string().optional(),
   subject: z.string().optional(),
-  startDate: z.iso.datetime().optional(),
-  endDate: z.iso.datetime().optional(),
+  startDate: TimestampSchema.optional(),
+  endDate: TimestampSchema.optional(),
 });

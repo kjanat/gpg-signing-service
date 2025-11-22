@@ -19,13 +19,13 @@ export default defineWorkersConfig({
     isolate: true,
     reporters: process.env.GITHUB_ACTIONS
       ? ["github-actions", "dot", "junit", "json"]
-      : ["dot", "default"],
+      : ["default"], // "dot",
     include: ["src/__tests__/**/*.{ts,js}"],
     exclude: ["**/*.d.ts", "node_modules/**"],
     coverage: {
-      // enabled: true,
+      enabled: true,
       provider: "istanbul",
-      reporter: ["text", "html", "clover", "json"],
+      reporter: ["text", "html", "json"],
       include: ["src/**/*.ts"],
       exclude: ["scripts", "dist", ".commitlint.ts", "vitest.config.ts"],
       // strict thresholds, if you modify this, you are fired !!!
