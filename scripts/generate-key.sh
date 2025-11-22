@@ -10,7 +10,7 @@ KEYS_DIR="${PROJECT_DIR}/.keys"
 
 # Show help by default
 show_help() {
-  cat << EOF
+	cat <<EOF
 Usage: $(basename "$0") <name> <email> [comment] [passphrase]
 
 Generate a GPG signing key for the GPG Signing Service.
@@ -37,19 +37,19 @@ Next steps after generation:
   3. Upload key via /admin/keys endpoint
 
 EOF
-  exit 0
+	exit 0
 }
 
 # Show help if no arguments or help flag
 if [ $# -eq 0 ] || [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
-  show_help
+	show_help
 fi
 
 # Require at least name and email
 if [ $# -lt 2 ]; then
-  echo "Error: name and email are required" >&2
-  echo "Run '$(basename "$0") --help' for usage information" >&2
-  exit 1
+	echo "Error: name and email are required" >&2
+	echo "Run '$(basename "$0") --help' for usage information" >&2
+	exit 1
 fi
 
 # Key parameters
@@ -75,7 +75,7 @@ echo "  Passphrase: ${PASSPHRASE:-none}"
 
 # Generate key using batch mode
 if [ -n "$PASSPHRASE" ]; then
-  gpg --batch --gen-key << EOF
+	gpg --batch --gen-key <<EOF
 Key-Type: EDDSA
 Key-Curve: ed25519
 Key-Usage: sign
@@ -87,7 +87,7 @@ Passphrase: ${PASSPHRASE}
 %commit
 EOF
 else
-  gpg --batch --gen-key << EOF
+	gpg --batch --gen-key <<EOF
 Key-Type: EDDSA
 Key-Curve: ed25519
 Key-Usage: sign
@@ -104,44 +104,44 @@ fi
 KEY_ID=$(gpg --list-keys --keyid-format long "${KEY_EMAIL}" | grep -E "^pub" | awk '{print $2}' | cut -d'/' -f2)
 
 {
-  echo ""
-  echo "Key generated successfully!"
-  echo "  Key ID: $KEY_ID"
+	echo ""
+	echo "Key generated successfully!"
+	echo "  Key ID: $KEY_ID"
 }
 
 # Export private key
 PRIVATE_KEY_FILE="${KEYS_DIR}/private-key.asc"
 if [ -n "$PASSPHRASE" ]; then
-  gpg --batch --pinentry-mode loopback --passphrase "$PASSPHRASE" --armor --export-secret-keys "$KEY_ID" > "$PRIVATE_KEY_FILE"
+	gpg --batch --pinentry-mode loopback --passphrase "$PASSPHRASE" --armor --export-secret-keys "$KEY_ID" >"$PRIVATE_KEY_FILE"
 else
-  gpg --armor --export-secret-keys "$KEY_ID" > "$PRIVATE_KEY_FILE"
+	gpg --armor --export-secret-keys "$KEY_ID" >"$PRIVATE_KEY_FILE"
 fi
 
 # Export public key
 PUBLIC_KEY_FILE="${KEYS_DIR}/public-key.asc"
-gpg --armor --export "$KEY_ID" > "$PUBLIC_KEY_FILE"
+gpg --armor --export "$KEY_ID" >"$PUBLIC_KEY_FILE"
 
 # Get fingerprint
 FINGERPRINT=$(gpg --fingerprint "$KEY_ID" | grep -A1 "pub" | tail -1 | tr -d ' ')
 
 {
-  echo ""
-  echo "Keys exported to:"
-  echo "  Private: $PRIVATE_KEY_FILE"
-  echo "  Public:  $PUBLIC_KEY_FILE"
-  echo ""
-  echo "Fingerprint: $FINGERPRINT"
-  echo ""
-  echo "Next steps:"
-  echo "  1. Set passphrase as secret: wrangler secret put KEY_PASSPHRASE"
-  echo "  2. Upload key to service:"
-  # shellcheck disable=SC1003
-  echo '     curl -X POST https://your-worker.workers.dev/admin/keys \'
-  # shellcheck disable=SC1003
-  echo '       -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \'
-  # shellcheck disable=SC1003
-  echo '       -H "Content-Type: application/json" \'
-  echo "       -d '{\"armoredPrivateKey\": \"$(cat "$PRIVATE_KEY_FILE" | sed ':a;N;$!ba;s/\n/\\n/g')\", \"keyId\": \"signing-key-v1\"}'"
-  echo ""
-  echo "IMPORTANT: Keep $PRIVATE_KEY_FILE secure and add .keys/ to .gitignore!"
+	echo ""
+	echo "Keys exported to:"
+	echo "  Private: $PRIVATE_KEY_FILE"
+	echo "  Public:  $PUBLIC_KEY_FILE"
+	echo ""
+	echo "Fingerprint: $FINGERPRINT"
+	echo ""
+	echo "Next steps:"
+	echo "  1. Set passphrase as secret: wrangler secret put KEY_PASSPHRASE"
+	echo "  2. Upload key to service:"
+	# shellcheck disable=SC1003
+	echo '     curl -X POST https://your-worker.workers.dev/admin/keys \'
+	# shellcheck disable=SC1003
+	echo '       -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \'
+	# shellcheck disable=SC1003
+	echo '       -H "Content-Type: application/json" \'
+	echo "       -d '{\"armoredPrivateKey\": \"$(cat "$PRIVATE_KEY_FILE" | sed ':a;N;$!ba;s/\n/\\n/g')\", \"keyId\": \"signing-key-v1\"}'"
+	echo ""
+	echo "IMPORTANT: Keep $PRIVATE_KEY_FILE secure and add .keys/ to .gitignore!"
 }

@@ -21,6 +21,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .env.test.local
 .env.production.local
 .env.local
+.dev.env
 
 # caches
 .eslintcache
@@ -43,3 +44,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Swagger UI
 swagger-ui
 redoc-static.html
+
+# Taskfile
+.task

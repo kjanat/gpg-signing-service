@@ -1,0 +1,10 @@
+name: "Check Formatting"
+description: "Check code formatting"
+
+runs:
+  using: "composite"
+  steps:
+    - uses: ./.github/actions/setup-task
+    - name: Check Formatting
+      shell: bash
+      run: ${{ github.action_path }}/script.sh

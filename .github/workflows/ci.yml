@@ -12,18 +12,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - uses: go-task/setup-task@v1
       - uses: ./.github/actions/setup-bun
       - uses: ./.github/actions/setup-go
 
       - name: Generate API
-        run: bun generate:api
+        run: task generate:api
 
       - name: Check for changes
         shell: bash
         run: |
           if [[ -n $(git status --porcelain) ]]; then
             echo "Error: API generation resulted in changes.
-              Please run 'bun generate:api' and commit the changes."
+              Please run 'task generate:api' and commit the changes."
             git status |& tee "$GITHUB_STEP_SUMMARY"
             git diff |& tee "$GITHUB_STEP_SUMMARY"
             exit 1
@@ -33,71 +34,47 @@ jobs:
           fi
 
   format:
-    name: Format
+    name: Format check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - uses: go-task/setup-task@v1
       - uses: ./.github/actions/setup-bun
+      - uses: ./.github/actions/setup-golangci-lint
+        with: { setup-go: "true" }
 
       - name: Check Formatting
-        shell: bash
-        run: |
-          function print_markdown() {
-            local language=$1
-            local content=$2
-
-            printf '```%s\n' "$language"
-            printf '%s\n' "$content"
-            printf '```\n'
-          }
-
-          if ! bun format:check; then
-
-            DIFFERENT_FILES="$(dprint check --list-different --allow-no-files)"
-            DIFF="$(dprint fmt --diff --allow-no-files)"
-
-            {
-              echo "### Different files
-
-              $(print_markdown 'files' "$DIFFERENT_FILES")
-
-              ### Diff
-
-              $(print_markdown 'diff' "$DIFF")
-              "
-            } |& tee "$GITHUB_STEP_SUMMARY"
-
-            exit 1
-          else
-            echo "All files are formatted"
-          fi
+        uses: ./.github/actions/check-formatting
 
   typecheck:
     name: Typecheck
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - uses: go-task/setup-task@v1
       - uses: ./.github/actions/setup-bun
 
       - name: Run Typecheck
-        run: bun typecheck
+        run: task typecheck
 
   lint:
     name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - uses: go-task/setup-task@v1
       - uses: ./.github/actions/setup-bun
 
       - name: Run Lint
-        run: bun lint
+        run: task lint
 
   test:
     name: Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - uses: go-task/setup-task@v1
       - uses: ./.github/actions/setup-bun
 
       - name: Run Tests
-        run: bun run test
+        run: task test

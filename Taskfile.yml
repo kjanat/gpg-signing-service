@@ -1,0 +1,144 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+# https://taskfile.dev
+---
+version: "3"
+
+includes:
+  gpg-sign:
+    taskfile: ./client
+    dir: ./client
+    flatten: false
+    aliases: [client]
+
+vars:
+  DATABASE_NAME: gpg-signing-audit
+  KV_NAMESPACE: JWKS_CACHE
+  SQL_MIGRATIONS_FILE: ./migrations/0001_initial.sql
+  DPRINT_CONFIG: .dprint.jsonc
+
+dotenv: [".dev.env"]
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmd: "{{.TASK_EXE}} --taskfile {{.TASKFILE}} --list-all"
+
+  dev:
+    desc: Start development server
+    aliases: [d]
+    cmd: bunx wrangler dev
+
+  deploy:
+    desc: Deploy to Cloudflare Workers
+    prompt:
+      - "Are you sure?"
+      - "This will affect live users!"
+    cmd: bunx wrangler deploy
+
+  test:
+    desc: Run tests
+    aliases: [t]
+    cmd: bunx vitest run
+
+  test:coverage:
+    desc: Run tests with coverage
+    aliases: [tc]
+    cmd: bunx vitest run --coverage
+
+  test:watch:
+    desc: Run tests in watch mode
+    aliases: [tw]
+    cmd: bunx vitest
+
+  lint:
+    desc: Lint code
+    aliases: [l]
+    cmd: bunx eslint src/
+
+  lint:fix:
+    desc: Lint and fix code
+    aliases: [lf]
+    cmd: bunx eslint src/ --fix
+
+  format:
+    silent: true
+    desc: Format code
+    aliases: [fmt, f]
+    env:
+      CONFIG: "{{.DPRINT_CONFIG}}"
+      DPRINT_CONFIG_DISCOVERY: "false"
+    cmd: bunx dprint fmt {{.CLI_ARGS}} --config=$CONFIG --allow-no-files
+
+  format:check:
+    silent: true
+    desc: Check code formatting
+    aliases: [fc]
+    env:
+      CONFIG: "{{.DPRINT_CONFIG}}"
+      DPRINT_CONFIG_DISCOVERY: "false"
+    cmd: bunx dprint check {{.CLI_ARGS}} --config=$CONFIG --allow-no-files
+
+  typecheck:
+    desc: Typecheck code
+    aliases: [tc, type]
+    sources:
+      - "**/*.ts"
+    cmds:
+      - bunx tsgo --noEmit
+
+  typegen:
+    desc: Generate Worker types
+    aliases: [tg]
+    generates:
+      - ./worker-configuration.d.ts
+    cmd: bunx wrangler types
+
+  generate:api:
+    desc: Generate OpenAPI spec and client
+    aliases: [gapi]
+    sources:
+      - "**/*.ts"
+    cmds:
+      - bun run scripts/generate-openapi.ts
+      - task: client:generate
+
+  generate:key:
+    desc: Generate GPG key
+    aliases: [gpg]
+    generates:
+      - ./.keys
+    cmds:
+      - bash scripts/generate-key.sh
+
+  db:create:
+    desc: Create D1 database
+    status:
+      - bunx wrangler d1 list --json | jq -e 'map(.name) | contains(["{{.DATABASE_NAME}}"])'
+    cmd: bunx wrangler d1 create {{.DATABASE_NAME}}
+
+  db:migrate:
+    desc: Migrate D1 database
+    prompt:
+      - "Are you sure?"
+      - "This will affect live users!"
+    status:
+      - bunx wrangler d1 list --json | jq -e 'map(.name) | contains(["{{.DATABASE_NAME}}"])'
+    cmd: |
+      bunx wrangler d1 execute --remote {{.DATABASE_NAME}} \
+        --file={{.SQL_MIGRATIONS_FILE}}
+
+  db:migrate:local:
+    desc: Migrate local D1 database
+    status:
+      - bunx wrangler d1 list --json | jq -e 'map(.name) | contains(["{{.DATABASE_NAME}}"])'
+    cmd: |
+      bunx wrangler d1 execute --local {{.DATABASE_NAME}} \
+        --file={{.SQL_MIGRATIONS_FILE}}
+
+  kv:create:
+    desc: Create KV namespace
+    aliases: [kvc]
+    status:
+      - bunx wrangler kv namespace list | jq -e 'map(.title) | contains(["{{.KV_NAMESPACE}}"])'
+    cmds:
+      - bunx wrangler kv namespace create {{.KV_NAMESPACE}}

@@ -1,0 +1,60 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+# https://taskfile.dev
+---
+version: "3"
+
+vars:
+  OAPI_CODEGEN_CONFIG: oapi-codegen.yaml
+  OPENAPI_SPEC: openapi.json
+
+tasks:
+  default:
+    silent: true
+    desc: Show available tasks and build the CLI
+    cmds:
+      - "{{.TASK_EXE}} --taskfile {{.TASKFILE}} --list"
+      - echo "To some tasks you CAN pass arguments using '{{.TASK_EXE}} client:<task> -- <args>'"
+      - task: build
+
+  test:
+    desc: Run Go tests *args
+    cmds:
+      - go test -v ./... {{.CLI_ARGS}}
+
+  build:
+    desc: Build the CLI
+    sources:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+    vars:
+      COMMIT_HASH:
+        sh: git rev-parse HEAD
+      BUILD_TIME:
+        sh: date -u +"%Y-%m-%dT%H:%M:%SZ"
+    cmds:
+      - go mod tidy
+      - |
+          go build -o bin/gpg-sign \
+            -ldflags "-X main.commitHash={{.COMMIT_HASH}} \
+            -X main.buildTime={{.BUILD_TIME}}" \
+            ./cmd/gpg-sign
+
+  generate:
+    desc: Generate Go client code
+    cmd: go tool oapi-codegen -config {{.OAPI_CODEGEN_CONFIG}} {{.OPENAPI_SPEC}}
+
+  lint:
+    desc: Lint Go code *args
+    cmds:
+      - golangci-lint run {{.CLI_ARGS}}
+
+  lint:fix:
+    desc: Lint and fix Go code *args
+    cmds:
+      - golangci-lint run {{.CLI_ARGS}} --fix
+
+  format:
+    desc: Format Go code *args
+    cmds:
+      - golangci-lint fmt {{.CLI_ARGS}}
