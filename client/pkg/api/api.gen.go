@@ -48,8 +48,8 @@ type PostSignTextBody = string
 
 // PostSignParams defines parameters for PostSign.
 type PostSignParams struct {
-	KeyId      *string `form:"keyId,omitempty" json:"keyId,omitempty"`
-	XRequestID *string `json:"X-Request-ID,omitempty"`
+	KeyId      *string             `form:"keyId,omitempty" json:"keyId,omitempty"`
+	XRequestID *openapi_types.UUID `json:"X-Request-ID,omitempty"`
 }
 
 // PostAdminKeysJSONRequestBody defines body for PostAdminKeys for application/json ContentType.
@@ -960,20 +960,22 @@ type GetHealthResponse struct {
 			Database   bool `json:"database"`
 			KeyStorage bool `json:"keyStorage"`
 		} `json:"checks"`
-		Status    string `json:"status"`
-		Timestamp string `json:"timestamp"`
-		Version   string `json:"version"`
+		Status    GetHealth200Status `json:"status"`
+		Timestamp time.Time          `json:"timestamp"`
+		Version   string             `json:"version"`
 	}
 	JSON503 *struct {
 		Checks struct {
 			Database   bool `json:"database"`
 			KeyStorage bool `json:"keyStorage"`
 		} `json:"checks"`
-		Status    string `json:"status"`
-		Timestamp string `json:"timestamp"`
-		Version   string `json:"version"`
+		Status    GetHealth503Status `json:"status"`
+		Timestamp time.Time          `json:"timestamp"`
+		Version   string             `json:"version"`
 	}
 }
+type GetHealth200Status string
+type GetHealth503Status string
 
 // Status returns HTTPResponse.Status
 func (r GetHealthResponse) Status() string {
@@ -995,14 +997,18 @@ type GetPublicKeyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON404      *struct {
-		Code  string `json:"code"`
-		Error string `json:"error"`
+		Code      GetPublicKey404Code `json:"code"`
+		Error     string              `json:"error"`
+		RequestId *openapi_types.UUID `json:"requestId,omitempty"`
 	}
 	JSON500 *struct {
-		Code  string `json:"code"`
-		Error string `json:"error"`
+		Code      GetPublicKey500Code `json:"code"`
+		Error     string              `json:"error"`
+		RequestId *openapi_types.UUID `json:"requestId,omitempty"`
 	}
 }
+type GetPublicKey404Code string
+type GetPublicKey500Code string
 
 // Status returns HTTPResponse.Status
 func (r GetPublicKeyResponse) Status() string {
@@ -1024,13 +1030,14 @@ type PostSignResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON400      *struct {
-		Code      string  `json:"code"`
-		Error     string  `json:"error"`
-		RequestId *string `json:"requestId,omitempty"`
+		Code      PostSign400Code     `json:"code"`
+		Error     string              `json:"error"`
+		RequestId *openapi_types.UUID `json:"requestId,omitempty"`
 	}
 	JSON404 *struct {
-		Code  string `json:"code"`
-		Error string `json:"error"`
+		Code      PostSign404Code     `json:"code"`
+		Error     string              `json:"error"`
+		RequestId *openapi_types.UUID `json:"requestId,omitempty"`
 	}
 	JSON429 *struct {
 		Code       string  `json:"code"`
@@ -1038,16 +1045,20 @@ type PostSignResponse struct {
 		RetryAfter float32 `json:"retryAfter"`
 	}
 	JSON500 *struct {
-		Code      string  `json:"code"`
-		Error     string  `json:"error"`
-		RequestId *string `json:"requestId,omitempty"`
+		Code      PostSign500Code     `json:"code"`
+		Error     string              `json:"error"`
+		RequestId *openapi_types.UUID `json:"requestId,omitempty"`
 	}
 	JSON503 *struct {
-		Code      string  `json:"code"`
-		Error     string  `json:"error"`
-		RequestId *string `json:"requestId,omitempty"`
+		Code      PostSign503Code     `json:"code"`
+		Error     string              `json:"error"`
+		RequestId *openapi_types.UUID `json:"requestId,omitempty"`
 	}
 }
+type PostSign400Code string
+type PostSign404Code string
+type PostSign500Code string
+type PostSign503Code string
 
 // Status returns HTTPResponse.Status
 func (r PostSignResponse) Status() string {
@@ -1414,9 +1425,9 @@ func ParseGetHealthResponse(rsp *http.Response) (*GetHealthResponse, error) {
 				Database   bool `json:"database"`
 				KeyStorage bool `json:"keyStorage"`
 			} `json:"checks"`
-			Status    string `json:"status"`
-			Timestamp string `json:"timestamp"`
-			Version   string `json:"version"`
+			Status    GetHealth200Status `json:"status"`
+			Timestamp time.Time          `json:"timestamp"`
+			Version   string             `json:"version"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
@@ -1429,9 +1440,9 @@ func ParseGetHealthResponse(rsp *http.Response) (*GetHealthResponse, error) {
 				Database   bool `json:"database"`
 				KeyStorage bool `json:"keyStorage"`
 			} `json:"checks"`
-			Status    string `json:"status"`
-			Timestamp string `json:"timestamp"`
-			Version   string `json:"version"`
+			Status    GetHealth503Status `json:"status"`
+			Timestamp time.Time          `json:"timestamp"`
+			Version   string             `json:"version"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
@@ -1459,8 +1470,9 @@ func ParseGetPublicKeyResponse(rsp *http.Response) (*GetPublicKeyResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest struct {
-			Code  string `json:"code"`
-			Error string `json:"error"`
+			Code      GetPublicKey404Code `json:"code"`
+			Error     string              `json:"error"`
+			RequestId *openapi_types.UUID `json:"requestId,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
@@ -1469,8 +1481,9 @@ func ParseGetPublicKeyResponse(rsp *http.Response) (*GetPublicKeyResponse, error
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest struct {
-			Code  string `json:"code"`
-			Error string `json:"error"`
+			Code      GetPublicKey500Code `json:"code"`
+			Error     string              `json:"error"`
+			RequestId *openapi_types.UUID `json:"requestId,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
@@ -1498,9 +1511,9 @@ func ParsePostSignResponse(rsp *http.Response) (*PostSignResponse, error) {
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest struct {
-			Code      string  `json:"code"`
-			Error     string  `json:"error"`
-			RequestId *string `json:"requestId,omitempty"`
+			Code      PostSign400Code     `json:"code"`
+			Error     string              `json:"error"`
+			RequestId *openapi_types.UUID `json:"requestId,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
@@ -1509,8 +1522,9 @@ func ParsePostSignResponse(rsp *http.Response) (*PostSignResponse, error) {
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest struct {
-			Code  string `json:"code"`
-			Error string `json:"error"`
+			Code      PostSign404Code     `json:"code"`
+			Error     string              `json:"error"`
+			RequestId *openapi_types.UUID `json:"requestId,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
@@ -1530,9 +1544,9 @@ func ParsePostSignResponse(rsp *http.Response) (*PostSignResponse, error) {
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest struct {
-			Code      string  `json:"code"`
-			Error     string  `json:"error"`
-			RequestId *string `json:"requestId,omitempty"`
+			Code      PostSign500Code     `json:"code"`
+			Error     string              `json:"error"`
+			RequestId *openapi_types.UUID `json:"requestId,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
@@ -1541,9 +1555,9 @@ func ParsePostSignResponse(rsp *http.Response) (*PostSignResponse, error) {
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest struct {
-			Code      string  `json:"code"`
-			Error     string  `json:"error"`
-			RequestId *string `json:"requestId,omitempty"`
+			Code      PostSign503Code     `json:"code"`
+			Error     string              `json:"error"`
+			RequestId *openapi_types.UUID `json:"requestId,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
@@ -1558,34 +1572,34 @@ func ParsePostSignResponse(rsp *http.Response) (*PostSignResponse, error) {
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

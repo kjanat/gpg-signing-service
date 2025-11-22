@@ -1,5 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { createOpenAPIApp } from "~/lib/openapi";
+import { ErrorResponseSchema, RequestHeadersSchema } from "~/schemas";
 import type {
   ErrorCode,
   Identity,
@@ -39,15 +40,7 @@ const signRoute = createRoute({
         example: "A1B2C3D4E5F6G7H8",
       }),
     }),
-    headers: z.object({
-      "X-Request-ID": z.string().optional().openapi({
-        param: {
-          name: "X-Request-ID",
-          in: "header",
-        },
-        example: "123e4567-e89b-12d3-a456-426614174000",
-      }),
-    }),
+    headers: RequestHeadersSchema,
   },
   responses: {
     200: {
@@ -63,11 +56,7 @@ const signRoute = createRoute({
     400: {
       content: {
         "application/json": {
-          schema: z.object({
-            error: z.string(),
-            code: z.string(),
-            requestId: z.string().optional(),
-          }),
+          schema: ErrorResponseSchema,
         },
       },
       description: "Bad Request",
@@ -75,10 +64,7 @@ const signRoute = createRoute({
     404: {
       content: {
         "application/json": {
-          schema: z.object({
-            error: z.string(),
-            code: z.string(),
-          }),
+          schema: ErrorResponseSchema,
         },
       },
       description: "Key not found",
@@ -98,11 +84,7 @@ const signRoute = createRoute({
     500: {
       content: {
         "application/json": {
-          schema: z.object({
-            error: z.string(),
-            code: z.string(),
-            requestId: z.string().optional(),
-          }),
+          schema: ErrorResponseSchema,
         },
       },
       description: "Internal Server Error",
@@ -110,11 +92,7 @@ const signRoute = createRoute({
     503: {
       content: {
         "application/json": {
-          schema: z.object({
-            error: z.string(),
-            code: z.string(),
-            requestId: z.string().optional(),
-          }),
+          schema: ErrorResponseSchema,
         },
       },
       description: "Service Unavailable",

@@ -231,7 +231,7 @@ export function createRateLimitDenied(resetAt: number): RateLimitDenied {
 // =============================================================================
 
 /** Health status levels */
-export type HealthStatus = "healthy" | "degraded" | "unhealthy";
+export type HealthStatus = "healthy" | "degraded";
 
 /** Health check response */
 export interface HealthResponse {

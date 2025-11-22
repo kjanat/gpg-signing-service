@@ -11,6 +11,7 @@ import {
 } from "~/middleware/security";
 import adminRoutes from "~/routes/admin";
 import signRoutes from "~/routes/sign";
+import { ErrorResponseSchema, HealthResponseSchema } from "~/schemas";
 import type { HealthResponse } from "~/types";
 
 // Export Durable Objects
@@ -34,15 +35,7 @@ const healthRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({
-            status: z.string(),
-            timestamp: z.string(),
-            version: z.string(),
-            checks: z.object({
-              keyStorage: z.boolean(),
-              database: z.boolean(),
-            }),
-          }),
+          schema: HealthResponseSchema,
         },
       },
       description: "Service is healthy",
@@ -50,15 +43,7 @@ const healthRoute = createRoute({
     503: {
       content: {
         "application/json": {
-          schema: z.object({
-            status: z.string(),
-            timestamp: z.string(),
-            version: z.string(),
-            checks: z.object({
-              keyStorage: z.boolean(),
-              database: z.boolean(),
-            }),
-          }),
+          schema: HealthResponseSchema,
         },
       },
       description: "Service is degraded",
@@ -135,10 +120,7 @@ const publicKeyRoute = createRoute({
     404: {
       content: {
         "application/json": {
-          schema: z.object({
-            error: z.string(),
-            code: z.string(),
-          }),
+          schema: ErrorResponseSchema,
         },
       },
       description: "Key not found",
@@ -146,10 +128,7 @@ const publicKeyRoute = createRoute({
     500: {
       content: {
         "application/json": {
-          schema: z.object({
-            error: z.string(),
-            code: z.string(),
-          }),
+          schema: ErrorResponseSchema,
         },
       },
       description: "Internal server error",
