@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from "hono";
-import { createLocalJWKSet, jwtVerify } from "jose";
+import { createLocalJWKSet, type JWTPayload, jwtVerify } from "jose";
 import type { Env, LegacyJWKSResponse, OIDCClaims, Variables } from "~/types";
 import { createIdentity, markClaimsAsValidated } from "~/types";
 import { fetchWithTimeout } from "~/utils/fetch";
@@ -147,7 +147,7 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
   // based on the `kid` in the token header, so manual key lookup is not needed.
   const JWKS = createLocalJWKSet(jwks);
 
-  let verifiedPayload;
+  let verifiedPayload: JWTPayload;
   try {
     ({ payload: verifiedPayload } = await jwtVerify(token, JWKS, {
       issuer: allowedIssuers,

@@ -47,3 +47,6 @@ redoc-static.html
 
 # Taskfile
 .task
+
+# Docs
+_*.md
