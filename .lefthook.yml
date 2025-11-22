@@ -14,6 +14,13 @@ pre-commit:
     - name: generate-api
       run: bun run generate:api
 
+    - name: git add auto-generated files
+      run: |
+        git add \
+          client/openapi.json \
+          client/pkg/api/api.gen.go \
+          worker-configuration.d.ts
+
 pre-push:
   jobs:
     - name: typecheck
