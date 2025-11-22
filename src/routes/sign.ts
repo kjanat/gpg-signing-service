@@ -151,7 +151,7 @@ app.openapi(signRoute, async (c) => {
     return c.json(
       {
         error: "Service temporarily unavailable",
-        code: "RATE_LIMIT_ERROR" satisfies ErrorCode,
+        code: "RATE_LIMIT_ERROR" as const satisfies ErrorCode,
         requestId,
       },
       503,
@@ -162,7 +162,7 @@ app.openapi(signRoute, async (c) => {
     return c.json(
       {
         error: "Rate limit exceeded",
-        code: "RATE_LIMITED" satisfies ErrorCode,
+        code: "RATE_LIMITED" as const satisfies ErrorCode,
         retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / 1000),
       },
       429,
@@ -180,7 +180,7 @@ app.openapi(signRoute, async (c) => {
     return c.json(
       {
         error: "No commit data provided",
-        code: "INVALID_REQUEST" satisfies ErrorCode,
+        code: "INVALID_REQUEST" as const satisfies ErrorCode,
         requestId,
       },
       400,
@@ -258,7 +258,7 @@ app.openapi(signRoute, async (c) => {
       return c.json(
         {
           error: message,
-          code: "KEY_NOT_FOUND" satisfies ErrorCode,
+          code: "KEY_NOT_FOUND" as const satisfies ErrorCode,
           requestId,
         },
         404,
@@ -266,7 +266,11 @@ app.openapi(signRoute, async (c) => {
     }
 
     return c.json(
-      { error: message, code: "SIGN_ERROR" satisfies ErrorCode, requestId },
+      {
+        error: message,
+        code: "SIGN_ERROR" as const satisfies ErrorCode,
+        requestId,
+      },
       500,
     );
   }

@@ -15,19 +15,21 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 // GetAdminAuditParams defines parameters for GetAdminAudit.
 type GetAdminAuditParams struct {
-	Limit     *int    `form:"limit,omitempty" json:"limit,omitempty"`
-	Offset    *int    `form:"offset,omitempty" json:"offset,omitempty"`
-	Action    *string `form:"action,omitempty" json:"action,omitempty"`
-	Subject   *string `form:"subject,omitempty" json:"subject,omitempty"`
-	StartDate *string `form:"startDate,omitempty" json:"startDate,omitempty"`
-	EndDate   *string `form:"endDate,omitempty" json:"endDate,omitempty"`
+	Limit     *int       `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset    *int       `form:"offset,omitempty" json:"offset,omitempty"`
+	Action    *string    `form:"action,omitempty" json:"action,omitempty"`
+	Subject   *string    `form:"subject,omitempty" json:"subject,omitempty"`
+	StartDate *time.Time `form:"startDate,omitempty" json:"startDate,omitempty"`
+	EndDate   *time.Time `form:"endDate,omitempty" json:"endDate,omitempty"`
 }
 
 // PostAdminKeysJSONBody defines parameters for PostAdminKeys.
@@ -782,16 +784,18 @@ type GetAdminAuditResponse struct {
 		} `json:"logs"`
 	}
 	JSON400 *struct {
-		Code      string  `json:"code"`
-		Error     string  `json:"error"`
-		RequestId *string `json:"requestId,omitempty"`
+		Code      GetAdminAudit400Code `json:"code"`
+		Error     string               `json:"error"`
+		RequestId *openapi_types.UUID  `json:"requestId,omitempty"`
 	}
 	JSON500 *struct {
-		Code      string  `json:"code"`
-		Error     string  `json:"error"`
-		RequestId *string `json:"requestId,omitempty"`
+		Code      GetAdminAudit500Code `json:"code"`
+		Error     string               `json:"error"`
+		RequestId *openapi_types.UUID  `json:"requestId,omitempty"`
 	}
 }
+type GetAdminAudit400Code string
+type GetAdminAudit500Code string
 
 // Status returns HTTPResponse.Status
 func (r GetAdminAuditResponse) Status() string {
@@ -821,11 +825,12 @@ type GetAdminKeysResponse struct {
 		} `json:"keys"`
 	}
 	JSON500 *struct {
-		Code      string  `json:"code"`
-		Error     string  `json:"error"`
-		RequestId *string `json:"requestId,omitempty"`
+		Code      GetAdminKeys500Code `json:"code"`
+		Error     string              `json:"error"`
+		RequestId *openapi_types.UUID `json:"requestId,omitempty"`
 	}
 }
+type GetAdminKeys500Code string
 
 // Status returns HTTPResponse.Status
 func (r GetAdminKeysResponse) Status() string {
@@ -854,16 +859,18 @@ type PostAdminKeysResponse struct {
 		UserId      string `json:"userId"`
 	}
 	JSON400 *struct {
-		Code      string  `json:"code"`
-		Error     string  `json:"error"`
-		RequestId *string `json:"requestId,omitempty"`
+		Code      PostAdminKeys400Code `json:"code"`
+		Error     string               `json:"error"`
+		RequestId *openapi_types.UUID  `json:"requestId,omitempty"`
 	}
 	JSON500 *struct {
-		Code      string  `json:"code"`
-		Error     string  `json:"error"`
-		RequestId *string `json:"requestId,omitempty"`
+		Code      PostAdminKeys500Code `json:"code"`
+		Error     string               `json:"error"`
+		RequestId *openapi_types.UUID  `json:"requestId,omitempty"`
 	}
 }
+type PostAdminKeys400Code string
+type PostAdminKeys500Code string
 
 // Status returns HTTPResponse.Status
 func (r PostAdminKeysResponse) Status() string {
@@ -889,11 +896,12 @@ type DeleteAdminKeysKeyIdResponse struct {
 		Success bool `json:"success"`
 	}
 	JSON500 *struct {
-		Code      string  `json:"code"`
-		Error     string  `json:"error"`
-		RequestId *string `json:"requestId,omitempty"`
+		Code      DeleteAdminKeysKeyId500Code `json:"code"`
+		Error     string                      `json:"error"`
+		RequestId *openapi_types.UUID         `json:"requestId,omitempty"`
 	}
 }
+type DeleteAdminKeysKeyId500Code string
 
 // Status returns HTTPResponse.Status
 func (r DeleteAdminKeysKeyIdResponse) Status() string {
@@ -915,16 +923,18 @@ type GetAdminKeysKeyIdPublicResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON404      *struct {
-		Code      string  `json:"code"`
-		Error     string  `json:"error"`
-		RequestId *string `json:"requestId,omitempty"`
+		Code      GetAdminKeysKeyIdPublic404Code `json:"code"`
+		Error     string                         `json:"error"`
+		RequestId *openapi_types.UUID            `json:"requestId,omitempty"`
 	}
 	JSON500 *struct {
-		Code      string  `json:"code"`
-		Error     string  `json:"error"`
-		RequestId *string `json:"requestId,omitempty"`
+		Code      GetAdminKeysKeyIdPublic500Code `json:"code"`
+		Error     string                         `json:"error"`
+		RequestId *openapi_types.UUID            `json:"requestId,omitempty"`
 	}
 }
+type GetAdminKeysKeyIdPublic404Code string
+type GetAdminKeysKeyIdPublic500Code string
 
 // Status returns HTTPResponse.Status
 func (r GetAdminKeysKeyIdPublicResponse) Status() string {
@@ -1180,9 +1190,9 @@ func ParseGetAdminAuditResponse(rsp *http.Response) (*GetAdminAuditResponse, err
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest struct {
-			Code      string  `json:"code"`
-			Error     string  `json:"error"`
-			RequestId *string `json:"requestId,omitempty"`
+			Code      GetAdminAudit400Code `json:"code"`
+			Error     string               `json:"error"`
+			RequestId *openapi_types.UUID  `json:"requestId,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
@@ -1191,9 +1201,9 @@ func ParseGetAdminAuditResponse(rsp *http.Response) (*GetAdminAuditResponse, err
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest struct {
-			Code      string  `json:"code"`
-			Error     string  `json:"error"`
-			RequestId *string `json:"requestId,omitempty"`
+			Code      GetAdminAudit500Code `json:"code"`
+			Error     string               `json:"error"`
+			RequestId *openapi_types.UUID  `json:"requestId,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
@@ -1235,9 +1245,9 @@ func ParseGetAdminKeysResponse(rsp *http.Response) (*GetAdminKeysResponse, error
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest struct {
-			Code      string  `json:"code"`
-			Error     string  `json:"error"`
-			RequestId *string `json:"requestId,omitempty"`
+			Code      GetAdminKeys500Code `json:"code"`
+			Error     string              `json:"error"`
+			RequestId *openapi_types.UUID `json:"requestId,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
@@ -1278,9 +1288,9 @@ func ParsePostAdminKeysResponse(rsp *http.Response) (*PostAdminKeysResponse, err
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest struct {
-			Code      string  `json:"code"`
-			Error     string  `json:"error"`
-			RequestId *string `json:"requestId,omitempty"`
+			Code      PostAdminKeys400Code `json:"code"`
+			Error     string               `json:"error"`
+			RequestId *openapi_types.UUID  `json:"requestId,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
@@ -1289,9 +1299,9 @@ func ParsePostAdminKeysResponse(rsp *http.Response) (*PostAdminKeysResponse, err
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest struct {
-			Code      string  `json:"code"`
-			Error     string  `json:"error"`
-			RequestId *string `json:"requestId,omitempty"`
+			Code      PostAdminKeys500Code `json:"code"`
+			Error     string               `json:"error"`
+			RequestId *openapi_types.UUID  `json:"requestId,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
@@ -1329,9 +1339,9 @@ func ParseDeleteAdminKeysKeyIdResponse(rsp *http.Response) (*DeleteAdminKeysKeyI
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest struct {
-			Code      string  `json:"code"`
-			Error     string  `json:"error"`
-			RequestId *string `json:"requestId,omitempty"`
+			Code      DeleteAdminKeysKeyId500Code `json:"code"`
+			Error     string                      `json:"error"`
+			RequestId *openapi_types.UUID         `json:"requestId,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
@@ -1359,9 +1369,9 @@ func ParseGetAdminKeysKeyIdPublicResponse(rsp *http.Response) (*GetAdminKeysKeyI
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest struct {
-			Code      string  `json:"code"`
-			Error     string  `json:"error"`
-			RequestId *string `json:"requestId,omitempty"`
+			Code      GetAdminKeysKeyIdPublic404Code `json:"code"`
+			Error     string                         `json:"error"`
+			RequestId *openapi_types.UUID            `json:"requestId,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
@@ -1370,9 +1380,9 @@ func ParseGetAdminKeysKeyIdPublicResponse(rsp *http.Response) (*GetAdminKeysKeyI
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest struct {
-			Code      string  `json:"code"`
-			Error     string  `json:"error"`
-			RequestId *string `json:"requestId,omitempty"`
+			Code      GetAdminKeysKeyIdPublic500Code `json:"code"`
+			Error     string                         `json:"error"`
+			RequestId *openapi_types.UUID            `json:"requestId,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
@@ -1548,31 +1558,34 @@ func ParsePostSignResponse(rsp *http.Response) (*PostSignResponse, error) {
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"H4sIAAAAAAAC/+xa3XPaOBD/VzR6NsQQQhLeyMdRJp0ek7Q3d9P2Qdhro8aWXGlNw2T4328k2eCATUjT",
-	"6UfavDC2tLta7W8/nXsayDSTAgRqOrhfepSLSNLBPUWOCdABHU1G5IbHgouY3ICa8wDIcDKmHp2D0lwK",
-	"OqCdtt/26dKjMgPBMk4H9LDtt3vUoxnDmeFMD1iYcnHA8pCjeY7B/oSgA8UzdIyuARWHORC7jSQy1uQL",
-	"xxmJeIKguIipFaKYIRiH5nyAQ8N5aBkbgYqlgKA0Hby/p9yw/ZyDWlCPCpYalRKe2q06mEHK3CkilidI",
-	"Bx3f9yjcsTQzytunlN3xNE/tk3nkonj0KC4yw48LhBgUXS69eoEyijQ0SKzKq7L3PSryJGFTs4Aqh/3F",
-	"scBeZ1VcQarR3mEjpc6nnyDAryJFpvCCIXwNMYjwUdKPHlWgMyk0WEB1fd/8BFIgCIsllmUJDyw0Dj5p",
-	"A6j7Cr9MGeAgd9SBzB1RIUbk6dTcqUcN6MwCR0j1NmFxudsH9CgoJdW5DKF2lYf1r7XOQdUu3cJiXE+U",
-	"ArKQIatdVPA5B40NpKWJ69eCALSurE2lTIAJs4g8BY0szWrtaqVyBSEdvDeqVvdXj+St0Vlo7lVQ5zRe",
-	"H+TjCvTSbVmuXjCl2GJLsjWeV1h3m9psfxhxhqtAY3j3nompBtNbYDzZVhuqOSaek7KPamMxZwkPSSHD",
-	"iDt6WfohKMESokHNQRHHYGlxnKZMLVx2qOQSu1gkoltY6MY89JprJKWTkUgqwpKEaJQKQmIpm9LQlVv8",
-	"hpGqPGhTPEpiqTjO0tr7DxQwhHBY7+8RFzGoTHGBTwpAG5YrvbbKriraqxzyyR5t1d8HDtZmMnLm+R2x",
-	"bi/A4LS8gUzqGmy/yxLJQsKIqewyxecMwZBYmGtX6W3BeyL1Br6trmcyXDzjkplKjUdN3CGuwPJaVUO0",
-	"Zf7OLkfjN2QympDJ9fif4dtLcnX5Hzl7/ff5lV3/INrtNvV2gHfNcNg5654fXvQuj/7qj45fnWyTbdhp",
-	"+4Al33qjrWlNxbbcigOd51zWTkf/Wld+JOnnGtQ+gC6ZeA3BYH34Fc99YH8FC5JbvEJIChlRniSLP8n6",
-	"BQawVWQS8KWMRCYybabtg3sLsqWLbQkgbEe5C/uesErS3gpqbs8qrF0VyK3rIE0bu25XSow/dPdq8/Kk",
-	"mPNtOxt3I2G9P+9w9kaPLhnu67Dl/t8RwivY7YDtQZZPEx40Fp+mZsUZELdtlZoZ0RkEPCpejS921qAW",
-	"zBMn6KeHdBZnrbLMbR4AbBnEqUdMWrbpoPdysGb8SEgkkcxF+Nt2bmsPcL40A5bgrNFxzmcQ3FrXcRtN",
-	"N2CetBtb1vnLK8fx246WzDFqOjXTS06ZhvrIfAuLG5SKxbBHcK5s9tZ863orjQxzXWvhXQOdynT30dLP",
-	"SXg48CmpvfI29oFFOV7mujDgwiH/8I8xfqgxQoiVqcA3PNT5DrE8nX86fzWh/KnJzVR7DHMFZA7K5DhW",
-	"DAm3PNYFfdeK7THrX00U/+Sx+kj/q2eqH5WLDGLt8WuHLDc8FiTmSAKZphyJnSPm2jQ0NiO5pmQ0GdU2",
-	"JhOp0XD4LhAvP8nMgIV2HF+w/bd17UqAli0167h3uofQO+oft+DkdNrqdMPDFusd9Vu9br/f6XWOe77v",
-	"NzlV0/wI4Q4PsoTxDZispaICIN3TKOr0g9Og04Nu/6g77Xajk+nxyXTqn7Aj5h+fHvpBp3f8QWRMgUDi",
-	"pkQpF69BxKaI6Hh1nvnYBMd/8nE3plg349Gb4dt315e7plc1McKQlkHyxU0/zlhIrteTj189BPa6p9/b",
-	"NqgWwwgffEgsP2nuUu8B6T66XjMEYj+gE7gLAMKX3OjfuJRw6VLCs0vRn0vLssB7J9iccfePBg/Tnk1i",
-	"lQRmuCz/DwAA//93oChTMiIAAA==",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

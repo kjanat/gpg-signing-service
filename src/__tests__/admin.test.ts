@@ -433,7 +433,7 @@ describe("Admin Routes", () => {
 
     it("should filter by date range", async () => {
       const response = await adminRequest(
-        "/audit?startDate=2024-01-01&endDate=2024-12-31",
+        "/audit?startDate=2024-01-01T00:00:00Z&endDate=2024-12-31T23:59:59Z",
       );
 
       expect(response.status).toBe(200);

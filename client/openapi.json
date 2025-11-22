@@ -361,7 +361,7 @@
                 "properties": {
                   "armoredPrivateKey": {
                     "type": "string",
-                    "example": "-----BEGIN PGP PRIVATE KEY BLOCK-----\n..."
+                    "example": "-----BEGIN PGP PRIVATE KEY BLOCK-----\\n..."
                   },
                   "keyId": {
                     "type": "string",
@@ -419,13 +419,31 @@
                   "type": "object",
                   "properties": {
                     "error": {
-                      "type": "string"
+                      "type": "string",
+                      "minLength": 1
                     },
                     "code": {
-                      "type": "string"
+                      "type": "string",
+                      "enum": [
+                        "AUTH_MISSING",
+                        "AUTH_INVALID",
+                        "KEY_NOT_FOUND",
+                        "KEY_PROCESSING_ERROR",
+                        "KEY_LIST_ERROR",
+                        "KEY_UPLOAD_ERROR",
+                        "KEY_DELETE_ERROR",
+                        "SIGN_ERROR",
+                        "RATE_LIMIT_ERROR",
+                        "RATE_LIMITED",
+                        "INVALID_REQUEST",
+                        "AUDIT_ERROR",
+                        "NOT_FOUND",
+                        "INTERNAL_ERROR"
+                      ]
                     },
                     "requestId": {
-                      "type": "string"
+                      "type": "string",
+                      "format": "uuid"
                     }
                   },
                   "required": [
@@ -444,13 +462,31 @@
                   "type": "object",
                   "properties": {
                     "error": {
-                      "type": "string"
+                      "type": "string",
+                      "minLength": 1
                     },
                     "code": {
-                      "type": "string"
+                      "type": "string",
+                      "enum": [
+                        "AUTH_MISSING",
+                        "AUTH_INVALID",
+                        "KEY_NOT_FOUND",
+                        "KEY_PROCESSING_ERROR",
+                        "KEY_LIST_ERROR",
+                        "KEY_UPLOAD_ERROR",
+                        "KEY_DELETE_ERROR",
+                        "SIGN_ERROR",
+                        "RATE_LIMIT_ERROR",
+                        "RATE_LIMITED",
+                        "INVALID_REQUEST",
+                        "AUDIT_ERROR",
+                        "NOT_FOUND",
+                        "INTERNAL_ERROR"
+                      ]
                     },
                     "requestId": {
-                      "type": "string"
+                      "type": "string",
+                      "format": "uuid"
                     }
                   },
                   "required": [
@@ -516,13 +552,31 @@
                   "type": "object",
                   "properties": {
                     "error": {
-                      "type": "string"
+                      "type": "string",
+                      "minLength": 1
                     },
                     "code": {
-                      "type": "string"
+                      "type": "string",
+                      "enum": [
+                        "AUTH_MISSING",
+                        "AUTH_INVALID",
+                        "KEY_NOT_FOUND",
+                        "KEY_PROCESSING_ERROR",
+                        "KEY_LIST_ERROR",
+                        "KEY_UPLOAD_ERROR",
+                        "KEY_DELETE_ERROR",
+                        "SIGN_ERROR",
+                        "RATE_LIMIT_ERROR",
+                        "RATE_LIMITED",
+                        "INVALID_REQUEST",
+                        "AUDIT_ERROR",
+                        "NOT_FOUND",
+                        "INTERNAL_ERROR"
+                      ]
                     },
                     "requestId": {
-                      "type": "string"
+                      "type": "string",
+                      "format": "uuid"
                     }
                   },
                   "required": [
@@ -570,13 +624,31 @@
                   "type": "object",
                   "properties": {
                     "error": {
-                      "type": "string"
+                      "type": "string",
+                      "minLength": 1
                     },
                     "code": {
-                      "type": "string"
+                      "type": "string",
+                      "enum": [
+                        "AUTH_MISSING",
+                        "AUTH_INVALID",
+                        "KEY_NOT_FOUND",
+                        "KEY_PROCESSING_ERROR",
+                        "KEY_LIST_ERROR",
+                        "KEY_UPLOAD_ERROR",
+                        "KEY_DELETE_ERROR",
+                        "SIGN_ERROR",
+                        "RATE_LIMIT_ERROR",
+                        "RATE_LIMITED",
+                        "INVALID_REQUEST",
+                        "AUDIT_ERROR",
+                        "NOT_FOUND",
+                        "INTERNAL_ERROR"
+                      ]
                     },
                     "requestId": {
-                      "type": "string"
+                      "type": "string",
+                      "format": "uuid"
                     }
                   },
                   "required": [
@@ -595,13 +667,31 @@
                   "type": "object",
                   "properties": {
                     "error": {
-                      "type": "string"
+                      "type": "string",
+                      "minLength": 1
                     },
                     "code": {
-                      "type": "string"
+                      "type": "string",
+                      "enum": [
+                        "AUTH_MISSING",
+                        "AUTH_INVALID",
+                        "KEY_NOT_FOUND",
+                        "KEY_PROCESSING_ERROR",
+                        "KEY_LIST_ERROR",
+                        "KEY_UPLOAD_ERROR",
+                        "KEY_DELETE_ERROR",
+                        "SIGN_ERROR",
+                        "RATE_LIMIT_ERROR",
+                        "RATE_LIMITED",
+                        "INVALID_REQUEST",
+                        "AUDIT_ERROR",
+                        "NOT_FOUND",
+                        "INTERNAL_ERROR"
+                      ]
                     },
                     "requestId": {
-                      "type": "string"
+                      "type": "string",
+                      "format": "uuid"
                     }
                   },
                   "required": [
@@ -661,13 +751,31 @@
                   "type": "object",
                   "properties": {
                     "error": {
-                      "type": "string"
+                      "type": "string",
+                      "minLength": 1
                     },
                     "code": {
-                      "type": "string"
+                      "type": "string",
+                      "enum": [
+                        "AUTH_MISSING",
+                        "AUTH_INVALID",
+                        "KEY_NOT_FOUND",
+                        "KEY_PROCESSING_ERROR",
+                        "KEY_LIST_ERROR",
+                        "KEY_UPLOAD_ERROR",
+                        "KEY_DELETE_ERROR",
+                        "SIGN_ERROR",
+                        "RATE_LIMIT_ERROR",
+                        "RATE_LIMITED",
+                        "INVALID_REQUEST",
+                        "AUDIT_ERROR",
+                        "NOT_FOUND",
+                        "INTERNAL_ERROR"
+                      ]
                     },
                     "requestId": {
-                      "type": "string"
+                      "type": "string",
+                      "format": "uuid"
                     }
                   },
                   "required": [
@@ -728,7 +836,8 @@
           },
           {
             "schema": {
-              "type": "string"
+              "type": "string",
+              "format": "date-time"
             },
             "required": false,
             "name": "startDate",
@@ -736,7 +845,8 @@
           },
           {
             "schema": {
-              "type": "string"
+              "type": "string",
+              "format": "date-time"
             },
             "required": false,
             "name": "endDate",
@@ -819,13 +929,31 @@
                   "type": "object",
                   "properties": {
                     "error": {
-                      "type": "string"
+                      "type": "string",
+                      "minLength": 1
                     },
                     "code": {
-                      "type": "string"
+                      "type": "string",
+                      "enum": [
+                        "AUTH_MISSING",
+                        "AUTH_INVALID",
+                        "KEY_NOT_FOUND",
+                        "KEY_PROCESSING_ERROR",
+                        "KEY_LIST_ERROR",
+                        "KEY_UPLOAD_ERROR",
+                        "KEY_DELETE_ERROR",
+                        "SIGN_ERROR",
+                        "RATE_LIMIT_ERROR",
+                        "RATE_LIMITED",
+                        "INVALID_REQUEST",
+                        "AUDIT_ERROR",
+                        "NOT_FOUND",
+                        "INTERNAL_ERROR"
+                      ]
                     },
                     "requestId": {
-                      "type": "string"
+                      "type": "string",
+                      "format": "uuid"
                     }
                   },
                   "required": [
@@ -844,13 +972,31 @@
                   "type": "object",
                   "properties": {
                     "error": {
-                      "type": "string"
+                      "type": "string",
+                      "minLength": 1
                     },
                     "code": {
-                      "type": "string"
+                      "type": "string",
+                      "enum": [
+                        "AUTH_MISSING",
+                        "AUTH_INVALID",
+                        "KEY_NOT_FOUND",
+                        "KEY_PROCESSING_ERROR",
+                        "KEY_LIST_ERROR",
+                        "KEY_UPLOAD_ERROR",
+                        "KEY_DELETE_ERROR",
+                        "SIGN_ERROR",
+                        "RATE_LIMIT_ERROR",
+                        "RATE_LIMITED",
+                        "INVALID_REQUEST",
+                        "AUDIT_ERROR",
+                        "NOT_FOUND",
+                        "INTERNAL_ERROR"
+                      ]
                     },
                     "requestId": {
-                      "type": "string"
+                      "type": "string",
+                      "format": "uuid"
                     }
                   },
                   "required": [

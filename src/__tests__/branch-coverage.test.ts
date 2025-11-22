@@ -1,3 +1,4 @@
+/** biome-ignore-all lint/suspicious/noExplicitAny: Is a test file */
 import {
   createExecutionContext,
   env,

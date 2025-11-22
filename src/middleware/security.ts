@@ -117,7 +117,7 @@ export const adminRateLimit: MiddlewareHandler<{ Bindings: Env }> = async (
       return c.json(
         {
           error: "Rate limit exceeded",
-          code: "RATE_LIMITED" satisfies ErrorCode,
+          code: "RATE_LIMITED" as const satisfies ErrorCode,
           retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / 1000),
         },
         429,
@@ -135,7 +135,7 @@ export const adminRateLimit: MiddlewareHandler<{ Bindings: Env }> = async (
     return c.json(
       {
         error: "Service temporarily unavailable",
-        code: "RATE_LIMIT_ERROR" satisfies ErrorCode,
+        code: "RATE_LIMIT_ERROR" as const satisfies ErrorCode,
       },
       503,
     );

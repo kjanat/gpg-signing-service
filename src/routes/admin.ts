@@ -1,35 +1,17 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { createOpenAPIApp } from "~/lib/openapi";
+import {
+  AuditQuerySchema,
+  ErrorResponseSchema,
+  KeyResponseSchema,
+  KeyUploadSchema,
+} from "~/schemas";
 import type { ErrorCode, StoredKey } from "~/types";
 import { createArmoredPrivateKey, createKeyId } from "~/types";
 import { getAuditLogs, logAuditEvent } from "~/utils/audit";
 import { extractPublicKey, parseAndValidateKey } from "~/utils/signing";
 
 const app = createOpenAPIApp();
-
-// Schemas
-const KeyUploadSchema = z.object({
-  armoredPrivateKey: z.string().openapi({
-    example: "-----BEGIN PGP PRIVATE KEY BLOCK-----\n...",
-  }),
-  keyId: z.string().openapi({
-    example: "A1B2C3D4E5F6G7H8",
-  }),
-});
-
-const KeyResponseSchema = z.object({
-  success: z.boolean(),
-  keyId: z.string(),
-  fingerprint: z.string(),
-  algorithm: z.string(),
-  userId: z.string(),
-});
-
-const ErrorResponseSchema = z.object({
-  error: z.string(),
-  code: z.string(),
-  requestId: z.string().optional(),
-});
 
 // Routes
 
@@ -158,7 +140,7 @@ app.openapi(uploadKeyRoute, async (c) => {
     return c.json(
       {
         error: message,
-        code: "KEY_UPLOAD_ERROR" satisfies ErrorCode,
+        code: "KEY_UPLOAD_ERROR" as const satisfies ErrorCode,
         requestId,
       },
       500,
@@ -226,7 +208,7 @@ app.openapi(listKeysRoute, async (c) => {
     return c.json(
       {
         error: "Failed to retrieve keys",
-        code: "KEY_LIST_ERROR" satisfies ErrorCode,
+        code: "KEY_LIST_ERROR" as const satisfies ErrorCode,
       },
       500,
     );
@@ -290,7 +272,10 @@ app.openapi(getPublicKeyRoute, async (c) => {
 
     if (!keyResponse.ok) {
       return c.json(
-        { error: "Key not found", code: "KEY_NOT_FOUND" satisfies ErrorCode },
+        {
+          error: "Key not found",
+          code: "KEY_NOT_FOUND" as const satisfies ErrorCode,
+        },
         404,
       );
     }
@@ -304,7 +289,7 @@ app.openapi(getPublicKeyRoute, async (c) => {
     return c.json(
       {
         error: "Failed to process key",
-        code: "KEY_PROCESSING_ERROR" satisfies ErrorCode,
+        code: "KEY_PROCESSING_ERROR" as const satisfies ErrorCode,
       },
       500,
     );
@@ -404,7 +389,7 @@ app.openapi(deleteKeyRoute, async (c) => {
     return c.json(
       {
         error: "Failed to delete key",
-        code: "KEY_DELETE_ERROR" satisfies ErrorCode,
+        code: "KEY_DELETE_ERROR" as const satisfies ErrorCode,
       },
       500,
     );
@@ -417,25 +402,7 @@ const getAuditLogsRoute = createRoute({
   summary: "Get audit logs",
   description: "Retrieve audit logs with filtering",
   request: {
-    query: z.object({
-      limit: z.coerce
-        .number()
-        .int()
-        .min(1)
-        .max(1000)
-        .default(100)
-        .openapi({ example: 100 }),
-      offset: z.coerce
-        .number()
-        .int()
-        .min(0)
-        .default(0)
-        .openapi({ example: 0 }),
-      action: z.string().optional(),
-      subject: z.string().optional(),
-      startDate: z.string().optional(),
-      endDate: z.string().optional(),
-    }),
+    query: AuditQuerySchema,
   },
   responses: {
     200: {
@@ -502,7 +469,7 @@ app.openapi(getAuditLogsRoute, async (c) => {
     return c.json(
       {
         error: "Failed to retrieve audit logs",
-        code: "AUDIT_ERROR" satisfies ErrorCode,
+        code: "AUDIT_ERROR" as const satisfies ErrorCode,
       },
       500,
     );
