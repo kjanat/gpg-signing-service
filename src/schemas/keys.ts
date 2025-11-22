@@ -114,3 +114,18 @@ export const KeyResponseSchema = z.object({
   algorithm: z.string(),
   userId: z.string(),
 });
+
+/**
+ * Stored key schema
+ * Represents a key stored in Durable Object storage
+ */
+export const StoredKeySchema = z.object({
+  armoredPrivateKey: ArmoredPrivateKeySchema,
+  keyId: KeyIdSchema,
+  fingerprint: FingerprintSchema,
+  createdAt: z.iso.datetime({ offset: true }),
+  algorithm: z.string().min(1),
+});
+
+/** Type inferred from StoredKeySchema */
+export type StoredKey = z.infer<typeof StoredKeySchema>;

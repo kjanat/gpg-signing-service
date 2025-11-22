@@ -18,3 +18,9 @@ export const HealthResponseSchema = z.object({
     database: z.boolean(),
   }),
 });
+
+/** Type inferred from HealthStatusSchema */
+export type HealthStatus = z.infer<typeof HealthStatusSchema>;
+
+/** Type inferred from HealthResponseSchema */
+export type HealthResponse = z.infer<typeof HealthResponseSchema>;

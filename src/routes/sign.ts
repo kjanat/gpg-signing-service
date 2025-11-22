@@ -15,6 +15,7 @@ import type {
 } from "~/types";
 import { createKeyId } from "~/types";
 import { logAuditEvent } from "~/utils/audit";
+import { fetchKeyStorage, fetchRateLimiter } from "~/utils/durable-objects";
 import { signCommitData } from "~/utils/signing";
 
 const app = createOpenAPIApp();
@@ -102,14 +103,7 @@ app.openapi(signRoute, async (c) => {
   // Check rate limit - FAIL CLOSED if rate limiter unavailable
   let rateLimit: RateLimitResult;
   try {
-    const rateLimiterId = c.env.RATE_LIMITER.idFromName("global");
-    const rateLimiter = c.env.RATE_LIMITER.get(rateLimiterId);
-
-    const rateLimitResponse = await rateLimiter.fetch(
-      new Request(
-        `http://internal/consume?identity=${encodeURIComponent(identity)}`,
-      ),
-    );
+    const rateLimitResponse = await fetchRateLimiter(c.env, identity);
 
     if (!rateLimitResponse.ok) {
       throw new Error(`Rate limiter returned ${rateLimitResponse.status}`);
@@ -165,13 +159,9 @@ app.openapi(signRoute, async (c) => {
 
   try {
     // Fetch private key from Durable Object
-    const keyStorageId = c.env.KEY_STORAGE.idFromName("global");
-    const keyStorage = c.env.KEY_STORAGE.get(keyStorageId);
-
-    const keyResponse = await keyStorage.fetch(
-      new Request(
-        `http://internal/get-key?keyId=${encodeURIComponent(keyIdParam)}`,
-      ),
+    const keyResponse = await fetchKeyStorage(
+      c.env,
+      `/get-key?keyId=${encodeURIComponent(keyIdParam)}`,
     );
 
     if (!keyResponse.ok) {

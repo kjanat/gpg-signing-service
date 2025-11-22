@@ -64,15 +64,19 @@ export async function parseAndValidateKey(
   const fingerprint = createKeyFingerprint(privateKey.getFingerprint());
   const keyId = createKeyId(privateKey.getKeyID().toHex().toUpperCase());
 
-  // Get algorithm name
+  /**
+   * Get algorithm name
+   *
+   * @link https://datatracker.ietf.org/doc/html/rfc4880#section-9.1
+   */
   const algorithmMap: Record<number, string> = {
-    1: "RSA",
-    2: "RSA-E",
-    3: "RSA-S",
-    16: "Elgamal",
-    17: "DSA",
-    18: "ECDH",
-    19: "ECDSA",
+    1: "RSA", // RSA Encrypt or Sign
+    2: "RSA-E", // RSA Encrypt-Only
+    3: "RSA-S", // RSA Sign-Only
+    16: "Elgamal", // Encrypt-Only
+    17: "DSA", // Digital Signature Algorithm
+    18: "ECDH", // Reserved for Elliptic Curve
+    19: "ECDSA", // Reserved for ECDSA
     22: "EdDSA",
   };
 

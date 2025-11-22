@@ -9,6 +9,7 @@ import {
 import type { ErrorCode, StoredKey } from "~/types";
 import { createArmoredPrivateKey, createKeyId } from "~/types";
 import { getAuditLogs, logAuditEvent } from "~/utils/audit";
+import { fetchKeyStorage } from "~/utils/durable-objects";
 import { extractPublicKey, parseAndValidateKey } from "~/utils/signing";
 
 const app = createOpenAPIApp();
@@ -79,16 +80,11 @@ app.openapi(uploadKeyRoute, async (c) => {
     };
 
     // Store in Durable Object
-    const keyStorageId = c.env.KEY_STORAGE.idFromName("global");
-    const keyStorage = c.env.KEY_STORAGE.get(keyStorageId);
-
-    const storeResponse = await keyStorage.fetch(
-      new Request("http://internal/store-key", {
-        method: "POST",
-        body: JSON.stringify(storedKey),
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
+    const storeResponse = await fetchKeyStorage(c.env, "/store-key", {
+      method: "POST",
+      body: JSON.stringify(storedKey),
+      headers: { "Content-Type": "application/json" },
+    });
 
     if (!storeResponse.ok) {
       const error = (await storeResponse.json()) as { error: string };
@@ -184,12 +180,7 @@ const listKeysRoute = createRoute({
 
 app.openapi(listKeysRoute, async (c) => {
   try {
-    const keyStorageId = c.env.KEY_STORAGE.idFromName("global");
-    const keyStorage = c.env.KEY_STORAGE.get(keyStorageId);
-
-    const response = await keyStorage.fetch(
-      new Request("http://internal/list-keys"),
-    );
+    const response = await fetchKeyStorage(c.env, "/list-keys");
     if (!response.ok) {
       throw new Error(`Key storage returned ${response.status}`);
     }
@@ -263,11 +254,9 @@ app.openapi(getPublicKeyRoute, async (c) => {
   const { keyId } = c.req.valid("param");
 
   try {
-    const keyStorageId = c.env.KEY_STORAGE.idFromName("global");
-    const keyStorage = c.env.KEY_STORAGE.get(keyStorageId);
-
-    const keyResponse = await keyStorage.fetch(
-      new Request(`http://internal/get-key?keyId=${encodeURIComponent(keyId)}`),
+    const keyResponse = await fetchKeyStorage(
+      c.env,
+      `/get-key?keyId=${encodeURIComponent(keyId)}`,
     );
 
     if (!keyResponse.ok) {
@@ -340,14 +329,10 @@ app.openapi(deleteKeyRoute, async (c) => {
   const requestId = c.req.header("X-Request-ID") || crypto.randomUUID();
 
   try {
-    const keyStorageId = c.env.KEY_STORAGE.idFromName("global");
-    const keyStorage = c.env.KEY_STORAGE.get(keyStorageId);
-
-    const response = await keyStorage.fetch(
-      new Request(
-        `http://internal/delete-key?keyId=${encodeURIComponent(keyId)}`,
-        { method: "DELETE" },
-      ),
+    const response = await fetchKeyStorage(
+      c.env,
+      `/delete-key?keyId=${encodeURIComponent(keyId)}`,
+      { method: "DELETE" },
     );
 
     if (!response.ok) {

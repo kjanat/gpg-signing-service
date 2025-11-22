@@ -39,3 +39,9 @@ export const RateLimitErrorSchema = z.object({
   code: ErrorCodeSchema,
   retryAfter: z.number().int().positive(),
 });
+
+/** Type inferred from ErrorCodeSchema */
+export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
+
+/** Type inferred from ErrorResponseSchema */
+export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;

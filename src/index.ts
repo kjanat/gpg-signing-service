@@ -17,6 +17,7 @@ import {
   PublicKeyQuerySchema,
 } from "~/schemas";
 import type { HealthResponse } from "~/types";
+import { fetchKeyStorage } from "~/utils/durable-objects";
 
 // Export Durable Objects
 export { KeyStorage } from "~/durable-objects/key-storage";
@@ -60,11 +61,7 @@ app.openapi(healthRoute, async (c) => {
 
   try {
     // Check key storage
-    const keyStorageId = c.env.KEY_STORAGE.idFromName("global");
-    const keyStorage = c.env.KEY_STORAGE.get(keyStorageId);
-    const keyHealthResponse = await keyStorage.fetch(
-      new Request("http://internal/health"),
-    );
+    const keyHealthResponse = await fetchKeyStorage(c.env, "/health");
     checks.keyStorage = keyHealthResponse.ok;
   } catch (error) {
     console.error("Key storage health check failed:", error);
@@ -133,11 +130,9 @@ app.openapi(publicKeyRoute, async (c) => {
   const { keyId: keyIdQuery } = c.req.valid("query");
   const keyId = keyIdQuery || c.env.KEY_ID;
 
-  const keyStorageId = c.env.KEY_STORAGE.idFromName("global");
-  const keyStorage = c.env.KEY_STORAGE.get(keyStorageId);
-
-  const keyResponse = await keyStorage.fetch(
-    new Request(`http://internal/get-key?keyId=${encodeURIComponent(keyId)}`),
+  const keyResponse = await fetchKeyStorage(
+    c.env,
+    `/get-key?keyId=${encodeURIComponent(keyId)}`,
   );
 
   if (!keyResponse.ok) {

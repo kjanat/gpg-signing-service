@@ -43,3 +43,30 @@ export const AuditQuerySchema = z.object({
   startDate: TimestampSchema.optional(),
   endDate: TimestampSchema.optional(),
 });
+
+/**
+ * Audit action types
+ */
+export const AuditActionSchema = z.enum(["sign", "key_upload", "key_rotate"]);
+
+/**
+ * Audit log entry schema
+ */
+export const AuditLogEntrySchema = z.object({
+  id: z.string().uuid(),
+  timestamp: TimestampSchema,
+  requestId: z.string().uuid(),
+  action: AuditActionSchema,
+  issuer: z.string().min(1),
+  subject: z.string().min(1),
+  keyId: z.string().min(1),
+  success: z.boolean(),
+  errorCode: z.string().optional(),
+  metadata: z.string().optional(),
+});
+
+/** Type inferred from AuditActionSchema */
+export type AuditAction = z.infer<typeof AuditActionSchema>;
+
+/** Type inferred from AuditLogEntrySchema */
+export type AuditLogEntry = z.infer<typeof AuditLogEntrySchema>;

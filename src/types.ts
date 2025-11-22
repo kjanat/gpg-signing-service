@@ -23,15 +23,35 @@ export type ArmoredPrivateKey = Brand<string, "ArmoredPrivateKey">;
 export type Identity = Brand<string, "Identity">;
 
 // Helper functions for creating branded types
+// NOTE: These are internal constructors used by validated schemas
+// For external usage, import and use the Zod schemas from ~/schemas/keys
 export function createKeyId(value: string): KeyId {
-  return value as KeyId;
+  // Basic validation - full validation via KeyIdSchema
+  if (!/^[A-F0-9]{16}$/i.test(value)) {
+    throw new Error(`Invalid KeyId format: ${value}`);
+  }
+  return value.toUpperCase() as KeyId;
 }
 
 export function createKeyFingerprint(value: string): KeyFingerprint {
+  // Basic validation - full validation via FingerprintSchema
+  if (!/^[A-F0-9]{40}$/i.test(value)) {
+    throw new Error(`Invalid KeyFingerprint format: ${value}`);
+  }
   return value.toUpperCase() as KeyFingerprint;
 }
 
 export function createArmoredPrivateKey(value: string): ArmoredPrivateKey {
+  // Basic validation - full validation via ArmoredPrivateKeySchema
+  if (!value.includes("BEGIN PGP PRIVATE KEY BLOCK")) {
+    throw new Error("Invalid ArmoredPrivateKey: missing PGP header");
+  }
+  if (!value.includes("END PGP PRIVATE KEY BLOCK")) {
+    throw new Error("Invalid ArmoredPrivateKey: missing PGP footer");
+  }
+  if (value.length < 350 || value.length > 10_000) {
+    throw new Error(`Invalid ArmoredPrivateKey length: ${value.length}`);
+  }
   return value as ArmoredPrivateKey;
 }
 
@@ -40,30 +60,10 @@ export function createIdentity(issuer: string, subject: string): Identity {
 }
 
 // =============================================================================
-// Error Codes
+// Error Types (re-exported from schemas)
 // =============================================================================
 
-/** All valid error codes used in the codebase */
-export type ErrorCode =
-  // Authentication errors
-  | "AUTH_MISSING"
-  | "AUTH_INVALID"
-  // Key management errors
-  | "KEY_NOT_FOUND"
-  | "KEY_PROCESSING_ERROR"
-  | "KEY_LIST_ERROR"
-  | "KEY_UPLOAD_ERROR"
-  | "KEY_DELETE_ERROR"
-  // Signing errors
-  | "SIGN_ERROR"
-  // Rate limiting
-  | "RATE_LIMIT_ERROR"
-  | "RATE_LIMITED"
-  // General errors
-  | "INVALID_REQUEST"
-  | "AUDIT_ERROR"
-  | "NOT_FOUND"
-  | "INTERNAL_ERROR";
+export type { ErrorCode, ErrorResponse } from "~/schemas/errors";
 
 // =============================================================================
 // Context Variables
@@ -78,6 +78,7 @@ export interface ValidatedOIDCClaims extends OIDCClaims {
 export interface Variables {
   oidcClaims: ValidatedOIDCClaims;
   identity: Identity;
+  requestId: string;
 }
 
 // =============================================================================
@@ -142,49 +143,16 @@ export function markClaimsAsValidated(claims: OIDCClaims): ValidatedOIDCClaims {
 }
 
 // =============================================================================
-// Request/Response Types
+// Audit Types (re-exported from schemas)
 // =============================================================================
 
-/** Error response with typed error code */
-export interface ErrorResponse {
-  error: string;
-  code: ErrorCode;
-  requestId?: string;
-}
+export type { AuditAction, AuditLogEntry } from "~/schemas/audit";
 
 // =============================================================================
-// Audit Types
+// Key Storage Types (re-exported from schemas)
 // =============================================================================
 
-/** Audit action types */
-export type AuditAction = "sign" | "key_upload" | "key_rotate";
-
-/** Audit log entry */
-export interface AuditLogEntry {
-  id: string;
-  timestamp: string;
-  requestId: string;
-  action: AuditAction;
-  issuer: string;
-  subject: string;
-  keyId: string;
-  success: boolean;
-  errorCode?: ErrorCode;
-  metadata?: string;
-}
-
-// =============================================================================
-// Key Storage Types
-// =============================================================================
-
-/** Key storage data with branded types */
-export interface StoredKey {
-  armoredPrivateKey: ArmoredPrivateKey;
-  keyId: KeyId;
-  fingerprint: KeyFingerprint;
-  createdAt: string;
-  algorithm: string;
-}
+export type { StoredKey } from "~/schemas/keys";
 
 /** Unvalidated key upload request (from API) */
 export interface KeyUploadRequest {
@@ -227,19 +195,10 @@ export function createRateLimitDenied(resetAt: number): RateLimitDenied {
 }
 
 // =============================================================================
-// Health Check Types
+// Health Check Types (re-exported from schemas)
 // =============================================================================
 
-/** Health status levels */
-export type HealthStatus = "healthy" | "degraded";
-
-/** Health check response */
-export interface HealthResponse {
-  status: HealthStatus;
-  timestamp: string;
-  version: string;
-  checks: { keyStorage: boolean; database: boolean };
-}
+export type { HealthResponse, HealthStatus } from "~/schemas/health";
 
 // =============================================================================
 // JWKS Types - Discriminated Union for RSA/EC Keys

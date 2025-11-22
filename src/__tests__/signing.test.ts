@@ -78,8 +78,8 @@ describe("parseAndValidateKey", () => {
     // Mock openpgp.readPrivateKey to return a key with unknown algorithm
     vi.mocked(openpgp.readPrivateKey).mockResolvedValueOnce({
       keyPacket: { algorithm: 999 }, // Unknown algorithm ID
-      getFingerprint: () => "fingerprint",
-      getKeyID: () => ({ toHex: () => "KEYID" }),
+      getFingerprint: () => "0123456789ABCDEF0123456789ABCDEF01234567",
+      getKeyID: () => ({ toHex: () => "A1B2C3D4E5F6G7H8" }),
       getUserIDs: () => ["User"],
       isDecrypted: () => true,
     } as unknown as any);
@@ -98,8 +98,8 @@ describe("parseAndValidateKey", () => {
     // Mock openpgp.readPrivateKey to return a key with no User IDs
     vi.mocked(openpgp.readPrivateKey).mockResolvedValueOnce({
       keyPacket: { algorithm: 22 }, // EdDSA
-      getFingerprint: () => "fingerprint",
-      getKeyID: () => ({ toHex: () => "KEYID" }),
+      getFingerprint: () => "0123456789ABCDEF0123456789ABCDEF01234567",
+      getKeyID: () => ({ toHex: () => "A1B2C3D4E5F6G7H8" }),
       getUserIDs: () => [],
       isDecrypted: () => true,
     } as unknown as any);
@@ -230,25 +230,56 @@ describe("signCommitData", () => {
 
 describe("createStoredKey", () => {
   it("should create StoredKey with branded types", () => {
+    const validPrivateKey = `-----BEGIN PGP PRIVATE KEY BLOCK-----
+
+lIYEaR3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw
+d6i3vJf+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA
+WHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd+P+7SjzApULQ2S2FqIEtv
+d2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw+
+iJYEExYKAD4WIQSAbTobn5V9ZzGVC8pi515USXgV3QUCaR3PygIbAwUJA8JnAAUL
+CQgHAgYVCgkICwIEFgIDAQIeAQIXgAAKCRBi515USXgV3UGkAQDdih4x/+9oQZ6+
+0T0Etx1oIerz9Uh8CD0aRP/XzC1wPQD/Ug7bAb9n5RFDqb2Vlq2KK+uza5vDlDHq
+rxgkrugpagY=
+=gskf
+-----END PGP PRIVATE KEY BLOCK-----`;
+
     const result = createStoredKey(
-      "-----BEGIN PGP PRIVATE KEY-----\ntest\n-----END PGP PRIVATE KEY-----",
-      "ABCD1234",
-      "1234567890ABCDEF",
+      validPrivateKey,
+      "A1B2C3D4E5F67890",
+      "0123456789ABCDEF0123456789ABCDEF01234567",
       "RSA",
     );
 
     expect(result.armoredPrivateKey).toContain(
-      "-----BEGIN PGP PRIVATE KEY-----",
+      "-----BEGIN PGP PRIVATE KEY BLOCK-----",
     );
-    expect(result.keyId).toBe("ABCD1234");
-    expect(result.fingerprint).toBe("1234567890ABCDEF");
+    expect(result.keyId).toBe("A1B2C3D4E5F67890");
+    expect(result.fingerprint).toBe("0123456789ABCDEF0123456789ABCDEF01234567");
     expect(result.algorithm).toBe("RSA");
     expect(result.createdAt).toBeTruthy();
   });
 
   it("should set createdAt to current time", () => {
+    const validPrivateKey = `-----BEGIN PGP PRIVATE KEY BLOCK-----
+
+lIYEaR3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw
+d6i3vJf+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA
+WHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd+P+7SjzApULQ2S2FqIEtv
+d2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw+
+iJYEExYKAD4WIQSAbTobn5V9ZzGVC8pi515USXgV3QUCaR3PygIbAwUJA8JnAAUL
+CQgHAgYVCgkICwIEFgIDAQIeAQIXgAAKCRBi515USXgV3UGkAQDdih4x/+9oQZ6+
+0T0Etx1oIerz9Uh8CD0aRP/XzC1wPQD/Ug7bAb9n5RFDqb2Vlq2KK+uza5vDlDHq
+rxgkrugpagY=
+=gskf
+-----END PGP PRIVATE KEY BLOCK-----`;
+
     const before = new Date().toISOString();
-    const result = createStoredKey("key", "id", "fp", "algo");
+    const result = createStoredKey(
+      validPrivateKey,
+      "A1B2C3D4E5F67890",
+      "0123456789ABCDEF0123456789ABCDEF01234567",
+      "algo",
+    );
     const after = new Date().toISOString();
 
     expect(result.createdAt >= before).toBe(true);
