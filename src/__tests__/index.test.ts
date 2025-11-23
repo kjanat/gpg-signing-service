@@ -10,7 +10,7 @@ import app from "~/index";
 describe("Public Key Route", () => {
   it("should return public key for valid keyId", async () => {
     const ctx = createExecutionContext();
-    const keyId = "valid-test-key";
+    const keyId = "FEDCBA9876543210";
 
     // 1. Generate a valid key
     const { privateKey } = await openpgp.generateKey({
@@ -19,6 +19,10 @@ describe("Public Key Route", () => {
       userIDs: [{ name: "Test", email: "test@example.com" }],
       format: "armored",
     });
+
+    // Parse the key to get real fingerprint
+    const parsedKey = await openpgp.readPrivateKey({ armoredKey: privateKey });
+    const fingerprint = parsedKey.getFingerprint();
 
     // 2. Store the key
     const keyStorageId = env.KEY_STORAGE.idFromName("global");
@@ -29,7 +33,7 @@ describe("Public Key Route", () => {
         body: JSON.stringify({
           armoredPrivateKey: privateKey,
           keyId,
-          fingerprint: "test-fingerprint",
+          fingerprint,
           createdAt: new Date().toISOString(),
           algorithm: "EdDSA",
         }),
@@ -65,8 +69,8 @@ describe("Global Error Handling", () => {
         method: "POST",
         body: JSON.stringify({
           armoredPrivateKey: "invalid-key-content",
-          keyId: "error-test-key",
-          fingerprint: "dummy-fingerprint",
+          keyId: "9999999999999999",
+          fingerprint: "0123456789ABCDEF0123456789ABCDEF01234567",
           createdAt: new Date().toISOString(),
           algorithm: "RSA",
         }),
@@ -75,7 +79,7 @@ describe("Global Error Handling", () => {
     );
 
     const response = await app.fetch(
-      new Request("http://localhost/public-key?keyId=error-test-key"),
+      new Request("http://localhost/public-key?keyId=9999999999999999"),
       env,
       ctx,
     );

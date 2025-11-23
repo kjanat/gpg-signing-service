@@ -92,7 +92,7 @@ func (c *Client) Health(ctx context.Context) (*HealthStatus, error) {
 		return &HealthStatus{
 			Status:     string(resp.JSON200.Status),
 			Version:    resp.JSON200.Version,
-			Timestamp:  parseTimestamp(resp.JSON200.Timestamp),
+			Timestamp:  resp.JSON200.Timestamp,
 			KeyStorage: resp.JSON200.Checks.KeyStorage,
 			Database:   resp.JSON200.Checks.Database,
 		}, nil
@@ -102,7 +102,7 @@ func (c *Client) Health(ctx context.Context) (*HealthStatus, error) {
 		return &HealthStatus{
 				Status:     string(resp.JSON503.Status),
 				Version:    resp.JSON503.Version,
-				Timestamp:  parseTimestamp(resp.JSON503.Timestamp),
+				Timestamp:  resp.JSON503.Timestamp,
 				KeyStorage: resp.JSON503.Checks.KeyStorage,
 				Database:   resp.JSON503.Checks.Database,
 			}, &ServiceError{

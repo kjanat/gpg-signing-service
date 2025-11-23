@@ -56,7 +56,7 @@ custom_domain = true
 # # https://developers.cloudflare.com/workers/configuration/secrets/
 [vars]
 ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com"
-KEY_ID = "signing-key-v1"
+KEY_ID = "62E75E54497815DD"
 
 # Secrets (set via `wrangler secret put`)
 # - KEY_PASSPHRASE: Passphrase for encrypted private key

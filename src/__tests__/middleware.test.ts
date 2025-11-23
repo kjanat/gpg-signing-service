@@ -19,6 +19,15 @@ vi.mock("~/utils/fetch", () => ({
   fetchWithTimeout: middlewareFetchMock,
 }));
 
+// Mock audit logging to avoid database errors in tests
+vi.mock("~/utils/audit", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/utils/audit")>();
+  return {
+    ...actual,
+    logAuditEvent: vi.fn(async () => undefined),
+  };
+});
+
 // Helper to make requests
 async function makeRequest(
   path: string,

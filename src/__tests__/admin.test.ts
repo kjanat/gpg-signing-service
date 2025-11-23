@@ -8,6 +8,15 @@ import app from "gpg-signing-service";
 import * as openpgp from "openpgp";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
+// Mock audit logging to avoid database errors in tests
+vi.mock("~/utils/audit", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/utils/audit")>();
+  return {
+    ...actual,
+    logAuditEvent: vi.fn(async () => undefined),
+  };
+});
+
 // Helper to make authenticated requests
 async function adminRequest(
   path: string,
@@ -93,7 +102,7 @@ describe("Admin Routes", () => {
         method: "POST",
         body: JSON.stringify({
           armoredPrivateKey: privateKey,
-          keyId: "test-key-upload-1",
+          keyId: "ABCD123456789012",
         }),
       });
 
@@ -105,7 +114,7 @@ describe("Admin Routes", () => {
         algorithm: string;
       };
       expect(body.success).toBe(true);
-      expect(body.keyId).toBe("test-key-upload-1");
+      expect(body.keyId).toBe("ABCD123456789012");
       expect(body.algorithm).toBe("EdDSA");
       expect(body.fingerprint).toBeTruthy();
     });
@@ -190,7 +199,7 @@ describe("Admin Routes", () => {
           // headers: { Authorization: `Bearer ${env.ADMIN_TOKEN}` }, // adminRequest already adds headers
           body: JSON.stringify({
             armoredPrivateKey: validKey,
-            keyId: "default-error-key",
+            keyId: "7777777777777777",
           }),
         });
 
@@ -204,10 +213,9 @@ describe("Admin Routes", () => {
     it("should handle non-Error exceptions", async () => {
       // Mock KEY_STORAGE to throw a string
       const originalGet = env.KEY_STORAGE.get;
+      const mockFetch = vi.fn().mockRejectedValue("String error");
       env.KEY_STORAGE.get = () => ({
-        fetch: async () => {
-          throw "String error";
-        },
+        fetch: mockFetch,
       } as unknown as DurableObjectStub);
 
       try {
@@ -215,7 +223,7 @@ describe("Admin Routes", () => {
           method: "POST",
           body: JSON.stringify({
             armoredPrivateKey: await generateTestKey(),
-            keyId: "string-error-key",
+            keyId: "8888888888888888",
           }),
         });
 
@@ -271,11 +279,11 @@ describe("Admin Routes", () => {
         method: "POST",
         body: JSON.stringify({
           armoredPrivateKey: privateKey,
-          keyId: "public-test-key",
+          keyId: "BCDE234567890123",
         }),
       });
 
-      const response = await adminRequest("/keys/public-test-key/public");
+      const response = await adminRequest("/keys/BCDE234567890123/public");
 
       expect(response.status).toBe(200);
       expect(response.headers.get("Content-Type")).toBe("application/pgp-keys");
@@ -284,8 +292,8 @@ describe("Admin Routes", () => {
       expect(publicKey).toContain("-----BEGIN PGP PUBLIC KEY BLOCK-----");
     });
 
-    it("should return 404 for non-existent key", async () => {
-      const response = await adminRequest("/keys/non-existent-key/public");
+    it("should return 404 for EEEEEEEEEEEEEEEE key", async () => {
+      const response = await adminRequest("/keys/EEEEEEEEEEEEEEEE/public");
 
       expect(response.status).toBe(404);
       const body = (await response.json()) as { code: string };
@@ -301,7 +309,7 @@ describe("Admin Routes", () => {
           new Response(
             JSON.stringify({
               armoredPrivateKey: "invalid-content",
-              keyId: "processing-fail-key",
+              keyId: "6666666666666666",
             }),
             { status: 200 },
           ),
@@ -342,8 +350,8 @@ describe("Admin Routes", () => {
       expect(body.success).toBe(true);
     });
 
-    it("should return success with deleted=false for non-existent key", async () => {
-      const response = await adminRequest("/keys/non-existent", {
+    it("should return success with deleted=false for EEEEEEEEEEEEEEEE key", async () => {
+      const response = await adminRequest("/keys/EEEEEEEEEEEEEEEE", {
         method: "DELETE",
       });
 
@@ -489,10 +497,9 @@ describe("Admin Routes", () => {
     it("should handle non-Error exceptions during deletion", async () => {
       // Mock KEY_STORAGE to throw a string
       const originalGet = env.KEY_STORAGE.get;
+      const mockFetch = vi.fn().mockRejectedValue("Delete string error");
       env.KEY_STORAGE.get = () => ({
-        fetch: async () => {
-          throw "Delete string error";
-        },
+        fetch: mockFetch,
       } as unknown as DurableObjectStub);
 
       try {
@@ -506,6 +513,177 @@ describe("Admin Routes", () => {
       } finally {
         env.KEY_STORAGE.get = originalGet;
       }
+    });
+  });
+
+  describe("Audit Logging Catch Handlers", () => {
+    it("should log audit failures via catch handler on upload success", async () => {
+      // Spy on console.error to verify catch handler executes
+      const consoleSpy = vi.spyOn(console, "error");
+      const { logAuditEvent } = await import("~/utils/audit");
+
+      // Save original implementation
+      const originalImpl = logAuditEvent;
+
+      // Mock to reject once to trigger catch
+      vi.mocked(logAuditEvent).mockRejectedValueOnce(
+        new Error("Audit DB connection failed"),
+      );
+
+      const privateKey = await generateTestKey();
+      const ctx = createExecutionContext();
+
+      const response = await app.fetch(
+        new Request("http://localhost/admin/keys", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${env.ADMIN_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            armoredPrivateKey: privateKey,
+            keyId: "CATCH1234567890A",
+          }),
+        }),
+        env,
+        ctx,
+      );
+
+      // Wait for background tasks
+      await waitOnExecutionContext(ctx);
+
+      // Verify catch handler logged the error
+      expect(consoleSpy).toHaveBeenCalledWith(
+        "Background task failed:",
+        expect.objectContaining({
+          requestId: expect.any(String),
+          error: expect.any(Error),
+        }),
+      );
+
+      consoleSpy.mockRestore();
+    });
+
+    it("should log audit failures via catch handler on upload error", async () => {
+      const consoleSpy = vi.spyOn(console, "error");
+      const { logAuditEvent } = await import("~/utils/audit");
+
+      vi.mocked(logAuditEvent).mockRejectedValueOnce(
+        new Error("Audit DB unavailable"),
+      );
+
+      const ctx = createExecutionContext();
+      const response = await app.fetch(
+        new Request("http://localhost/admin/keys", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${env.ADMIN_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            armoredPrivateKey: "totally-invalid-key-format",
+            keyId: "CATCH2234567890B",
+          }),
+        }),
+        env,
+        ctx,
+      );
+
+      await waitOnExecutionContext(ctx);
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        "Background task failed:",
+        expect.objectContaining({
+          requestId: expect.any(String),
+          error: expect.any(Error),
+        }),
+      );
+
+      consoleSpy.mockRestore();
+    });
+
+    it("should log audit failures via catch handler on delete success", async () => {
+      const consoleSpy = vi.spyOn(console, "error");
+      const { logAuditEvent } = await import("~/utils/audit");
+      const privateKey = await generateTestKey();
+
+      // Upload key first
+      await adminRequest("/keys", {
+        method: "POST",
+        body: JSON.stringify({
+          armoredPrivateKey: privateKey,
+          keyId: "CATCH3234567890C",
+        }),
+      });
+
+      // Mock to reject for delete audit
+      vi.mocked(logAuditEvent).mockRejectedValueOnce(
+        new Error("Audit DB write failed"),
+      );
+
+      const ctx = createExecutionContext();
+      const response = await app.fetch(
+        new Request("http://localhost/admin/keys/CATCH3234567890C", {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${env.ADMIN_TOKEN}`,
+          },
+        }),
+        env,
+        ctx,
+      );
+
+      await waitOnExecutionContext(ctx);
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        "Background task failed:",
+        expect.objectContaining({
+          requestId: expect.any(String),
+          error: expect.any(Error),
+        }),
+      );
+
+      consoleSpy.mockRestore();
+    });
+
+    it("should log audit failures via catch handler on delete error", async () => {
+      const consoleSpy = vi.spyOn(console, "error");
+      const { logAuditEvent } = await import("~/utils/audit");
+
+      // Mock storage to fail
+      const originalGet = env.KEY_STORAGE.get;
+      env.KEY_STORAGE.get = () => ({
+        fetch: async () => new Response("Storage Error", { status: 500 }),
+      } as unknown as DurableObjectStub);
+
+      vi.mocked(logAuditEvent).mockRejectedValueOnce(
+        new Error("Audit DB unavailable"),
+      );
+
+      const ctx = createExecutionContext();
+      const response = await app.fetch(
+        new Request("http://localhost/admin/keys/CATCH4234567890D", {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${env.ADMIN_TOKEN}`,
+          },
+        }),
+        env,
+        ctx,
+      );
+
+      await waitOnExecutionContext(ctx);
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        "Background task failed:",
+        expect.objectContaining({
+          requestId: expect.any(String),
+          error: expect.any(Error),
+        }),
+      );
+
+      consoleSpy.mockRestore();
+      env.KEY_STORAGE.get = originalGet;
     });
   });
 });

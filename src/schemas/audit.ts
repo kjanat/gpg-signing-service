@@ -1,4 +1,5 @@
 import { z } from "@hono/zod-openapi";
+import { ErrorCodeSchema } from "./errors";
 
 /**
  * ISO8601 datetime validation with timezone offset
@@ -61,7 +62,7 @@ export const AuditLogEntrySchema = z.object({
   subject: z.string().min(1),
   keyId: z.string().min(1),
   success: z.boolean(),
-  errorCode: z.string().optional(),
+  errorCode: ErrorCodeSchema.optional(),
   metadata: z.string().optional(),
 });
 

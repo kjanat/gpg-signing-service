@@ -10,6 +10,7 @@ import type { ErrorCode, StoredKey } from "~/types";
 import { createArmoredPrivateKey, createKeyId } from "~/types";
 import { getAuditLogs, logAuditEvent } from "~/utils/audit";
 import { fetchKeyStorage } from "~/utils/durable-objects";
+import { scheduleBackgroundTask } from "~/utils/execution";
 import { extractPublicKey, parseAndValidateKey } from "~/utils/signing";
 
 const app = createOpenAPIApp();
@@ -91,20 +92,24 @@ app.openapi(uploadKeyRoute, async (c) => {
       throw new Error(error.error || "Failed to store key");
     }
 
-    // Log key upload
-    await logAuditEvent(c.env.AUDIT_DB, {
+    // Log key upload (non-blocking in production, blocking in tests)
+    await scheduleBackgroundTask(
+      c,
       requestId,
-      action: "key_upload",
-      issuer: "admin",
-      subject: "admin",
-      keyId: body.keyId,
-      success: true,
-      metadata: JSON.stringify({
-        fingerprint: keyInfo.fingerprint,
-        algorithm: keyInfo.algorithm,
-        userId: keyInfo.userId,
+      logAuditEvent(c.env.AUDIT_DB, {
+        requestId,
+        action: "key_upload",
+        issuer: "admin",
+        subject: "admin",
+        keyId: body.keyId,
+        success: true,
+        metadata: JSON.stringify({
+          fingerprint: keyInfo.fingerprint,
+          algorithm: keyInfo.algorithm,
+          userId: keyInfo.userId,
+        }),
       }),
-    });
+    );
 
     return c.json(
       {
@@ -121,17 +126,21 @@ app.openapi(uploadKeyRoute, async (c) => {
       ? error.message
       : "Key upload failed";
 
-    // Audit failed key upload attempt
-    await logAuditEvent(c.env.AUDIT_DB, {
+    // Audit failed key upload attempt (non-blocking in production)
+    await scheduleBackgroundTask(
+      c,
       requestId,
-      action: "key_upload",
-      issuer: "admin",
-      subject: "admin",
-      keyId: "unknown",
-      success: false,
-      errorCode: "KEY_UPLOAD_ERROR",
-      metadata: JSON.stringify({ error: message }),
-    });
+      logAuditEvent(c.env.AUDIT_DB, {
+        requestId,
+        action: "key_upload",
+        issuer: "admin",
+        subject: "admin",
+        keyId: "unknown",
+        success: false,
+        errorCode: "KEY_UPLOAD_ERROR",
+        metadata: JSON.stringify({ error: message }),
+      }),
+    );
 
     return c.json(
       {
@@ -344,32 +353,40 @@ app.openapi(deleteKeyRoute, async (c) => {
       deleted: boolean;
     };
 
-    // Log key deletion
-    await logAuditEvent(c.env.AUDIT_DB, {
+    // Log key deletion (non-blocking in production)
+    await scheduleBackgroundTask(
+      c,
       requestId,
-      action: "key_rotate",
-      issuer: "admin",
-      subject: "admin",
-      keyId,
-      success: result.deleted,
-    });
+      logAuditEvent(c.env.AUDIT_DB, {
+        requestId,
+        action: "key_rotate",
+        issuer: "admin",
+        subject: "admin",
+        keyId,
+        success: result.deleted,
+      }),
+    );
 
     return c.json(result, 200);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Delete failed";
     console.error("Failed to delete key:", { keyId, error });
 
-    // Audit failed deletion attempt
-    await logAuditEvent(c.env.AUDIT_DB, {
+    // Audit failed deletion attempt (non-blocking in production)
+    await scheduleBackgroundTask(
+      c,
       requestId,
-      action: "key_rotate",
-      issuer: "admin",
-      subject: "admin",
-      keyId,
-      success: false,
-      errorCode: "KEY_DELETE_ERROR",
-      metadata: JSON.stringify({ error: message }),
-    });
+      logAuditEvent(c.env.AUDIT_DB, {
+        requestId,
+        action: "key_rotate",
+        issuer: "admin",
+        subject: "admin",
+        keyId,
+        success: false,
+        errorCode: "KEY_DELETE_ERROR",
+        metadata: JSON.stringify({ error: message }),
+      }),
+    );
 
     return c.json(
       {

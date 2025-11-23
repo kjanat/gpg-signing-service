@@ -99,10 +99,10 @@ describe("Coverage Tests", () => {
   });
 
   describe("Public Key Endpoint", () => {
-    it("should return 404 for non-existent key", async () => {
+    it("should return 404 for EEEEEEEEEEEEEEEE key", async () => {
       const ctx = createExecutionContext();
       const response = await app.fetch(
-        new Request("http://localhost/public-key?keyId=non-existent-key"),
+        new Request("http://localhost/public-key?keyId=EEEEEEEEEEEEEEEE"),
         env,
         ctx,
       );

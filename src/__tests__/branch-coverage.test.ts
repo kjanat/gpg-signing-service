@@ -364,7 +364,7 @@ describe("Branch Coverage Helpers", () => {
           },
           body: JSON.stringify({
             armoredPrivateKey: "invalid-key-format",
-            keyId: "A1B2C3D4E5F6G7H8",
+            keyId: "A1B2C3D4E5F67890",
           }),
         }),
         env,
@@ -398,7 +398,7 @@ describe("Branch Coverage Helpers", () => {
 
       const ctx = createExecutionContext();
       const res = await app.fetch(
-        new Request("http://localhost/sign?keyId=A1B2C3D4E5F6G7H8", {
+        new Request("http://localhost/sign?keyId=A1B2C3D4E5F67890", {
           method: "POST",
           headers: {
             Authorization: "Bearer valid-token",
@@ -421,6 +421,19 @@ describe("Branch Coverage Helpers", () => {
         new Error("Signing failed"),
       );
 
+      const validPrivateKey = `-----BEGIN PGP PRIVATE KEY BLOCK-----
+
+lIYEaR3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw
+d6i3vJf+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA
+WHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd+P+7SjzApULQ2S2FqIEtv
+d2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw+
+iJYEExYKAD4WIQSAbTobn5V9ZzGVC8pi515USXgV3QUCaR3PygIbAwUJA8JnAAUL
+CQgHAgYVCgkICwIEFgIDAQIeAQIXgAAKCRBi515USXgV3UGkAQDdih4x/+9oQZ6+
+0T0Etx1oIerz9Uh8CD0aRP/XzC1wPQD/Ug7bAb9n5RFDqb2Vlq2KK+uza5vDlDHq
+rxgkrugpagY=
+=gskf
+-----END PGP PRIVATE KEY BLOCK-----`;
+
       const customEnv = {
         ...env,
         KEY_STORAGE: {
@@ -430,9 +443,9 @@ describe("Branch Coverage Helpers", () => {
               Promise.resolve(
                 new Response(
                   JSON.stringify({
-                    armoredPrivateKey: "key",
-                    keyId: "id",
-                    fingerprint: "fp",
+                    armoredPrivateKey: validPrivateKey,
+                    keyId: "A1B2C3D4E5F67890",
+                    fingerprint: "0123456789ABCDEF0123456789ABCDEF01234567",
                     algorithm: "RSA",
                   }),
                   { status: 200 },
@@ -447,7 +460,7 @@ describe("Branch Coverage Helpers", () => {
 
       const ctx = createExecutionContext();
       const res = await app.fetch(
-        new Request("http://localhost/sign?keyId=A1B2C3D4E5F6G7H8", {
+        new Request("http://localhost/sign?keyId=A1B2C3D4E5F67890", {
           method: "POST",
           headers: {
             Authorization: "Bearer valid-token",
@@ -470,8 +483,8 @@ describe("Branch Coverage Helpers", () => {
     it("handles unknown key algorithms", async () => {
       const mockKey = {
         keyPacket: { algorithm: 99 },
-        getFingerprint: () => "fp",
-        getKeyID: () => ({ toHex: () => "id" }),
+        getFingerprint: () => "0123456789ABCDEF0123456789ABCDEF01234567",
+        getKeyID: () => ({ toHex: () => "ABCD1234567890EF" }),
         getUserIDs: () => ["user"],
         isDecrypted: () => true,
       };

@@ -80,7 +80,7 @@ tasks:
 
   typecheck:
     desc: Typecheck code
-    aliases: [tc, type]
+    aliases: [ts, type, tsc, tsgo]
     sources:
       - "**/*.ts"
     cmds:

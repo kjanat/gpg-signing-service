@@ -79,7 +79,7 @@ describe("parseAndValidateKey", () => {
     vi.mocked(openpgp.readPrivateKey).mockResolvedValueOnce({
       keyPacket: { algorithm: 999 }, // Unknown algorithm ID
       getFingerprint: () => "0123456789ABCDEF0123456789ABCDEF01234567",
-      getKeyID: () => ({ toHex: () => "A1B2C3D4E5F6G7H8" }),
+      getKeyID: () => ({ toHex: () => "A1B2C3D4E5F67890" }),
       getUserIDs: () => ["User"],
       isDecrypted: () => true,
     } as unknown as any);
@@ -99,7 +99,7 @@ describe("parseAndValidateKey", () => {
     vi.mocked(openpgp.readPrivateKey).mockResolvedValueOnce({
       keyPacket: { algorithm: 22 }, // EdDSA
       getFingerprint: () => "0123456789ABCDEF0123456789ABCDEF01234567",
-      getKeyID: () => ({ toHex: () => "A1B2C3D4E5F6G7H8" }),
+      getKeyID: () => ({ toHex: () => "A1B2C3D4E5F67890" }),
       getUserIDs: () => [],
       isDecrypted: () => true,
     } as unknown as any);

@@ -3,9 +3,7 @@ import { z } from "@hono/zod-openapi";
 /**
  * Request ID validation (UUID v4)
  */
-export const RequestIdSchema = z
-  .string()
-  .uuid("Request ID must be a valid UUID");
+export const RequestIdSchema = z.uuid("Request ID must be a valid UUID");
 
 /**
  * Common request headers schema

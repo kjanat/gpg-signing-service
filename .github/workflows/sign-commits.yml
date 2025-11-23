@@ -1,8 +1,8 @@
 name: Sign Commits
 
 on:
-  push:
-    branches: [master, main]
+  # push:
+  #   branches: [master, main]
   workflow_dispatch:
 
 permissions:
@@ -12,7 +12,6 @@ permissions:
 jobs:
   sign:
     name: Sign Commits
-    if: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

@@ -29,9 +29,13 @@ vi.mock("~/utils/fetch", () => ({
 }));
 
 // Mock audit logging to avoid D1 dependency in tests
-vi.mock("~/utils/audit", () => ({
-  logAuditEvent: vi.fn(),
-}));
+vi.mock("~/utils/audit", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/utils/audit")>();
+  return {
+    ...actual,
+    logAuditEvent: vi.fn(async () => undefined),
+  };
+});
 
 // Helper to make requests
 async function makeRequest(
@@ -132,13 +136,13 @@ describe("Sign Route", () => {
   describe("POST /sign", () => {
     it("should sign valid commit data", async () => {
       await setupJWKSMock();
-      await uploadTestKey("sign-test-key");
+      await uploadTestKey("A1B2C3D4E5F67890");
       const token = await createToken();
 
       const commitData =
         "tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147\nparent ...";
 
-      const response = await makeRequest("/sign?keyId=sign-test-key", {
+      const response = await makeRequest("/sign?keyId=A1B2C3D4E5F67890", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: commitData,
@@ -167,7 +171,7 @@ describe("Sign Route", () => {
     it("should return 404 if key not found", async () => {
       await setupJWKSMock();
       const token = await createToken();
-      const response = await makeRequest("/sign?keyId=non-existent", {
+      const response = await makeRequest("/sign?keyId=FFFFFFFFFFFFFFFF", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: "commit data",
@@ -288,7 +292,7 @@ describe("Sign Route", () => {
 
     it("should return 500 when signing fails with generic error", async () => {
       await setupJWKSMock();
-      await uploadTestKey("generic-error-key");
+      await uploadTestKey("5555555555555555");
       const token = await createToken();
 
       // Mock signCommitData to throw
@@ -337,14 +341,13 @@ describe("Sign Route", () => {
 
       // Mock KEY_STORAGE to throw a string
       const originalGet = env.KEY_STORAGE.get;
+      const mockFetch = vi.fn().mockRejectedValue("String error");
       env.KEY_STORAGE.get = () => ({
-        fetch: async () => {
-          throw "String error";
-        },
+        fetch: mockFetch,
       } as unknown as DurableObjectStub);
 
       try {
-        const response = await makeRequest("/sign?keyId=string-error-key", {
+        const response = await makeRequest("/sign?keyId=8888888888888888", {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
           body: "commit data",
@@ -371,7 +374,7 @@ describe("Sign Route", () => {
       } as unknown as DurableObjectStub);
 
       try {
-        const response = await makeRequest("/sign?keyId=upstream-fail", {
+        const response = await makeRequest("/sign?keyId=9999999999999999", {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
           body: "commit data",
@@ -383,6 +386,86 @@ describe("Sign Route", () => {
       } finally {
         env.KEY_STORAGE.get = originalGet;
       }
+    });
+  });
+
+  describe("Audit Logging Catch Handlers", () => {
+    it("should log audit failures via catch handler on sign success", async () => {
+      await setupJWKSMock();
+      const token = await createToken();
+
+      // Spy on console.error to verify catch handler executes
+      const consoleSpy = vi.spyOn(console, "error");
+      const { logAuditEvent } = await import("~/utils/audit");
+
+      // Upload a key first
+      const keyId = "SIGNCATCH1234567";
+      await uploadTestKey(keyId);
+
+      // Mock to reject once to trigger catch
+      vi.mocked(logAuditEvent).mockRejectedValueOnce(
+        new Error("Audit DB connection failed"),
+      );
+
+      const ctx = createExecutionContext();
+      const response = await app.fetch(
+        new Request(`http://localhost/sign?keyId=${keyId}`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: "commit data for audit catch test",
+        }),
+        env,
+        ctx,
+      );
+
+      // Wait for background tasks
+      await waitOnExecutionContext(ctx);
+
+      // Verify catch handler logged the error
+      expect(consoleSpy).toHaveBeenCalledWith(
+        "Background task failed:",
+        expect.objectContaining({
+          requestId: expect.any(String),
+          error: expect.any(Error),
+        }),
+      );
+
+      consoleSpy.mockRestore();
+    });
+
+    it("should log audit failures via catch handler on sign error", async () => {
+      await setupJWKSMock();
+      const token = await createToken();
+      const consoleSpy = vi.spyOn(console, "error");
+      const { logAuditEvent } = await import("~/utils/audit");
+
+      // Mock to reject for error audit
+      vi.mocked(logAuditEvent).mockRejectedValueOnce(
+        new Error("Audit DB unavailable"),
+      );
+
+      const ctx = createExecutionContext();
+      const response = await app.fetch(
+        new Request("http://localhost/sign?keyId=NONEXISTENT123", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: "commit data",
+        }),
+        env,
+        ctx,
+      );
+
+      await waitOnExecutionContext(ctx);
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        "Background task failed:",
+        expect.objectContaining({
+          requestId: expect.any(String),
+          error: expect.any(Error),
+        }),
+      );
+
+      consoleSpy.mockRestore();
     });
   });
 });
