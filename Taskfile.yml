@@ -72,7 +72,7 @@ tasks:
     env:
       CONFIG: "{{.DPRINT_CONFIG}}"
       DPRINT_CONFIG_DISCOVERY: "false"
-    cmd: bunx dprint fmt {{.CLI_ARGS}} --config=$CONFIG --allow-no-files
+    cmd: bun dprint fmt {{.CLI_ARGS}} --config=$CONFIG --allow-no-files
 
   format:check:
     silent: true
@@ -82,7 +82,7 @@ tasks:
     env:
       CONFIG: "{{.DPRINT_CONFIG}}"
       DPRINT_CONFIG_DISCOVERY: "false"
-    cmd: bunx dprint check {{.CLI_ARGS}} --config=$CONFIG --allow-no-files
+    cmd: bun dprint check {{.CLI_ARGS}} --config=$CONFIG --allow-no-files
 
   typecheck:
     desc: Typecheck code
