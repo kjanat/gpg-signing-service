@@ -352,8 +352,25 @@ describe("Branch Coverage Helpers", () => {
   });
 
   describe("Route error handling", () => {
-    it("triggers catch block in uploadKeyRoute with invalid key format", async () => {
-      // Sending garbage key triggers openpgp error, which is caught by the route handler
+    it("triggers catch block in uploadKeyRoute with internal error", async () => {
+      // Mock openpgp to throw error despite valid schema
+      vi.mocked(openpgp.readPrivateKey).mockRejectedValueOnce(
+        new Error("Internal PGP Error"),
+      );
+
+      const validLookingKey = `-----BEGIN PGP PRIVATE KEY BLOCK-----
+
+lIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw
+d6i3vJf+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA
+WHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd+P+7SjzApULQ2S2FqIEtv
+d2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw+
+iJkEExYKAEEWIQQRTd3LSMIzSP5K+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL
+CQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p
+KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
+7Bfg==
+=oEGo
+-----END PGP PRIVATE KEY BLOCK-----`;
+
       const ctx = createExecutionContext();
       const res = await app.fetch(
         new Request("http://localhost/admin/keys", {
@@ -363,7 +380,7 @@ describe("Branch Coverage Helpers", () => {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            armoredPrivateKey: "invalid-key-format",
+            armoredPrivateKey: validLookingKey,
             keyId: "A1B2C3D4E5F67890",
           }),
         }),

@@ -24,21 +24,29 @@ export const ErrorCodeSchema = z.enum([
  * Standard error response schema
  * Used across all endpoints for consistent error handling
  */
-export const ErrorResponseSchema = z.object({
-  error: z.string().min(1, "Error message cannot be empty"),
-  code: ErrorCodeSchema,
-  requestId: z.string().uuid().optional(),
-});
+/**
+ * Standard error response schema
+ * Used across all endpoints for consistent error handling
+ */
+export const ErrorResponseSchema = z
+  .object({
+    error: z.string().min(1, "Error message cannot be empty"),
+    code: ErrorCodeSchema,
+    requestId: z.string().uuid().optional(),
+  })
+  .openapi("ErrorResponse");
 
 /**
  * Rate limit error response schema
  * Includes retryAfter timestamp for 429 responses
  */
-export const RateLimitErrorSchema = z.object({
-  error: z.string().min(1, "Error message cannot be empty"),
-  code: ErrorCodeSchema,
-  retryAfter: z.number().int().positive(),
-});
+export const RateLimitErrorSchema = z
+  .object({
+    error: z.string().min(1, "Error message cannot be empty"),
+    code: ErrorCodeSchema,
+    retryAfter: z.number().int().positive(),
+  })
+  .openapi("RateLimitError");
 
 /** Type inferred from ErrorCodeSchema */
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;

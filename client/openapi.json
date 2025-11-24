@@ -5,7 +5,188 @@
     "title": "GPG Signing Service API"
   },
   "components": {
-    "schemas": {},
+    "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "degraded"
+            ]
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "type": "string",
+            "pattern": "^\\d+\\.\\d+\\.\\d+$"
+          },
+          "checks": {
+            "type": "object",
+            "properties": {
+              "keyStorage": {
+                "type": "boolean"
+              },
+              "database": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "keyStorage",
+              "database"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "timestamp",
+          "version",
+          "checks"
+        ]
+      },
+      "PublicKeyResponse": {
+        "type": "string",
+        "example": "-----BEGIN PGP PUBLIC KEY BLOCK-----\n..."
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "minLength": 1
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "AUTH_MISSING",
+              "AUTH_INVALID",
+              "KEY_NOT_FOUND",
+              "KEY_PROCESSING_ERROR",
+              "KEY_LIST_ERROR",
+              "KEY_UPLOAD_ERROR",
+              "KEY_DELETE_ERROR",
+              "SIGN_ERROR",
+              "RATE_LIMIT_ERROR",
+              "RATE_LIMITED",
+              "INVALID_REQUEST",
+              "AUDIT_ERROR",
+              "NOT_FOUND",
+              "INTERNAL_ERROR"
+            ]
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "error",
+          "code"
+        ]
+      },
+      "SignResponse": {
+        "type": "string",
+        "example": "-----BEGIN PGP SIGNATURE-----\n..."
+      },
+      "RateLimitError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "minLength": 1
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "AUTH_MISSING",
+              "AUTH_INVALID",
+              "KEY_NOT_FOUND",
+              "KEY_PROCESSING_ERROR",
+              "KEY_LIST_ERROR",
+              "KEY_UPLOAD_ERROR",
+              "KEY_DELETE_ERROR",
+              "SIGN_ERROR",
+              "RATE_LIMIT_ERROR",
+              "RATE_LIMITED",
+              "INVALID_REQUEST",
+              "AUDIT_ERROR",
+              "NOT_FOUND",
+              "INTERNAL_ERROR"
+            ]
+          },
+          "retryAfter": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          }
+        },
+        "required": [
+          "error",
+          "code",
+          "retryAfter"
+        ]
+      },
+      "SignRequest": {
+        "type": "string",
+        "minLength": 1,
+        "example": "tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147\nparent ..."
+      },
+      "KeyResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "keyId": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 16,
+            "pattern": "^[A-F0-9]{16}$/i"
+          },
+          "fingerprint": {
+            "type": "string",
+            "minLength": 40,
+            "maxLength": 40,
+            "pattern": "^[A-F0-9]{40}$/i"
+          },
+          "algorithm": {
+            "type": "string"
+          },
+          "userId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "keyId",
+          "fingerprint",
+          "algorithm",
+          "userId"
+        ]
+      },
+      "KeyUpload": {
+        "type": "object",
+        "properties": {
+          "armoredPrivateKey": {
+            "type": "string",
+            "minLength": 100,
+            "maxLength": 10000
+          },
+          "keyId": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 16,
+            "pattern": "^[A-F0-9]{16}$/i"
+          }
+        },
+        "required": [
+          "armoredPrivateKey",
+          "keyId"
+        ]
+      }
+    },
     "parameters": {}
   },
   "paths": {
@@ -19,45 +200,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "status": {
-                      "type": "string",
-                      "enum": [
-                        "healthy",
-                        "degraded"
-                      ]
-                    },
-                    "timestamp": {
-                      "type": "string",
-                      "format": "date-time"
-                    },
-                    "version": {
-                      "type": "string",
-                      "pattern": "^\\d+\\.\\d+\\.\\d+$"
-                    },
-                    "checks": {
-                      "type": "object",
-                      "properties": {
-                        "keyStorage": {
-                          "type": "boolean"
-                        },
-                        "database": {
-                          "type": "boolean"
-                        }
-                      },
-                      "required": [
-                        "keyStorage",
-                        "database"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "status",
-                    "timestamp",
-                    "version",
-                    "checks"
-                  ]
+                  "$ref": "#/components/schemas/HealthResponse"
                 }
               }
             }
@@ -67,45 +210,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "status": {
-                      "type": "string",
-                      "enum": [
-                        "healthy",
-                        "degraded"
-                      ]
-                    },
-                    "timestamp": {
-                      "type": "string",
-                      "format": "date-time"
-                    },
-                    "version": {
-                      "type": "string",
-                      "pattern": "^\\d+\\.\\d+\\.\\d+$"
-                    },
-                    "checks": {
-                      "type": "object",
-                      "properties": {
-                        "keyStorage": {
-                          "type": "boolean"
-                        },
-                        "database": {
-                          "type": "boolean"
-                        }
-                      },
-                      "required": [
-                        "keyStorage",
-                        "database"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "status",
-                    "timestamp",
-                    "version",
-                    "checks"
-                  ]
+                  "$ref": "#/components/schemas/HealthResponse"
                 }
               }
             }
@@ -134,7 +239,7 @@
             "content": {
               "application/pgp-keys": {
                 "schema": {
-                  "type": "string"
+                  "$ref": "#/components/schemas/PublicKeyResponse"
                 }
               }
             }
@@ -144,40 +249,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "code": {
-                      "type": "string",
-                      "enum": [
-                        "AUTH_MISSING",
-                        "AUTH_INVALID",
-                        "KEY_NOT_FOUND",
-                        "KEY_PROCESSING_ERROR",
-                        "KEY_LIST_ERROR",
-                        "KEY_UPLOAD_ERROR",
-                        "KEY_DELETE_ERROR",
-                        "SIGN_ERROR",
-                        "RATE_LIMIT_ERROR",
-                        "RATE_LIMITED",
-                        "INVALID_REQUEST",
-                        "AUDIT_ERROR",
-                        "NOT_FOUND",
-                        "INTERNAL_ERROR"
-                      ]
-                    },
-                    "requestId": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  },
-                  "required": [
-                    "error",
-                    "code"
-                  ]
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -187,40 +259,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "code": {
-                      "type": "string",
-                      "enum": [
-                        "AUTH_MISSING",
-                        "AUTH_INVALID",
-                        "KEY_NOT_FOUND",
-                        "KEY_PROCESSING_ERROR",
-                        "KEY_LIST_ERROR",
-                        "KEY_UPLOAD_ERROR",
-                        "KEY_DELETE_ERROR",
-                        "SIGN_ERROR",
-                        "RATE_LIMIT_ERROR",
-                        "RATE_LIMITED",
-                        "INVALID_REQUEST",
-                        "AUDIT_ERROR",
-                        "NOT_FOUND",
-                        "INTERNAL_ERROR"
-                      ]
-                    },
-                    "requestId": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  },
-                  "required": [
-                    "error",
-                    "code"
-                  ]
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -257,9 +296,7 @@
           "content": {
             "text/plain": {
               "schema": {
-                "type": "string",
-                "minLength": 1,
-                "example": "tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147\nparent ..."
+                "$ref": "#/components/schemas/SignRequest"
               }
             }
           }
@@ -270,8 +307,7 @@
             "content": {
               "text/plain": {
                 "schema": {
-                  "type": "string",
-                  "example": "-----BEGIN PGP SIGNATURE-----\n..."
+                  "$ref": "#/components/schemas/SignResponse"
                 }
               }
             }
@@ -281,40 +317,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "code": {
-                      "type": "string",
-                      "enum": [
-                        "AUTH_MISSING",
-                        "AUTH_INVALID",
-                        "KEY_NOT_FOUND",
-                        "KEY_PROCESSING_ERROR",
-                        "KEY_LIST_ERROR",
-                        "KEY_UPLOAD_ERROR",
-                        "KEY_DELETE_ERROR",
-                        "SIGN_ERROR",
-                        "RATE_LIMIT_ERROR",
-                        "RATE_LIMITED",
-                        "INVALID_REQUEST",
-                        "AUDIT_ERROR",
-                        "NOT_FOUND",
-                        "INTERNAL_ERROR"
-                      ]
-                    },
-                    "requestId": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  },
-                  "required": [
-                    "error",
-                    "code"
-                  ]
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -324,40 +327,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "code": {
-                      "type": "string",
-                      "enum": [
-                        "AUTH_MISSING",
-                        "AUTH_INVALID",
-                        "KEY_NOT_FOUND",
-                        "KEY_PROCESSING_ERROR",
-                        "KEY_LIST_ERROR",
-                        "KEY_UPLOAD_ERROR",
-                        "KEY_DELETE_ERROR",
-                        "SIGN_ERROR",
-                        "RATE_LIMIT_ERROR",
-                        "RATE_LIMITED",
-                        "INVALID_REQUEST",
-                        "AUDIT_ERROR",
-                        "NOT_FOUND",
-                        "INTERNAL_ERROR"
-                      ]
-                    },
-                    "requestId": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  },
-                  "required": [
-                    "error",
-                    "code"
-                  ]
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -367,42 +337,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "code": {
-                      "type": "string",
-                      "enum": [
-                        "AUTH_MISSING",
-                        "AUTH_INVALID",
-                        "KEY_NOT_FOUND",
-                        "KEY_PROCESSING_ERROR",
-                        "KEY_LIST_ERROR",
-                        "KEY_UPLOAD_ERROR",
-                        "KEY_DELETE_ERROR",
-                        "SIGN_ERROR",
-                        "RATE_LIMIT_ERROR",
-                        "RATE_LIMITED",
-                        "INVALID_REQUEST",
-                        "AUDIT_ERROR",
-                        "NOT_FOUND",
-                        "INTERNAL_ERROR"
-                      ]
-                    },
-                    "retryAfter": {
-                      "type": "integer",
-                      "minimum": 0,
-                      "exclusiveMinimum": true
-                    }
-                  },
-                  "required": [
-                    "error",
-                    "code",
-                    "retryAfter"
-                  ]
+                  "$ref": "#/components/schemas/RateLimitError"
                 }
               }
             }
@@ -412,40 +347,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "code": {
-                      "type": "string",
-                      "enum": [
-                        "AUTH_MISSING",
-                        "AUTH_INVALID",
-                        "KEY_NOT_FOUND",
-                        "KEY_PROCESSING_ERROR",
-                        "KEY_LIST_ERROR",
-                        "KEY_UPLOAD_ERROR",
-                        "KEY_DELETE_ERROR",
-                        "SIGN_ERROR",
-                        "RATE_LIMIT_ERROR",
-                        "RATE_LIMITED",
-                        "INVALID_REQUEST",
-                        "AUDIT_ERROR",
-                        "NOT_FOUND",
-                        "INTERNAL_ERROR"
-                      ]
-                    },
-                    "requestId": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  },
-                  "required": [
-                    "error",
-                    "code"
-                  ]
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -455,40 +357,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "code": {
-                      "type": "string",
-                      "enum": [
-                        "AUTH_MISSING",
-                        "AUTH_INVALID",
-                        "KEY_NOT_FOUND",
-                        "KEY_PROCESSING_ERROR",
-                        "KEY_LIST_ERROR",
-                        "KEY_UPLOAD_ERROR",
-                        "KEY_DELETE_ERROR",
-                        "SIGN_ERROR",
-                        "RATE_LIMIT_ERROR",
-                        "RATE_LIMITED",
-                        "INVALID_REQUEST",
-                        "AUDIT_ERROR",
-                        "NOT_FOUND",
-                        "INTERNAL_ERROR"
-                      ]
-                    },
-                    "requestId": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  },
-                  "required": [
-                    "error",
-                    "code"
-                  ]
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -505,21 +374,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "properties": {
-                  "armoredPrivateKey": {
-                    "type": "string",
-                    "example": "-----BEGIN PGP PRIVATE KEY BLOCK-----\\n..."
-                  },
-                  "keyId": {
-                    "type": "string",
-                    "example": "A1B2C3D4E5F6G7H8"
-                  }
-                },
-                "required": [
-                  "armoredPrivateKey",
-                  "keyId"
-                ]
+                "$ref": "#/components/schemas/KeyUpload"
               }
             }
           }
@@ -530,31 +385,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": {
-                      "type": "boolean"
-                    },
-                    "keyId": {
-                      "type": "string"
-                    },
-                    "fingerprint": {
-                      "type": "string"
-                    },
-                    "algorithm": {
-                      "type": "string"
-                    },
-                    "userId": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "success",
-                    "keyId",
-                    "fingerprint",
-                    "algorithm",
-                    "userId"
-                  ]
+                  "$ref": "#/components/schemas/KeyResponse"
                 }
               }
             }
@@ -564,40 +395,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "code": {
-                      "type": "string",
-                      "enum": [
-                        "AUTH_MISSING",
-                        "AUTH_INVALID",
-                        "KEY_NOT_FOUND",
-                        "KEY_PROCESSING_ERROR",
-                        "KEY_LIST_ERROR",
-                        "KEY_UPLOAD_ERROR",
-                        "KEY_DELETE_ERROR",
-                        "SIGN_ERROR",
-                        "RATE_LIMIT_ERROR",
-                        "RATE_LIMITED",
-                        "INVALID_REQUEST",
-                        "AUDIT_ERROR",
-                        "NOT_FOUND",
-                        "INTERNAL_ERROR"
-                      ]
-                    },
-                    "requestId": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  },
-                  "required": [
-                    "error",
-                    "code"
-                  ]
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -607,40 +405,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "code": {
-                      "type": "string",
-                      "enum": [
-                        "AUTH_MISSING",
-                        "AUTH_INVALID",
-                        "KEY_NOT_FOUND",
-                        "KEY_PROCESSING_ERROR",
-                        "KEY_LIST_ERROR",
-                        "KEY_UPLOAD_ERROR",
-                        "KEY_DELETE_ERROR",
-                        "SIGN_ERROR",
-                        "RATE_LIMIT_ERROR",
-                        "RATE_LIMITED",
-                        "INVALID_REQUEST",
-                        "AUDIT_ERROR",
-                        "NOT_FOUND",
-                        "INTERNAL_ERROR"
-                      ]
-                    },
-                    "requestId": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  },
-                  "required": [
-                    "error",
-                    "code"
-                  ]
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -697,40 +462,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "code": {
-                      "type": "string",
-                      "enum": [
-                        "AUTH_MISSING",
-                        "AUTH_INVALID",
-                        "KEY_NOT_FOUND",
-                        "KEY_PROCESSING_ERROR",
-                        "KEY_LIST_ERROR",
-                        "KEY_UPLOAD_ERROR",
-                        "KEY_DELETE_ERROR",
-                        "SIGN_ERROR",
-                        "RATE_LIMIT_ERROR",
-                        "RATE_LIMITED",
-                        "INVALID_REQUEST",
-                        "AUDIT_ERROR",
-                        "NOT_FOUND",
-                        "INTERNAL_ERROR"
-                      ]
-                    },
-                    "requestId": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  },
-                  "required": [
-                    "error",
-                    "code"
-                  ]
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -769,40 +501,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "code": {
-                      "type": "string",
-                      "enum": [
-                        "AUTH_MISSING",
-                        "AUTH_INVALID",
-                        "KEY_NOT_FOUND",
-                        "KEY_PROCESSING_ERROR",
-                        "KEY_LIST_ERROR",
-                        "KEY_UPLOAD_ERROR",
-                        "KEY_DELETE_ERROR",
-                        "SIGN_ERROR",
-                        "RATE_LIMIT_ERROR",
-                        "RATE_LIMITED",
-                        "INVALID_REQUEST",
-                        "AUDIT_ERROR",
-                        "NOT_FOUND",
-                        "INTERNAL_ERROR"
-                      ]
-                    },
-                    "requestId": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  },
-                  "required": [
-                    "error",
-                    "code"
-                  ]
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -812,40 +511,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "code": {
-                      "type": "string",
-                      "enum": [
-                        "AUTH_MISSING",
-                        "AUTH_INVALID",
-                        "KEY_NOT_FOUND",
-                        "KEY_PROCESSING_ERROR",
-                        "KEY_LIST_ERROR",
-                        "KEY_UPLOAD_ERROR",
-                        "KEY_DELETE_ERROR",
-                        "SIGN_ERROR",
-                        "RATE_LIMIT_ERROR",
-                        "RATE_LIMITED",
-                        "INVALID_REQUEST",
-                        "AUDIT_ERROR",
-                        "NOT_FOUND",
-                        "INTERNAL_ERROR"
-                      ]
-                    },
-                    "requestId": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  },
-                  "required": [
-                    "error",
-                    "code"
-                  ]
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -896,40 +562,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "code": {
-                      "type": "string",
-                      "enum": [
-                        "AUTH_MISSING",
-                        "AUTH_INVALID",
-                        "KEY_NOT_FOUND",
-                        "KEY_PROCESSING_ERROR",
-                        "KEY_LIST_ERROR",
-                        "KEY_UPLOAD_ERROR",
-                        "KEY_DELETE_ERROR",
-                        "SIGN_ERROR",
-                        "RATE_LIMIT_ERROR",
-                        "RATE_LIMITED",
-                        "INVALID_REQUEST",
-                        "AUDIT_ERROR",
-                        "NOT_FOUND",
-                        "INTERNAL_ERROR"
-                      ]
-                    },
-                    "requestId": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  },
-                  "required": [
-                    "error",
-                    "code"
-                  ]
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -1074,40 +707,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "code": {
-                      "type": "string",
-                      "enum": [
-                        "AUTH_MISSING",
-                        "AUTH_INVALID",
-                        "KEY_NOT_FOUND",
-                        "KEY_PROCESSING_ERROR",
-                        "KEY_LIST_ERROR",
-                        "KEY_UPLOAD_ERROR",
-                        "KEY_DELETE_ERROR",
-                        "SIGN_ERROR",
-                        "RATE_LIMIT_ERROR",
-                        "RATE_LIMITED",
-                        "INVALID_REQUEST",
-                        "AUDIT_ERROR",
-                        "NOT_FOUND",
-                        "INTERNAL_ERROR"
-                      ]
-                    },
-                    "requestId": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  },
-                  "required": [
-                    "error",
-                    "code"
-                  ]
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -1117,40 +717,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "code": {
-                      "type": "string",
-                      "enum": [
-                        "AUTH_MISSING",
-                        "AUTH_INVALID",
-                        "KEY_NOT_FOUND",
-                        "KEY_PROCESSING_ERROR",
-                        "KEY_LIST_ERROR",
-                        "KEY_UPLOAD_ERROR",
-                        "KEY_DELETE_ERROR",
-                        "SIGN_ERROR",
-                        "RATE_LIMIT_ERROR",
-                        "RATE_LIMITED",
-                        "INVALID_REQUEST",
-                        "AUDIT_ERROR",
-                        "NOT_FOUND",
-                        "INTERNAL_ERROR"
-                      ]
-                    },
-                    "requestId": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  },
-                  "required": [
-                    "error",
-                    "code"
-                  ]
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }

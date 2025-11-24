@@ -22,6 +22,106 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
+// Defines values for ErrorResponseCode.
+const (
+	ErrorResponseCodeAUDITERROR         ErrorResponseCode = "AUDIT_ERROR"
+	ErrorResponseCodeAUTHINVALID        ErrorResponseCode = "AUTH_INVALID"
+	ErrorResponseCodeAUTHMISSING        ErrorResponseCode = "AUTH_MISSING"
+	ErrorResponseCodeINTERNALERROR      ErrorResponseCode = "INTERNAL_ERROR"
+	ErrorResponseCodeINVALIDREQUEST     ErrorResponseCode = "INVALID_REQUEST"
+	ErrorResponseCodeKEYDELETEERROR     ErrorResponseCode = "KEY_DELETE_ERROR"
+	ErrorResponseCodeKEYLISTERROR       ErrorResponseCode = "KEY_LIST_ERROR"
+	ErrorResponseCodeKEYNOTFOUND        ErrorResponseCode = "KEY_NOT_FOUND"
+	ErrorResponseCodeKEYPROCESSINGERROR ErrorResponseCode = "KEY_PROCESSING_ERROR"
+	ErrorResponseCodeKEYUPLOADERROR     ErrorResponseCode = "KEY_UPLOAD_ERROR"
+	ErrorResponseCodeNOTFOUND           ErrorResponseCode = "NOT_FOUND"
+	ErrorResponseCodeRATELIMITED        ErrorResponseCode = "RATE_LIMITED"
+	ErrorResponseCodeRATELIMITERROR     ErrorResponseCode = "RATE_LIMIT_ERROR"
+	ErrorResponseCodeSIGNERROR          ErrorResponseCode = "SIGN_ERROR"
+)
+
+// Defines values for HealthResponseStatus.
+const (
+	Degraded HealthResponseStatus = "degraded"
+	Healthy  HealthResponseStatus = "healthy"
+)
+
+// Defines values for RateLimitErrorCode.
+const (
+	RateLimitErrorCodeAUDITERROR         RateLimitErrorCode = "AUDIT_ERROR"
+	RateLimitErrorCodeAUTHINVALID        RateLimitErrorCode = "AUTH_INVALID"
+	RateLimitErrorCodeAUTHMISSING        RateLimitErrorCode = "AUTH_MISSING"
+	RateLimitErrorCodeINTERNALERROR      RateLimitErrorCode = "INTERNAL_ERROR"
+	RateLimitErrorCodeINVALIDREQUEST     RateLimitErrorCode = "INVALID_REQUEST"
+	RateLimitErrorCodeKEYDELETEERROR     RateLimitErrorCode = "KEY_DELETE_ERROR"
+	RateLimitErrorCodeKEYLISTERROR       RateLimitErrorCode = "KEY_LIST_ERROR"
+	RateLimitErrorCodeKEYNOTFOUND        RateLimitErrorCode = "KEY_NOT_FOUND"
+	RateLimitErrorCodeKEYPROCESSINGERROR RateLimitErrorCode = "KEY_PROCESSING_ERROR"
+	RateLimitErrorCodeKEYUPLOADERROR     RateLimitErrorCode = "KEY_UPLOAD_ERROR"
+	RateLimitErrorCodeNOTFOUND           RateLimitErrorCode = "NOT_FOUND"
+	RateLimitErrorCodeRATELIMITED        RateLimitErrorCode = "RATE_LIMITED"
+	RateLimitErrorCodeRATELIMITERROR     RateLimitErrorCode = "RATE_LIMIT_ERROR"
+	RateLimitErrorCodeSIGNERROR          RateLimitErrorCode = "SIGN_ERROR"
+)
+
+// ErrorResponse defines model for ErrorResponse.
+type ErrorResponse struct {
+	Code      ErrorResponseCode   `json:"code"`
+	Error     string              `json:"error"`
+	RequestId *openapi_types.UUID `json:"requestId,omitempty"`
+}
+
+// ErrorResponseCode defines model for ErrorResponse.Code.
+type ErrorResponseCode string
+
+// HealthResponse defines model for HealthResponse.
+type HealthResponse struct {
+	Checks struct {
+		Database   bool `json:"database"`
+		KeyStorage bool `json:"keyStorage"`
+	} `json:"checks"`
+	Status    HealthResponseStatus `json:"status"`
+	Timestamp time.Time            `json:"timestamp"`
+	Version   string               `json:"version"`
+}
+
+// HealthResponseStatus defines model for HealthResponse.Status.
+type HealthResponseStatus string
+
+// KeyResponse defines model for KeyResponse.
+type KeyResponse struct {
+	Algorithm   string `json:"algorithm"`
+	Fingerprint string `json:"fingerprint"`
+	KeyId       string `json:"keyId"`
+	Success     *bool  `json:"success,omitempty"`
+	UserId      string `json:"userId"`
+}
+
+// KeyUpload defines model for KeyUpload.
+type KeyUpload struct {
+	ArmoredPrivateKey string `json:"armoredPrivateKey"`
+	KeyId             string `json:"keyId"`
+}
+
+// PublicKeyResponse defines model for PublicKeyResponse.
+type PublicKeyResponse = string
+
+// RateLimitError defines model for RateLimitError.
+type RateLimitError struct {
+	Code       RateLimitErrorCode `json:"code"`
+	Error      string             `json:"error"`
+	RetryAfter int                `json:"retryAfter"`
+}
+
+// RateLimitErrorCode defines model for RateLimitError.Code.
+type RateLimitErrorCode string
+
+// SignRequest defines model for SignRequest.
+type SignRequest = string
+
+// SignResponse defines model for SignResponse.
+type SignResponse = string
+
 // GetAdminAuditParams defines parameters for GetAdminAudit.
 type GetAdminAuditParams struct {
 	Limit     *int       `form:"limit,omitempty" json:"limit,omitempty"`
@@ -32,19 +132,10 @@ type GetAdminAuditParams struct {
 	EndDate   *time.Time `form:"endDate,omitempty" json:"endDate,omitempty"`
 }
 
-// PostAdminKeysJSONBody defines parameters for PostAdminKeys.
-type PostAdminKeysJSONBody struct {
-	ArmoredPrivateKey string `json:"armoredPrivateKey"`
-	KeyId             string `json:"keyId"`
-}
-
 // GetPublicKeyParams defines parameters for GetPublicKey.
 type GetPublicKeyParams struct {
 	KeyId *string `form:"keyId,omitempty" json:"keyId,omitempty"`
 }
-
-// PostSignTextBody defines parameters for PostSign.
-type PostSignTextBody = string
 
 // PostSignParams defines parameters for PostSign.
 type PostSignParams struct {
@@ -53,10 +144,10 @@ type PostSignParams struct {
 }
 
 // PostAdminKeysJSONRequestBody defines body for PostAdminKeys for application/json ContentType.
-type PostAdminKeysJSONRequestBody PostAdminKeysJSONBody
+type PostAdminKeysJSONRequestBody = KeyUpload
 
 // PostSignTextRequestBody defines body for PostSign for text/plain ContentType.
-type PostSignTextRequestBody = PostSignTextBody
+type PostSignTextRequestBody = SignRequest
 
 // RequestEditorFn  is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -783,19 +874,9 @@ type GetAdminAuditResponse struct {
 			Timestamp string  `json:"timestamp"`
 		} `json:"logs"`
 	}
-	JSON400 *struct {
-		Code      GetAdminAudit400Code `json:"code"`
-		Error     string               `json:"error"`
-		RequestId *openapi_types.UUID  `json:"requestId,omitempty"`
-	}
-	JSON500 *struct {
-		Code      GetAdminAudit500Code `json:"code"`
-		Error     string               `json:"error"`
-		RequestId *openapi_types.UUID  `json:"requestId,omitempty"`
-	}
+	JSON400 *ErrorResponse
+	JSON500 *ErrorResponse
 }
-type GetAdminAudit400Code string
-type GetAdminAudit500Code string
 
 // Status returns HTTPResponse.Status
 func (r GetAdminAuditResponse) Status() string {
@@ -824,13 +905,8 @@ type GetAdminKeysResponse struct {
 			KeyId       string `json:"keyId"`
 		} `json:"keys"`
 	}
-	JSON500 *struct {
-		Code      GetAdminKeys500Code `json:"code"`
-		Error     string              `json:"error"`
-		RequestId *openapi_types.UUID `json:"requestId,omitempty"`
-	}
+	JSON500 *ErrorResponse
 }
-type GetAdminKeys500Code string
 
 // Status returns HTTPResponse.Status
 func (r GetAdminKeysResponse) Status() string {
@@ -851,26 +927,10 @@ func (r GetAdminKeysResponse) StatusCode() int {
 type PostAdminKeysResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *struct {
-		Algorithm   string `json:"algorithm"`
-		Fingerprint string `json:"fingerprint"`
-		KeyId       string `json:"keyId"`
-		Success     bool   `json:"success"`
-		UserId      string `json:"userId"`
-	}
-	JSON400 *struct {
-		Code      PostAdminKeys400Code `json:"code"`
-		Error     string               `json:"error"`
-		RequestId *openapi_types.UUID  `json:"requestId,omitempty"`
-	}
-	JSON500 *struct {
-		Code      PostAdminKeys500Code `json:"code"`
-		Error     string               `json:"error"`
-		RequestId *openapi_types.UUID  `json:"requestId,omitempty"`
-	}
+	JSON201      *KeyResponse
+	JSON400      *ErrorResponse
+	JSON500      *ErrorResponse
 }
-type PostAdminKeys400Code string
-type PostAdminKeys500Code string
 
 // Status returns HTTPResponse.Status
 func (r PostAdminKeysResponse) Status() string {
@@ -895,13 +955,8 @@ type DeleteAdminKeysKeyIdResponse struct {
 		Deleted bool `json:"deleted"`
 		Success bool `json:"success"`
 	}
-	JSON500 *struct {
-		Code      DeleteAdminKeysKeyId500Code `json:"code"`
-		Error     string                      `json:"error"`
-		RequestId *openapi_types.UUID         `json:"requestId,omitempty"`
-	}
+	JSON500 *ErrorResponse
 }
-type DeleteAdminKeysKeyId500Code string
 
 // Status returns HTTPResponse.Status
 func (r DeleteAdminKeysKeyIdResponse) Status() string {
@@ -922,19 +977,9 @@ func (r DeleteAdminKeysKeyIdResponse) StatusCode() int {
 type GetAdminKeysKeyIdPublicResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON404      *struct {
-		Code      GetAdminKeysKeyIdPublic404Code `json:"code"`
-		Error     string                         `json:"error"`
-		RequestId *openapi_types.UUID            `json:"requestId,omitempty"`
-	}
-	JSON500 *struct {
-		Code      GetAdminKeysKeyIdPublic500Code `json:"code"`
-		Error     string                         `json:"error"`
-		RequestId *openapi_types.UUID            `json:"requestId,omitempty"`
-	}
+	JSON404      *ErrorResponse
+	JSON500      *ErrorResponse
 }
-type GetAdminKeysKeyIdPublic404Code string
-type GetAdminKeysKeyIdPublic500Code string
 
 // Status returns HTTPResponse.Status
 func (r GetAdminKeysKeyIdPublicResponse) Status() string {
@@ -955,27 +1000,9 @@ func (r GetAdminKeysKeyIdPublicResponse) StatusCode() int {
 type GetHealthResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *struct {
-		Checks struct {
-			Database   bool `json:"database"`
-			KeyStorage bool `json:"keyStorage"`
-		} `json:"checks"`
-		Status    GetHealth200Status `json:"status"`
-		Timestamp time.Time          `json:"timestamp"`
-		Version   string             `json:"version"`
-	}
-	JSON503 *struct {
-		Checks struct {
-			Database   bool `json:"database"`
-			KeyStorage bool `json:"keyStorage"`
-		} `json:"checks"`
-		Status    GetHealth503Status `json:"status"`
-		Timestamp time.Time          `json:"timestamp"`
-		Version   string             `json:"version"`
-	}
+	JSON200      *HealthResponse
+	JSON503      *HealthResponse
 }
-type GetHealth200Status string
-type GetHealth503Status string
 
 // Status returns HTTPResponse.Status
 func (r GetHealthResponse) Status() string {
@@ -996,19 +1023,9 @@ func (r GetHealthResponse) StatusCode() int {
 type GetPublicKeyResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON404      *struct {
-		Code      GetPublicKey404Code `json:"code"`
-		Error     string              `json:"error"`
-		RequestId *openapi_types.UUID `json:"requestId,omitempty"`
-	}
-	JSON500 *struct {
-		Code      GetPublicKey500Code `json:"code"`
-		Error     string              `json:"error"`
-		RequestId *openapi_types.UUID `json:"requestId,omitempty"`
-	}
+	JSON404      *ErrorResponse
+	JSON500      *ErrorResponse
 }
-type GetPublicKey404Code string
-type GetPublicKey500Code string
 
 // Status returns HTTPResponse.Status
 func (r GetPublicKeyResponse) Status() string {
@@ -1029,37 +1046,12 @@ func (r GetPublicKeyResponse) StatusCode() int {
 type PostSignResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON400      *struct {
-		Code      PostSign400Code     `json:"code"`
-		Error     string              `json:"error"`
-		RequestId *openapi_types.UUID `json:"requestId,omitempty"`
-	}
-	JSON404 *struct {
-		Code      PostSign404Code     `json:"code"`
-		Error     string              `json:"error"`
-		RequestId *openapi_types.UUID `json:"requestId,omitempty"`
-	}
-	JSON429 *struct {
-		Code       PostSign429Code `json:"code"`
-		Error      string          `json:"error"`
-		RetryAfter int             `json:"retryAfter"`
-	}
-	JSON500 *struct {
-		Code      PostSign500Code     `json:"code"`
-		Error     string              `json:"error"`
-		RequestId *openapi_types.UUID `json:"requestId,omitempty"`
-	}
-	JSON503 *struct {
-		Code      PostSign503Code     `json:"code"`
-		Error     string              `json:"error"`
-		RequestId *openapi_types.UUID `json:"requestId,omitempty"`
-	}
+	JSON400      *ErrorResponse
+	JSON404      *ErrorResponse
+	JSON429      *RateLimitError
+	JSON500      *ErrorResponse
+	JSON503      *ErrorResponse
 }
-type PostSign400Code string
-type PostSign404Code string
-type PostSign429Code string
-type PostSign500Code string
-type PostSign503Code string
 
 // Status returns HTTPResponse.Status
 func (r PostSignResponse) Status() string {
@@ -1201,22 +1193,14 @@ func ParseGetAdminAuditResponse(rsp *http.Response) (*GetAdminAuditResponse, err
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest struct {
-			Code      GetAdminAudit400Code `json:"code"`
-			Error     string               `json:"error"`
-			RequestId *openapi_types.UUID  `json:"requestId,omitempty"`
-		}
+		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest struct {
-			Code      GetAdminAudit500Code `json:"code"`
-			Error     string               `json:"error"`
-			RequestId *openapi_types.UUID  `json:"requestId,omitempty"`
-		}
+		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1256,11 +1240,7 @@ func ParseGetAdminKeysResponse(rsp *http.Response) (*GetAdminKeysResponse, error
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest struct {
-			Code      GetAdminKeys500Code `json:"code"`
-			Error     string              `json:"error"`
-			RequestId *openapi_types.UUID `json:"requestId,omitempty"`
-		}
+		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1286,35 +1266,21 @@ func ParsePostAdminKeysResponse(rsp *http.Response) (*PostAdminKeysResponse, err
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest struct {
-			Algorithm   string `json:"algorithm"`
-			Fingerprint string `json:"fingerprint"`
-			KeyId       string `json:"keyId"`
-			Success     bool   `json:"success"`
-			UserId      string `json:"userId"`
-		}
+		var dest KeyResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON201 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest struct {
-			Code      PostAdminKeys400Code `json:"code"`
-			Error     string               `json:"error"`
-			RequestId *openapi_types.UUID  `json:"requestId,omitempty"`
-		}
+		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest struct {
-			Code      PostAdminKeys500Code `json:"code"`
-			Error     string               `json:"error"`
-			RequestId *openapi_types.UUID  `json:"requestId,omitempty"`
-		}
+		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1350,11 +1316,7 @@ func ParseDeleteAdminKeysKeyIdResponse(rsp *http.Response) (*DeleteAdminKeysKeyI
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest struct {
-			Code      DeleteAdminKeysKeyId500Code `json:"code"`
-			Error     string                      `json:"error"`
-			RequestId *openapi_types.UUID         `json:"requestId,omitempty"`
-		}
+		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1380,22 +1342,14 @@ func ParseGetAdminKeysKeyIdPublicResponse(rsp *http.Response) (*GetAdminKeysKeyI
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest struct {
-			Code      GetAdminKeysKeyIdPublic404Code `json:"code"`
-			Error     string                         `json:"error"`
-			RequestId *openapi_types.UUID            `json:"requestId,omitempty"`
-		}
+		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest struct {
-			Code      GetAdminKeysKeyIdPublic500Code `json:"code"`
-			Error     string                         `json:"error"`
-			RequestId *openapi_types.UUID            `json:"requestId,omitempty"`
-		}
+		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1421,30 +1375,14 @@ func ParseGetHealthResponse(rsp *http.Response) (*GetHealthResponse, error) {
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest struct {
-			Checks struct {
-				Database   bool `json:"database"`
-				KeyStorage bool `json:"keyStorage"`
-			} `json:"checks"`
-			Status    GetHealth200Status `json:"status"`
-			Timestamp time.Time          `json:"timestamp"`
-			Version   string             `json:"version"`
-		}
+		var dest HealthResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest struct {
-			Checks struct {
-				Database   bool `json:"database"`
-				KeyStorage bool `json:"keyStorage"`
-			} `json:"checks"`
-			Status    GetHealth503Status `json:"status"`
-			Timestamp time.Time          `json:"timestamp"`
-			Version   string             `json:"version"`
-		}
+		var dest HealthResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1470,22 +1408,14 @@ func ParseGetPublicKeyResponse(rsp *http.Response) (*GetPublicKeyResponse, error
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest struct {
-			Code      GetPublicKey404Code `json:"code"`
-			Error     string              `json:"error"`
-			RequestId *openapi_types.UUID `json:"requestId,omitempty"`
-		}
+		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest struct {
-			Code      GetPublicKey500Code `json:"code"`
-			Error     string              `json:"error"`
-			RequestId *openapi_types.UUID `json:"requestId,omitempty"`
-		}
+		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1511,55 +1441,35 @@ func ParsePostSignResponse(rsp *http.Response) (*PostSignResponse, error) {
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest struct {
-			Code      PostSign400Code     `json:"code"`
-			Error     string              `json:"error"`
-			RequestId *openapi_types.UUID `json:"requestId,omitempty"`
-		}
+		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest struct {
-			Code      PostSign404Code     `json:"code"`
-			Error     string              `json:"error"`
-			RequestId *openapi_types.UUID `json:"requestId,omitempty"`
-		}
+		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
-		var dest struct {
-			Code       PostSign429Code `json:"code"`
-			Error      string          `json:"error"`
-			RetryAfter int             `json:"retryAfter"`
-		}
+		var dest RateLimitError
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest struct {
-			Code      PostSign500Code     `json:"code"`
-			Error     string              `json:"error"`
-			RequestId *openapi_types.UUID `json:"requestId,omitempty"`
-		}
+		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON500 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest struct {
-			Code      PostSign503Code     `json:"code"`
-			Error     string              `json:"error"`
-			RequestId *openapi_types.UUID `json:"requestId,omitempty"`
-		}
+		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1573,34 +1483,36 @@ func ParsePostSignResponse(rsp *http.Response) (*PostSignResponse, error) {
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"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",
+	"usdeJi5FQwUKklKe/xcAAP//jT5BT9MhAAA=",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

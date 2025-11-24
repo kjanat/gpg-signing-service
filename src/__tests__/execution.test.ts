@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
 import type { Context } from "hono";
+import { describe, expect, it, vi } from "vitest";
 import { scheduleBackgroundTask } from "~/utils/execution";
 
 describe("scheduleBackgroundTask", () => {
@@ -16,7 +16,7 @@ describe("scheduleBackgroundTask", () => {
 
     // Assert - waitUntil called with error-wrapped promise
     expect(mockWaitUntil).toHaveBeenCalledTimes(1);
-    const calledPromise = mockWaitUntil.mock.calls[0][0];
+    const calledPromise = mockWaitUntil.mock.calls[0]?.[0];
     expect(calledPromise).toBeInstanceOf(Promise);
   });
 

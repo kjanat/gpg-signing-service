@@ -93,6 +93,9 @@ app.openapi(uploadKeyRoute, async (c) => {
     }
 
     // Log key upload (non-blocking in production, blocking in tests)
+    console.log(
+      "DEBUG: About to call scheduleBackgroundTask for upload success",
+    );
     await scheduleBackgroundTask(
       c,
       requestId,
@@ -122,11 +125,15 @@ app.openapi(uploadKeyRoute, async (c) => {
       201,
     );
   } catch (error) {
+    console.log("DEBUG: uploadKeyRoute catch block entered", error);
     const message = error instanceof Error
       ? error.message
       : "Key upload failed";
 
     // Audit failed key upload attempt (non-blocking in production)
+    console.log(
+      "DEBUG: About to call scheduleBackgroundTask for upload failure",
+    );
     await scheduleBackgroundTask(
       c,
       requestId,

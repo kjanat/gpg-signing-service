@@ -1,5 +1,5 @@
 import { swaggerUI } from "@hono/swagger-ui";
-import { createRoute, z } from "@hono/zod-openapi";
+import { createRoute } from "@hono/zod-openapi";
 import { logger } from "hono/logger";
 import * as openpgp from "openpgp";
 import { createOpenAPIApp, openApiConfig } from "~/lib/openapi";
@@ -15,6 +15,7 @@ import {
   ErrorResponseSchema,
   HealthResponseSchema,
   PublicKeyQuerySchema,
+  PublicKeyResponseSchema,
 } from "~/schemas";
 import type { HealthResponse } from "~/types";
 import { fetchKeyStorage } from "~/utils/durable-objects";
@@ -102,7 +103,7 @@ const publicKeyRoute = createRoute({
     200: {
       content: {
         "application/pgp-keys": {
-          schema: z.string(),
+          schema: PublicKeyResponseSchema,
         },
       },
       description: "Public Key",
@@ -151,10 +152,13 @@ app.openapi(publicKeyRoute, async (c) => {
     return c.text(publicKey, 200, { "Content-Type": "application/pgp-keys" });
   } catch (error) {
     console.error("Key processing error:", error);
-    return c.json({
-      error: "Key processing error",
-      code: "KEY_PROCESSING_ERROR",
-    }, 500);
+    return c.json(
+      {
+        error: "Key processing error",
+        code: "KEY_PROCESSING_ERROR",
+      },
+      500,
+    );
   }
 });
 

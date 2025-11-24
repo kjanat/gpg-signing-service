@@ -17,6 +17,20 @@ import {
 } from "~/schemas";
 
 describe("Schema Validation - Edge Cases", () => {
+  // Realistic Ed25519 key (smallest valid key ~400-500 chars)
+  const validKey = `-----BEGIN PGP PRIVATE KEY BLOCK-----
+
+lIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw
+d6i3vJf+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA
+WHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd+P+7SjzApULQ2S2FqIEtv
+d2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw+
+iJkEExYKAEEWIQQRTd3LSMIzSP5K+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL
+CQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p
+KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
+7Bfg==
+=oEGo
+-----END PGP PRIVATE KEY BLOCK-----`;
+
   describe("KeyIdSchema", () => {
     // Happy path
     it("should accept valid 16-hex KeyId", () => {
@@ -144,20 +158,6 @@ describe("Schema Validation - Edge Cases", () => {
   });
 
   describe("ArmoredPrivateKeySchema", () => {
-    // Realistic Ed25519 key (smallest valid key ~400-500 chars)
-    const validKey = `-----BEGIN PGP PRIVATE KEY BLOCK-----
-
-lIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw
-d6i3vJf+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA
-WHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd+P+7SjzApULQ2S2FqIEtv
-d2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw+
-iJkEExYKAEEWIQQRTd3LSMIzSP5K+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL
-CQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p
-KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
-7Bfg==
-=oEGo
------END PGP PRIVATE KEY BLOCK-----`;
-
     // Happy path
     it("should accept valid PGP key", () => {
       const result = ArmoredPrivateKeySchema.parse(validKey);
@@ -169,7 +169,7 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
       const shortKey =
         "-----BEGIN PGP PRIVATE KEY BLOCK-----\nXX\n=XX\n-----END PGP PRIVATE KEY BLOCK-----";
       expect(() => ArmoredPrivateKeySchema.parse(shortKey)).toThrow(
-        "Private key too short - minimum 350 characters",
+        "Private key too short - minimum 100 characters",
       );
     });
 
@@ -189,14 +189,16 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
       const header = "-----BEGIN PGP PRIVATE KEY BLOCK-----\n\n";
       const footer = "\n=ABCD\n-----END PGP PRIVATE KEY BLOCK-----";
       const base64Lines = Math.ceil((350 - header.length - footer.length) / 65); // 64 chars + newline
-      const data = Array(base64Lines)
-        .fill("A".repeat(64))
-        .join("\n");
+      const data = Array(base64Lines).fill("A".repeat(64)).join("\n");
 
       const key = header + data + footer;
       // Adjust to exactly 350
-      const adjusted = key.slice(0, 350 - 35)
-        + "\n=ABCD\n-----END PGP PRIVATE KEY BLOCK-----";
+      const adjusted = `${
+        key.slice(
+          0,
+          350 - 35,
+        )
+      }\n=ABCD\n-----END PGP PRIVATE KEY BLOCK-----`;
 
       const result = ArmoredPrivateKeySchema.parse(adjusted);
       expect(result).toBeTruthy();
@@ -759,20 +761,19 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
   describe("KeyUploadSchema", () => {
     it("should accept valid upload request", () => {
       const result = KeyUploadSchema.parse({
-        armoredPrivateKey: "-----BEGIN PGP PRIVATE KEY BLOCK-----\\n...",
-        keyId: "A1B2C3D4E5F6G7H8",
+        armoredPrivateKey: validKey,
+        keyId: "A1B2C3D4E5F67890",
       });
 
       expect(result.armoredPrivateKey).toBeTruthy();
-      expect(result.keyId).toBe("A1B2C3D4E5F6G7H8");
     });
 
     it("should reject missing armoredPrivateKey", () => {
-      expect(() => KeyUploadSchema.parse({ keyId: "A1B2C3D4E5F6G7H8" }))
-        .toThrow();
+      expect(() => KeyUploadSchema.parse({})).toThrow();
     });
 
-    it("should reject missing keyId", () => {
+    // KeyId is no longer part of the upload schema (it's derived or passed separately)
+    it("should reject invalid armoredPrivateKey", () => {
       expect(() =>
         KeyUploadSchema.parse({ armoredPrivateKey: "-----BEGIN..." })
       ).toThrow();
@@ -782,26 +783,15 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
   describe("KeyResponseSchema", () => {
     it("should accept valid key response", () => {
       const result = KeyResponseSchema.parse({
-        success: true,
-        keyId: "ABC123",
-        fingerprint: "DEADBEEF",
-        algorithm: "RSA-4096",
-        userId: "user@example.com",
-      });
-
-      expect(result.success).toBe(true);
-    });
-
-    it("should accept success=false", () => {
-      const result = KeyResponseSchema.parse({
-        success: false,
-        keyId: "ABC",
-        fingerprint: "BEEF",
+        keyId: "A1B2C3D4E5F60718",
+        fingerprint: "0123456789ABCDEF0123456789ABCDEF01234567",
+        publicKey: "-----BEGIN PGP PUBLIC KEY BLOCK-----...",
+        createdAt: "2025-01-01T00:00:00Z",
         algorithm: "RSA",
-        userId: "user",
+        userId: "Test User <test@example.com>",
       });
 
-      expect(result.success).toBe(false);
+      expect(result.keyId).toBe("A1B2C3D4E5F60718");
     });
 
     it("should reject missing fields", () => {

@@ -11,7 +11,9 @@ try {
   const bytes = await Bun.write(output, JSON.stringify(doc, null, 2));
   console.log(
     `OpenAPI spec generated at ${output.name} (${
-      (bytes / 1024).toFixed(2)
+      (bytes / 1024).toFixed(
+        2,
+      )
     } KB)`,
   );
 } catch (error) {

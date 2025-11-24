@@ -5,6 +5,8 @@ import {
   PublicKeyQuerySchema,
   RateLimitErrorSchema,
   RequestHeadersSchema,
+  SignRequestSchema,
+  SignResponseSchema,
 } from "~/schemas";
 import type {
   ErrorCode,
@@ -30,10 +32,7 @@ const signRoute = createRoute({
     body: {
       content: {
         "text/plain": {
-          schema: z.string().min(1).openapi({
-            example:
-              "tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147\nparent ...",
-          }),
+          schema: SignRequestSchema,
         },
       },
       required: true,
@@ -45,9 +44,7 @@ const signRoute = createRoute({
     200: {
       content: {
         "text/plain": {
-          schema: z.string().openapi({
-            example: "-----BEGIN PGP SIGNATURE-----\n...",
-          }),
+          schema: SignResponseSchema,
         },
       },
       description: "PGP Signature",

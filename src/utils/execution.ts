@@ -16,7 +16,16 @@ export async function scheduleBackgroundTask(
   promise: Promise<unknown>,
 ): Promise<void> {
   const taskWithErrorHandling = promise.catch((error) => {
+    console.log("DEBUG: scheduleBackgroundTask catch block entered", {
+      requestId,
+      error,
+    });
     console.error("Background task failed:", { requestId, error });
+  });
+
+  console.log("DEBUG: scheduleBackgroundTask called", {
+    requestId,
+    hasExecutionCtx: !!ctx.executionCtx,
   });
 
   if (ctx.executionCtx) {

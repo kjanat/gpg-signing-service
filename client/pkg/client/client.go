@@ -145,7 +145,7 @@ func (c *Client) PublicKey(ctx context.Context, keyID string) (string, error) {
 
 	if resp.JSON404 != nil {
 		return "", &ServiceError{
-			Code:       resp.JSON404.Code,
+			Code:       string(resp.JSON404.Code),
 			Message:    resp.JSON404.Error,
 			StatusCode: 404,
 		}
@@ -153,7 +153,7 @@ func (c *Client) PublicKey(ctx context.Context, keyID string) (string, error) {
 
 	if resp.JSON500 != nil {
 		return "", &ServiceError{
-			Code:       resp.JSON500.Code,
+			Code:       string(resp.JSON500.Code),
 			Message:    resp.JSON500.Error,
 			StatusCode: 500,
 		}
@@ -212,14 +212,14 @@ func (c *Client) Sign(ctx context.Context, commitData string, keyID string) (*Si
 
 	if resp.JSON400 != nil {
 		return nil, &ValidationError{
-			Code:    resp.JSON400.Code,
+			Code:    string(resp.JSON400.Code),
 			Message: resp.JSON400.Error,
 		}
 	}
 
 	if resp.JSON404 != nil {
 		return nil, &ServiceError{
-			Code:       resp.JSON404.Code,
+			Code:       string(resp.JSON404.Code),
 			Message:    resp.JSON404.Error,
 			StatusCode: 404,
 		}
@@ -242,7 +242,7 @@ func (c *Client) Sign(ctx context.Context, commitData string, keyID string) (*Si
 			statusCode = 503
 		}
 		return nil, &ServiceError{
-			Code:       errResp.Code,
+			Code:       string(errResp.Code),
 			Message:    errResp.Error,
 			StatusCode: statusCode,
 		}
@@ -267,7 +267,6 @@ func (c *Client) UploadKey(ctx context.Context, keyID string, armoredPrivateKey 
 	}
 
 	body := api.PostAdminKeysJSONRequestBody{
-		KeyId:             keyID,
 		ArmoredPrivateKey: armoredPrivateKey,
 	}
 
@@ -285,8 +284,6 @@ func (c *Client) UploadKey(ctx context.Context, keyID string, armoredPrivateKey 
 		return &KeyInfo{
 			KeyID:       resp.JSON201.KeyId,
 			Fingerprint: resp.JSON201.Fingerprint,
-			Algorithm:   resp.JSON201.Algorithm,
-			UserID:      resp.JSON201.UserId,
 		}, nil
 	}
 
@@ -298,7 +295,7 @@ func (c *Client) UploadKey(ctx context.Context, keyID string, armoredPrivateKey 
 			statusCode = 500
 		}
 		return nil, &ServiceError{
-			Code:       errResp.Code,
+			Code:       string(errResp.Code),
 			Message:    errResp.Error,
 			StatusCode: statusCode,
 		}
@@ -334,7 +331,7 @@ func (c *Client) ListKeys(ctx context.Context) ([]KeyMetadata, error) {
 
 	if resp.JSON500 != nil {
 		return nil, &ServiceError{
-			Code:       resp.JSON500.Code,
+			Code:       string(resp.JSON500.Code),
 			Message:    resp.JSON500.Error,
 			StatusCode: 500,
 		}
@@ -368,7 +365,7 @@ func (c *Client) DeleteKey(ctx context.Context, keyID string) error {
 
 	if resp.JSON500 != nil {
 		return &ServiceError{
-			Code:       resp.JSON500.Code,
+			Code:       string(resp.JSON500.Code),
 			Message:    resp.JSON500.Error,
 			StatusCode: 500,
 		}
@@ -396,12 +393,10 @@ func (c *Client) AuditLogs(ctx context.Context, filter AuditFilter) (*AuditResul
 		params.Subject = &filter.Subject
 	}
 	if !filter.StartDate.IsZero() {
-		startDateStr := filter.StartDate.Format(time.RFC3339)
-		params.StartDate = &startDateStr
+		params.StartDate = &filter.StartDate
 	}
 	if !filter.EndDate.IsZero() {
-		endDateStr := filter.EndDate.Format(time.RFC3339)
-		params.EndDate = &endDateStr
+		params.EndDate = &filter.EndDate
 	}
 
 	var resp *api.GetAdminAuditResponse
@@ -421,6 +416,11 @@ func (c *Client) AuditLogs(ctx context.Context, filter AuditFilter) (*AuditResul
 			if l.Metadata != nil {
 				metadata = json.RawMessage(*l.Metadata)
 			}
+			var errorCode *string
+			if l.ErrorCode != nil {
+				code := string(*l.ErrorCode)
+				errorCode = &code
+			}
 			logs[i] = AuditLog{
 				ID:        l.Id,
 				Timestamp: parseTimestamp(l.Timestamp),
@@ -430,7 +430,7 @@ func (c *Client) AuditLogs(ctx context.Context, filter AuditFilter) (*AuditResul
 				Subject:   l.Subject,
 				KeyID:     l.KeyId,
 				Success:   l.Success,
-				ErrorCode: l.ErrorCode,
+				ErrorCode: errorCode,
 				Metadata:  metadata,
 			}
 		}
@@ -449,7 +449,7 @@ func (c *Client) AuditLogs(ctx context.Context, filter AuditFilter) (*AuditResul
 			statusCode = 500
 		}
 		return nil, &ServiceError{
-			Code:       errResp.Code,
+			Code:       string(errResp.Code),
 			Message:    errResp.Error,
 			StatusCode: statusCode,
 		}
@@ -483,7 +483,7 @@ func (c *Client) AdminPublicKey(ctx context.Context, keyID string) (string, erro
 
 	if resp.JSON404 != nil {
 		return "", &ServiceError{
-			Code:       resp.JSON404.Code,
+			Code:       string(resp.JSON404.Code),
 			Message:    resp.JSON404.Error,
 			StatusCode: 404,
 		}
@@ -491,7 +491,7 @@ func (c *Client) AdminPublicKey(ctx context.Context, keyID string) (string, erro
 
 	if resp.JSON500 != nil {
 		return "", &ServiceError{
-			Code:       resp.JSON500.Code,
+			Code:       string(resp.JSON500.Code),
 			Message:    resp.JSON500.Error,
 			StatusCode: 500,
 		}

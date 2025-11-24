@@ -92,9 +92,7 @@ describe("Durable Object Helpers", () => {
         },
       } as unknown as Env;
 
-      await expect(fetchKeyStorage(env, "/test")).rejects.toThrow(
-        "Name error",
-      );
+      await expect(fetchKeyStorage(env, "/test")).rejects.toThrow("Name error");
     });
 
     it("should handle null stub from get()", async () => {
@@ -371,10 +369,9 @@ describe("Durable Object Helpers", () => {
     });
 
     it("should throw on 503 Service Unavailable", async () => {
-      const response = new Response(
-        JSON.stringify({ error: "Service down" }),
-        { status: 503 },
-      );
+      const response = new Response(JSON.stringify({ error: "Service down" }), {
+        status: 503,
+      });
 
       await expect(parseDOResponse(response, (d) => d)).rejects.toThrow(
         "Service down",
@@ -382,10 +379,9 @@ describe("Durable Object Helpers", () => {
     });
 
     it("should throw on 400 Bad Request", async () => {
-      const response = new Response(
-        JSON.stringify({ error: "Bad input" }),
-        { status: 400 },
-      );
+      const response = new Response(JSON.stringify({ error: "Bad input" }), {
+        status: 400,
+      });
 
       await expect(parseDOResponse(response, (d) => d)).rejects.toThrow(
         "Bad input",
@@ -401,9 +397,9 @@ describe("Durable Object Helpers", () => {
         throw new Error("Parser validation failed");
       };
 
-      await expect(
-        parseDOResponse(response, strictParser),
-      ).rejects.toThrow("Parser validation failed");
+      await expect(parseDOResponse(response, strictParser)).rejects.toThrow(
+        "Parser validation failed",
+      );
     });
 
     it("should handle malformed JSON", async () => {
@@ -448,10 +444,9 @@ describe("Durable Object Helpers", () => {
     });
 
     it("should handle 401 Unauthorized", async () => {
-      const response = new Response(
-        JSON.stringify({ error: "Unauthorized" }),
-        { status: 401 },
-      );
+      const response = new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+      });
 
       await expect(parseDOResponse(response, (d) => d)).rejects.toThrow(
         "Unauthorized",
@@ -459,10 +454,9 @@ describe("Durable Object Helpers", () => {
     });
 
     it("should handle 429 Too Many Requests", async () => {
-      const response = new Response(
-        JSON.stringify({ error: "Rate limited" }),
-        { status: 429 },
-      );
+      const response = new Response(JSON.stringify({ error: "Rate limited" }), {
+        status: 429,
+      });
 
       await expect(parseDOResponse(response, (d) => d)).rejects.toThrow(
         "Rate limited",
@@ -525,9 +519,9 @@ describe("Durable Object Helpers", () => {
         return obj;
       };
 
-      await expect(
-        parseDOResponse(response, parser),
-      ).rejects.toThrow("id must be string");
+      await expect(parseDOResponse(response, parser)).rejects.toThrow(
+        "id must be string",
+      );
     });
   });
 
@@ -550,10 +544,7 @@ describe("Durable Object Helpers", () => {
         },
       } as unknown as Env;
 
-      const response = await fetchKeyStorage(
-        env,
-        "/get-key?keyId=ABC123",
-      );
+      const response = await fetchKeyStorage(env, "/get-key?keyId=ABC123");
 
       const result = await parseDOResponse(response, (d) => d);
       expect(result).toEqual(keyData);

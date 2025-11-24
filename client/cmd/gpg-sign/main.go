@@ -313,10 +313,6 @@ var adminUploadCmd = &cobra.Command{
 		fmt.Printf("Key uploaded successfully\n")
 		fmt.Printf("  Key ID: %s\n", result.KeyID)
 		fmt.Printf("  Fingerprint: %s\n", result.Fingerprint)
-		fmt.Printf("  Algorithm: %s\n", result.Algorithm)
-		if result.UserID != "" {
-			fmt.Printf("  User ID: %s\n", result.UserID)
-		}
 
 		return nil
 	},

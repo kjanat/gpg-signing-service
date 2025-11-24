@@ -30,8 +30,6 @@ type SignResult struct {
 type KeyInfo struct {
 	KeyID       string
 	Fingerprint string
-	Algorithm   string
-	UserID      string
 }
 
 // KeyMetadata represents key listing information.

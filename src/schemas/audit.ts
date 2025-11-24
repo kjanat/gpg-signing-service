@@ -30,20 +30,22 @@ export const DateRangeSchema = z
 /**
  * Audit query parameters schema
  */
-export const AuditQuerySchema = z.object({
-  limit: z.coerce
-    .number()
-    .int()
-    .min(1)
-    .max(1000)
-    .default(100)
-    .openapi({ example: 100 }),
-  offset: z.coerce.number().int().min(0).default(0).openapi({ example: 0 }),
-  action: z.string().optional(),
-  subject: z.string().optional(),
-  startDate: TimestampSchema.optional(),
-  endDate: TimestampSchema.optional(),
-});
+export const AuditQuerySchema = z
+  .object({
+    limit: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(1000)
+      .default(100)
+      .openapi({ example: 100 }),
+    offset: z.coerce.number().int().min(0).default(0).openapi({ example: 0 }),
+    action: z.string().optional(),
+    subject: z.string().optional(),
+    startDate: TimestampSchema.optional(),
+    endDate: TimestampSchema.optional(),
+  })
+  .openapi("AuditQuery");
 
 /**
  * Audit action types

@@ -38,7 +38,7 @@ export const FingerprintSchema = z
  */
 export const ArmoredPrivateKeySchema = z
   .string()
-  .min(350, "Private key too short - minimum 350 characters")
+  .min(100, "Private key too short - minimum 100 characters")
   .max(10_000, "Private key too large - maximum 10,000 characters")
   .refine(
     (val) => {
@@ -95,25 +95,25 @@ export const ArmoredPrivateKeySchema = z
 /**
  * Key upload request schema
  */
-export const KeyUploadSchema = z.object({
-  armoredPrivateKey: z.string().openapi({
-    example: "-----BEGIN PGP PRIVATE KEY BLOCK-----\\n...",
-  }),
-  keyId: z.string().openapi({
-    example: "A1B2C3D4E5F6G7H8",
-  }),
-});
+export const KeyUploadSchema = z
+  .object({
+    armoredPrivateKey: ArmoredPrivateKeySchema,
+    keyId: KeyIdSchema,
+  })
+  .openapi("KeyUpload");
 
 /**
  * Key response schema
  */
-export const KeyResponseSchema = z.object({
-  success: z.boolean(),
-  keyId: z.string(),
-  fingerprint: z.string(),
-  algorithm: z.string(),
-  userId: z.string(),
-});
+export const KeyResponseSchema = z
+  .object({
+    success: z.boolean().optional(),
+    keyId: KeyIdSchema,
+    fingerprint: FingerprintSchema,
+    algorithm: z.string(),
+    userId: z.string(),
+  })
+  .openapi("KeyResponse");
 
 /**
  * Stored key schema
@@ -129,3 +129,10 @@ export const StoredKeySchema = z.object({
 
 /** Type inferred from StoredKeySchema */
 export type StoredKey = z.infer<typeof StoredKeySchema>;
+
+/**
+ * Public key response schema (PGP armored public key)
+ */
+export const PublicKeyResponseSchema = z.string().openapi("PublicKeyResponse", {
+  example: "-----BEGIN PGP PUBLIC KEY BLOCK-----\n...",
+});

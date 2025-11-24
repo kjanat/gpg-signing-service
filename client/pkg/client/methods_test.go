@@ -229,9 +229,6 @@ func TestUploadKey(t *testing.T) {
 				if info.KeyID != "key-123" {
 					t.Errorf("expected KeyID 'key-123', got %q", info.KeyID)
 				}
-				if info.Algorithm != "RSA" {
-					t.Errorf("expected Algorithm 'RSA', got %q", info.Algorithm)
-				}
 			},
 		},
 	}

@@ -95,7 +95,9 @@ describe("Sign Route", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     // Mock cache to return null by default (cache miss)
-    vi.spyOn(env.JWKS_CACHE, "get").mockResolvedValue(null as any);
+    vi.spyOn(env.JWKS_CACHE, "get").mockResolvedValue(
+      null as unknown as Map<string, unknown>,
+    );
     // Set allowed origins to ensure consistent behavior
     env.ALLOWED_ORIGINS = "https://allowed.com";
   });
@@ -241,9 +243,10 @@ describe("Sign Route", () => {
 
       // Mock rate limiter fetch to return 500
       const originalGet = env.RATE_LIMITER.get;
-      env.RATE_LIMITER.get = () => ({
-        fetch: async () => new Response("Internal Error", { status: 500 }),
-      } as unknown as DurableObjectStub);
+      env.RATE_LIMITER.get = () =>
+        ({
+          fetch: async () => new Response("Internal Error", { status: 500 }),
+        }) as unknown as DurableObjectStub;
 
       try {
         const response = await makeRequest("/sign", {
@@ -266,14 +269,17 @@ describe("Sign Route", () => {
 
       // Mock rate limiter to return not allowed
       const originalGet = env.RATE_LIMITER.get;
-      env.RATE_LIMITER.get = () => ({
-        fetch: async () =>
-          new Response(JSON.stringify({
-            allowed: false,
-            remaining: 0,
-            resetAt: Date.now() + 60000,
-          })),
-      } as unknown as DurableObjectStub);
+      env.RATE_LIMITER.get = () =>
+        ({
+          fetch: async () =>
+            new Response(
+              JSON.stringify({
+                allowed: false,
+                remaining: 0,
+                resetAt: Date.now() + 60000,
+              }),
+            ),
+        }) as unknown as DurableObjectStub;
 
       try {
         const response = await makeRequest("/sign", {
@@ -313,12 +319,15 @@ describe("Sign Route", () => {
       // If we return a key that `readPrivateKey` fails on, it might throw.
 
       const originalGet = env.KEY_STORAGE.get;
-      env.KEY_STORAGE.get = () => ({
-        fetch: async () =>
-          new Response(JSON.stringify({
-            armoredPrivateKey: "invalid-key-data",
-          })),
-      } as unknown as DurableObjectStub);
+      env.KEY_STORAGE.get = () =>
+        ({
+          fetch: async () =>
+            new Response(
+              JSON.stringify({
+                armoredPrivateKey: "invalid-key-data",
+              }),
+            ),
+        }) as unknown as DurableObjectStub;
 
       try {
         const response = await makeRequest("/sign?keyId=generic-error-key", {
@@ -342,9 +351,10 @@ describe("Sign Route", () => {
       // Mock KEY_STORAGE to throw a string
       const originalGet = env.KEY_STORAGE.get;
       const mockFetch = vi.fn().mockRejectedValue("String error");
-      env.KEY_STORAGE.get = () => ({
-        fetch: mockFetch,
-      } as unknown as DurableObjectStub);
+      env.KEY_STORAGE.get = () =>
+        ({
+          fetch: mockFetch,
+        }) as unknown as DurableObjectStub;
 
       try {
         const response = await makeRequest("/sign?keyId=8888888888888888", {
@@ -366,12 +376,13 @@ describe("Sign Route", () => {
 
       // Mock KEY_STORAGE to return 500 with explicit error
       const originalGet = env.KEY_STORAGE.get;
-      env.KEY_STORAGE.get = () => ({
-        fetch: async () =>
-          new Response(JSON.stringify({ error: "Upstream failure" }), {
-            status: 500,
-          }),
-      } as unknown as DurableObjectStub);
+      env.KEY_STORAGE.get = () =>
+        ({
+          fetch: async () =>
+            new Response(JSON.stringify({ error: "Upstream failure" }), {
+              status: 500,
+            }),
+        }) as unknown as DurableObjectStub;
 
       try {
         const response = await makeRequest("/sign?keyId=9999999999999999", {
@@ -408,7 +419,7 @@ describe("Sign Route", () => {
       );
 
       const ctx = createExecutionContext();
-      const response = await app.fetch(
+      await app.fetch(
         new Request(`http://localhost/sign?keyId=${keyId}`, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
@@ -445,7 +456,7 @@ describe("Sign Route", () => {
       );
 
       const ctx = createExecutionContext();
-      const response = await app.fetch(
+      await app.fetch(
         new Request("http://localhost/sign?keyId=NONEXISTENT123", {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
