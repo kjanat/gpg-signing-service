@@ -151,7 +151,6 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
   try {
     ({ payload: verifiedPayload } = await jwtVerify(token, JWKS, {
       issuer: allowedIssuers,
-      audience: expectedAudience,
       algorithms: ALLOWED_ALGORITHMS,
       clockTolerance: "60s", // Allow for 60 seconds of clock skew
     }));

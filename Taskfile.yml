@@ -154,4 +154,5 @@ tasks:
 
   install:
     desc: Install dependencies
+    silent: true
     cmd: bun install
