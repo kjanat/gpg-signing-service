@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 /// <reference types="bun" />
+
 import app from "gpg-signing-service";
 import { openApiConfig } from "~/lib/openapi";
 

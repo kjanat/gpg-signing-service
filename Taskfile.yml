@@ -38,26 +38,31 @@ tasks:
   test:
     desc: Run tests
     aliases: [t]
+    deps: [install]
     cmd: bunx vitest run
 
   test:coverage:
     desc: Run tests with coverage
     aliases: [tc]
+    deps: [install]
     cmd: bunx vitest run --coverage
 
   test:watch:
     desc: Run tests in watch mode
     aliases: [tw]
+    deps: [install]
     cmd: bunx vitest
 
   lint:
     desc: Lint code
     aliases: [l]
+    deps: [install]
     cmd: bunx eslint src/
 
   lint:fix:
     desc: Lint and fix code
     aliases: [lf]
+    deps: [install]
     cmd: bunx eslint src/ --fix
 
   format:
@@ -73,6 +78,7 @@ tasks:
     silent: true
     desc: Check code formatting
     aliases: [fc]
+    deps: [install]
     env:
       CONFIG: "{{.DPRINT_CONFIG}}"
       DPRINT_CONFIG_DISCOVERY: "false"
@@ -81,6 +87,7 @@ tasks:
   typecheck:
     desc: Typecheck code
     aliases: [ts, type, tsc, tsgo]
+    deps: [install]
     sources:
       - "**/*.ts"
     cmds:
@@ -89,6 +96,7 @@ tasks:
   typegen:
     desc: Generate Worker types
     aliases: [tg]
+    deps: [install]
     generates:
       - ./worker-configuration.d.ts
     cmd: bunx wrangler types
@@ -96,6 +104,7 @@ tasks:
   generate:api:
     desc: Generate OpenAPI spec and client
     aliases: [gapi]
+    deps: [install]
     sources:
       - "**/*.ts"
     cmds:
@@ -142,3 +151,7 @@ tasks:
       - bunx wrangler kv namespace list | jq -e 'map(.title) | contains(["{{.KV_NAMESPACE}}"])'
     cmds:
       - bunx wrangler kv namespace create {{.KV_NAMESPACE}}
+
+  install:
+    desc: Install dependencies
+    cmd: bun install
