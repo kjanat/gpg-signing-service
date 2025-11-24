@@ -73,7 +73,7 @@ describe("Coverage Tests", () => {
       const originalDelete = env.KEY_STORAGE.get;
       env.KEY_STORAGE.get = () => {
         // Return something that will break when trying to call methods
-        return null as any;
+        return null as unknown as DurableObjectStub;
       };
 
       try {

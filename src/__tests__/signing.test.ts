@@ -82,7 +82,7 @@ describe("parseAndValidateKey", () => {
       getKeyID: () => ({ toHex: () => "A1B2C3D4E5F67890" }),
       getUserIDs: () => ["User"],
       isDecrypted: () => true,
-    } as unknown as any);
+    } as unknown as openpgp.PrivateKey);
 
     try {
       const info = await parseAndValidateKey(privateKey);
@@ -102,7 +102,7 @@ describe("parseAndValidateKey", () => {
       getKeyID: () => ({ toHex: () => "A1B2C3D4E5F67890" }),
       getUserIDs: () => [],
       isDecrypted: () => true,
-    } as unknown as any);
+    } as unknown as openpgp.PrivateKey);
 
     const info = await parseAndValidateKey(privateKey);
     expect(info.userId).toBe("Unknown");

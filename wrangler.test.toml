@@ -38,6 +38,8 @@ custom_domain = true
 
 # Environment variables for testing
 [vars]
+BUN_VERSION = "1.3.3"
+# SKIP_DEPENDENCY_INSTALL = "1"
 ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com,https://token.actions.githubusercontent.com/unique-test-issuer"
 KEY_ID = "62E75E54497815DD"
 ADMIN_TOKEN = "test-admin-token"

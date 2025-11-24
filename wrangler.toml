@@ -1,4 +1,5 @@
-#:schema node_modules/wrangler/config-schema.json
+#:schema ./node_modules/wrangler/config-schema.json
+# https://www.unpkg.com/wrangler/config-schema.json
 
 name = "gpg-signing-service"
 main = "src/index.ts"
@@ -55,6 +56,8 @@ custom_domain = true
 # # Note: Use secrets to store sensitive data.
 # # https://developers.cloudflare.com/workers/configuration/secrets/
 [vars]
+BUN_VERSION = "1.3.3"
+# SKIP_DEPENDENCY_INSTALL = "1"
 ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com"
 KEY_ID = "62E75E54497815DD"
 

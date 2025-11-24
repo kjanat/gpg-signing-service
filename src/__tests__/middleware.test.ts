@@ -5,7 +5,15 @@ import {
 } from "cloudflare:test";
 import app from "gpg-signing-service";
 import * as jose from "jose";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 const parseJson = async <T>(response: Response): Promise<T> =>
   (await response.json()) as T;
@@ -124,14 +132,31 @@ describe("Security Headers Middleware", () => {
   });
 
   describe("OIDC Token Validation", () => {
+    beforeAll(async () => {
+      // Clean up real KV cache to prevent test pollution from other test files (e.g. sign.test.ts)
+      await env.JWKS_CACHE.delete(
+        "jwks:https://token.actions.githubusercontent.com",
+      );
+      await env.JWKS_CACHE.delete(
+        "jwks:https://token.actions.githubusercontent.com/unique-test-issuer",
+      );
+    });
+
     beforeEach(() => {
       vi.resetAllMocks();
       // Mock cache to return null by default (cache miss)
-      vi.spyOn(env.JWKS_CACHE, "get").mockResolvedValue(null as any);
+      // Real KV is isolated and empty by default, so we don't need to mock it for cache misses
     });
 
-    afterEach(() => {
+    afterEach(async () => {
       vi.resetAllMocks();
+      // Clean up real KV cache to prevent test pollution
+      await env.JWKS_CACHE.delete(
+        "jwks:https://token.actions.githubusercontent.com",
+      );
+      await env.JWKS_CACHE.delete(
+        "jwks:https://token.actions.githubusercontent.com/unique-test-issuer",
+      );
     });
 
     async function setupJWKSMock(
@@ -156,6 +181,11 @@ describe("Security Headers Middleware", () => {
     }
 
     it("should reject key not intended for signatures", async () => {
+      // Clean up cache to ensure no pollution
+      await env.JWKS_CACHE.delete(
+        "jwks:https://token.actions.githubusercontent.com",
+      );
+
       const { publicKey } = await jose.generateKeyPair("ES256");
       const issuer = "https://token.actions.githubusercontent.com";
       const kid = "enc-key";
@@ -521,7 +551,7 @@ describe("Security Headers Middleware", () => {
 
     async function createToken(
       claims: object = {},
-      keyPair?: any,
+      keyPair?: jose.GenerateKeyPairResult,
       alg: string = "ES256",
       kid: string = "test-key",
     ) {
@@ -547,13 +577,11 @@ describe("Security Headers Middleware", () => {
       jwk.kid = "test-key-RS256";
       jwk.use = "sig";
 
-      // Mock cache
-      const mockCache = {
-        get: vi.fn().mockResolvedValue({ keys: [jwk] }),
-        put: vi.fn(),
-        delete: vi.fn(),
-        list: vi.fn(),
-      };
+      // Use real KV for this test
+      await env.JWKS_CACHE.put(
+        "jwks:https://token.actions.githubusercontent.com",
+        JSON.stringify({ keys: [jwk] }),
+      );
 
       const response = await makeRequest(
         "/sign",
@@ -562,7 +590,7 @@ describe("Security Headers Middleware", () => {
           headers: { Authorization: `Bearer ${token}` },
           body: "commit data",
         },
-        { JWKS_CACHE: mockCache as any },
+        // No custom env needed, using real (isolated) KV
       );
 
       // 404 means OIDC passed (using cached key) and it reached the route
@@ -582,6 +610,11 @@ describe("Security Headers Middleware", () => {
     });
 
     it("should accept token with array audience containing correct audience", async () => {
+      // Clean up cache to ensure no pollution
+      await env.JWKS_CACHE.delete(
+        "jwks:https://token.actions.githubusercontent.com",
+      );
+
       const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
       const issuer = "https://token.actions.githubusercontent.com";
       const kid = "test-key";
@@ -590,7 +623,7 @@ describe("Security Headers Middleware", () => {
 
       const token = await createToken(
         { aud: ["other-service", "gpg-signing-service"] },
-        { privateKey },
+        { privateKey, publicKey },
         "ES256",
         kid,
       );
@@ -601,16 +634,12 @@ describe("Security Headers Middleware", () => {
         body: "commit data",
       });
       // 404 means OIDC passed
-      if (response.status === 401) {
-        const body = await parseJson<unknown>(response);
-        console.error("OIDC Array Audience Test Failed:", body);
-      }
       expect(response.status).toBe(404);
     });
 
     it("should handle non-Error exceptions during validation", async () => {
-      const { privateKey } = await jose.generateKeyPair("ES256");
-      const token = await createToken({}, { privateKey });
+      const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+      const token = await createToken({}, { privateKey, publicKey });
 
       // Mock JWKS_CACHE to throw a string
       vi.spyOn(env.JWKS_CACHE, "get").mockRejectedValue("String error");
@@ -631,6 +660,11 @@ describe("Security Headers Middleware", () => {
 
       for (const alg of algorithms) {
         it(`should support ${alg} algorithm`, async () => {
+          // Clean up cache from previous iteration
+          await env.JWKS_CACHE.delete(
+            "jwks:https://token.actions.githubusercontent.com",
+          );
+
           // Generate key pair for the algorithm
           const { privateKey, publicKey } = await jose.generateKeyPair(alg);
           const jwk = await jose.exportJWK(publicKey);
