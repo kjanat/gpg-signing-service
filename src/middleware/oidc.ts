@@ -69,14 +69,18 @@ async function timingSafeEqual(a: string, b: string): Promise<boolean> {
   const aBytes = encoder.encode(a);
   const bBytes = encoder.encode(b);
 
-  // If lengths differ, compare against dummy to maintain constant time
-  if (aBytes.length !== bBytes.length) {
-    const dummy = encoder.encode("0".repeat(aBytes.length));
-    crypto.subtle.timingSafeEqual(aBytes, dummy);
-    return false;
-  }
+  // Pad shorter value to match longer length for constant-time comparison
+  const maxLen = Math.max(aBytes.length, bBytes.length);
+  const aPadded = new Uint8Array(maxLen);
+  const bPadded = new Uint8Array(maxLen);
+  aPadded.set(aBytes);
+  bPadded.set(bBytes);
 
-  return crypto.subtle.timingSafeEqual(aBytes, bBytes);
+  // Now compare same-length arrays, then check if original lengths matched
+  const bytesEqual = crypto.subtle.timingSafeEqual(aPadded, bPadded);
+  const lengthsEqual = aBytes.length === bBytes.length;
+
+  return bytesEqual && lengthsEqual;
 }
 
 // Allowed JWT signing algorithms
