@@ -21,6 +21,8 @@ import { TIME } from "~/types/time";
 export const CACHE_TTL = {
   /** JWKS cache duration - balance between freshness and performance */
   JWKS: 5 * TIME.MINUTE, // Could be increased if OIDC provider is highly reliable
+  /** Decrypted key cache duration - balance security exposure vs performance */
+  DECRYPTED_KEY: 5 * TIME.MINUTE, // Short TTL to limit exposure of decrypted keys in memory
 } as const;
 
 // =============================================================================

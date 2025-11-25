@@ -6,24 +6,37 @@ import {
   createKeyFingerprint,
   createKeyId,
 } from "~/types";
+import { DecryptedKeyCache } from "./key-cache";
 
 // Re-export types for convenience
 export type { ParsedKeyInfo, SigningResult };
+
+// Module-level cache instance for decrypted keys
+// Safe in Workers: each isolate has its own instance
+const decryptedKeyCache = new DecryptedKeyCache();
 
 export async function signCommitData(
   commitData: string,
   storedKey: StoredKey,
   passphrase: string,
 ): Promise<SigningResult> {
-  // Read the encrypted private key
-  const privateKey = await openpgp.readPrivateKey({
-    armoredKey: storedKey.armoredPrivateKey,
-  });
+  // Try to get cached decrypted key first
+  let decryptedKey = decryptedKeyCache.get(storedKey.keyId);
 
-  // Decrypt if passphrase protected
-  let decryptedKey = privateKey;
-  if (!privateKey.isDecrypted()) {
-    decryptedKey = await openpgp.decryptKey({ privateKey, passphrase });
+  if (!decryptedKey) {
+    // Cache miss: parse and decrypt the key
+    const privateKey = await openpgp.readPrivateKey({
+      armoredKey: storedKey.armoredPrivateKey,
+    });
+
+    // Decrypt if passphrase protected
+    decryptedKey = privateKey;
+    if (!privateKey.isDecrypted()) {
+      decryptedKey = await openpgp.decryptKey({ privateKey, passphrase });
+    }
+
+    // Cache the decrypted key for future requests
+    decryptedKeyCache.set(storedKey.keyId, decryptedKey);
   }
 
   // Create message from commit data
@@ -111,4 +124,27 @@ export function createStoredKey(
     createdAt: new Date().toISOString(),
     algorithm,
   };
+}
+
+/**
+ * Invalidate a specific key from the decrypted key cache
+ * Call this when a key is rotated or deleted
+ */
+export function invalidateKeyCache(keyId: string): void {
+  decryptedKeyCache.invalidate(keyId);
+}
+
+/**
+ * Clear the entire decrypted key cache
+ * Call this on service restart or security events
+ */
+export function clearKeyCache(): void {
+  decryptedKeyCache.clear();
+}
+
+/**
+ * Get cache statistics for monitoring
+ */
+export function getKeyCacheStats(): { size: number; ttl: number } {
+  return decryptedKeyCache.stats();
 }

@@ -22,7 +22,11 @@ import { getAuditLogs, logAuditEvent } from "~/utils/audit";
 import { fetchKeyStorage } from "~/utils/durable-objects";
 import { scheduleBackgroundTask } from "~/utils/execution";
 import { logger } from "~/utils/logger";
-import { extractPublicKey, parseAndValidateKey } from "~/utils/signing";
+import {
+  extractPublicKey,
+  invalidateKeyCache,
+  parseAndValidateKey,
+} from "~/utils/signing";
 
 const app = createOpenAPIApp();
 
@@ -87,6 +91,9 @@ app.openapi(uploadKeyRoute, async (c) => {
       const error = (await storeResponse.json()) as { error: string };
       throw new Error(error.error || "Failed to store key");
     }
+
+    // Invalidate any cached decrypted key (in case of key rotation/overwrite)
+    invalidateKeyCache(body.keyId);
 
     // Log key upload (non-blocking in production, blocking in tests)
     logger.debug("Scheduling background task for upload success audit", {
@@ -317,6 +324,11 @@ app.openapi(deleteKeyRoute, async (c) => {
       success: boolean;
       deleted: boolean;
     };
+
+    // Invalidate cached decrypted key on deletion
+    if (result.deleted) {
+      invalidateKeyCache(keyId);
+    }
 
     // Log key deletion (non-blocking in production)
     await scheduleBackgroundTask(

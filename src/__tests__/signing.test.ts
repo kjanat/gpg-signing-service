@@ -1,6 +1,6 @@
 /** biome-ignore-all lint/style/noNonNullAssertion: This is a test file */
 import * as openpgp from "openpgp";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { StoredKey } from "~/schemas/keys";
 import {
   createArmoredPrivateKey,
@@ -8,8 +8,11 @@ import {
   createKeyId,
 } from "~/types";
 import {
+  clearKeyCache,
   createStoredKey,
   extractPublicKey,
+  getKeyCacheStats,
+  invalidateKeyCache,
   parseAndValidateKey,
   signCommitData,
 } from "~/utils/signing";
@@ -17,6 +20,12 @@ import {
 vi.mock("openpgp", async (importOriginal) => {
   const actual = await importOriginal<typeof import("openpgp")>();
   return { ...actual, readPrivateKey: vi.fn(actual.readPrivateKey) };
+});
+
+// Clear cache between tests to ensure isolation
+afterEach(() => {
+  clearKeyCache();
+  vi.restoreAllMocks();
 });
 
 // Generate a test key for use in tests
@@ -290,5 +299,184 @@ rxgkrugpagY=
 
     expect(result.createdAt >= before).toBe(true);
     expect(result.createdAt <= after).toBe(true);
+  });
+});
+
+describe("signCommitData caching", () => {
+  it("should cache decrypted key after first signing", async () => {
+    const { privateKey, keyId, fingerprint } = await generateTestKey();
+
+    const storedKey: StoredKey = {
+      armoredPrivateKey: createArmoredPrivateKey(privateKey),
+      keyId: createKeyId(keyId),
+      fingerprint: createKeyFingerprint(fingerprint),
+      createdAt: new Date().toISOString(),
+      algorithm: "EdDSA",
+    };
+
+    // First call - cache miss
+    await signCommitData("commit 1", storedKey, "");
+
+    // Check cache has one entry
+    const stats = getKeyCacheStats();
+    expect(stats.size).toBe(1);
+  });
+
+  it("should reuse cached key on subsequent signing", async () => {
+    const { privateKey, keyId, fingerprint } = await generateTestKey();
+
+    const storedKey: StoredKey = {
+      armoredPrivateKey: createArmoredPrivateKey(privateKey),
+      keyId: createKeyId(keyId),
+      fingerprint: createKeyFingerprint(fingerprint),
+      createdAt: new Date().toISOString(),
+      algorithm: "EdDSA",
+    };
+
+    // Call readPrivateKey spy counter
+    const readKeySpy = vi.mocked(openpgp.readPrivateKey);
+
+    // First call - should parse key
+    await signCommitData("commit 1", storedKey, "");
+    const callsAfterFirst = readKeySpy.mock.calls.length;
+
+    // Second call - should use cache, not parse again
+    await signCommitData("commit 2", storedKey, "");
+    const callsAfterSecond = readKeySpy.mock.calls.length;
+
+    // readPrivateKey should not have been called again
+    expect(callsAfterSecond).toBe(callsAfterFirst);
+  });
+
+  it("should produce valid signatures from cached key", async () => {
+    const { privateKey, publicKey, keyId, fingerprint } =
+      await generateTestKey();
+
+    const storedKey: StoredKey = {
+      armoredPrivateKey: createArmoredPrivateKey(privateKey),
+      keyId: createKeyId(keyId),
+      fingerprint: createKeyFingerprint(fingerprint),
+      createdAt: new Date().toISOString(),
+      algorithm: "EdDSA",
+    };
+
+    // First call populates cache
+    await signCommitData("initial", storedKey, "");
+
+    // Second call uses cache - verify signature is still valid
+    const commitData = "cached signing test";
+    const result = await signCommitData(commitData, storedKey, "");
+
+    // Verify the signature
+    const pubKey = await openpgp.readKey({ armoredKey: publicKey });
+    const message = await openpgp.createMessage({ text: commitData });
+    const signature = await openpgp.readSignature({
+      armoredSignature: result.signature,
+    });
+
+    const verification = await openpgp.verify({
+      message,
+      signature,
+      verificationKeys: pubKey,
+    });
+
+    const firstSignature = verification.signatures[0];
+    expect(firstSignature).toBeDefined();
+    await expect(firstSignature!.verified).resolves.toBeTruthy();
+  });
+});
+
+describe("cache invalidation", () => {
+  it("should invalidate specific key", async () => {
+    const { privateKey, keyId, fingerprint } = await generateTestKey();
+
+    const storedKey: StoredKey = {
+      armoredPrivateKey: createArmoredPrivateKey(privateKey),
+      keyId: createKeyId(keyId),
+      fingerprint: createKeyFingerprint(fingerprint),
+      createdAt: new Date().toISOString(),
+      algorithm: "EdDSA",
+    };
+
+    // Populate cache
+    await signCommitData("test", storedKey, "");
+    expect(getKeyCacheStats().size).toBe(1);
+
+    // Invalidate
+    invalidateKeyCache(keyId);
+    expect(getKeyCacheStats().size).toBe(0);
+  });
+
+  it("should clear all cached keys", async () => {
+    const key1 = await generateTestKey();
+    const key2 = await generateTestKey();
+
+    const storedKey1: StoredKey = {
+      armoredPrivateKey: createArmoredPrivateKey(key1.privateKey),
+      keyId: createKeyId(key1.keyId),
+      fingerprint: createKeyFingerprint(key1.fingerprint),
+      createdAt: new Date().toISOString(),
+      algorithm: "EdDSA",
+    };
+
+    const storedKey2: StoredKey = {
+      armoredPrivateKey: createArmoredPrivateKey(key2.privateKey),
+      keyId: createKeyId(key2.keyId),
+      fingerprint: createKeyFingerprint(key2.fingerprint),
+      createdAt: new Date().toISOString(),
+      algorithm: "EdDSA",
+    };
+
+    // Populate cache with two keys
+    await signCommitData("test1", storedKey1, "");
+    await signCommitData("test2", storedKey2, "");
+    expect(getKeyCacheStats().size).toBe(2);
+
+    // Clear all
+    clearKeyCache();
+    expect(getKeyCacheStats().size).toBe(0);
+  });
+
+  it("should re-parse key after invalidation", async () => {
+    const { privateKey, keyId, fingerprint } = await generateTestKey();
+
+    const storedKey: StoredKey = {
+      armoredPrivateKey: createArmoredPrivateKey(privateKey),
+      keyId: createKeyId(keyId),
+      fingerprint: createKeyFingerprint(fingerprint),
+      createdAt: new Date().toISOString(),
+      algorithm: "EdDSA",
+    };
+
+    const readKeySpy = vi.mocked(openpgp.readPrivateKey);
+
+    // First call - parses key
+    await signCommitData("commit 1", storedKey, "");
+    const callsAfterFirst = readKeySpy.mock.calls.length;
+
+    // Invalidate cache
+    invalidateKeyCache(keyId);
+
+    // Next call should parse again
+    await signCommitData("commit 2", storedKey, "");
+    const callsAfterInvalidation = readKeySpy.mock.calls.length;
+
+    expect(callsAfterInvalidation).toBeGreaterThan(callsAfterFirst);
+  });
+});
+
+describe("getKeyCacheStats", () => {
+  it("should return cache statistics", async () => {
+    const stats = getKeyCacheStats();
+    expect(stats).toHaveProperty("size");
+    expect(stats).toHaveProperty("ttl");
+    expect(typeof stats.size).toBe("number");
+    expect(typeof stats.ttl).toBe("number");
+  });
+
+  it("should report correct TTL", () => {
+    const stats = getKeyCacheStats();
+    // Default TTL is 5 minutes (300000 ms)
+    expect(stats.ttl).toBe(5 * 60 * 1000);
   });
 });
