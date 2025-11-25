@@ -205,12 +205,28 @@ This ensures the client is always in sync with the server API.
 
 ## License
 
-Dual-licensed under your choice of [MIT](LICENSE-MIT) or [AGPL-3.0](LICENSE-AGPL-3.0).
+**Dual licensed**: MIT OR AGPL-3.0 ([LICENSE-MIT](LICENSE-MIT) · [LICENSE-AGPL-3.0](LICENSE-AGPL-3.0))
 
-See [LICENSE.md](LICENSE.md) for details:
+<details>
+<summary><b>Which license applies?</b></summary>
 
-- **Private/personal use**: MIT License
-- **Commercial/business use**: AGPL-3.0
+**Use MIT** for:
+
+- Personal/private use
+- Internal company projects (not exposed externally)
+- Self-hosting for private use
+
+**Use AGPL-3.0** for:
+
+- Commercial/business use
+- Providing as a service to external users
+- Running on publicly accessible servers
+
+**AGPL-3.0 requires**: Making complete source code (including modifications) available to network users.
+
+**SPDX**: `AGPL-3.0-only OR MIT`
+
+</details>
 
 <!-- link definitions -->
 
