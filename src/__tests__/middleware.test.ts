@@ -19,12 +19,17 @@ const parseJson = async <T>(response: Response): Promise<T> =>
   (await response.json()) as T;
 
 // Mock fetch for JWKS
-const { middlewareFetchMock } = vi.hoisted(() => ({
+const { middlewareFetchMock, validateUrlMock } = vi.hoisted(() => ({
   middlewareFetchMock: vi.fn(),
+  validateUrlMock: vi.fn(),
 }));
 
 vi.mock("~/utils/fetch", () => ({
   fetchWithTimeout: middlewareFetchMock,
+}));
+
+vi.mock("~/utils/url-validation", () => ({
+  validateUrl: validateUrlMock,
 }));
 
 // Mock audit logging to avoid database errors in tests
@@ -50,6 +55,10 @@ async function makeRequest(
     ctx,
   );
   await waitOnExecutionContext(ctx);
+  // Additional waits to ensure all microtasks, promise chains, and timers complete
+  // This handles edge cases where libraries like jose might create floating promises
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setTimeout(resolve, 10));
   return response;
 }
 
@@ -142,14 +151,25 @@ describe("Security Headers Middleware", () => {
       );
     });
 
-    beforeEach(() => {
+    beforeEach(async () => {
       vi.resetAllMocks();
-      // Mock cache to return null by default (cache miss)
-      // Real KV is isolated and empty by default, so we don't need to mock it for cache misses
+      middlewareFetchMock.mockReset();
+      validateUrlMock.mockReset();
+      // Default: validateUrl passes (no SSRF detected)
+      validateUrlMock.mockResolvedValue(undefined);
+      // Clean up KV cache before each test to avoid stale state
+      await env.JWKS_CACHE.delete(
+        "jwks:https://token.actions.githubusercontent.com",
+      );
+      await env.JWKS_CACHE.delete(
+        "jwks:https://token.actions.githubusercontent.com/unique-test-issuer",
+      );
     });
 
     afterEach(async () => {
       vi.resetAllMocks();
+      middlewareFetchMock.mockReset();
+      validateUrlMock.mockReset();
       // Clean up real KV cache to prevent test pollution
       await env.JWKS_CACHE.delete(
         "jwks:https://token.actions.githubusercontent.com",
@@ -293,28 +313,32 @@ describe("Security Headers Middleware", () => {
       await setupJWKSMock(issuer, kid, publicKey);
 
       // Mock cache put to fail
-      vi.spyOn(env.JWKS_CACHE, "put").mockRejectedValue(
-        new Error("Cache error"),
-      );
+      const putSpy = vi
+        .spyOn(env.JWKS_CACHE, "put")
+        .mockRejectedValue(new Error("Cache error"));
 
-      const token = await new jose.SignJWT({
-        iss: issuer,
-        sub: "test",
-        aud: "gpg-signing-service",
-      })
-        .setProtectedHeader({ alg: "ES256", kid })
-        .setIssuedAt()
-        .setExpirationTime("1h")
-        .sign(privateKey);
+      try {
+        const token = await new jose.SignJWT({
+          iss: issuer,
+          sub: "test",
+          aud: "gpg-signing-service",
+        })
+          .setProtectedHeader({ alg: "ES256", kid })
+          .setIssuedAt()
+          .setExpirationTime("1h")
+          .sign(privateKey);
 
-      const response = await makeRequest("/sign", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: "commit data",
-      });
+        const response = await makeRequest("/sign", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: "commit data",
+        });
 
-      // Should still succeed despite cache error
-      expect(response.status).not.toBe(401);
+        // Should still succeed despite cache error
+        expect(response.status).not.toBe(401);
+      } finally {
+        putSpy.mockRestore();
+      }
     });
 
     it("should reject missing authorization header", async () => {
@@ -395,6 +419,16 @@ describe("Security Headers Middleware", () => {
     });
 
     it("should reject token signed by unknown key", async () => {
+      // Clean cache to avoid stale JWKS from previous tests
+      await env.JWKS_CACHE.delete(
+        "jwks:https://token.actions.githubusercontent.com",
+      );
+      // Reset mocks to ensure clean state
+      vi.resetAllMocks();
+      middlewareFetchMock.mockReset();
+      validateUrlMock.mockReset();
+      validateUrlMock.mockResolvedValue(undefined);
+
       const { privateKey } = await jose.generateKeyPair("ES256");
       const issuer = "https://token.actions.githubusercontent.com";
 
@@ -421,6 +455,12 @@ describe("Security Headers Middleware", () => {
       expect(response.status).toBe(401);
       const body = (await response.json()) as { error: string };
       expect(body.error).toContain("Key not found");
+
+      // Final cleanup for this specific test
+      await env.JWKS_CACHE.delete(
+        "jwks:https://token.actions.githubusercontent.com",
+      );
+      vi.resetAllMocks();
     });
 
     it("should reject token with invalid signature", async () => {
@@ -770,6 +810,168 @@ describe("Security Headers Middleware", () => {
       } finally {
         env.RATE_LIMITER.idFromName = originalIdFromName;
       }
+    });
+  });
+
+  describe("SSRF Protection in OIDC", () => {
+    beforeEach(async () => {
+      vi.resetAllMocks();
+      middlewareFetchMock.mockReset();
+      validateUrlMock.mockReset();
+      // Default: validateUrl passes
+      validateUrlMock.mockResolvedValue(undefined);
+      // Clean up KV cache to avoid pollution from other tests
+      await env.JWKS_CACHE.delete("jwks:https://10.0.0.1");
+      await env.JWKS_CACHE.delete("jwks:https://malicious.example.com");
+      await env.JWKS_CACHE.delete(
+        "jwks:https://token.actions.githubusercontent.com",
+      );
+    });
+
+    afterEach(async () => {
+      vi.resetAllMocks();
+      middlewareFetchMock.mockReset();
+      validateUrlMock.mockReset();
+      // Clean up all cache keys used in SSRF tests
+      try {
+        await env.JWKS_CACHE.delete("jwks:https://10.0.0.1");
+        await env.JWKS_CACHE.delete("jwks:https://malicious.example.com");
+        await env.JWKS_CACHE.delete(
+          "jwks:https://token.actions.githubusercontent.com",
+        );
+        await env.JWKS_CACHE.delete("jwks:https://169.254.169.254");
+        await env.JWKS_CACHE.delete("jwks:https://internal-service");
+      } catch {
+        // Suppress errors from cache deletes (keys might not exist)
+      }
+    });
+
+    it("should block SSRF in OIDC wellKnown URL with Error object", async () => {
+      // First call to validateUrl (wellKnown URL) throws Error
+      validateUrlMock.mockRejectedValueOnce(
+        new Error("Access to private IP range 10.0.0.0/8 is forbidden"),
+      );
+
+      const { privateKey } = await jose.generateKeyPair("ES256");
+      const token = await new jose.SignJWT({
+        iss: "https://10.0.0.1",
+        sub: "test-subject",
+        aud: "gpg-signing-service",
+      })
+        .setProtectedHeader({ alg: "ES256", kid: "test-key" })
+        .setExpirationTime("1h")
+        .sign(privateKey);
+
+      const response = await makeRequest(
+        "/sign",
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: "commit data",
+        },
+        { ALLOWED_ISSUERS: "https://10.0.0.1" },
+      );
+
+      expect(response.status).toBe(401);
+      const body = await parseJson<{ error: string }>(response);
+      expect(body.error).toContain("SSRF protection");
+    });
+
+    it("should block SSRF in OIDC wellKnown URL with non-Error", async () => {
+      // First call throws non-Error object
+      validateUrlMock.mockRejectedValueOnce("String error");
+
+      const token = await new jose.SignJWT({
+        iss: "https://malicious.example.com",
+        sub: "test-subject",
+        aud: "gpg-signing-service",
+      })
+        .setProtectedHeader({ alg: "ES256", kid: "test-key" })
+        .setExpirationTime("1h")
+        .sign((await jose.generateKeyPair("ES256")).privateKey);
+
+      const response = await makeRequest(
+        "/sign",
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: "commit data",
+        },
+        { ALLOWED_ISSUERS: "https://malicious.example.com" },
+      );
+
+      expect(response.status).toBe(401);
+      const body = await parseJson<{ error: string }>(response);
+      expect(body.error).toContain("SSRF protection: Invalid URL");
+    });
+
+    it("should block SSRF in JWKS URI with Error object", async () => {
+      // First validateUrl call passes (wellKnown), second throws (jwks_uri)
+      validateUrlMock
+        .mockResolvedValueOnce(undefined) // wellKnown URL passes
+        .mockRejectedValueOnce(
+          new Error("Access to cloud metadata endpoints is forbidden"),
+        ); // jwks_uri fails
+
+      // Mock OIDC config response with malicious jwks_uri
+      middlewareFetchMock.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            jwks_uri: "https://169.254.169.254/latest/meta-data/",
+          }),
+        ),
+      );
+
+      const token = await new jose.SignJWT({
+        iss: "https://token.actions.githubusercontent.com",
+        sub: "test-subject",
+        aud: "gpg-signing-service",
+      })
+        .setProtectedHeader({ alg: "ES256", kid: "test-key" })
+        .setExpirationTime("1h")
+        .sign((await jose.generateKeyPair("ES256")).privateKey);
+
+      const response = await makeRequest("/sign", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: "commit data",
+      });
+
+      expect(response.status).toBe(401);
+      const body = await parseJson<{ error: string }>(response);
+      expect(body.error).toContain("SSRF protection");
+    });
+
+    it("should block SSRF in JWKS URI with non-Error", async () => {
+      // First validateUrl call passes, second throws non-Error
+      validateUrlMock
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce("Non-error string");
+
+      middlewareFetchMock.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ jwks_uri: "https://internal-service/jwks" }),
+        ),
+      );
+
+      const token = await new jose.SignJWT({
+        iss: "https://token.actions.githubusercontent.com",
+        sub: "test-subject",
+        aud: "gpg-signing-service",
+      })
+        .setProtectedHeader({ alg: "ES256", kid: "test-key" })
+        .setExpirationTime("1h")
+        .sign((await jose.generateKeyPair("ES256")).privateKey);
+
+      const response = await makeRequest("/sign", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: "commit data",
+      });
+
+      expect(response.status).toBe(401);
+      const body = await parseJson<{ error: string }>(response);
+      expect(body.error).toContain("SSRF protection: Invalid URL");
     });
   });
 });

@@ -64,3 +64,39 @@ KEY_ID = "62E75E54497815DD"
 # Secrets (set via `wrangler secret put`)
 # - KEY_PASSPHRASE: Passphrase for encrypted private key
 # - ADMIN_TOKEN: Token for admin endpoints
+
+# =============================================================================
+# STAGING ENVIRONMENT
+# Deploy with: wrangler deploy --env staging
+# Secrets: wrangler secret put KEY_PASSPHRASE --env staging
+# =============================================================================
+[env.staging]
+name = "gpg-signing-service-staging"
+workers_dev = true
+
+# Bindings are non-inheritable - must be specified per environment
+[[env.staging.durable_objects.bindings]]
+name = "KEY_STORAGE"
+class_name = "KeyStorage"
+
+[[env.staging.durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiter"
+
+# Staging D1 Database - create with: wrangler d1 create gpg-signing-audit-staging
+[[env.staging.d1_databases]]
+binding = "AUDIT_DB"
+database_name = "gpg-signing-audit-staging"
+database_id = "REPLACE_WITH_STAGING_DB_ID"
+
+# Staging KV - create with: wrangler kv namespace create JWKS_CACHE --env staging
+[[env.staging.kv_namespaces]]
+binding = "JWKS_CACHE"
+id = "REPLACE_WITH_STAGING_KV_ID"
+
+# Staging environment variables
+[env.staging.vars]
+BUN_VERSION = "1.3.3"
+ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com"
+KEY_ID = "62E75E54497815DD"
+ENVIRONMENT = "staging"

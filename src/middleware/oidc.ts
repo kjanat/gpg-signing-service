@@ -5,6 +5,7 @@ import { createIdentity, HTTP, markClaimsAsValidated, TIME } from "~/types";
 import { CACHE_TTL } from "~/utils/constants";
 import { fetchWithTimeout } from "~/utils/fetch";
 import { logger } from "~/utils/logger";
+import { validateUrl } from "~/utils/url-validation";
 
 // OIDC validation middleware
 export const oidcAuth: MiddlewareHandler<{
@@ -158,15 +159,34 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
   // based on the `kid` in the token header, so manual key lookup is not needed.
   const JWKS = createLocalJWKSet(jwks);
 
+  // Verify JWT signature using jose library
+  // Note: We handle promise rejections explicitly because jose's error handling
+  // can create unhandled rejections if not properly caught
+  const verifyPromise = jwtVerify(token, JWKS, {
+    issuer: allowedIssuers,
+    algorithms: ALLOWED_ALGORITHMS,
+    clockTolerance: "60s", // Allow for 60 seconds of clock skew
+  });
+
   let verifiedPayload: JWTPayload;
   try {
-    ({ payload: verifiedPayload } = await jwtVerify(token, JWKS, {
-      issuer: allowedIssuers,
-      algorithms: ALLOWED_ALGORITHMS,
-      clockTolerance: "60s", // Allow for 60 seconds of clock skew
-    }));
+    // Catch promise rejections and map them to user-friendly errors before they escape
+    const verifyResult = await verifyPromise.catch(
+      (e: Error & { code?: string }) => {
+        if (e.code === "ERR_JWKS_NO_MATCHING_KEY") {
+          throw new Error("Key not found");
+        }
+        if (e.message?.includes("signature verification failed")) {
+          throw new Error("Invalid token signature");
+        }
+        throw e;
+      },
+    );
+    verifiedPayload = verifyResult.payload;
   } catch (e) {
-    mapJoseError(e as Error & { code?: string });
+    // Handle any errors from the promise chain above
+    const error = e as Error;
+    throw error;
   }
 
   return verifiedPayload as OIDCClaims;
@@ -209,6 +229,20 @@ async function getJWKS(
 
   // Fetch JWKS from issuer with timeout
   const wellKnownUrl = `${issuer}/.well-known/openid-configuration`;
+
+  // SSRF Protection: Validate wellKnown URL before fetching
+  try {
+    await validateUrl(wellKnownUrl);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invalid URL";
+    logger.warn("SSRF protection blocked OIDC config URL", {
+      issuer,
+      url: wellKnownUrl,
+      error: message,
+    });
+    throw new Error(`SSRF protection: ${message}`);
+  }
+
   const configResponse = await fetchWithTimeout(wellKnownUrl, {}, 10000);
 
   if (!configResponse.ok) {
@@ -216,6 +250,20 @@ async function getJWKS(
   }
 
   const config = (await configResponse.json()) as { jwks_uri: string };
+
+  // SSRF Protection: Validate JWKS URI before fetching
+  try {
+    await validateUrl(config.jwks_uri);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invalid URL";
+    logger.warn("SSRF protection blocked JWKS URI", {
+      issuer,
+      jwks_uri: config.jwks_uri,
+      error: message,
+    });
+    throw new Error(`SSRF protection: ${message}`);
+  }
+
   const jwksResponse = await fetchWithTimeout(config.jwks_uri, {}, 10000);
 
   if (!jwksResponse.ok) {

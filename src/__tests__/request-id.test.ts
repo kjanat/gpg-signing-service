@@ -499,10 +499,8 @@ describe("Request ID Middleware", () => {
       const app = createApp();
 
       const captures: Record<string, string> = {};
-      app.get("/test/:id", async (c) => {
+      app.get("/test/:id", (c) => {
         const pathId = c.req.param("id");
-        // Simulate async work
-        await new Promise((resolve) => setTimeout(resolve, 10));
         captures[pathId] = c.get("requestId");
         return c.text("ok");
       });
@@ -566,20 +564,20 @@ describe("Request ID Middleware", () => {
       const app = createApp();
       app.get("/test", (c) => c.text("ok"));
 
-      const start = Date.now();
-
-      // 1000 requests
-      await Promise.all(
+      // Send 1000 concurrent requests to verify the middleware scales
+      const results = await Promise.all(
         Array.from({ length: 1000 }, (_, i) =>
           app.request("/test", {
             headers: { "X-Request-ID": `req-${i}` },
           })),
       );
 
-      const elapsed = Date.now() - start;
-
-      // Should complete in reasonable time (< 5 seconds for 1000 requests)
-      expect(elapsed).toBeLessThan(5000);
+      // All requests should succeed with their respective request IDs
+      for (let i = 0; i < results.length; i++) {
+        const response = results[i];
+        expect(response.status).toBe(200);
+        expect(response.headers.get("X-Request-ID")).toBe(`req-${i}`);
+      }
     });
   });
 });

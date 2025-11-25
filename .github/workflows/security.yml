@@ -1,0 +1,167 @@
+name: Security
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  schedule:
+    # Weekly security scan (Sunday 00:00 UTC)
+    - cron: "0 0 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: read
+
+jobs:
+  codeql:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+
+      - name: Setup Node.js dependencies
+        uses: ./.github/actions/setup-bun
+
+      - name: Build project
+        run: bun install --frozen-lockfile
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}
+
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Review dependencies
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          allow-licenses: |
+            Apache-2.0
+            Apache-2.0-only
+            Apache-2.0-or-later
+            BSD-2-Clause
+            BSD-3-Clause
+            ISC
+            MIT
+            MPL-2.0
+            AGPL-3.0-only
+            AGPL-3.0-or-later
+            0BSD
+          deny-licenses: |
+            GPL
+            GPL-2.0-only
+            GPL-2.0-or-later
+            GPL-3.0-only
+            GPL-3.0-or-later
+            LGPL-2.0-only
+            LGPL-2.0-or-later
+            LGPL-2.1-only
+            LGPL-2.1-or-later
+            LGPL-3.0-only
+            LGPL-3.0-or-later
+
+  npm-audit:
+    name: NPM Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: ./.github/actions/setup-bun
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run npm audit
+        run: npm audit --audit-level=moderate 2>&1 || true
+
+      - name: Check critical vulnerabilities
+        shell: bash
+        run: |
+          # Generate audit report and check for critical vulnerabilities
+          AUDIT_OUTPUT=$(npm audit json 2>/dev/null || echo '{}')
+          CRITICAL_COUNT=$(echo "$AUDIT_OUTPUT" | jq -r '[.vulnerabilities[]? | select(.severity=="critical")] | length' 2>/dev/null || echo "0")
+
+          if [ "$CRITICAL_COUNT" -gt 0 ]; then
+            echo "::error::Found $CRITICAL_COUNT critical vulnerability(ies) in npm audit"
+            echo "$AUDIT_OUTPUT" | jq -r '.vulnerabilities[]? | select(.severity=="critical") | "- \(.id): \(.title) (\(.severity))"' 2>/dev/null || true
+            exit 1
+          fi
+
+          echo "No critical vulnerabilities found"
+
+  secret-scanning:
+    name: Secret Scanning (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITLEAKS_ENABLE_COMMENTS: true
+
+  security-summary:
+    name: Security Checks Summary
+    runs-on: ubuntu-latest
+    needs: [codeql, npm-audit, secret-scanning]
+    if: always()
+    steps:
+      - name: Check job statuses
+        env:
+          CODEQL_RESULT: ${{ needs.codeql.result }}
+          NPM_AUDIT_RESULT: ${{ needs.npm-audit.result }}
+          SECRET_SCAN_RESULT: ${{ needs.secret-scanning.result }}
+        shell: bash
+        run: |
+          set +e
+          EXIT_CODE=0
+
+          if [ "$CODEQL_RESULT" = "failure" ]; then
+            echo "::error::CodeQL analysis failed - review security findings"
+            EXIT_CODE=1
+          fi
+
+          if [ "$NPM_AUDIT_RESULT" = "failure" ]; then
+            echo "::error::NPM audit detected critical vulnerabilities"
+            EXIT_CODE=1
+          fi
+
+          if [ "$SECRET_SCAN_RESULT" = "failure" ]; then
+            echo "::error::Secret scanning detected exposed secrets"
+            EXIT_CODE=1
+          fi
+
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "All security checks passed"
+          fi
+
+          exit $EXIT_CODE
