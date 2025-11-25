@@ -53,9 +53,8 @@ export const productionCors: MiddlewareHandler<{ Bindings: Env }> = async (
   const allowedOrigins = c.env.ALLOWED_ORIGINS?.split(",") ?? [];
 
   // Check if origin is allowed
-  const isAllowed =
-    allowedOrigins.length === 0 ||
-    (origin !== undefined && allowedOrigins.includes(origin));
+  const isAllowed = allowedOrigins.length === 0
+    || (origin !== undefined && allowedOrigins.includes(origin));
 
   if (c.req.method === "OPTIONS") {
     // Preflight request
@@ -94,10 +93,9 @@ export const adminRateLimit: MiddlewareHandler<{ Bindings: Env }> = async (
   next,
 ) => {
   // Get client IP from CF headers or fallback
-  const clientIp =
-    c.req.header("CF-Connecting-IP") ||
-    c.req.header("X-Forwarded-For")?.split(",")[0]?.trim() ||
-    "unknown";
+  const clientIp = c.req.header("CF-Connecting-IP")
+    || c.req.header("X-Forwarded-For")?.split(",")[0]?.trim()
+    || "unknown";
 
   // Use IP-based identity for admin rate limiting
   const identity = `admin:${clientIp}`;

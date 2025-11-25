@@ -115,13 +115,13 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
     // Edge cases - length
     it("should reject 39 characters", () => {
       expect(() =>
-        FingerprintSchema.parse("0123456789ABCDEF0123456789ABCDEF0123456"),
+        FingerprintSchema.parse("0123456789ABCDEF0123456789ABCDEF0123456")
       ).toThrow("Fingerprint must be exactly 40 characters");
     });
 
     it("should reject 41 characters", () => {
       expect(() =>
-        FingerprintSchema.parse("0123456789ABCDEF0123456789ABCDEF012345678"),
+        FingerprintSchema.parse("0123456789ABCDEF0123456789ABCDEF012345678")
       ).toThrow();
     });
 
@@ -132,13 +132,13 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
     // Edge cases - invalid chars
     it("should reject non-hex", () => {
       expect(() =>
-        FingerprintSchema.parse("GHIJKLMNOPQRSTUVWXYZ01234567890123456789"),
+        FingerprintSchema.parse("GHIJKLMNOPQRSTUVWXYZ01234567890123456789")
       ).toThrow("Fingerprint must be 40 hexadecimal characters");
     });
 
     it("should reject with dashes", () => {
       expect(() =>
-        FingerprintSchema.parse("0123-4567-89AB-CDEF-0123-4567-89AB-CDEF-0123"),
+        FingerprintSchema.parse("0123-4567-89AB-CDEF-0123-4567-89AB-CDEF-0123")
       ).toThrow();
     });
 
@@ -193,10 +193,12 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
 
       const key = header + data + footer;
       // Adjust to exactly 350
-      const adjusted = `${key.slice(
-        0,
-        350 - 35,
-      )}\n=ABCD\n-----END PGP PRIVATE KEY BLOCK-----`;
+      const adjusted = `${
+        key.slice(
+          0,
+          350 - 35,
+        )
+      }\n=ABCD\n-----END PGP PRIVATE KEY BLOCK-----`;
 
       const result = ArmoredPrivateKeySchema.parse(adjusted);
       expect(result).toBeTruthy();
@@ -459,7 +461,7 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
         DateRangeSchema.parse({
           startDate: "2025-12-31T23:59:59Z",
           endDate: "2025-01-01T00:00:00Z",
-        }),
+        })
       ).toThrow("startDate must be before or equal to endDate");
     });
 
@@ -468,7 +470,7 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
         DateRangeSchema.parse({
           startDate: "2025-11-22T12:00:01Z",
           endDate: "2025-11-22T12:00:00Z",
-        }),
+        })
       ).toThrow("startDate must be before or equal to endDate");
     });
   });
@@ -613,7 +615,7 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
 
     it("should reject empty error message", () => {
       expect(() =>
-        ErrorResponseSchema.parse({ error: "", code: "INTERNAL_ERROR" }),
+        ErrorResponseSchema.parse({ error: "", code: "INTERNAL_ERROR" })
       ).toThrow("Error message cannot be empty");
     });
 
@@ -623,7 +625,7 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
           error: "Test",
           code: "INTERNAL_ERROR",
           requestId: "not-a-uuid",
-        }),
+        })
       ).toThrow();
     });
   });
@@ -641,9 +643,8 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
     });
 
     it("should reject UUID without dashes", () => {
-      expect(() =>
-        RequestIdSchema.parse("123e4567e89b12d3a456426614174000"),
-      ).toThrow();
+      expect(() => RequestIdSchema.parse("123e4567e89b12d3a456426614174000"))
+        .toThrow();
     });
 
     it("should reject empty string", () => {
@@ -705,7 +706,7 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
           timestamp: "2025-11-22T14:30:00Z",
           version: "v1.0",
           checks: { keyStorage: true, database: true },
-        }),
+        })
       ).toThrow("Must be semantic version");
     });
 
@@ -717,7 +718,7 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
           timestamp: "2025-11-22T14:30:00Z",
           version: "1.0.0-beta.1",
           checks: { keyStorage: true, database: true },
-        }),
+        })
       ).toThrow();
     });
 
@@ -728,7 +729,7 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
           timestamp: "invalid",
           version: "1.0.0",
           checks: { keyStorage: true, database: true },
-        }),
+        })
       ).toThrow();
     });
   });
@@ -750,9 +751,8 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
     });
 
     it("should reject invalid UUID", () => {
-      expect(() =>
-        RequestHeadersSchema.parse({ "X-Request-ID": "not-uuid" }),
-      ).toThrow();
+      expect(() => RequestHeadersSchema.parse({ "X-Request-ID": "not-uuid" }))
+        .toThrow();
     });
   });
 
@@ -773,7 +773,7 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
     // KeyId is no longer part of the upload schema (it's derived or passed separately)
     it("should reject invalid armoredPrivateKey", () => {
       expect(() =>
-        KeyUploadSchema.parse({ armoredPrivateKey: "-----BEGIN..." }),
+        KeyUploadSchema.parse({ armoredPrivateKey: "-----BEGIN..." })
       ).toThrow();
     });
   });
@@ -793,9 +793,8 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
     });
 
     it("should reject missing fields", () => {
-      expect(() =>
-        KeyResponseSchema.parse({ success: true, keyId: "ABC" }),
-      ).toThrow();
+      expect(() => KeyResponseSchema.parse({ success: true, keyId: "ABC" }))
+        .toThrow();
     });
   });
 });

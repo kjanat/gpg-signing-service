@@ -52,8 +52,8 @@ export function createArmoredPrivateKey(value: string): ArmoredPrivateKey {
     throw new Error("Invalid ArmoredPrivateKey: missing PGP footer");
   }
   if (
-    value.length < LIMITS.MIN_KEY_SIZE ||
-    value.length > LIMITS.MAX_KEY_SIZE
+    value.length < LIMITS.MIN_KEY_SIZE
+    || value.length > LIMITS.MAX_KEY_SIZE
   ) {
     throw new Error(`Invalid ArmoredPrivateKey length: ${value.length}`);
   }

@@ -569,13 +569,11 @@ describe("Request ID Middleware", () => {
         Array.from({ length: 1000 }, (_, i) =>
           app.request("/test", {
             headers: { "X-Request-ID": `req-${i}` },
-          }),
-        ),
+          })),
       );
 
       // All requests should succeed with their respective request IDs
-      for (let i = 0; i < results.length; i++) {
-        const response = results[i]!;
+      for (const [i, response] of results.entries()) {
         expect(response.status).toBe(200);
         expect(response.headers.get("X-Request-ID")).toBe(`req-${i}`);
       }

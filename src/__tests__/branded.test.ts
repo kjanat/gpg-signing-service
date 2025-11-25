@@ -99,14 +99,13 @@ describe("Branded Types", () => {
 
     // Validation failures - line 40 (error thrown)
     it("should reject KeyFingerprint shorter than 40 characters", () => {
-      expect(() =>
-        createKeyFingerprint("A1B2C3D4E5F607189A1B2C3D4E5F6071"),
-      ).toThrow("Invalid KeyFingerprint format:");
+      expect(() => createKeyFingerprint("A1B2C3D4E5F607189A1B2C3D4E5F6071"))
+        .toThrow("Invalid KeyFingerprint format:");
     });
 
     it("should reject KeyFingerprint longer than 40 characters", () => {
       expect(() =>
-        createKeyFingerprint("A1B2C3D4E5F607189A1B2C3D4E5F607189A1B2C3D4"),
+        createKeyFingerprint("A1B2C3D4E5F607189A1B2C3D4E5F607189A1B2C3D4")
       ).toThrow("Invalid KeyFingerprint format:");
     });
 
@@ -118,19 +117,19 @@ describe("Branded Types", () => {
 
     it("should reject non-hex characters (G-Z)", () => {
       expect(() =>
-        createKeyFingerprint("G1B2C3D4E5F607189A1B2C3D4E5F607189A1B2C3"),
+        createKeyFingerprint("G1B2C3D4E5F607189A1B2C3D4E5F607189A1B2C3")
       ).toThrow("Invalid KeyFingerprint format:");
     });
 
     it("should reject special characters", () => {
       expect(() =>
-        createKeyFingerprint("A1B2-C3D4-E5F6-0718-9A1B-2C3D-4E5F-6071-89A1"),
+        createKeyFingerprint("A1B2-C3D4-E5F6-0718-9A1B-2C3D-4E5F-6071-89A1")
       ).toThrow("Invalid KeyFingerprint format:");
     });
 
     it("should reject whitespace", () => {
       expect(() =>
-        createKeyFingerprint("A1B2C3D4E5F60718 A1B2C3D4E5F607189A1B2C3"),
+        createKeyFingerprint("A1B2C3D4E5F60718 A1B2C3D4E5F607189A1B2C3")
       ).toThrow("Invalid KeyFingerprint format:");
     });
   });
@@ -263,10 +262,9 @@ ${padding}
 
     it("should accept key at maximum size boundary", () => {
       // Create a key that is exactly at the maximum size
-      const headerFooterSize =
-        "-----BEGIN PGP PRIVATE KEY BLOCK-----".length +
-        "-----END PGP PRIVATE KEY BLOCK-----".length +
-        2; // +2 for newlines
+      const headerFooterSize = "-----BEGIN PGP PRIVATE KEY BLOCK-----".length
+        + "-----END PGP PRIVATE KEY BLOCK-----".length
+        + 2; // +2 for newlines
       const contentSize = LIMITS.MAX_KEY_SIZE - headerFooterSize;
       const padding = new Array(contentSize).fill("X").join("");
       const keyAtMax = `-----BEGIN PGP PRIVATE KEY BLOCK-----

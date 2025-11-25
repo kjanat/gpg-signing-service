@@ -91,7 +91,7 @@ describe("errors.ts - Error handling utilities", () => {
         status: HTTP.NotFound,
       });
 
-      const callArgs = (c.json as any).mock.calls[0][0];
+      const callArgs = (c.json as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
       expect(callArgs).not.toHaveProperty("requestId");
       expect(callArgs).toEqual({
         error: message,

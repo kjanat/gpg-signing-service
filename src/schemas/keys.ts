@@ -70,21 +70,21 @@ export const ArmoredPrivateKeySchema = z
       }
 
       // Last line must be footer (trim to handle trailing newline)
-      const lastLine =
-        lines[lines.length - 1]?.trim() || lines[lines.length - 2]?.trim();
+      const lastLine = lines[lines.length - 1]?.trim()
+        || lines[lines.length - 2]?.trim();
       if (!lastLine?.startsWith("-----END PGP PRIVATE KEY BLOCK-----")) {
         return false;
       }
 
       // Must contain at least one base64 line (alphanumeric + / + = chars)
       const hasBase64 = lines.some((line) =>
-        /^[A-Za-z0-9+/=]{1,76}$/.test(line.trim()),
+        /^[A-Za-z0-9+/=]{1,76}$/.test(line.trim())
       );
       if (!hasBase64) return false;
 
       // Should contain checksum line (starts with '=')
       const hasChecksum = lines.some((line) =>
-        /^=[A-Za-z0-9+/=]{4}$/.test(line.trim()),
+        /^=[A-Za-z0-9+/=]{4}$/.test(line.trim())
       );
 
       return hasChecksum;

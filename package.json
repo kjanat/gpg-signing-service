@@ -33,9 +33,7 @@
     "typecheck": "tsgo --noEmit",
     "typegen": "wrangler types"
   },
-  "peerDependencies": {
-    "typescript": "^5.9.3"
-  },
+  "peerDependencies": { "typescript": "^5.9.3" },
   "dependencies": {
     "@hono/swagger-ui": "^0.5.2",
     "@hono/zod-openapi": "^1.1.5",

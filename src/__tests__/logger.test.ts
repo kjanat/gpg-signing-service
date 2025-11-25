@@ -130,7 +130,7 @@ describe("Logger - Development Mode", () => {
 // Tests for production mode logging
 describe("Logger", () => {
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
-  let logger: any;
+  let logger: typeof import("~/utils/logger").logger;
 
   beforeEach(async () => {
     // Import in production mode
@@ -704,7 +704,7 @@ describe("Logger", () => {
     });
 
     it("should handle message with special characters", () => {
-      const message = 'Message with "quotes" and \\ backslash';
+      const message = "Message with \"quotes\" and \\ backslash";
 
       logger.warn(message);
 

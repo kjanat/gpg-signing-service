@@ -49,14 +49,13 @@ class Logger {
   error(message: string, error?: Error | unknown, context?: LogContext) {
     const errorContext = {
       ...context,
-      error:
-        error instanceof Error
-          ? {
-              message: error.message,
-              stack: this.isDevelopment ? error.stack : undefined,
-              name: error.name,
-            }
-          : error,
+      error: error instanceof Error
+        ? {
+          message: error.message,
+          stack: this.isDevelopment ? error.stack : undefined,
+          name: error.name,
+        }
+        : error,
     };
     this.log("error", message, errorContext);
   }

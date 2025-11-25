@@ -23,18 +23,18 @@ vi.mock("openpgp", async (importOriginal) => {
 async function generateTestKey(passphrase?: string) {
   const options = passphrase
     ? {
-        type: "ecc" as const,
-        curve: "ed25519Legacy" as const,
-        userIDs: [{ name: "Test User", email: "test@example.com" }],
-        passphrase,
-        format: "armored" as const,
-      }
+      type: "ecc" as const,
+      curve: "ed25519Legacy" as const,
+      userIDs: [{ name: "Test User", email: "test@example.com" }],
+      passphrase,
+      format: "armored" as const,
+    }
     : {
-        type: "ecc" as const,
-        curve: "ed25519Legacy" as const,
-        userIDs: [{ name: "Test User", email: "test@example.com" }],
-        format: "armored" as const,
-      };
+      type: "ecc" as const,
+      curve: "ed25519Legacy" as const,
+      userIDs: [{ name: "Test User", email: "test@example.com" }],
+      format: "armored" as const,
+    };
 
   const { privateKey, publicKey } = await openpgp.generateKey(options);
 
@@ -165,8 +165,9 @@ describe("signCommitData", () => {
 
   it("should sign commit data with encrypted key", async () => {
     const passphrase = "secure-pass-456";
-    const { privateKey, keyId, fingerprint } =
-      await generateTestKey(passphrase);
+    const { privateKey, keyId, fingerprint } = await generateTestKey(
+      passphrase,
+    );
 
     const storedKey: StoredKey = {
       armoredPrivateKey: createArmoredPrivateKey(privateKey),

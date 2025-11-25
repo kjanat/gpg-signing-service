@@ -96,7 +96,7 @@ describe("logAuditEvent", () => {
       subject: "admin-user",
       keyId: "KEY456",
       success: true,
-      metadata: '{"algorithm":"RSA"}',
+      metadata: "{\"algorithm\":\"RSA\"}",
     });
 
     expect(db._mockBind).toHaveBeenCalledWith(
@@ -109,7 +109,7 @@ describe("logAuditEvent", () => {
       "KEY456",
       1,
       null,
-      '{"algorithm":"RSA"}',
+      "{\"algorithm\":\"RSA\"}",
     );
   });
 
@@ -274,7 +274,7 @@ describe("getAuditLogs", () => {
           key_id: "KEY789",
           success: 0,
           error_code: "KEY_NOT_FOUND",
-          metadata: '{"reason":"expired"}',
+          metadata: "{\"reason\":\"expired\"}",
         },
       ],
     });
@@ -291,7 +291,7 @@ describe("getAuditLogs", () => {
       keyId: "KEY789",
       success: false,
       errorCode: "KEY_NOT_FOUND",
-      metadata: '{"reason":"expired"}',
+      metadata: "{\"reason\":\"expired\"}",
     });
   });
 });

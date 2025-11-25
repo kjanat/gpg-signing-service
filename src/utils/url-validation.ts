@@ -23,9 +23,9 @@ export async function validateUrl(url: string): Promise<void> {
 
   // Block common cloud metadata endpoints
   if (
-    parsedUrl.hostname === "169.254.169.254" ||
-    parsedUrl.hostname === "metadata.google.internal" ||
-    parsedUrl.hostname.endsWith(".metadata.google.internal")
+    parsedUrl.hostname === "169.254.169.254"
+    || parsedUrl.hostname === "metadata.google.internal"
+    || parsedUrl.hostname.endsWith(".metadata.google.internal")
   ) {
     throw new Error("Access to cloud metadata endpoints is forbidden");
   }
@@ -52,14 +52,15 @@ export async function validateUrl(url: string): Promise<void> {
 function validateIPv4(ip: string): void {
   const parts = ip.split(".").map(Number);
 
-  if (parts.length !== 4 || parts.some((p) => isNaN(p) || p < 0 || p > 255)) {
+  if (
+    parts.length !== 4
+    || parts.some((p) => Number.isNaN(p) || p < 0 || p > 255)
+  ) {
     throw new Error("Invalid IPv4 address");
   }
 
   // parts is guaranteed to have 4 valid numbers after the check above
-  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-  const a = parts[0]!;
-  const b = parts[1];
+  const [a, b] = parts as [number, number, number, number];
 
   // 10.0.0.0/8 - Private
   if (a === 10) {
@@ -120,10 +121,10 @@ function validateIPv6(ip: string): void {
 
   // fe80::/10 - Link-local
   if (
-    normalized.startsWith("fe8") ||
-    normalized.startsWith("fe9") ||
-    normalized.startsWith("fea") ||
-    normalized.startsWith("feb")
+    normalized.startsWith("fe8")
+    || normalized.startsWith("fe9")
+    || normalized.startsWith("fea")
+    || normalized.startsWith("feb")
   ) {
     throw new Error("Access to IPv6 link-local range fe80::/10 is forbidden");
   }

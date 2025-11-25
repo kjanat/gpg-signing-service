@@ -475,21 +475,24 @@ export enum MediaType {
    *
    * Microsoft Word document (.docx) - Office Open XML format.
    */
-  ApplicationDocx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ApplicationDocx =
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 
   /**
    * **application/vnd.openxmlformats-officedocument.spreadsheetml.sheet**
    *
    * Microsoft Excel spreadsheet (.xlsx) - Office Open XML format.
    */
-  ApplicationXlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ApplicationXlsx =
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 
   /**
    * **application/vnd.openxmlformats-officedocument.presentationml.presentation**
    *
    * Microsoft PowerPoint presentation (.pptx) - Office Open XML format.
    */
-  ApplicationPptx = "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ApplicationPptx =
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 
   /**
    * **application/vnd.oasis.opendocument.text**

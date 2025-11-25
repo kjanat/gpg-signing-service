@@ -125,8 +125,9 @@ app.openapi(uploadKeyRoute, async (c) => {
       error: String(error),
       requestId,
     });
-    const message =
-      error instanceof Error ? error.message : "Key upload failed";
+    const message = error instanceof Error
+      ? error.message
+      : "Key upload failed";
 
     // Audit failed key upload attempt (non-blocking in production)
     logger.debug("Scheduling background task for upload failure audit", {
@@ -387,8 +388,9 @@ const getAuditLogsRoute = createRoute({
 
 app.openapi(getAuditLogsRoute, async (c) => {
   try {
-    const { limit, offset, action, subject, startDate, endDate } =
-      c.req.valid("query");
+    const { limit, offset, action, subject, startDate, endDate } = c.req.valid(
+      "query",
+    );
 
     // Filter out undefined values for optional parameters
     const auditOptions: Parameters<typeof getAuditLogs>[1] = { limit, offset };

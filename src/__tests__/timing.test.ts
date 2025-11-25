@@ -62,8 +62,8 @@ describe("Timing Attack Protection", () => {
       // Assume env.ADMIN_TOKEN is something like "admin-secret-token"
       // Create a token that matches first half but not second half
       const partialMatch =
-        env.ADMIN_TOKEN.slice(0, Math.floor(env.ADMIN_TOKEN.length / 2)) +
-        "X".repeat(Math.ceil(env.ADMIN_TOKEN.length / 2));
+        env.ADMIN_TOKEN.slice(0, Math.floor(env.ADMIN_TOKEN.length / 2))
+        + "X".repeat(Math.ceil(env.ADMIN_TOKEN.length / 2));
 
       const response = await app.fetch(
         new Request("http://localhost/admin/keys", {
@@ -117,7 +117,7 @@ describe("Timing Attack Protection", () => {
       const correctToken = env.ADMIN_TOKEN;
       const wrongLength = "X".repeat(correctToken.length + 10);
       const wrongPrefix = "X".repeat(correctToken.length);
-      const partialMatch = correctToken.slice(0, correctToken.length - 1) + "X";
+      const partialMatch = `${correctToken.slice(0, correctToken.length - 1)}X`;
 
       // Verify all invalid tokens are rejected identically
       for (const token of [wrongLength, wrongPrefix, partialMatch]) {

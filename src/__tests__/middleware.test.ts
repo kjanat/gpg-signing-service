@@ -715,8 +715,8 @@ describe("Security Headers Middleware", () => {
           // Mock JWKS response
           middlewareFetchMock.mockImplementation(async (url) => {
             if (
-              url ===
-              "https://token.actions.githubusercontent.com/.well-known/openid-configuration"
+              url
+                === "https://token.actions.githubusercontent.com/.well-known/openid-configuration"
             ) {
               return new Response(
                 JSON.stringify({
