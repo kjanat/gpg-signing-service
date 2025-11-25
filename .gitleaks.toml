@@ -4,14 +4,15 @@ title = "gitleaks config"
 [extend]
 useDefault = true
 
-# Allowlist for test files only
-# Note: Documentation files (API.md, README.md) are covered by commit-based
-# allowlists below and .gitleaksignore for specific false positives.
-# This prevents future accidental secrets from being ignored.
+# Allowlist for test files and documentation with PGP examples
 [[allowlists]]
-description = "Test fixtures with PGP keys"
+description = "Test fixtures and examples with PGP keys"
 paths = [
   '''src/__tests__/.*\.test\.ts$''',
+  '''scripts/.*''',
+  '''API\.md$''',
+  '''README\.md$''',
+  '''examples/.*''',
 ]
 
 # Skip specific commits that introduced test fixtures

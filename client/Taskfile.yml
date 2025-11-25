@@ -49,8 +49,8 @@ tasks:
     cmds:
       - go mod tidy
       - |
-          go build -o bin/gpg-sign \
-            -ldflags "-X main.commitHash={{.COMMIT_HASH}} -X main.buildTime={{.BUILD_TIME}} -X main.version={{.VERSION}}" \
+          go build -trimpath -o bin/gpg-sign \
+            -ldflags "-s -w -X main.commitHash={{.COMMIT_HASH}} -X main.buildTime={{.BUILD_TIME}} -X main.version={{.VERSION}}" \
             ./cmd/gpg-sign
 
   generate:
