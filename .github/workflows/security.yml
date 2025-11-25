@@ -60,37 +60,21 @@ jobs:
           fail-on-severity: high
           deny-licenses: GPL-2.0, GPL-3.0, LGPL-2.0, LGPL-2.1, LGPL-3.0
 
-  npm-audit:
-    name: NPM Audit
+  bun-audit:
+    name: Bun Audit
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Setup Node.js
+      - name: Setup Bun
         uses: ./.github/actions/setup-bun
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Run npm audit
-        # Reports moderate+ vulnerabilities but doesn't block; next step blocks only on critical
-        run: npm audit --audit-level=moderate 2>&1 || true
-
-      - name: Check critical vulnerabilities
-        shell: bash
-        run: |
-          # Generate audit report and check for critical vulnerabilities
-          AUDIT_OUTPUT=$(npm audit json 2>/dev/null || echo '{}')
-          CRITICAL_COUNT=$(echo "$AUDIT_OUTPUT" | jq -r '[.vulnerabilities[]? | select(.severity=="critical")] | length' 2>/dev/null || echo "0")
-
-          if [ "$CRITICAL_COUNT" -gt 0 ]; then
-            echo "::error::Found $CRITICAL_COUNT critical vulnerability(ies) in npm audit"
-            echo "$AUDIT_OUTPUT" | jq -r '.vulnerabilities[]? | select(.severity=="critical") | "- \(.id): \(.title) (\(.severity))"' 2>/dev/null || true
-            exit 1
-          fi
-
-          echo "No critical vulnerabilities found"
+      - name: Run bun audit
+        run: bun audit --audit-level=critical
 
   secret-scanning:
     name: Secret Scanning (Gitleaks)
@@ -110,13 +94,13 @@ jobs:
   security-summary:
     name: Security Checks Summary
     runs-on: ubuntu-latest
-    needs: [codeql, npm-audit, secret-scanning, dependency-review]
+    needs: [codeql, bun-audit, secret-scanning, dependency-review]
     if: always()
     steps:
       - name: Check job statuses
         env:
           CODEQL_RESULT: ${{ needs.codeql.result }}
-          NPM_AUDIT_RESULT: ${{ needs.npm-audit.result }}
+          BUN_AUDIT_RESULT: ${{ needs.bun-audit.result }}
           SECRET_SCAN_RESULT: ${{ needs.secret-scanning.result }}
           DEPENDENCY_REVIEW_RESULT: ${{ needs.dependency-review.result }}
         shell: bash
@@ -129,8 +113,8 @@ jobs:
             EXIT_CODE=1
           fi
 
-          if [ "$NPM_AUDIT_RESULT" = "failure" ]; then
-            echo "::error::NPM audit detected critical vulnerabilities"
+          if [ "$BUN_AUDIT_RESULT" = "failure" ]; then
+            echo "::error::Bun audit detected critical vulnerabilities"
             EXIT_CODE=1
           fi
 
