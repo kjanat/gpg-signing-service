@@ -64,6 +64,8 @@ jobs:
       - uses: actions/checkout@v5
       - uses: go-task/setup-task@v1
       - uses: ./.github/actions/setup-bun
+      - uses: ./.github/actions/setup-golangci-lint
+        with: { setup-go: "true" }
 
       - name: Run Lint
         run: task lint

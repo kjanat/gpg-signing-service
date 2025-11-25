@@ -58,30 +58,8 @@ jobs:
         uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: high
-          allow-licenses: |
-            Apache-2.0
-            Apache-2.0-only
-            Apache-2.0-or-later
-            BSD-2-Clause
-            BSD-3-Clause
-            ISC
-            MIT
-            MPL-2.0
-            AGPL-3.0-only
-            AGPL-3.0-or-later
-            0BSD
-          deny-licenses: |
-            GPL
-            GPL-2.0-only
-            GPL-2.0-or-later
-            GPL-3.0-only
-            GPL-3.0-or-later
-            LGPL-2.0-only
-            LGPL-2.0-or-later
-            LGPL-2.1-only
-            LGPL-2.1-or-later
-            LGPL-3.0-only
-            LGPL-3.0-or-later
+          allow-licenses: Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MIT, MPL-2.0, 0BSD
+          deny-licenses: GPL-2.0, GPL-3.0, LGPL-2.0, LGPL-2.1, LGPL-3.0
 
   npm-audit:
     name: NPM Audit
