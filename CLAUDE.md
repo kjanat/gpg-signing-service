@@ -64,19 +64,50 @@ task generate:key    # Generate GPG key (alias: gpg)
 
 ```tree
 src/
-  index.ts              # Main Hono app
-  types.ts              # TypeScript interfaces
-  durable-objects/      # DO classes
-    key-storage.ts      # Private key storage
-    rate-limiter.ts     # Token bucket rate limiter
+  index.ts              # Main Hono app entry point
+  durable-objects/      # Durable Object classes
+    key-storage.ts      # Private key storage DO
+    rate-limiter.ts     # Token bucket rate limiter DO
+  lib/
+    openapi.ts          # OpenAPI app factory
   middleware/
-    oidc.ts             # OIDC validation
+    oidc.ts             # OIDC token validation
+    request-id.ts       # Request ID middleware
+    security.ts         # Security headers & CORS
   routes/
     sign.ts             # POST /sign endpoint
-    admin.ts            # Admin endpoints
+    admin.ts            # Admin endpoints (/admin/*)
+  schemas/              # Zod schemas for validation
+    index.ts            # Schema exports
+    audit.ts            # Audit log schemas
+    errors.ts           # Error response schemas
+    health.ts           # Health check schemas
+    keys.ts             # Key management schemas
+    requests.ts         # Request/response schemas
+  types/                # TypeScript type definitions
+    index.ts            # Type exports
+    branded.ts          # Branded types for type safety
+    env.ts              # Environment bindings
+    headers.ts          # HTTP header constants
+    http.ts             # HTTP status codes
+    jwks.ts             # JWKS types
+    media-types.ts      # Content-Type constants
+    oidc.ts             # OIDC claim types
+    rate-limit.ts       # Rate limit types
+    signing.ts          # Signing result types
+    time.ts             # Time constants
   utils/
-    signing.ts          # OpenPGP signing logic
     audit.ts            # D1 audit logging
+    constants.ts        # Application constants
+    database.ts         # Database utilities
+    durable-objects.ts  # DO fetch helpers
+    errors.ts           # Error utilities
+    execution.ts        # Background task scheduling
+    fetch.ts            # Fetch with timeout
+    key-cache.ts        # Decrypted key cache
+    logger.ts           # Structured logging
+    signing.ts          # OpenPGP signing logic
+    url-validation.ts   # SSRF protection
 ```
 
 ## Key Files
