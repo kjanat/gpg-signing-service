@@ -1,0 +1,28 @@
+name: "golangci-lint"
+description: "Setup golangci-lint"
+
+inputs:
+  version:
+    description: "golangci-lint version"
+    required: false
+    default: "latest"
+  working-directory:
+    description: "Working directory"
+    required: false
+    default: "./client"
+  setup-go:
+    description: "Setup Go"
+    required: false
+    default: "true"
+
+runs:
+  using: "composite"
+  steps:
+    - if: ${{ inputs.setup-go }}
+      uses: ./.github/actions/setup-go
+
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@v9
+      with:
+        version: ${{ inputs.version }}
+        working-directory: ${{ inputs.working-directory }}

@@ -1,5 +1,8 @@
 import type { MiddlewareHandler } from "hono";
-import type { Env, RateLimitResult, ErrorCode } from "~/types";
+import type { ErrorCode } from "~/schemas/errors";
+import type { Env, RateLimitResult } from "~/types";
+import { HEADERS, HTTP, TIME } from "~/types";
+import { logger } from "~/utils/logger";
 
 /**
  * Security headers middleware for production hardening
@@ -30,11 +33,11 @@ export const securityHeaders: MiddlewareHandler<{ Bindings: Env }> = async (
   c.res.headers.delete("X-Powered-By");
 
   // Expose rate limit headers if present
-  const rateLimitRemaining = c.res.headers.get("X-RateLimit-Remaining");
+  const rateLimitRemaining = c.res.headers.get(HEADERS.RATE_LIMIT_REMAINING);
   if (rateLimitRemaining !== null) {
     c.header(
       "Access-Control-Expose-Headers",
-      "X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset",
+      `${HEADERS.RATE_LIMIT_LIMIT}, ${HEADERS.RATE_LIMIT_REMAINING}, ${HEADERS.RATE_LIMIT_RESET}`,
     );
   }
 };
@@ -50,15 +53,14 @@ export const productionCors: MiddlewareHandler<{ Bindings: Env }> = async (
   const allowedOrigins = c.env.ALLOWED_ORIGINS?.split(",") ?? [];
 
   // Check if origin is allowed
-  const isAllowed =
-    allowedOrigins.length === 0 ||
-    (origin !== undefined && allowedOrigins.includes(origin));
+  const isAllowed = allowedOrigins.length === 0
+    || (origin !== undefined && allowedOrigins.includes(origin));
 
   if (c.req.method === "OPTIONS") {
     // Preflight request
     if (isAllowed && origin !== undefined) {
       return new Response(null, {
-        status: 204,
+        status: HTTP.NoContent,
         headers: {
           "Access-Control-Allow-Origin": origin,
           "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
@@ -68,7 +70,7 @@ export const productionCors: MiddlewareHandler<{ Bindings: Env }> = async (
         },
       });
     }
-    return new Response(null, { status: 204 });
+    return new Response(null, { status: HTTP.NoContent });
   }
 
   await next();
@@ -91,10 +93,9 @@ export const adminRateLimit: MiddlewareHandler<{ Bindings: Env }> = async (
   next,
 ) => {
   // Get client IP from CF headers or fallback
-  const clientIp =
-    c.req.header("CF-Connecting-IP") ||
-    c.req.header("X-Forwarded-For")?.split(",")[0]?.trim() ||
-    "unknown";
+  const clientIp = c.req.header("CF-Connecting-IP")
+    || c.req.header("X-Forwarded-For")?.split(",")[0]?.trim()
+    || "unknown";
 
   // Use IP-based identity for admin rate limiting
   const identity = `admin:${clientIp}`;
@@ -119,25 +120,31 @@ export const adminRateLimit: MiddlewareHandler<{ Bindings: Env }> = async (
       return c.json(
         {
           error: "Rate limit exceeded",
-          code: "RATE_LIMITED" satisfies ErrorCode,
-          retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / 1000),
+          code: "RATE_LIMITED" as const satisfies ErrorCode,
+          retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / TIME.SECOND),
         },
         429,
       );
     }
 
     // Add rate limit headers
-    c.header("X-RateLimit-Remaining", String(rateLimit.remaining));
-    c.header("X-RateLimit-Reset", String(Math.ceil(rateLimit.resetAt / 1000)));
+    c.header(HEADERS.RATE_LIMIT_REMAINING, String(rateLimit.remaining));
+    c.header(
+      HEADERS.RATE_LIMIT_RESET,
+      String(Math.ceil(rateLimit.resetAt / TIME.SECOND)),
+    );
 
     return next();
   } catch (error) {
-    console.error("Admin rate limiter failed:", error);
+    logger.error("Admin rate limiter failed", {
+      error: error instanceof Error ? error.message : String(error),
+      clientIp,
+    });
     // FAIL CLOSED - deny request when rate limiting is unavailable
     return c.json(
       {
         error: "Service temporarily unavailable",
-        code: "RATE_LIMIT_ERROR" satisfies ErrorCode,
+        code: "RATE_LIMIT_ERROR" as const satisfies ErrorCode,
       },
       503,
     );

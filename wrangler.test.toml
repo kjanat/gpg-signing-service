@@ -1,7 +1,10 @@
+#:schema node_modules/wrangler/config-schema.json
+
 name = "gpg-signing-service-test"
 main = "src/index.ts"
 compatibility_date = "2025-11-13"
 compatibility_flags = ["nodejs_compat"]
+observability = { enabled = true }
 
 # Durable Objects
 [[durable_objects.bindings]]
@@ -15,7 +18,7 @@ class_name = "RateLimiter"
 # Migrations for Durable Objects
 [[migrations]]
 tag = "v1"
-new_classes = ["KeyStorage", "RateLimiter"]
+new_sqlite_classes = ["KeyStorage", "RateLimiter"]
 
 # D1 Database for audit logs (use local database for tests)
 [[d1_databases]]
@@ -28,9 +31,16 @@ database_id = "test-database-id"
 binding = "JWKS_CACHE"
 id = "test-kv-id"
 
+# Custom domain
+[[routes]]
+pattern = "test-gpg.kajkowalski.nl"
+custom_domain = true
+
 # Environment variables for testing
 [vars]
-ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com"
-KEY_ID = "test-key-v1"
+BUN_VERSION = "1.3.3"
+# SKIP_DEPENDENCY_INSTALL = "1"
+ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com,https://token.actions.githubusercontent.com/unique-test-issuer"
+KEY_ID = "62E75E54497815DD"
 ADMIN_TOKEN = "test-admin-token"
 KEY_PASSPHRASE = "test-passphrase"

@@ -1,8 +1,8 @@
 name: Sign Commits
 
 on:
-  push:
-    branches: [main, master]
+  # push:
+  #   branches: [master, main]
   workflow_dispatch:
 
 permissions:
@@ -11,10 +11,12 @@ permissions:
 
 jobs:
   sign:
+    name: Sign Commits
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with: { fetch-depth: 0 }
+      - uses: go-task/setup-task@v1
 
       - name: Get OIDC Token
         id: oidc
@@ -33,18 +35,18 @@ jobs:
           REQUEST_ID: ${{ github.run_id }}-${{ github.run_number }}
         run: |
           # Get commit data
-          COMMIT_DATA=$(git cat-file commit HEAD)
+          COMMIT_DATA="$(git cat-file commit HEAD)"
 
-          # Request signature from signing service
-          SIGNATURE=$(curl -s -X POST "${SIGNING_SERVICE_URL}/sign" \
+          # Request signature from signing service (-f fails fast on HTTP errors)
+          SIGNATURE="$(curl -sf -X POST "${SIGNING_SERVICE_URL}/sign" \
             -H "Authorization: Bearer ${OIDC_TOKEN}" \
             -H "Content-Type: text/plain" \
             -H "X-Request-ID: ${REQUEST_ID}" \
-            --data "$COMMIT_DATA")
+            --data "$COMMIT_DATA")"
 
           if [[ "$SIGNATURE" == *"-----BEGIN PGP SIGNATURE-----"* ]]; then
             echo "$SIGNATURE" > /tmp/signature.asc
-            echo "signature_file=/tmp/signature.asc" >> $GITHUB_OUTPUT
+            echo "signature_file=/tmp/signature.asc" >> "$GITHUB_OUTPUT"
           else
             echo "Error: Invalid signature response"
             echo "$SIGNATURE"
@@ -55,30 +57,35 @@ jobs:
         env:
           SIGNATURE_FILE: ${{ steps.sign.outputs.signature_file }}
         run: |
-          # Get the tree and parent
-          TREE=$(git cat-file -p HEAD | grep ^tree | cut -d' ' -f2)
-          PARENT=$(git cat-file -p HEAD | grep ^parent | cut -d' ' -f2)
+          # Get the tree
+          TREE="$(git cat-file -p HEAD | grep ^tree | cut -d' ' -f2)"
 
           # Get author and committer info
-          AUTHOR=$(git cat-file -p HEAD | grep ^author)
-          COMMITTER=$(git cat-file -p HEAD | grep ^committer)
+          AUTHOR="$(git cat-file -p HEAD | grep ^author)"
+          COMMITTER="$(git cat-file -p HEAD | grep ^committer)"
 
           # Get commit message
-          MESSAGE=$(git log -1 --format=%B)
+          MESSAGE="$(git log -1 --format=%B)"
+
+          # Temp vars
+          _NEW_COMMIT="/tmp/new_commit"
 
           # Create new commit object with signature
           {
             echo "tree $TREE"
-            [ -n "$PARENT" ] && echo "parent $PARENT"
+            # Properly handle multiple parents for merge commits
+            git cat-file -p HEAD | grep ^parent | while read -r line; do
+              echo "$line"
+            done
             echo "$AUTHOR"
             echo "$COMMITTER"
             echo "gpgsig $(cat "$SIGNATURE_FILE" | sed '2,$s/^/ /')"
             echo ""
             echo "$MESSAGE"
-          } | git hash-object -t commit --stdin -w > /tmp/new_commit
+          } | git hash-object -t commit --stdin -w > "${_NEW_COMMIT}"
 
           # Update branch to point to signed commit
-          git update-ref HEAD $(cat /tmp/new_commit)
+          git update-ref HEAD "$(cat "${_NEW_COMMIT}")"
 
       - name: Verify Signature
         env:

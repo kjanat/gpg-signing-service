@@ -1,0 +1,15 @@
+name: "Check Formatting"
+description: "Check code formatting"
+
+runs:
+  using: "composite"
+  steps:
+    - uses: ./.github/actions/setup-task
+
+    - name: Install shfmt
+      shell: bash
+      run: go install mvdan.cc/sh/v3/cmd/shfmt@latest
+
+    - name: Check Formatting
+      shell: bash
+      run: ${{ github.action_path }}/script.sh

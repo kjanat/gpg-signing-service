@@ -1,0 +1,34 @@
+name: "Setup Go"
+description: "Setup Go with caching and install dependencies"
+
+inputs:
+  go-version:
+    description: "Go version"
+    required: false
+  check-latest:
+    description: "Check for latest Go version"
+    required: false
+    default: "true"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Go (from go.mod)
+      if: ${{ ! inputs.go-version }}
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: client/go.mod
+        check-latest: ${{ inputs.check-latest }}
+        cache-dependency-path: |
+          **/go.mod
+          **/go.sum
+
+    - name: Setup Go (${{ inputs.go-version }})
+      if: inputs.go-version
+      uses: actions/setup-go@v6
+      with:
+        go-version: ${{ inputs.go-version }}
+        check-latest: ${{ inputs.check-latest }}
+        cache-dependency-path: |
+          **/go.mod
+          **/go.sum

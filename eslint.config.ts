@@ -1,9 +1,10 @@
 import eslint from "@eslint/js";
+import { defineConfig } from "eslint/config";
 import tseslint from "typescript-eslint";
 
-export default tseslint.config(
+export default defineConfig(
   eslint.configs.recommended,
-  ...tseslint.configs.recommended,
+  tseslint.configs.recommended,
   {
     languageOptions: {
       parserOptions: {
@@ -67,7 +68,9 @@ export default tseslint.config(
   },
   {
     ignores: [
+      ".serena/**",
       ".wrangler/**",
+      "client/**",
       "coverage/**",
       "dist/**",
       "node_modules/**",

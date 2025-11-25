@@ -1,0 +1,6 @@
+0deeb13eee38f309dbf5137192a616ef52b9993d:API.md:private-key:303
+0deeb13eee38f309dbf5137192a616ef52b9993d:scripts/generate-key.sh:curl-auth-header:137
+4b6fe507bc8c2ec1e65d69969f00bd897e1577b9:scripts/generate-key.sh:curl-auth-header:139
+21e000ed60165c243ec387af3f14cff0169d1f4e:scripts/key-size.py:private-key:67
+21e000ed60165c243ec387af3f14cff0169d1f4e:scripts/key-size.py:test-fixture-pgp:67
+21e000ed60165c243ec387af3f14cff0169d1f4e:scripts/key-size.py:test-fixture-pgp:93

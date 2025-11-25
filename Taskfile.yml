@@ -1,0 +1,185 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+# https://taskfile.dev
+---
+version: "3"
+
+includes:
+  client:
+    taskfile: ./client
+    dir: ./client
+    flatten: false
+    aliases: [gpg-sign, c]
+
+vars:
+  DATABASE_NAME: gpg-signing-audit
+  KV_NAMESPACE: JWKS_CACHE
+  SQL_MIGRATIONS_FILE: ./migrations/0001_initial.sql
+  DPRINT_CONFIG: .dprint.jsonc
+
+dotenv: [".dev.env"]
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmd: "{{.TASK_EXE}} --taskfile {{.TASKFILE}} --list-all"
+
+  dev:
+    desc: Start development server
+    aliases: [d]
+    cmd: bunx wrangler dev
+
+  deploy:
+    desc: Deploy to Cloudflare Workers
+    prompt:
+      - "Are you sure?"
+      - "This will affect live users!"
+    cmd: bunx wrangler deploy
+
+  test:
+    desc: Run tests
+    aliases: [t]
+    deps: [install:noscripts]
+    cmd: bunx vitest run
+
+  test:coverage:
+    desc: Run tests with coverage
+    aliases: [tc]
+    deps: [install:noscripts]
+    cmd: bunx vitest run --coverage
+
+  test:watch:
+    desc: Run tests in watch mode
+    aliases: [tw]
+    deps: [install:noscripts]
+    cmd: bunx vitest
+
+  lint:
+    desc: Lint code
+    aliases: [l]
+    deps: [install:noscripts]
+    cmds:
+      - task: format
+      - bun eslint src/
+      - bun biome lint
+
+  lint:fix:
+    desc: Lint and fix code
+    aliases: [lf]
+    deps: [install:noscripts]
+    cmds:
+      - bunx eslint src/ --fix
+      - bun biome check --fix
+      - defer:
+          task: format
+
+  format:
+    silent: true
+    desc: Format code
+    aliases: [fmt, f]
+    env:
+      CONFIG: "{{.DPRINT_CONFIG}}"
+      DPRINT_CONFIG_DISCOVERY: "false"
+    cmds:
+      - task: client:format
+      - bun dprint fmt {{.CLI_ARGS}} --config=$CONFIG --allow-no-files
+
+  format:check:
+    silent: true
+    desc: Check code formatting
+    aliases: [fc]
+    deps: [install:noscripts]
+    env:
+      CONFIG: "{{.DPRINT_CONFIG}}"
+      DPRINT_CONFIG_DISCOVERY: "false"
+    cmd: bun dprint check {{.CLI_ARGS}} --config=$CONFIG --allow-no-files
+
+  format:staged:
+    silent: true
+    desc: Format staged files with dprint
+    aliases: [fs]
+    env:
+      CONFIG: "{{.DPRINT_CONFIG}}"
+      DPRINT_CONFIG_DISCOVERY: "false"
+    cmd: bun dprint fmt --staged --config=$CONFIG --allow-no-files
+
+  typecheck:
+    desc: Typecheck code
+    aliases: [ts, type, tsc, tsgo]
+    deps: [install:noscripts]
+    sources:
+      - "**/*.ts"
+    cmds:
+      - bunx tsgo --noEmit
+
+  typegen:
+    desc: Generate Worker types
+    aliases: [tg]
+    deps: [install:noscripts]
+    sources:
+      - "**/*.ts"
+    generates:
+      - worker-configuration.d.ts
+    cmd: bunx wrangler types
+
+  generate:api:
+    desc: Generate OpenAPI spec and client
+    aliases: [gapi, gen]
+    deps: [install:noscripts]
+    sources:
+      - "**/*.ts"
+    generates:
+      - client/openapi.json
+    cmds:
+      - bun run scripts/generate-openapi.ts
+      - task: client:generate
+
+  generate:key:
+    desc: Generate GPG key
+    aliases: [gpg]
+    generates:
+      - ./.keys
+    cmds:
+      - bash scripts/generate-key.sh
+
+  db:create:
+    desc: Create D1 database
+    status:
+      - bunx wrangler d1 list --json | jq -e 'map(.name) | contains(["{{.DATABASE_NAME}}"])'
+    cmd: bunx wrangler d1 create {{.DATABASE_NAME}}
+
+  db:migrate:
+    desc: Migrate D1 database
+    prompt:
+      - "Are you sure?"
+      - "This will affect live users!"
+    status:
+      - bunx wrangler d1 list --json | jq -e 'map(.name) | contains(["{{.DATABASE_NAME}}"])'
+    cmd: |
+      bunx wrangler d1 execute --remote {{.DATABASE_NAME}} \
+        --file={{.SQL_MIGRATIONS_FILE}}
+
+  db:migrate:local:
+    desc: Migrate local D1 database
+    status:
+      - bunx wrangler d1 list --json | jq -e 'map(.name) | contains(["{{.DATABASE_NAME}}"])'
+    cmd: |
+      bunx wrangler d1 execute --local {{.DATABASE_NAME}} \
+        --file={{.SQL_MIGRATIONS_FILE}}
+
+  kv:create:
+    desc: Create KV namespace
+    aliases: [kvc]
+    status:
+      - bunx wrangler kv namespace list | jq -e 'map(.title) | contains(["{{.KV_NAMESPACE}}"])'
+    cmds:
+      - bunx wrangler kv namespace create {{.KV_NAMESPACE}}
+
+  install:
+    desc: Install dependencies
+    silent: true
+    cmd: bun install
+
+  install:noscripts:
+    desc: Install dependencies without scripts
+    silent: true
+    cmd: bun install --ignore-scripts >/dev/null

@@ -1,0 +1,86 @@
+{
+  "$schema": "https://dprint.dev/schemas/v0.json",
+  "lineWidth": 80,
+  "useTabs": false,
+  "indentWidth": 2,
+  "newLineKind": "lf",
+  "typescript": {
+    "lineWidth": 80,
+    "module.sortImportDeclarations": "maintain"
+  },
+  "json": {
+    "array.preferSingleLine": true,
+    "commentLine.forceSpaceAfterSlashes": true,
+    "object.preferSingleLine": true,
+    "trailingCommas": "never",
+    "useTabs": false
+  },
+  "markdown": {
+    "ignoreDirective": "prettier-ignore",
+    "ignoreFileDirective": "prettier-ignore-file",
+    "ignoreStartDirective": "prettier-ignore-start",
+    "ignoreEndDirective": "prettier-ignore-end"
+  },
+  "dockerfile": {},
+  "biome": {
+    "lineWidth": 80,
+    "indentWidth": 2,
+    "indentStyle": "space",
+    "json.indentStyle": "space"
+  },
+  "ruff": { "indentWidth": 4, "lineLength": 88, "preview": true },
+  "jupyter": {},
+  "malva": {},
+  "markup": {
+    "ignoreFileCommentDirective": "prettier-ignore-file",
+    "ignoreCommentDirective": "prettier-ignore"
+  },
+  "yaml": {
+    "indentBlockSequenceInMap": true,
+    "flowMap.preferSingleLine": true
+  },
+  "exec": {
+    "cwd": "${configDir}",
+    "commands": [
+      {
+        "cwd": "${configDir}/client",
+        "command": "golangci-lint fmt --color never --stdin {{file_path}}", // --config .golangci.yml
+        // "cacheKeyFiles": [".golangci.yml"],
+        "exts": ["go"],
+        "stdin": true
+      },
+      {
+        "command": "bun tombi format --stdin-filename {{file_path}} -",
+        "exts": ["toml"]
+      },
+      {
+        "exts": ["sh"],
+        "command": "shfmt --indent 0 --binary-next-line --case-indent --keep-padding --simplify --filename {{file_path}}",
+        "stdin": true
+      }
+    ]
+  },
+  "excludes": [
+    "**/*-lock.json",
+    "**/.keys",
+    "**/.venv",
+    "**/node_modules",
+    "**/openapi.json",
+    "**/worker-configuration.d.ts",
+    "tsconfig.json"
+  ],
+  "plugins": [
+    "https://plugins.dprint.dev/typescript-0.95.12.wasm",
+    "https://plugins.dprint.dev/json-0.21.0.wasm",
+    "https://plugins.dprint.dev/markdown-0.20.0.wasm",
+    "https://plugins.dprint.dev/dockerfile-0.3.3.wasm",
+    "https://plugins.dprint.dev/biome-0.11.5.wasm",
+    "https://plugins.dprint.dev/ruff-0.6.5.wasm",
+    "https://plugins.dprint.dev/jupyter-0.2.1.wasm",
+    "https://plugins.dprint.dev/g-plane/malva-v0.15.0.wasm",
+    "https://plugins.dprint.dev/g-plane/markup_fmt-v0.24.1.wasm",
+    "https://plugins.dprint.dev/g-plane/pretty_yaml-v0.5.1.wasm",
+    "https://plugins.dprint.dev/exec-0.6.0.json@a054130d458f124f9b5c91484833828950723a5af3f8ff2bd1523bd47b83b364",
+    "https://plugins.dprint.dev/prettier-0.58.2.json@2fd8cc9c9773364848dc93735b01a00d55fcfa78a56a9230b4b63c014964c82d"
+  ]
+}

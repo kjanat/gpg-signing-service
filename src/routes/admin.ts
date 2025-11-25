@@ -1,27 +1,70 @@
-import { Hono } from "hono";
-import type { Env, StoredKey, KeyUploadRequest, ErrorCode } from "~/types";
-import { createArmoredPrivateKey, createKeyId } from "~/types";
-import { parseAndValidateKey, extractPublicKey } from "~/utils/signing";
-import { logAuditEvent, getAuditLogs } from "~/utils/audit";
+import { createRoute, z } from "@hono/zod-openapi";
+import { createOpenAPIApp } from "~/lib/openapi";
+import {
+  AuditLogsResponseSchema,
+  AuditQuerySchema,
+  ErrorResponseSchema,
+  KeyDeletionResponseSchema,
+  KeyListResponseSchema,
+  KeyResponseSchema,
+  KeyUploadSchema,
+} from "~/schemas";
+import type { ErrorCode } from "~/schemas/errors";
+import type { StoredKey } from "~/schemas/keys";
+import {
+  createArmoredPrivateKey,
+  createKeyId,
+  HEADERS,
+  HTTP,
+  MediaType,
+} from "~/types";
+import { getAuditLogs, logAuditEvent } from "~/utils/audit";
+import { fetchKeyStorage } from "~/utils/durable-objects";
+import { scheduleBackgroundTask } from "~/utils/execution";
+import { logger } from "~/utils/logger";
+import {
+  extractPublicKey,
+  invalidateKeyCache,
+  parseAndValidateKey,
+} from "~/utils/signing";
 
-const app = new Hono<{ Bindings: Env }>();
+const app = createOpenAPIApp();
 
-// Upload a new signing key
-app.post("/keys", async (c) => {
-  const requestId = c.req.header("X-Request-ID") || crypto.randomUUID();
+// Routes
+
+const uploadKeyRoute = createRoute({
+  method: "post",
+  path: "/keys",
+  summary: "Upload a new signing key",
+  description: "Upload a GPG private key for signing",
+  security: [{ bearerAuth: [] }],
+  request: {
+    body: {
+      content: { "application/json": { schema: KeyUploadSchema } },
+      required: true,
+    },
+  },
+  responses: {
+    201: {
+      content: { "application/json": { schema: KeyResponseSchema } },
+      description: "Key uploaded successfully",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Invalid request",
+    },
+    500: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Internal server error",
+    },
+  },
+});
+
+app.openapi(uploadKeyRoute, async (c) => {
+  const requestId = c.req.header(HEADERS.REQUEST_ID) || crypto.randomUUID();
 
   try {
-    const body = (await c.req.json()) as KeyUploadRequest;
-
-    if (!body.armoredPrivateKey || !body.keyId) {
-      return c.json(
-        {
-          error: "Missing armoredPrivateKey or keyId",
-          code: "INVALID_REQUEST" satisfies ErrorCode,
-        },
-        400,
-      );
-    }
+    const body = c.req.valid("json");
 
     // Validate and parse the key
     const keyInfo = await parseAndValidateKey(
@@ -38,36 +81,41 @@ app.post("/keys", async (c) => {
     };
 
     // Store in Durable Object
-    const keyStorageId = c.env.KEY_STORAGE.idFromName("global");
-    const keyStorage = c.env.KEY_STORAGE.get(keyStorageId);
-
-    const storeResponse = await keyStorage.fetch(
-      new Request("http://internal/store-key", {
-        method: "POST",
-        body: JSON.stringify(storedKey),
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
+    const storeResponse = await fetchKeyStorage(c.env, "/store-key", {
+      method: "POST",
+      body: JSON.stringify(storedKey),
+      headers: { "Content-Type": MediaType.ApplicationJson },
+    });
 
     if (!storeResponse.ok) {
       const error = (await storeResponse.json()) as { error: string };
       throw new Error(error.error || "Failed to store key");
     }
 
-    // Log key upload
-    await logAuditEvent(c.env.AUDIT_DB, {
+    // Invalidate any cached decrypted key (in case of key rotation/overwrite)
+    invalidateKeyCache(body.keyId);
+
+    // Log key upload (non-blocking in production, blocking in tests)
+    logger.debug("Scheduling background task for upload success audit", {
       requestId,
-      action: "key_upload",
-      issuer: "admin",
-      subject: "admin",
-      keyId: body.keyId,
-      success: true,
-      metadata: JSON.stringify({
-        fingerprint: keyInfo.fingerprint,
-        algorithm: keyInfo.algorithm,
-        userId: keyInfo.userId,
-      }),
     });
+    await scheduleBackgroundTask(
+      c,
+      requestId,
+      logAuditEvent(c.env.AUDIT_DB, {
+        requestId,
+        action: "key_upload",
+        issuer: "admin",
+        subject: "admin",
+        keyId: body.keyId,
+        success: true,
+        metadata: JSON.stringify({
+          fingerprint: keyInfo.fingerprint,
+          algorithm: keyInfo.algorithm,
+          userId: keyInfo.userId,
+        }),
+      }),
+    );
 
     return c.json(
       {
@@ -77,77 +125,138 @@ app.post("/keys", async (c) => {
         algorithm: keyInfo.algorithm,
         userId: keyInfo.userId,
       },
-      201,
+      HTTP.Created,
     );
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Key upload failed";
-
-    // Audit failed key upload attempt
-    await logAuditEvent(c.env.AUDIT_DB, {
+    logger.debug("Upload key route error handler", {
+      error: String(error),
       requestId,
-      action: "key_upload",
-      issuer: "admin",
-      subject: "admin",
-      keyId: "unknown",
-      success: false,
-      errorCode: "KEY_UPLOAD_ERROR",
-      metadata: JSON.stringify({ error: message }),
     });
+    const message = error instanceof Error
+      ? error.message
+      : "Key upload failed";
+
+    // Audit failed key upload attempt (non-blocking in production)
+    logger.debug("Scheduling background task for upload failure audit", {
+      requestId,
+    });
+    await scheduleBackgroundTask(
+      c,
+      requestId,
+      logAuditEvent(c.env.AUDIT_DB, {
+        requestId,
+        action: "key_upload",
+        issuer: "admin",
+        subject: "admin",
+        keyId: "unknown",
+        success: false,
+        errorCode: "KEY_UPLOAD_ERROR",
+        metadata: JSON.stringify({ error: message }),
+      }),
+    );
 
     return c.json(
       {
         error: message,
-        code: "KEY_UPLOAD_ERROR" satisfies ErrorCode,
+        code: "KEY_UPLOAD_ERROR" as const satisfies ErrorCode,
         requestId,
       },
-      500,
+      HTTP.InternalServerError,
     );
   }
 });
 
-// List all keys (metadata only)
-app.get("/keys", async (c) => {
-  try {
-    const keyStorageId = c.env.KEY_STORAGE.idFromName("global");
-    const keyStorage = c.env.KEY_STORAGE.get(keyStorageId);
+const listKeysRoute = createRoute({
+  method: "get",
+  path: "/keys",
+  summary: "List all keys",
+  description: "List metadata for all stored keys",
+  security: [{ bearerAuth: [] }],
+  responses: {
+    200: {
+      content: { "application/json": { schema: KeyListResponseSchema } },
+      description: "List of keys",
+    },
+    500: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Internal server error",
+    },
+  },
+});
 
-    const response = await keyStorage.fetch(
-      new Request("http://internal/list-keys"),
-    );
+app.openapi(listKeysRoute, async (c) => {
+  try {
+    const response = await fetchKeyStorage(c.env, "/list-keys");
     if (!response.ok) {
       throw new Error(`Key storage returned ${response.status}`);
     }
 
-    const result = await response.json();
-    return c.json(result);
+    const result = (await response.json()) as {
+      keys: {
+        keyId: string;
+        fingerprint: string;
+        createdAt: string;
+        algorithm: string;
+      }[];
+    };
+    return c.json(result, HTTP.OK);
   } catch (error) {
-    console.error("Failed to list keys:", error);
+    logger.error("Failed to list keys:", error);
     return c.json(
       {
         error: "Failed to retrieve keys",
-        code: "KEY_LIST_ERROR" satisfies ErrorCode,
+        code: "KEY_LIST_ERROR" as const satisfies ErrorCode,
       },
-      500,
+      HTTP.InternalServerError,
     );
   }
 });
 
-// Get public key for a specific key ID
-app.get("/keys/:keyId/public", async (c) => {
-  const keyId = c.req.param("keyId");
+const getPublicKeyRoute = createRoute({
+  method: "get",
+  path: "/keys/{keyId}/public",
+  summary: "Get public key",
+  description: "Get the public key for a specific key ID",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({
+      keyId: z.string().openapi({
+        param: { name: "keyId", in: "path" },
+        example: "A1B2C3D4E5F6G7H8",
+      }),
+    }),
+  },
+  responses: {
+    200: {
+      content: { "application/pgp-keys": { schema: z.string() } },
+      description: "Public Key",
+    },
+    404: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Key not found",
+    },
+    500: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Internal server error",
+    },
+  },
+});
+
+app.openapi(getPublicKeyRoute, async (c) => {
+  const { keyId } = c.req.valid("param");
 
   try {
-    const keyStorageId = c.env.KEY_STORAGE.idFromName("global");
-    const keyStorage = c.env.KEY_STORAGE.get(keyStorageId);
-
-    const keyResponse = await keyStorage.fetch(
-      new Request(`http://internal/get-key?keyId=${encodeURIComponent(keyId)}`),
+    const keyResponse = await fetchKeyStorage(
+      c.env,
+      `/get-key?keyId=${encodeURIComponent(keyId)}`,
     );
 
     if (!keyResponse.ok) {
       return c.json(
-        { error: "Key not found", code: "KEY_NOT_FOUND" satisfies ErrorCode },
+        {
+          error: "Key not found",
+          code: "KEY_NOT_FOUND" as const satisfies ErrorCode,
+        },
         404,
       );
     }
@@ -155,33 +264,56 @@ app.get("/keys/:keyId/public", async (c) => {
     const storedKey = (await keyResponse.json()) as StoredKey;
     const publicKey = await extractPublicKey(storedKey.armoredPrivateKey);
 
-    return c.text(publicKey, 200, { "Content-Type": "application/pgp-keys" });
+    return c.text(publicKey, HTTP.OK, {
+      "Content-Type": MediaType.ApplicationPgpKeys,
+    });
   } catch (error) {
-    console.error("Failed to get public key:", { keyId, error });
+    logger.error("Failed to get public key:", { keyId, error });
     return c.json(
       {
         error: "Failed to process key",
-        code: "KEY_PROCESSING_ERROR" satisfies ErrorCode,
+        code: "KEY_PROCESSING_ERROR" as const satisfies ErrorCode,
       },
       500,
     );
   }
 });
 
-// Delete a key
-app.delete("/keys/:keyId", async (c) => {
-  const keyId = c.req.param("keyId");
-  const requestId = c.req.header("X-Request-ID") || crypto.randomUUID();
+const deleteKeyRoute = createRoute({
+  method: "delete",
+  path: "/keys/{keyId}",
+  summary: "Delete a key",
+  description: "Delete a stored key",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({
+      keyId: z.string().openapi({
+        param: { name: "keyId", in: "path" },
+        example: "A1B2C3D4E5F6G7H8",
+      }),
+    }),
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: KeyDeletionResponseSchema } },
+      description: "Key deleted",
+    },
+    500: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Internal server error",
+    },
+  },
+});
+
+app.openapi(deleteKeyRoute, async (c) => {
+  const { keyId } = c.req.valid("param");
+  const requestId = c.req.header(HEADERS.REQUEST_ID) || crypto.randomUUID();
 
   try {
-    const keyStorageId = c.env.KEY_STORAGE.idFromName("global");
-    const keyStorage = c.env.KEY_STORAGE.get(keyStorageId);
-
-    const response = await keyStorage.fetch(
-      new Request(
-        `http://internal/delete-key?keyId=${encodeURIComponent(keyId)}`,
-        { method: "DELETE" },
-      ),
+    const response = await fetchKeyStorage(
+      c.env,
+      `/delete-key?keyId=${encodeURIComponent(keyId)}`,
+      { method: "DELETE" },
     );
 
     if (!response.ok) {
@@ -193,87 +325,102 @@ app.delete("/keys/:keyId", async (c) => {
       deleted: boolean;
     };
 
-    // Log key deletion
-    await logAuditEvent(c.env.AUDIT_DB, {
-      requestId,
-      action: "key_rotate",
-      issuer: "admin",
-      subject: "admin",
-      keyId,
-      success: result.deleted,
-    });
+    // Invalidate cached decrypted key on deletion
+    if (result.deleted) {
+      invalidateKeyCache(keyId);
+    }
 
-    return c.json(result);
+    // Log key deletion (non-blocking in production)
+    await scheduleBackgroundTask(
+      c,
+      requestId,
+      logAuditEvent(c.env.AUDIT_DB, {
+        requestId,
+        action: "key_rotate",
+        issuer: "admin",
+        subject: "admin",
+        keyId,
+        success: result.deleted,
+      }),
+    );
+
+    return c.json(result, HTTP.OK);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Delete failed";
-    console.error("Failed to delete key:", { keyId, error });
+    logger.error("Failed to delete key:", { keyId, error });
 
-    // Audit failed deletion attempt
-    await logAuditEvent(c.env.AUDIT_DB, {
+    // Audit failed deletion attempt (non-blocking in production)
+    await scheduleBackgroundTask(
+      c,
       requestId,
-      action: "key_rotate",
-      issuer: "admin",
-      subject: "admin",
-      keyId,
-      success: false,
-      errorCode: "KEY_DELETE_ERROR",
-      metadata: JSON.stringify({ error: message }),
-    });
+      logAuditEvent(c.env.AUDIT_DB, {
+        requestId,
+        action: "key_rotate",
+        issuer: "admin",
+        subject: "admin",
+        keyId,
+        success: false,
+        errorCode: "KEY_DELETE_ERROR",
+        metadata: JSON.stringify({ error: message }),
+      }),
+    );
 
     return c.json(
       {
         error: "Failed to delete key",
-        code: "KEY_DELETE_ERROR" satisfies ErrorCode,
+        code: "KEY_DELETE_ERROR" as const satisfies ErrorCode,
       },
       500,
     );
   }
 });
 
-// Get audit logs
-app.get("/audit", async (c) => {
+const getAuditLogsRoute = createRoute({
+  method: "get",
+  path: "/audit",
+  summary: "Get audit logs",
+  description: "Retrieve audit logs with filtering",
+  security: [{ bearerAuth: [] }],
+  request: { query: AuditQuerySchema },
+  responses: {
+    200: {
+      content: { "application/json": { schema: AuditLogsResponseSchema } },
+      description: "Audit logs",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Invalid request",
+    },
+    500: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Internal server error",
+    },
+  },
+});
+
+app.openapi(getAuditLogsRoute, async (c) => {
   try {
-    const limit = parseInt(c.req.query("limit") || "100");
-    const offset = parseInt(c.req.query("offset") || "0");
+    const { limit, offset, action, subject, startDate, endDate } = c.req.valid(
+      "query",
+    );
 
-    // Validate pagination parameters
-    if (
-      isNaN(limit) ||
-      isNaN(offset) ||
-      limit < 1 ||
-      limit > 1000 ||
-      offset < 0
-    ) {
-      return c.json(
-        {
-          error: "Invalid pagination parameters",
-          code: "INVALID_REQUEST" satisfies ErrorCode,
-        },
-        400,
-      );
-    }
+    // Filter out undefined values for optional parameters
+    const auditOptions: Parameters<typeof getAuditLogs>[1] = { limit, offset };
 
-    const action = c.req.query("action");
-    const subject = c.req.query("subject");
-    const startDate = c.req.query("startDate");
-    const endDate = c.req.query("endDate");
+    if (action !== undefined) auditOptions.action = action;
+    if (subject !== undefined) auditOptions.subject = subject;
+    if (startDate !== undefined) auditOptions.startDate = startDate;
+    if (endDate !== undefined) auditOptions.endDate = endDate;
 
-    const logs = await getAuditLogs(c.env.AUDIT_DB, {
-      limit,
-      offset,
-      action,
-      subject,
-      startDate,
-      endDate,
-    });
+    const logs = await getAuditLogs(c.env.AUDIT_DB, auditOptions);
 
-    return c.json({ logs, count: logs.length });
+    return c.json({ logs, count: logs.length }, HTTP.OK);
   } catch (error) {
-    console.error("Failed to get audit logs:", error);
+    logger.error("Failed to get audit logs:", error);
     return c.json(
       {
         error: "Failed to retrieve audit logs",
-        code: "AUDIT_ERROR" satisfies ErrorCode,
+        code: "AUDIT_ERROR" as const satisfies ErrorCode,
       },
       500,
     );

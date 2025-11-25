@@ -1,24 +1,36 @@
 pre-commit:
   jobs:
-    - name: format
-      run: bun run format
-      glob: "*.{js,ts,json,md,yml,yaml}"
+    - name: lint
+      run: task lint:fix
       stage_fixed: true
 
-    - name: lint
-      run: bun run lint:fix
-      glob: "*.{js,ts}"
+    - name: format
+      run: task format:staged
       stage_fixed: true
 
     - name: typegen
-      run: bun run wrangler types
-      glob: "*.{ts,toml}"
+      run: task typegen
 
-    - name: typecheck
-      run: bun run typecheck
-      glob: "*.ts"
+    - name: generate-api
+      run: task generate:api
+
+    - name: "git: add auto-generated files"
+      run: |
+        git add \
+          client/openapi.json \
+          client/pkg/api/api.gen.go \
+          worker-configuration.d.ts
 
 pre-push:
   jobs:
-    - name: test
-      run: bun run test
+    - name: typecheck
+      run: task typecheck
+
+    - name: test coverage
+      run: task test:coverage
+
+# Validate commit messages
+commit-msg:
+  commands:
+    "lint commit message":
+      run: bunx commitlint --config .commitlint.ts --edit {1}

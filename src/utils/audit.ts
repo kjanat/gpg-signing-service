@@ -1,4 +1,5 @@
-import type { AuditLogEntry, ErrorCode, AuditAction } from "~/types";
+import type { AuditAction, AuditLogEntry } from "~/schemas/audit";
+import type { ErrorCode } from "~/schemas/errors";
 
 export async function logAuditEvent(
   db: D1Database,
@@ -7,35 +8,26 @@ export async function logAuditEvent(
   const id = crypto.randomUUID();
   const timestamp = new Date().toISOString();
 
-  try {
-    await db
-      .prepare(
-        `
+  await db
+    .prepare(
+      `
       INSERT INTO audit_logs (id, timestamp, request_id, action, issuer, subject, key_id, success, error_code, metadata)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
-      )
-      .bind(
-        id,
-        timestamp,
-        entry.requestId,
-        entry.action,
-        entry.issuer,
-        entry.subject,
-        entry.keyId,
-        entry.success ? 1 : 0,
-        entry.errorCode || null,
-        entry.metadata || null,
-      )
-      .run();
-  } catch (error) {
-    // Log failure but don't crash the request - audit is important but not critical path
-    console.error("Failed to write audit log:", {
-      entry,
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
-    // Note: In production, this should trigger an alert
-  }
+    )
+    .bind(
+      id,
+      timestamp,
+      entry.requestId,
+      entry.action,
+      entry.issuer,
+      entry.subject,
+      entry.keyId,
+      entry.success ? 1 : 0,
+      entry.errorCode || null,
+      entry.metadata || null,
+    )
+    .run();
 }
 
 export async function getAuditLogs(
@@ -67,9 +59,10 @@ export async function getAuditLogs(
   }
 
   if (subject) {
-    query += " AND subject LIKE ?";
-    // Escape LIKE wildcards to prevent pattern injection
-    const escapedSubject = subject.replace(/[%_]/g, "\\$&");
+    // SECURITY: Escape LIKE wildcards to prevent pattern injection (OWASP A03:2021)
+    // Must specify ESCAPE clause for SQLite to recognize the escape character
+    query += " AND subject LIKE ? ESCAPE '\\'";
+    const escapedSubject = subject.replace(/[%_\\]/g, "\\$&");
     params.push(`%${escapedSubject}%`);
   }
 

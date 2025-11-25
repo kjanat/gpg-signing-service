@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { logAuditEvent, getAuditLogs } from "~/utils/audit";
-import type { AuditLogEntry } from "~/types";
+/** biome-ignore-all lint/style/noNonNullAssertion: This is a test file */
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AuditLogEntry } from "~/schemas/audit";
+import { getAuditLogs, logAuditEvent } from "~/utils/audit";
 
 // Mock D1Database
 function createMockDb() {
@@ -35,7 +36,7 @@ describe("logAuditEvent", () => {
       requestId: "req-123",
       action: "sign",
       issuer: "https://github.com",
-      subject: "repo:owner/repo:ref:refs/heads/main",
+      subject: "repo:owner/repo:ref:refs/heads/master",
       keyId: "KEY123",
       success: true,
     });
@@ -49,7 +50,7 @@ describe("logAuditEvent", () => {
       "req-123",
       "sign",
       "https://github.com",
-      "repo:owner/repo:ref:refs/heads/main",
+      "repo:owner/repo:ref:refs/heads/master",
       "KEY123",
       1, // success = true
       null, // errorCode
@@ -95,7 +96,7 @@ describe("logAuditEvent", () => {
       subject: "admin-user",
       keyId: "KEY456",
       success: true,
-      metadata: '{"algorithm":"RSA"}',
+      metadata: "{\"algorithm\":\"RSA\"}",
     });
 
     expect(db._mockBind).toHaveBeenCalledWith(
@@ -108,17 +109,15 @@ describe("logAuditEvent", () => {
       "KEY456",
       1,
       null,
-      '{"algorithm":"RSA"}',
+      "{\"algorithm\":\"RSA\"}",
     );
   });
 
-  it("should not throw when database fails", async () => {
+  it("should throw when database fails (fail-closed)", async () => {
     const db = createMockDb();
     db._mockRun.mockRejectedValue(new Error("Database error"));
 
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-    // Should not throw
+    // Should throw - fail closed behavior
     await expect(
       logAuditEvent(db, {
         requestId: "req-999",
@@ -128,14 +127,43 @@ describe("logAuditEvent", () => {
         keyId: "KEY",
         success: true,
       }),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow("Database error");
+  });
 
-    expect(consoleSpy).toHaveBeenCalledWith(
-      "Failed to write audit log:",
-      expect.objectContaining({ error: "Database error" }),
-    );
+  it("should throw on DB run failure (fail-closed)", async () => {
+    const db = createMockDb();
+    db._mockRun.mockImplementation(() => {
+      throw new Error("DB Run Error");
+    });
 
-    consoleSpy.mockRestore();
+    await expect(
+      logAuditEvent(db, {
+        requestId: "req-fail",
+        action: "sign",
+        issuer: "test",
+        subject: "test",
+        keyId: "KEY",
+        success: true,
+      }),
+    ).rejects.toThrow("DB Run Error");
+  });
+
+  it("should throw on non-Error exceptions (fail-closed)", async () => {
+    const db = createMockDb();
+    db._mockRun.mockImplementation(() => {
+      throw "String error";
+    });
+
+    await expect(
+      logAuditEvent(db, {
+        requestId: "req-fail",
+        action: "sign",
+        issuer: "test",
+        subject: "test",
+        keyId: "KEY",
+        success: true,
+      }),
+    ).rejects.toThrow();
   });
 });
 
@@ -191,16 +219,67 @@ describe("getAuditLogs", () => {
     expect(db._mockBind).toHaveBeenCalledWith("sign", 100, 0);
   });
 
-  it("should apply subject filter with LIKE", async () => {
+  it("should apply subject filter with LIKE and ESCAPE clause", async () => {
     const db = createMockDb();
     db._mockAll.mockResolvedValue({ results: [] });
 
     await getAuditLogs(db, { subject: "owner/repo" });
 
     expect(db.prepare).toHaveBeenCalledWith(
-      expect.stringContaining("AND subject LIKE ?"),
+      expect.stringContaining("AND subject LIKE ? ESCAPE '\\'"),
     );
     expect(db._mockBind).toHaveBeenCalledWith("%owner/repo%", 100, 0);
+  });
+
+  it("should escape % wildcard in subject filter to prevent pattern injection", async () => {
+    const db = createMockDb();
+    db._mockAll.mockResolvedValue({ results: [] });
+
+    // Attacker tries to use % to match all records
+    await getAuditLogs(db, { subject: "%" });
+
+    expect(db.prepare).toHaveBeenCalledWith(
+      expect.stringContaining("ESCAPE '\\'"),
+    );
+    // % should be escaped as \% so it matches literal %
+    expect(db._mockBind).toHaveBeenCalledWith("%\\%%", 100, 0);
+  });
+
+  it("should escape _ wildcard in subject filter to prevent single-char matching", async () => {
+    const db = createMockDb();
+    db._mockAll.mockResolvedValue({ results: [] });
+
+    // Attacker tries to use _ to match any single character
+    await getAuditLogs(db, { subject: "user_name" });
+
+    // _ should be escaped as \_ so it matches literal underscore
+    expect(db._mockBind).toHaveBeenCalledWith("%user\\_name%", 100, 0);
+  });
+
+  it("should escape backslash in subject filter", async () => {
+    const db = createMockDb();
+    db._mockAll.mockResolvedValue({ results: [] });
+
+    // Input containing backslash should be double-escaped
+    await getAuditLogs(db, { subject: "path\\to\\file" });
+
+    // Each \ becomes \\ in the escaped output
+    expect(db._mockBind).toHaveBeenCalledWith("%path\\\\to\\\\file%", 100, 0);
+  });
+
+  it("should handle combined SQL injection attempt in subject", async () => {
+    const db = createMockDb();
+    db._mockAll.mockResolvedValue({ results: [] });
+
+    // Combined attack: wildcards + SQL injection attempt
+    await getAuditLogs(db, { subject: "%'; DROP TABLE audit_logs; --" });
+
+    // % escaped, _ in "audit_logs" escaped, SQL injection neutralized by parameterized query
+    expect(db._mockBind).toHaveBeenCalledWith(
+      "%\\%'; DROP TABLE audit\\_logs; --%",
+      100,
+      0,
+    );
   });
 
   it("should apply date range filters", async () => {
@@ -246,7 +325,7 @@ describe("getAuditLogs", () => {
           key_id: "KEY789",
           success: 0,
           error_code: "KEY_NOT_FOUND",
-          metadata: '{"reason":"expired"}',
+          metadata: "{\"reason\":\"expired\"}",
         },
       ],
     });
@@ -263,7 +342,7 @@ describe("getAuditLogs", () => {
       keyId: "KEY789",
       success: false,
       errorCode: "KEY_NOT_FOUND",
-      metadata: '{"reason":"expired"}',
+      metadata: "{\"reason\":\"expired\"}",
     });
   });
 });

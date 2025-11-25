@@ -1,0 +1,45 @@
+# yaml-language-server: $schema=https://golangci-lint.run/jsonschema/golangci.jsonschema.json
+# golangci-lint v2 configuration
+---
+version: "2"
+
+run:
+  relative-path-mode: gomod
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosec # Security issues
+    - gocritic # Opinionated checks
+    - revive # Drop-in golint replacement
+    - errname # Error naming conventions
+    - errorlint # Error wrapping
+    - goconst # Repeated strings -> constants
+    - unconvert # Unnecessary type conversions
+    - unparam # Unused function parameters
+    - wastedassign # Wasted assignments
+    - misspell # Spelling errors
+    - gocyclo # Cyclomatic complexity
+    - dupl # Duplicate code
+    - bodyclose # HTTP response body close
+    - nilerr # nil error checks
+    - prealloc # Slice pre-allocation
+  exclusions:
+    # Report only from client/ by excluding other top-level dirs; also drop generated .gen.go files.
+    paths:
+      - "^dist/"
+      - "^examples/"
+      - "^migrations/"
+      - "^node_modules/"
+      - "^scripts/"
+      - "^src/"
+      - ".*\\.gen\\.go$"
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports

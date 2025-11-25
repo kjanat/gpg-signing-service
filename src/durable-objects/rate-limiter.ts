@@ -1,5 +1,10 @@
 import type { RateLimitResult } from "~/types";
-import { createRateLimitAllowed, createRateLimitDenied } from "~/types";
+import {
+  createRateLimitAllowed,
+  createRateLimitDenied,
+  HTTP,
+  MediaType,
+} from "~/types";
 
 interface TokenBucket {
   tokens: number;
@@ -25,27 +30,31 @@ export class RateLimiter implements DurableObject {
     try {
       switch (path) {
         case "/check":
-          return this.checkLimit(url.searchParams.get("identity") || "default");
+          return await this.checkLimit(
+            url.searchParams.get("identity") || "default",
+          );
 
         case "/consume":
-          return this.consumeToken(
+          return await this.consumeToken(
             url.searchParams.get("identity") || "default",
           );
 
         case "/reset":
           if (request.method !== "POST") {
-            return new Response("Method not allowed", { status: 405 });
+            return new Response("Method not allowed", {
+              status: HTTP.MethodNotAllowed,
+            });
           }
-          return this.resetLimit(url.searchParams.get("identity") || "");
+          return await this.resetLimit(url.searchParams.get("identity") || "");
 
         default:
-          return new Response("Not found", { status: 404 });
+          return new Response("Not found", { status: HTTP.NotFound });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
       return new Response(JSON.stringify({ error: message }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
+        status: HTTP.InternalServerError,
+        headers: { "Content-Type": MediaType.ApplicationJson },
       });
     }
   }
@@ -54,14 +63,13 @@ export class RateLimiter implements DurableObject {
     const bucket = await this.getBucket(identity);
     const resetAt = bucket.lastRefill + this.windowMs;
 
-    const result: RateLimitResult =
-      bucket.tokens > 0 ?
-        createRateLimitAllowed(Math.floor(bucket.tokens), resetAt)
+    const result: RateLimitResult = bucket.tokens >= 1
+      ? createRateLimitAllowed(Math.floor(bucket.tokens), resetAt)
       : createRateLimitDenied(resetAt);
 
     return new Response(JSON.stringify(result), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
+      status: HTTP.OK,
+      headers: { "Content-Type": MediaType.ApplicationJson },
     });
   }
 
@@ -73,9 +81,9 @@ export class RateLimiter implements DurableObject {
       const result: RateLimitResult = createRateLimitDenied(resetAt);
 
       return new Response(JSON.stringify(result), {
-        status: 429,
+        status: HTTP.TooManyRequests,
         headers: {
-          "Content-Type": "application/json",
+          "Content-Type": MediaType.ApplicationJson,
           "Retry-After": String(Math.ceil((resetAt - Date.now()) / 1000)),
         },
       });
@@ -91,24 +99,24 @@ export class RateLimiter implements DurableObject {
     );
 
     return new Response(JSON.stringify(result), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
+      status: HTTP.OK,
+      headers: { "Content-Type": MediaType.ApplicationJson },
     });
   }
 
   private async resetLimit(identity: string): Promise<Response> {
     if (!identity) {
       return new Response(JSON.stringify({ error: "Identity required" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
+        status: HTTP.BadRequest,
+        headers: { "Content-Type": MediaType.ApplicationJson },
       });
     }
 
     await this.state.storage.delete(`bucket:${identity}`);
 
     return new Response(JSON.stringify({ success: true }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
+      status: HTTP.OK,
+      headers: { "Content-Type": MediaType.ApplicationJson },
     });
   }
 

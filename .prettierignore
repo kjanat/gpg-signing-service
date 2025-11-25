@@ -1,5 +1,20 @@
-.wrangler/**
-coverage/**
-dist/**
-node_modules/**
+# Go files are formatted by golangci-lint via dprint exec
+**/*.go
+**/*.mod
+**/*.sum
+
+# JSON/JSONC files are formatted by dprint (see .dprint.jsonc)
+# This prevents conflicts between Prettier and dprint
+**/*.json
+**/*.jsonc
+!package.json
+
+# Generated and build artifacts
+.keys/
+.serena/memories
+.wrangler/
+coverage/
+dist/
+node_modules/
+openapi.{yaml,json}
 worker-configuration.d.ts

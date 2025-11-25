@@ -1,0 +1,82 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+# https://taskfile.dev
+---
+version: "3"
+
+vars:
+  OAPI_CODEGEN_CONFIG: oapi-codegen.yaml
+  OPENAPI_SPEC: openapi.json
+  GOLANGCI_LINT_CONFIG: .golangci.yml
+
+tasks:
+  default:
+    silent: true
+    desc: Show available tasks and build the CLI
+    cmds:
+      - "{{.TASK_EXE}} --taskfile {{.TASKFILE}} --list"
+      - echo "To some tasks you CAN pass arguments using '{{.TASK_EXE}} client:<task> -- <args>'"
+      - task: build
+
+  test:
+    desc: Run Go tests *args
+    aliases: [t]
+    cmd: go test ./... {{.CLI_ARGS}}
+
+  test:coverage:
+    desc: Run Go tests with coverage *args
+    aliases: [tc]
+    cmd: go test -cover ./... {{.CLI_ARGS}}
+
+  test:watch:
+    desc: Run Go tests in watch mode *args
+    aliases: [tw]
+    cmd: go test -cover ./... -run {{.CLI_ARGS}} -watch
+
+  build:
+    desc: Build the CLI
+    aliases: [b, make]
+    sources:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+    vars:
+      COMMIT_HASH:
+        sh: git rev-parse HEAD
+      BUILD_TIME:
+        sh: date -u +"%Y-%m-%dT%H:%M:%SZ"
+      VERSION:
+        sh: bun pm pkg get version --cwd=../ | tr -d "\""
+    cmds:
+      - go mod tidy
+      - |
+          go build -o bin/gpg-sign \
+            -ldflags "-X main.commitHash={{.COMMIT_HASH}} -X main.buildTime={{.BUILD_TIME}} -X main.version={{.VERSION}}" \
+            ./cmd/gpg-sign
+
+  generate:
+    desc: Generate Go client code
+    aliases: [gen, g]
+    cmd: go tool oapi-codegen -config {{.OAPI_CODEGEN_CONFIG}} {{.OPENAPI_SPEC}}
+
+  lint:
+    desc: Lint Go code *args
+    aliases: [l]
+    cmds:
+      - golangci-lint run --config={{.GOLANGCI_LINT_CONFIG}} {{.CLI_ARGS}}
+
+  lint:fix:
+    desc: Lint and fix Go code *args
+    aliases: [lf]
+    cmds:
+      - golangci-lint run --fix --config={{.GOLANGCI_LINT_CONFIG}} {{.CLI_ARGS}}
+
+  format:
+    desc: Format Go code *args
+    aliases: [fmt, f]
+    cmds:
+      - golangci-lint fmt --config={{.GOLANGCI_LINT_CONFIG}} {{.CLI_ARGS}}
+
+  modernize:
+    desc: Modernize Go code *args
+    aliases: [m]
+    cmd: go run golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@latest -fix -test ./...

@@ -1,1 +1,31 @@
-{ "formatter": "prettier" }
+{
+  "formatter": "auto",
+  "auto_install_extensions": { "dprint": true, "golangci-lint": true },
+  "languages": {
+    "TypeScript": { "formatter": { "language_server": { "name": "dprint" } } },
+    "JSONC": { "formatter": { "language_server": { "name": "dprint" } } },
+    "JSON": { "formatter": { "language_server": { "name": "dprint" } } },
+    "Go": {
+      "language_servers": ["gopls", "golangci-lint"],
+      "formatter": { "language_server": { "name": "dprint" } }
+    }
+  },
+  "lsp": {
+    "gopls": {
+      "enable_lsp_tasks": true,
+      "initialization_options": {
+        "directoryFilters": ["+client"],
+        "expandWorkspaceToModule": true
+      }
+    },
+    "golangci-lint": {
+      "initialization_options": {
+        "command": [
+          "sh",
+          "-c",
+          "cd client && golangci-lint run --output.json.path stdout --show-stats=false --output.text.path= --config .golangci.yml"
+        ]
+      }
+    }
+  }
+}

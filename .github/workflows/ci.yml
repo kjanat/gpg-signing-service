@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  verify-api:
+    name: Verify API Generation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: go-task/setup-task@v1
+      - uses: ./.github/actions/setup-bun
+      - uses: ./.github/actions/setup-go
+
+      - name: Generate API
+        run: task generate:api
+
+      - name: Check for changes
+        shell: bash
+        run: |
+          if [[ -n $(git status --porcelain) ]]; then
+            echo "Error: API generation resulted in changes.
+              Please run 'task generate:api' and commit the changes."
+            git status |& tee "$GITHUB_STEP_SUMMARY"
+            git diff |& tee "$GITHUB_STEP_SUMMARY"
+            exit 1
+          else
+            echo "API is up to date"
+            exit 0
+          fi
+
+  format:
+    name: Format check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: go-task/setup-task@v1
+      - uses: ./.github/actions/setup-bun
+      - uses: ./.github/actions/setup-golangci-lint
+        with: { setup-go: "true" }
+
+      - name: Check Formatting
+        uses: ./.github/actions/check-formatting
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: go-task/setup-task@v1
+      - uses: ./.github/actions/setup-bun
+
+      - name: Run Typecheck
+        run: task typecheck
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: go-task/setup-task@v1
+      - uses: ./.github/actions/setup-bun
+      - uses: ./.github/actions/setup-golangci-lint
+        with: { setup-go: "true" }
+
+      - name: Install shfmt
+        run: go install mvdan.cc/sh/v3/cmd/shfmt@latest
+
+      - name: Run Lint
+        run: task lint
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: go-task/setup-task@v1
+      - uses: ./.github/actions/setup-bun
+
+      - name: Run Tests
+        run: task test
