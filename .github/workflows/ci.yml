@@ -11,7 +11,7 @@ jobs:
     name: Verify API Generation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: go-task/setup-task@v1
       - uses: ./.github/actions/setup-bun
       - uses: ./.github/actions/setup-go
@@ -37,7 +37,7 @@ jobs:
     name: Format check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: go-task/setup-task@v1
       - uses: ./.github/actions/setup-bun
       - uses: ./.github/actions/setup-golangci-lint
@@ -50,7 +50,7 @@ jobs:
     name: Typecheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: go-task/setup-task@v1
       - uses: ./.github/actions/setup-bun
 
@@ -61,7 +61,7 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: go-task/setup-task@v1
       - uses: ./.github/actions/setup-bun
       - uses: ./.github/actions/setup-golangci-lint
@@ -77,7 +77,7 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: go-task/setup-task@v1
       - uses: ./.github/actions/setup-bun
 
