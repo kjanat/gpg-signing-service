@@ -74,6 +74,10 @@ KEY_ID = "62E75E54497815DD"
 name = "gpg-signing-service-staging"
 workers_dev = true
 
+[[env.staging.routes]]
+pattern = "staging.gpg.kajkowalski.nl"
+custom_domain = true
+
 # Bindings are non-inheritable - must be specified per environment
 [[env.staging.durable_objects.bindings]]
 name = "KEY_STORAGE"
