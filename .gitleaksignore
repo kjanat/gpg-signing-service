@@ -1,3 +1,32 @@
+# Squashed merge commit (v1.0.0) - all test fixtures
+750224378d0013ef01b6f397f53525f4507438ff:README.md:private-key:100
+750224378d0013ef01b6f397f53525f4507438ff:API.md:private-key:303
+750224378d0013ef01b6f397f53525f4507438ff:scripts/key-size.py:private-key:67
+750224378d0013ef01b6f397f53525f4507438ff:scripts/key-size.py:test-fixture-pgp:67
+750224378d0013ef01b6f397f53525f4507438ff:scripts/key-size.py:test-fixture-pgp:93
+750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/branch-coverage.test.ts:private-key:361
+750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/branch-coverage.test.ts:private-key:441
+750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/schemas.test.ts:private-key:21
+750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/schemas.test.ts:private-key:170
+750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/schemas.test.ts:private-key:189
+750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/schemas.test.ts:private-key:220
+750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/schemas.test.ts:private-key:240
+750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/schemas.test.ts:private-key:262
+750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/schemas.test.ts:private-key:287
+750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/schemas.test.ts:private-key:307
+750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/schemas.test.ts:private-key:327
+750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/schemas.test.ts:private-key:354
+750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/signing.test.ts:private-key:248
+750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/signing.test.ts:private-key:278
+750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/branded.test.ts:private-key:139
+750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/branded.test.ts:private-key:159
+750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/branded.test.ts:private-key:180
+750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/branded.test.ts:private-key:231
+750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/branded.test.ts:private-key:255
+750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/branded.test.ts:private-key:270
+750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/branded.test.ts:private-key:422
+
+# Legacy pre-merge commits (can be removed)
 0deeb13eee38f309dbf5137192a616ef52b9993d:API.md:private-key:303
 0deeb13eee38f309dbf5137192a616ef52b9993d:scripts/generate-key.sh:curl-auth-header:137
 4b6fe507bc8c2ec1e65d69969f00bd897e1577b9:scripts/generate-key.sh:curl-auth-header:139
