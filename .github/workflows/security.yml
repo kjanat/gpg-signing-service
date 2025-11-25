@@ -22,7 +22,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [javascript-typescript]
+        language: [javascript-typescript, go]
+        include:
+          - language: go
+            build-dir: client
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -35,11 +38,22 @@ jobs:
           languages: ${{ matrix.language }}
           queries: security-and-quality
 
-      - name: Setup Node.js dependencies
+      - name: Setup dependencies (JS/TS)
+        if: matrix.language == 'javascript-typescript'
         uses: ./.github/actions/setup-bun
 
-      - name: Build project
+      - name: Build project (JS/TS)
+        if: matrix.language == 'javascript-typescript'
         run: bun install --frozen-lockfile
+
+      - name: Setup dependencies (Go)
+        if: matrix.language == 'go'
+        uses: ./.github/actions/setup-go
+
+      - name: Build project (Go)
+        if: matrix.language == 'go'
+        working-directory: client
+        run: go build ./...
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
