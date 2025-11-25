@@ -869,7 +869,7 @@ describe("Security Headers Middleware", () => {
           headers: { Authorization: `Bearer ${token}` },
           body: "commit data",
         },
-        { ALLOWED_ISSUERS: "https://10.0.0.1" },
+        { ALLOWED_ISSUERS: "https://10.0.0.1" as Env["ALLOWED_ISSUERS"] },
       );
 
       expect(response.status).toBe(401);
@@ -897,7 +897,10 @@ describe("Security Headers Middleware", () => {
           headers: { Authorization: `Bearer ${token}` },
           body: "commit data",
         },
-        { ALLOWED_ISSUERS: "https://malicious.example.com" },
+        {
+          ALLOWED_ISSUERS:
+            "https://malicious.example.com" as Env["ALLOWED_ISSUERS"],
+        },
       );
 
       expect(response.status).toBe(401);

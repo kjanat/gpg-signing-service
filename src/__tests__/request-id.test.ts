@@ -574,7 +574,7 @@ describe("Request ID Middleware", () => {
 
       // All requests should succeed with their respective request IDs
       for (let i = 0; i < results.length; i++) {
-        const response = results[i];
+        const response = results[i]!;
         expect(response.status).toBe(200);
         expect(response.headers.get("X-Request-ID")).toBe(`req-${i}`);
       }

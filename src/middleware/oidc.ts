@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from "hono";
-import { createLocalJWKSet, type JWTPayload, jwtVerify } from "jose";
+import { createLocalJWKSet, jwtVerify } from "jose";
 import type { Env, LegacyJWKSResponse, OIDCClaims, Variables } from "~/types";
 import { createIdentity, HTTP, markClaimsAsValidated, TIME } from "~/types";
 import { CACHE_TTL } from "~/utils/constants";
@@ -146,12 +146,14 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
   const jwks = await getJWKS(payload.iss, env, header.kid);
 
   // Pre-flight: make sure a matching key exists and is intended for signatures.
+  // This check prevents jose's internal JWKSNoMatchingKey error from escaping
+  // as an unhandled rejection (jose's createLocalJWKSet throws synchronously
+  // inside its promise chain when no matching key is found).
   const matchingKey = jwks.keys.find((key) => key.kid === header.kid);
-  // If we can positively identify the key in the JWKS and it declares a
-  // non-signature use, reject early with a clear message. If no matching key
-  // is found here, defer to jose's key selection which will yield a precise
-  // error that we map below.
-  if (matchingKey?.use && matchingKey.use !== "sig") {
+  if (!matchingKey) {
+    throw new Error("Key not found");
+  }
+  if (matchingKey.use && matchingKey.use !== "sig") {
     throw new Error("Key not intended for signatures");
   }
 
@@ -160,36 +162,26 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
   const JWKS = createLocalJWKSet(jwks);
 
   // Verify JWT signature using jose library
-  // Note: We handle promise rejections explicitly because jose's error handling
-  // can create unhandled rejections if not properly caught
-  const verifyPromise = jwtVerify(token, JWKS, {
-    issuer: allowedIssuers,
-    algorithms: ALLOWED_ALGORITHMS,
-    clockTolerance: "60s", // Allow for 60 seconds of clock skew
-  });
-
-  let verifiedPayload: JWTPayload;
+  // Note: jose's createLocalJWKSet can emit unhandled rejections during key lookup
+  // when no matching key is found. The error is still caught here and mapped to
+  // a user-friendly message, but the internal rejection may escape in test environments.
   try {
-    // Catch promise rejections and map them to user-friendly errors before they escape
-    const verifyResult = await verifyPromise.catch(
-      (e: Error & { code?: string }) => {
-        if (e.code === "ERR_JWKS_NO_MATCHING_KEY") {
-          throw new Error("Key not found");
-        }
-        if (e.message?.includes("signature verification failed")) {
-          throw new Error("Invalid token signature");
-        }
-        throw e;
-      },
-    );
-    verifiedPayload = verifyResult.payload;
+    const { payload: verifiedPayload } = await jwtVerify(token, JWKS, {
+      issuer: allowedIssuers,
+      algorithms: ALLOWED_ALGORITHMS,
+      clockTolerance: "60s",
+    });
+    return verifiedPayload as OIDCClaims;
   } catch (e) {
-    // Handle any errors from the promise chain above
-    const error = e as Error;
-    throw error;
+    const err = e as Error & { code?: string };
+    if (err.code === "ERR_JWKS_NO_MATCHING_KEY") {
+      throw new Error("Key not found");
+    }
+    if (err.message?.includes("signature verification failed")) {
+      throw new Error("Invalid token signature");
+    }
+    throw err;
   }
-
-  return verifiedPayload as OIDCClaims;
 }
 
 // Exported for targeted testing of error mapping logic
