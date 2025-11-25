@@ -1,6 +1,6 @@
 {
   "name": "gpg-signing-service",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "Git commit signing API, with GPG-compatible signatures",
   "license": "AGPL-3.0-only OR MIT",
