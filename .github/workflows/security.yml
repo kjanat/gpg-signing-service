@@ -97,6 +97,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run npm audit
+        # Reports moderate+ vulnerabilities but doesn't block; next step blocks only on critical
         run: npm audit --audit-level=moderate 2>&1 || true
 
       - name: Check critical vulnerabilities

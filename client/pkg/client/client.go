@@ -216,6 +216,7 @@ func (c *Client) UploadKey(ctx context.Context, keyID string, armoredPrivateKey 
 
 	body := api.PostAdminKeysJSONRequestBody{
 		ArmoredPrivateKey: armoredPrivateKey,
+		KeyId:             keyID,
 	}
 
 	var resp *api.PostAdminKeysResponse

@@ -37,8 +37,8 @@ jobs:
           # Get commit data
           COMMIT_DATA="$(git cat-file commit HEAD)"
 
-          # Request signature from signing service
-          SIGNATURE="$(curl -s -X POST "${SIGNING_SERVICE_URL}/sign" \
+          # Request signature from signing service (-f fails fast on HTTP errors)
+          SIGNATURE="$(curl -sf -X POST "${SIGNING_SERVICE_URL}/sign" \
             -H "Authorization: Bearer ${OIDC_TOKEN}" \
             -H "Content-Type: text/plain" \
             -H "X-Request-ID: ${REQUEST_ID}" \

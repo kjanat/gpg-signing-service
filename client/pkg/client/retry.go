@@ -108,6 +108,10 @@ func (r *Retrier) backoff(attempt int) time.Duration {
 	// Defensive: normalize minWait to prevent Int64N panic
 	minWait := r.retryWaitMin
 	if minWait <= 0 {
+		// If retryWaitMax is also invalid, use safe default (1 second)
+		if r.retryWaitMax <= 0 {
+			return time.Second
+		}
 		return r.retryWaitMax
 	}
 
