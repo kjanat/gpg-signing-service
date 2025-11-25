@@ -154,7 +154,7 @@ describe("transformAuditLogRow", () => {
     });
 
     it("should include metadata when present", () => {
-      const metadata = "{\"algorithm\":\"RSA\",\"bits\":4096}";
+      const metadata = '{"algorithm":"RSA","bits":4096}';
       const row = {
         id: "audit-008",
         timestamp: "2024-01-15T14:00:00Z",

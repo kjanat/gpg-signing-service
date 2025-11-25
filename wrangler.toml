@@ -87,12 +87,12 @@ class_name = "RateLimiter"
 [[env.staging.d1_databases]]
 binding = "AUDIT_DB"
 database_name = "gpg-signing-audit-staging"
-database_id = "REPLACE_WITH_STAGING_DB_ID"
+database_id = "22ec5e27-27d6-48d6-a921-61344dd5d7c2"
 
 # Staging KV - create with: wrangler kv namespace create JWKS_CACHE --env staging
 [[env.staging.kv_namespaces]]
 binding = "JWKS_CACHE"
-id = "REPLACE_WITH_STAGING_KV_ID"
+id = "1a1c95b63a59458a9347be82f1b961df"
 
 # Staging environment variables
 [env.staging.vars]

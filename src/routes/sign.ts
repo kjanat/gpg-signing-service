@@ -195,8 +195,8 @@ app.openapi(signRoute, async (c) => {
       );
     }
 
-    const isKeyNotFound = message === "Key not found"
-      || message.includes("not found");
+    const isKeyNotFound =
+      message === "Key not found" || message.includes("not found");
 
     // Log failed signing attempt (non-blocking)
     await scheduleBackgroundTask(

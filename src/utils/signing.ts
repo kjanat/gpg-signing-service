@@ -76,8 +76,8 @@ export async function parseAndValidateKey(
     22: "EdDSA",
   };
 
-  const algorithm = algorithmMap[keyPacket.algorithm]
-    || `Unknown(${keyPacket.algorithm})`;
+  const algorithm =
+    algorithmMap[keyPacket.algorithm] || `Unknown(${keyPacket.algorithm})`;
 
   // Get user ID
   const userIds = privateKey.getUserIDs();

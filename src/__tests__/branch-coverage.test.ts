@@ -284,7 +284,7 @@ describe("Branch Coverage Helpers", () => {
       };
 
       await import("~/middleware/oidc").then(({ oidcAuth }) =>
-        oidcAuth(context as any, () => Promise.resolve())
+        oidcAuth(context as any, () => Promise.resolve()),
       );
 
       expect(json).toHaveBeenCalledWith({ error: "Missing token" }, 401);
@@ -310,7 +310,7 @@ describe("Branch Coverage Helpers", () => {
         json,
       };
       await import("~/middleware/oidc").then(({ oidcAuth }) =>
-        oidcAuth(context as any, () => Promise.resolve())
+        oidcAuth(context as any, () => Promise.resolve()),
       );
       expect(json).toHaveBeenCalledWith(
         expect.objectContaining({ code: "AUTH_MISSING" }),
@@ -341,7 +341,7 @@ describe("Branch Coverage Helpers", () => {
       };
 
       await import("~/middleware/security").then(({ adminRateLimit }) =>
-        adminRateLimit(context as any, () => Promise.resolve())
+        adminRateLimit(context as any, () => Promise.resolve()),
       );
 
       expect(json).toHaveBeenCalledWith(

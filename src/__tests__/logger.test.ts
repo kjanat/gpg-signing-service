@@ -704,7 +704,7 @@ describe("Logger", () => {
     });
 
     it("should handle message with special characters", () => {
-      const message = "Message with \"quotes\" and \\ backslash";
+      const message = 'Message with "quotes" and \\ backslash';
 
       logger.warn(message);
 

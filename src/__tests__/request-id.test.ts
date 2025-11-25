@@ -569,7 +569,8 @@ describe("Request ID Middleware", () => {
         Array.from({ length: 1000 }, (_, i) =>
           app.request("/test", {
             headers: { "X-Request-ID": `req-${i}` },
-          })),
+          }),
+        ),
       );
 
       // All requests should succeed with their respective request IDs

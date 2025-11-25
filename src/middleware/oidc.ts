@@ -210,8 +210,8 @@ async function getJWKS(
     // If an expected kid is provided and it's not in the cached JWKS, refresh
     // from the origin to pick up key rotations.
     if (
-      expectedKid
-      && !cachedJWKS.keys?.some((k: { kid?: string }) => k.kid === expectedKid)
+      expectedKid &&
+      !cachedJWKS.keys?.some((k: { kid?: string }) => k.kid === expectedKid)
     ) {
       // fall through to network fetch below
     } else {
