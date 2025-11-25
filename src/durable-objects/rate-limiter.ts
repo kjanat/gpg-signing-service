@@ -1,3 +1,25 @@
+/**
+ * @fileoverview Token bucket rate limiter implemented as a Durable Object.
+ *
+ * This module implements a token bucket algorithm for rate limiting API requests.
+ * Each OIDC identity gets its own rate limit bucket with configurable capacity
+ * and refill rate.
+ *
+ * Algorithm overview:
+ * - Each identity starts with a full bucket of tokens (default: 100)
+ * - Each request consumes one token from the bucket
+ * - Tokens are refilled over time at a constant rate (default: 100/minute)
+ * - When bucket is empty, requests are rejected with HTTP 429
+ *
+ * Storage characteristics:
+ * - Strong consistency ensures accurate rate limiting across edge
+ * - Per-identity isolation prevents cross-contamination
+ *
+ * @see {@link https://en.wikipedia.org/wiki/Token_bucket} - Token bucket algorithm
+ *
+ * @module durable-objects/rate-limiter
+ */
+
 import type { RateLimitResult } from "~/types";
 import {
   createRateLimitAllowed,
@@ -6,23 +28,59 @@ import {
   MediaType,
 } from "~/types";
 
+/**
+ * Token bucket state stored in Durable Object.
+ */
 interface TokenBucket {
+  /** Current number of tokens in the bucket (can be fractional) */
   tokens: number;
+  /** Timestamp of last refill operation (ms since epoch) */
   lastRefill: number;
 }
 
+/**
+ * Durable Object class implementing token bucket rate limiting.
+ *
+ * Provides HTTP endpoints for rate limit operations:
+ * - `GET /check?identity=X` - Check rate limit without consuming
+ * - `GET /consume?identity=X` - Check and consume a token
+ * - `POST /reset?identity=X` - Reset rate limit for identity
+ *
+ * @example
+ * ```typescript
+ * // Consume a token for rate limiting
+ * const response = await env.RATE_LIMITER.get(id).fetch('/consume?identity=user123');
+ * const result = await response.json();
+ * if (!result.allowed) {
+ *   // Rate limited - wait until result.resetAt
+ * }
+ * ```
+ */
 export class RateLimiter implements DurableObject {
   private state: DurableObjectState;
 
-  // Rate limit configuration
-  private readonly maxTokens = 100; // Max requests per window
-  private readonly refillRate = 100; // Tokens per minute
-  private readonly windowMs = 60_000; // 1 minute window
+  /** Maximum tokens per bucket (requests per window) */
+  private readonly maxTokens = 100;
+  /** Token refill rate (tokens added per minute) */
+  private readonly refillRate = 100;
+  /** Rate limit window duration in milliseconds */
+  private readonly windowMs = 60_000;
 
+  /**
+   * Creates a new RateLimiter Durable Object instance.
+   *
+   * @param state - Durable Object state provided by Cloudflare runtime
+   */
   constructor(state: DurableObjectState) {
     this.state = state;
   }
 
+  /**
+   * Handles incoming HTTP requests to the Durable Object.
+   *
+   * @param request - Incoming HTTP request
+   * @returns Response with rate limit result or error
+   */
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -59,6 +117,12 @@ export class RateLimiter implements DurableObject {
     }
   }
 
+  /**
+   * Checks rate limit status without consuming a token.
+   *
+   * @param identity - Unique identifier for the rate limit bucket
+   * @returns Response with rate limit status
+   */
   private async checkLimit(identity: string): Promise<Response> {
     const bucket = await this.getBucket(identity);
     const resetAt = bucket.lastRefill + this.windowMs;
@@ -73,6 +137,15 @@ export class RateLimiter implements DurableObject {
     });
   }
 
+  /**
+   * Consumes a token from the rate limit bucket.
+   *
+   * If tokens are available, decrements the count and returns allowed status.
+   * If bucket is empty, returns denied status with retry time.
+   *
+   * @param identity - Unique identifier for the rate limit bucket
+   * @returns Response with rate limit result (HTTP 200 if allowed, 429 if denied)
+   */
   private async consumeToken(identity: string): Promise<Response> {
     const bucket = await this.getBucket(identity);
     const resetAt = bucket.lastRefill + this.windowMs;
@@ -104,6 +177,12 @@ export class RateLimiter implements DurableObject {
     });
   }
 
+  /**
+   * Resets rate limit for a specific identity (admin operation).
+   *
+   * @param identity - Unique identifier for the rate limit bucket to reset
+   * @returns Response with success status
+   */
   private async resetLimit(identity: string): Promise<Response> {
     if (!identity) {
       return new Response(JSON.stringify({ error: "Identity required" }), {
@@ -120,6 +199,18 @@ export class RateLimiter implements DurableObject {
     });
   }
 
+  /**
+   * Gets or creates a token bucket for an identity.
+   *
+   * If bucket doesn't exist, creates one with full tokens.
+   * If bucket exists, refills tokens based on elapsed time.
+   *
+   * Refill formula: `tokens += (elapsed / windowMs) * refillRate`
+   * Tokens are capped at maxTokens to prevent unbounded accumulation.
+   *
+   * @param identity - Unique identifier for the rate limit bucket
+   * @returns Token bucket with current state
+   */
   private async getBucket(identity: string): Promise<TokenBucket> {
     const now = Date.now();
     let bucket = await this.state.storage.get<TokenBucket>(

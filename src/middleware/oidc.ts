@@ -1,3 +1,22 @@
+/**
+ * @fileoverview OIDC and admin authentication middleware.
+ *
+ * This module provides Hono middleware for authenticating requests using:
+ * - OIDC JWT tokens from GitHub Actions and GitLab CI
+ * - Static admin bearer tokens for management endpoints
+ *
+ * Security features:
+ * - Algorithm whitelist prevents key confusion attacks
+ * - SSRF protection validates all URLs before fetching
+ * - Constant-time comparison for admin tokens
+ * - JWKS caching with automatic invalidation
+ *
+ * @see {@link https://openid.net/specs/openid-connect-core-1_0.html} - OIDC spec
+ * @see {@link https://datatracker.ietf.org/doc/html/rfc7519} - JWT spec
+ *
+ * @module middleware/oidc
+ */
+
 import type { MiddlewareHandler } from "hono";
 import { createLocalJWKSet, jwtVerify } from "jose";
 import type { Env, LegacyJWKSResponse, OIDCClaims, Variables } from "~/types";
@@ -7,7 +26,28 @@ import { fetchWithTimeout } from "~/utils/fetch";
 import { logger } from "~/utils/logger";
 import { validateUrl } from "~/utils/url-validation";
 
-// OIDC validation middleware
+/**
+ * OIDC authentication middleware for the /sign endpoint.
+ *
+ * Validates JWT tokens issued by trusted OIDC providers (GitHub Actions, GitLab CI).
+ * Extracts and validates claims, then stores them in the Hono context for downstream use.
+ *
+ * Required headers:
+ * - `Authorization: Bearer <oidc-token>`
+ *
+ * On success, sets context variables:
+ * - `oidcClaims`: Validated OIDC token claims
+ * - `identity`: Combined issuer + subject for rate limiting
+ *
+ * @example
+ * ```typescript
+ * app.use('/sign', oidcAuth);
+ * app.post('/sign', async (c) => {
+ *   const claims = c.get('oidcClaims');
+ *   console.log(claims.repository); // 'owner/repo'
+ * });
+ * ```
+ */
 export const oidcAuth: MiddlewareHandler<{
   Bindings: Env;
   Variables: Variables;
@@ -41,7 +81,22 @@ export const oidcAuth: MiddlewareHandler<{
   }
 };
 
-// Admin token auth for management endpoints
+/**
+ * Admin token authentication middleware for management endpoints.
+ *
+ * Validates static bearer tokens for admin operations like key management
+ * and audit log queries. Uses constant-time comparison to prevent timing attacks.
+ *
+ * Required headers:
+ * - `Authorization: Bearer <admin-token>`
+ *
+ * The admin token is stored as a Cloudflare Worker secret (ADMIN_TOKEN).
+ *
+ * @example
+ * ```typescript
+ * app.use('/admin/*', adminAuth);
+ * ```
+ */
 export const adminAuth: MiddlewareHandler<{ Bindings: Env }> = async (
   c,
   next,
@@ -69,7 +124,19 @@ export const adminAuth: MiddlewareHandler<{ Bindings: Env }> = async (
   return next();
 };
 
-// Constant-time string comparison to prevent timing attacks
+/**
+ * Performs constant-time string comparison to prevent timing attacks.
+ *
+ * Implementation details:
+ * 1. Encodes strings to byte arrays
+ * 2. Pads shorter array to match longer length (ensures constant-time comparison)
+ * 3. Uses `crypto.subtle.timingSafeEqual` for byte comparison
+ * 4. Also verifies original lengths matched (prevents length-related timing)
+ *
+ * @param a - First string to compare
+ * @param b - Second string to compare
+ * @returns True if strings are equal, false otherwise
+ */
 async function timingSafeEqual(a: string, b: string): Promise<boolean> {
   const encoder = new TextEncoder();
   const aBytes = encoder.encode(a);
@@ -89,9 +156,34 @@ async function timingSafeEqual(a: string, b: string): Promise<boolean> {
   return bytesEqual && lengthsEqual;
 }
 
-// Allowed JWT signing algorithms
+/**
+ * Allowed JWT signing algorithms for OIDC tokens.
+ * Only asymmetric algorithms are allowed to prevent key confusion attacks.
+ */
 const ALLOWED_ALGORITHMS = ["RS256", "RS384", "RS512", "ES256", "ES384"];
 
+/**
+ * Validates an OIDC JWT token.
+ *
+ * Validation steps:
+ * 1. Parse JWT header and payload
+ * 2. Verify algorithm is in whitelist
+ * 3. Verify issuer is in ALLOWED_ISSUERS
+ * 4. Check temporal claims (nbf, exp) with 60s clock skew tolerance
+ * 5. Validate audience claim
+ * 6. Fetch JWKS and verify signature
+ *
+ * @param token - Raw JWT string
+ * @param env - Worker environment bindings
+ * @returns Validated OIDC claims
+ *
+ * @throws {Error} If token format is invalid
+ * @throws {Error} If algorithm is not allowed
+ * @throws {Error} If issuer is not trusted
+ * @throws {Error} If token is expired or not yet valid
+ * @throws {Error} If audience doesn't match
+ * @throws {Error} If signature verification fails
+ */
 async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
   // Decode JWT header and payload (without verification first)
   const parts = token.split(".");
@@ -196,6 +288,23 @@ export function mapJoseError(err: Error & { code?: string }): never {
   throw err;
 }
 
+/**
+ * Fetches and caches JWKS (JSON Web Key Set) for an OIDC issuer.
+ *
+ * Implements caching with automatic invalidation:
+ * - JWKS cached in KV for 5 minutes
+ * - If requested key ID not in cache, fetches fresh JWKS
+ * - SSRF protection validates all URLs before fetching
+ *
+ * @param issuer - OIDC issuer URL (e.g., 'https://token.actions.githubusercontent.com')
+ * @param env - Worker environment bindings
+ * @param expectedKid - Optional key ID to check in cached JWKS
+ * @returns JWKS response containing keys array
+ *
+ * @throws {Error} If OIDC discovery fails
+ * @throws {Error} If JWKS fetch fails
+ * @throws {Error} If SSRF protection blocks URL
+ */
 async function getJWKS(
   issuer: string,
   env: Env,
