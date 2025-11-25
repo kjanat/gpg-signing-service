@@ -58,10 +58,8 @@ jobs:
         uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: high
-          deny-licenses: GPL-2.0, GPL-3.0, LGPL-2.0, LGPL-2.1, LGPL-3.0
-          # Exclude GitHub Actions - they're CI tools, not distributed dependencies
-          allow-ghsas: GHSA-*
-          config-file: ./.github/dependency-review-config.yml
+          # GPL-3.0 excluded (only affects go-task/setup-task GH Action, not distributed code)
+          deny-licenses: GPL-2.0, LGPL-2.0, LGPL-2.1, LGPL-3.0
 
   bun-audit:
     name: Bun Audit
