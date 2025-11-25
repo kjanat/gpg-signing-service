@@ -5,14 +5,14 @@ pre-commit:
       stage_fixed: true
 
     - name: format
-      run: task fmt -- --staged
+      run: task format:staged
       stage_fixed: true
 
     - name: typegen
       run: task typegen
 
     - name: generate-api
-      run: task generate-api
+      run: task generate:api
 
     - name: "git: add auto-generated files"
       run: |

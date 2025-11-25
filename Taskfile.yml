@@ -93,6 +93,15 @@ tasks:
       DPRINT_CONFIG_DISCOVERY: "false"
     cmd: bun dprint check {{.CLI_ARGS}} --config=$CONFIG --allow-no-files
 
+  format:staged:
+    silent: true
+    desc: Format staged files with dprint
+    aliases: [fs]
+    env:
+      CONFIG: "{{.DPRINT_CONFIG}}"
+      DPRINT_CONFIG_DISCOVERY: "false"
+    cmd: bun dprint fmt --staged --config=$CONFIG --allow-no-files
+
   typecheck:
     desc: Typecheck code
     aliases: [ts, type, tsc, tsgo]
