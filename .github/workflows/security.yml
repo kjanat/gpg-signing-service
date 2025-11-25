@@ -133,7 +133,7 @@ jobs:
   security-summary:
     name: Security Checks Summary
     runs-on: ubuntu-latest
-    needs: [codeql, npm-audit, secret-scanning]
+    needs: [codeql, npm-audit, secret-scanning, dependency-review]
     if: always()
     steps:
       - name: Check job statuses
@@ -141,6 +141,7 @@ jobs:
           CODEQL_RESULT: ${{ needs.codeql.result }}
           NPM_AUDIT_RESULT: ${{ needs.npm-audit.result }}
           SECRET_SCAN_RESULT: ${{ needs.secret-scanning.result }}
+          DEPENDENCY_REVIEW_RESULT: ${{ needs.dependency-review.result }}
         shell: bash
         run: |
           set +e
@@ -158,6 +159,11 @@ jobs:
 
           if [ "$SECRET_SCAN_RESULT" = "failure" ]; then
             echo "::error::Secret scanning detected exposed secrets"
+            EXIT_CODE=1
+          fi
+
+          if [ "$DEPENDENCY_REVIEW_RESULT" = "failure" ]; then
+            echo "::error::Dependency review failed - check license compliance"
             EXIT_CODE=1
           fi
 

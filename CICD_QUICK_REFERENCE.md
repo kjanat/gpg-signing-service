@@ -6,7 +6,7 @@
 
 ## Status Matrix: What's Implemented vs What's Missing
 
-```
+```text
 LEGEND: ✅ Implemented | ⚠️ Partial | ❌ Missing | 🔄 In Progress
 ```
 

@@ -84,6 +84,10 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 }
 
 // Health checks service health.
+//
+// For degraded services (503), both HealthStatus and error are returned,
+// allowing callers to inspect partial health data while being informed of degradation.
+// Callers should check both return values when handling degraded states.
 func (c *Client) Health(ctx context.Context) (*HealthStatus, error) {
 	var resp *api.GetHealthResponse
 	err := c.retrier.Do(ctx, func() error {
@@ -143,6 +147,9 @@ func (c *Client) PublicKey(ctx context.Context, keyID string) (string, error) {
 	}
 
 	if resp.StatusCode() == 200 {
+		if len(resp.Body) == 0 {
+			return "", fmt.Errorf("empty response body")
+		}
 		publicKey := string(resp.Body)
 		if !strings.HasPrefix(publicKey, "-----BEGIN PGP PUBLIC KEY BLOCK-----") {
 			return "", fmt.Errorf("invalid PGP key format")
@@ -290,6 +297,10 @@ func (c *Client) ListKeys(ctx context.Context) ([]KeyMetadata, error) {
 }
 
 // DeleteKey deletes a signing key (admin operation).
+//
+// Returns KEY_NOT_FOUND error (with StatusCode 200) when the API indicates
+// the key was not deleted (deleted=false), typically meaning the key doesn't exist.
+// Callers should use IsKeyNotFound() to detect this case.
 func (c *Client) DeleteKey(ctx context.Context, keyID string) error {
 	var resp *api.DeleteAdminKeysKeyIdResponse
 	err := c.retrier.Do(ctx, func() error {
@@ -402,10 +413,16 @@ func mapAuditResponseError(resp *api.GetAdminAuditResponse) error {
 		statusCode = 500
 	}
 
+	requestID := ""
+	if errResp.RequestId != nil {
+		requestID = errResp.RequestId.String()
+	}
+
 	return &ServiceError{
 		Code:       string(errResp.Code),
 		Message:    errResp.Error,
 		StatusCode: statusCode,
+		RequestID:  requestID,
 	}
 }
 
@@ -526,8 +543,13 @@ func parseSignSuccess(resp *api.PostSignResponse) (*SignResult, bool) {
 		return nil, false
 	}
 
+	signature := string(resp.Body)
+	if !strings.HasPrefix(signature, "-----BEGIN PGP SIGNATURE-----") {
+		return nil, false
+	}
+
 	result := &SignResult{
-		Signature: string(resp.Body),
+		Signature: signature,
 	}
 	parseRateLimitHeaders(resp, result)
 

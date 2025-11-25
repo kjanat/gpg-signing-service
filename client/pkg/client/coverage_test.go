@@ -188,11 +188,12 @@ func TestSignMethodEdgeCases(t *testing.T) {
 			t.Fatalf("failed to create client: %v", err)
 		}
 		result, err := client.Sign(context.Background(), "data", "")
-		if err != nil {
-			t.Errorf("unexpected error: %v", err)
+		// With signature validation, empty responses should now be rejected
+		if err == nil {
+			t.Error("expected error for invalid signature, got nil")
 		}
-		if result == nil || result.Signature != "" {
-			t.Error("expected empty signature in result")
+		if result != nil {
+			t.Errorf("expected nil result on error, got %+v", result)
 		}
 	})
 }

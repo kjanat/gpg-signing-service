@@ -44,8 +44,7 @@ case "${1:-all}" in
 	failures)
 		echo "Failed operations:"
 		query_logs "limit=100"
-		jq '.logs[] | select(.success == false) |
-      "\(.timestamp) | \(.action) | \(.errorCode // "unknown")"'
+		jq '.logs[] | select(.success == false) | "\(.timestamp) | \(.action) | \(.errorCode // \"unknown\")"'
 		;;
 
 	by-repo)

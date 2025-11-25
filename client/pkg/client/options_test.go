@@ -1,6 +1,7 @@
 package client
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -156,7 +157,7 @@ func TestWithMaxRetriesVariations(t *testing.T) {
 	retries := []int{0, 1, 2, 5, 10, 100}
 
 	for _, retryCount := range retries {
-		t.Run("retries-"+string(rune(retryCount)), func(t *testing.T) {
+		t.Run(fmt.Sprintf("retries-%d", retryCount), func(t *testing.T) {
 			opts := defaultOptions()
 			WithMaxRetries(retryCount)(opts)
 

@@ -16,7 +16,7 @@ func TestSignValidation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprint(w, "signature")
+		_, _ = fmt.Fprint(w, "-----BEGIN PGP SIGNATURE-----\n\ntest-sig\n-----END PGP SIGNATURE-----")
 	}))
 	defer server.Close()
 
@@ -57,7 +57,7 @@ func TestSignValidation(t *testing.T) {
 
 // TestSignSuccessResponse tests Sign() with successful response
 func TestSignSuccessResponse(t *testing.T) {
-	signature := "test-signature-data"
+	signature := "-----BEGIN PGP SIGNATURE-----\n\ntest-signature-data\n-----END PGP SIGNATURE-----"
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
@@ -88,7 +88,7 @@ func TestSignWithRateLimitHeaders(t *testing.T) {
 		w.Header().Set("X-RateLimit-Remaining", "95")
 		w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(resetTime, 10))
 		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprint(w, "signature")
+		_, _ = fmt.Fprint(w, "-----BEGIN PGP SIGNATURE-----\n\ntest-sig\n-----END PGP SIGNATURE-----")
 	}))
 	defer server.Close()
 
@@ -110,7 +110,7 @@ func TestSignWithKeyID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprint(w, "signature")
+		_, _ = fmt.Fprint(w, "-----BEGIN PGP SIGNATURE-----\n\ntest-sig\n-----END PGP SIGNATURE-----")
 	}))
 	defer server.Close()
 
@@ -129,7 +129,7 @@ func TestSignContextCancellation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprint(w, "signature")
+		_, _ = fmt.Fprint(w, "-----BEGIN PGP SIGNATURE-----\n\ntest-sig\n-----END PGP SIGNATURE-----")
 	}))
 	defer server.Close()
 
@@ -152,7 +152,7 @@ func TestSignContextDeadline(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(200 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprint(w, "signature")
+		_, _ = fmt.Fprint(w, "-----BEGIN PGP SIGNATURE-----\n\ntest-sig\n-----END PGP SIGNATURE-----")
 	}))
 	defer server.Close()
 
@@ -404,7 +404,7 @@ func TestRetrierBackoffMax(t *testing.T) {
 func BenchmarkSign(b *testing.B) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprint(w, "signature")
+		_, _ = fmt.Fprint(w, "-----BEGIN PGP SIGNATURE-----\n\ntest-sig\n-----END PGP SIGNATURE-----")
 	}))
 	defer server.Close()
 

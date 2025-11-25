@@ -58,11 +58,11 @@ func (r *Retrier) Do(ctx context.Context, fn func() error) error {
 				timer := time.NewTimer(rateLimitErr.RetryAfter)
 				select {
 				case <-timer.C:
+					// Timer fired normally, no cleanup needed
 				case <-ctx.Done():
 					stopTimer(timer)
 					return ctx.Err()
 				}
-				stopTimer(timer)
 			}
 		}
 	}

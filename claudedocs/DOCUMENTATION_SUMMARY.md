@@ -88,7 +88,7 @@ mkdir -p docs/adr
 
 ### Week 2
 
-```
+```bash
 # Add troubleshooting to README
 # Create examples/README.md
 # Document performance
@@ -96,7 +96,7 @@ mkdir -p docs/adr
 
 ### Week 3
 
-```
+```bash
 # Create client/examples/
 # Upgrade OpenAPI to 3.1
 ```

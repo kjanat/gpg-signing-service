@@ -154,7 +154,7 @@
 
 #### Full API Surface Coverage
 
-```
+```text
 ✅ GET /health                    - 3 tests
 ✅ GET /public-key?keyId=...      - 5 tests
 ✅ POST /sign                     - 12 tests (with audit logging)
@@ -526,7 +526,7 @@ bun run bench:rate-limit    # Rate limiter throughput
 
 ### Test Organization: GOOD ✅
 
-```
+```text
 src/__tests__/
 ├── unit/
 │   ├── signing.test.ts       ✅ 14 tests (crypto)
@@ -859,7 +859,7 @@ bun run test -- --ui     # Interactive UI
 
 ### A. Test File Inventory
 
-```
+```text
 src/__tests__/ (16 files, 226+ tests)
 ├── admin.test.ts              14 tests ✅
 ├── audit.test.ts              12 tests ✅

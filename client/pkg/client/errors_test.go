@@ -3,6 +3,7 @@ package client
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -189,7 +190,7 @@ func TestIsKeyNotFound(t *testing.T) {
 			err: &ServiceError{
 				Code:       ErrCodeKeyNotFound,
 				Message:    "key not found",
-				StatusCode: 200,
+				StatusCode: 404,
 			},
 			match: true,
 		},
@@ -520,25 +521,15 @@ func TestErrorMessageFormatting(t *testing.T) {
 	}
 
 	// Verify all components are in the message
-	if !contains(errStr, "TEST_ERROR") {
+	if !strings.Contains(errStr, "TEST_ERROR") {
 		t.Errorf("error message missing code: %s", errStr)
 	}
-	if !contains(errStr, "This is a test error message") {
+	if !strings.Contains(errStr, "This is a test error message") {
 		t.Errorf("error message missing message: %s", errStr)
 	}
-	if !contains(errStr, "500") {
+	if !strings.Contains(errStr, "500") {
 		t.Errorf("error message missing status code: %s", errStr)
 	}
-}
-
-// Helper function for string checking
-func contains(s, substr string) bool {
-	for i := 0; i < len(s)-len(substr)+1; i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 // BenchmarkIsServiceError benchmarks error type checking

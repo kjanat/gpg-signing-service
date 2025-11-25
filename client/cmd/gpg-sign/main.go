@@ -396,7 +396,7 @@ var adminDeleteCmd = &cobra.Command{
 				if jsonOutput {
 					return outputJSON(map[string]bool{"deleted": false})
 				}
-				return nil // Or should this be an error? The original code didn't error on not found for delete
+				return nil // Idempotent delete: treat not-found as success
 			}
 			return fmt.Errorf("failed to delete key: %w", err)
 		}
