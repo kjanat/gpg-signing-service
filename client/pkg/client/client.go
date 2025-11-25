@@ -11,12 +11,13 @@ import (
 	"time"
 
 	"github.com/kjanat/gpg-signing-service/client/pkg/api"
+	openapiTypes "github.com/oapi-codegen/runtime/types"
 )
 
 // Client wraps the auto-generated API client with a cleaner interface.
 //
 // A Client is safe for concurrent use by multiple goroutines. It maintains
-// an internal HTTP connection pool that is shared across requests.
+// an internal HTTP connection pool, shared across requests.
 //
 // Do not copy a Client after first use.
 type Client struct {
@@ -43,6 +44,12 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 	if options.maxRetries < 0 {
 		return nil, errors.New("maxRetries cannot be negative")
 	}
+	if options.retryWaitMin <= 0 {
+		return nil, errors.New("retryWaitMin must be positive")
+	}
+	if options.retryWaitMax <= 0 {
+		return nil, errors.New("retryWaitMax must be positive")
+	}
 	if options.retryWaitMin >= options.retryWaitMax {
 		return nil, errors.New("retryWaitMin must be less than retryWaitMax")
 	}
@@ -58,7 +65,7 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 	if options.authToken != "" {
 		// Pre-allocate auth header to avoid allocation on every request
 		authHeader := "Bearer " + options.authToken
-		clientOpts = append(clientOpts, api.WithRequestEditorFn(func(ctx context.Context, req *http.Request) error {
+		clientOpts = append(clientOpts, api.WithRequestEditorFn(func(_ context.Context, req *http.Request) error {
 			req.Header.Set("Authorization", authHeader)
 			return nil
 		}))
@@ -165,19 +172,11 @@ func (c *Client) PublicKey(ctx context.Context, keyID string) (string, error) {
 // Sign signs commit data and returns the signature.
 // Pass an empty string for keyID to use the default key.
 func (c *Client) Sign(ctx context.Context, commitData string, keyID string) (*SignResult, error) {
-	if commitData == "" {
-		return nil, &ValidationError{
-			Code:    "INVALID_REQUEST",
-			Message: "commitData cannot be empty",
-		}
+	if err := validateSignInput(commitData); err != nil {
+		return nil, err
 	}
 
-	var keyIDPtr *string
-	if keyID != "" {
-		keyIDPtr = &keyID
-	}
-
-	params := &api.PostSignParams{KeyId: keyIDPtr}
+	params := buildSignParams(keyID)
 
 	var resp *api.PostSignResponse
 	err := c.retrier.Do(ctx, func() error {
@@ -189,63 +188,12 @@ func (c *Client) Sign(ctx context.Context, commitData string, keyID string) (*Si
 		return nil, err
 	}
 
-	if resp.StatusCode() == 200 {
-		result := &SignResult{
-			Signature: string(resp.Body),
-		}
-
-		// Extract rate limit headers
-		if remaining := resp.HTTPResponse.Header.Get("X-RateLimit-Remaining"); remaining != "" {
-			if val, err := strconv.Atoi(remaining); err == nil {
-				result.RateLimitRemaining = &val
-			}
-		}
-		if reset := resp.HTTPResponse.Header.Get("X-RateLimit-Reset"); reset != "" {
-			if val, err := strconv.ParseInt(reset, 10, 64); err == nil {
-				t := time.Unix(val, 0)
-				result.RateLimitReset = &t
-			}
-		}
-
+	if result, ok := parseSignSuccess(resp); ok {
 		return result, nil
 	}
 
-	if resp.JSON400 != nil {
-		return nil, &ValidationError{
-			Code:    string(resp.JSON400.Code),
-			Message: resp.JSON400.Error,
-		}
-	}
-
-	if resp.JSON404 != nil {
-		return nil, &ServiceError{
-			Code:       string(resp.JSON404.Code),
-			Message:    resp.JSON404.Error,
-			StatusCode: 404,
-		}
-	}
-
-	if resp.JSON429 != nil {
-		retryAfter := int(resp.JSON429.RetryAfter)
-		message := resp.JSON429.Error
-		return nil, &RateLimitError{
-			Message:    message,
-			RetryAfter: time.Duration(retryAfter) * time.Second,
-		}
-	}
-
-	if resp.JSON500 != nil || resp.JSON503 != nil {
-		errResp := resp.JSON500
-		statusCode := 500
-		if errResp == nil {
-			errResp = resp.JSON503
-			statusCode = 503
-		}
-		return nil, &ServiceError{
-			Code:       string(errResp.Code),
-			Message:    errResp.Error,
-			StatusCode: statusCode,
-		}
+	if mappedErr := mapSignResponseError(resp); mappedErr != nil {
+		return nil, mappedErr
 	}
 
 	return nil, newUnexpectedStatusError(resp.StatusCode())
@@ -376,28 +324,7 @@ func (c *Client) DeleteKey(ctx context.Context, keyID string) error {
 
 // AuditLogs queries audit logs (admin operation).
 func (c *Client) AuditLogs(ctx context.Context, filter AuditFilter) (*AuditResult, error) {
-	params := &api.GetAdminAuditParams{}
-
-	if filter.Limit > 0 {
-		limit := filter.Limit
-		params.Limit = &limit
-	}
-	if filter.Offset > 0 {
-		offset := filter.Offset
-		params.Offset = &offset
-	}
-	if filter.Action != "" {
-		params.Action = &filter.Action
-	}
-	if filter.Subject != "" {
-		params.Subject = &filter.Subject
-	}
-	if !filter.StartDate.IsZero() {
-		params.StartDate = &filter.StartDate
-	}
-	if !filter.EndDate.IsZero() {
-		params.EndDate = &filter.EndDate
-	}
+	params := buildAuditParams(filter)
 
 	var resp *api.GetAdminAuditResponse
 	err := c.retrier.Do(ctx, func() error {
@@ -409,50 +336,12 @@ func (c *Client) AuditLogs(ctx context.Context, filter AuditFilter) (*AuditResul
 		return nil, err
 	}
 
-	if resp.JSON200 != nil {
-		logs := make([]AuditLog, len(resp.JSON200.Logs))
-		for i, l := range resp.JSON200.Logs {
-			var metadata json.RawMessage
-			if l.Metadata != nil {
-				metadata = json.RawMessage(*l.Metadata)
-			}
-			var errorCode *string
-			if l.ErrorCode != nil {
-				code := string(*l.ErrorCode)
-				errorCode = &code
-			}
-			logs[i] = AuditLog{
-				ID:        l.Id,
-				Timestamp: parseTimestamp(l.Timestamp),
-				RequestID: l.RequestId,
-				Action:    l.Action,
-				Issuer:    l.Issuer,
-				Subject:   l.Subject,
-				KeyID:     l.KeyId,
-				Success:   l.Success,
-				ErrorCode: errorCode,
-				Metadata:  metadata,
-			}
-		}
-		count := int(resp.JSON200.Count)
-		return &AuditResult{
-			Logs:  logs,
-			Count: count,
-		}, nil
+	if result, ok := parseAuditSuccess(resp); ok {
+		return result, nil
 	}
 
-	if resp.JSON400 != nil || resp.JSON500 != nil {
-		errResp := resp.JSON400
-		statusCode := 400
-		if errResp == nil {
-			errResp = resp.JSON500
-			statusCode = 500
-		}
-		return nil, &ServiceError{
-			Code:       string(errResp.Code),
-			Message:    errResp.Error,
-			StatusCode: statusCode,
-		}
+	if mappedErr := mapAuditResponseError(resp); mappedErr != nil {
+		return nil, mappedErr
 	}
 
 	return nil, newUnexpectedStatusError(resp.StatusCode())
@@ -498,4 +387,203 @@ func (c *Client) AdminPublicKey(ctx context.Context, keyID string) (string, erro
 	}
 
 	return "", newUnexpectedStatusError(resp.StatusCode())
+}
+
+func mapAuditResponseError(resp *api.GetAdminAuditResponse) error {
+	if resp.JSON400 == nil && resp.JSON500 == nil {
+		return nil
+	}
+
+	errResp := resp.JSON400
+	statusCode := 400
+	if errResp == nil {
+		errResp = resp.JSON500
+		statusCode = 500
+	}
+
+	return &ServiceError{
+		Code:       string(errResp.Code),
+		Message:    errResp.Error,
+		StatusCode: statusCode,
+	}
+}
+
+func parseAuditSuccess(resp *api.GetAdminAuditResponse) (*AuditResult, bool) {
+	if resp.JSON200 == nil {
+		return nil, false
+	}
+
+	return &AuditResult{
+		Logs:  mapAuditLogs(resp.JSON200),
+		Count: resp.JSON200.Count,
+	}, true
+}
+
+func mapAuditLogs(response *api.AuditLogsResponse) []AuditLog {
+	logs := make([]AuditLog, len(response.Logs))
+	for i, entry := range response.Logs {
+		logs[i] = mapAuditLog(entry)
+	}
+	return logs
+}
+
+// revive:disable:var-naming // keep field names aligned with API schema and JSON tags
+func mapAuditLog(entry struct {
+	Action    api.AuditAction   `json:"action"`
+	ErrorCode *api.ErrorCode    `json:"errorCode,omitempty"`
+	Id        openapiTypes.UUID `json:"id"`
+	Issuer    string            `json:"issuer"`
+	KeyId     string            `json:"keyId"`
+	Metadata  *string           `json:"metadata,omitempty"`
+	RequestId openapiTypes.UUID `json:"requestId"`
+	Subject   string            `json:"subject"`
+	Success   bool              `json:"success"`
+	Timestamp time.Time         `json:"timestamp"`
+},
+) AuditLog {
+	var metadata json.RawMessage
+	if entry.Metadata != nil {
+		metadata = json.RawMessage(*entry.Metadata)
+	}
+
+	var errorCode *string
+	if entry.ErrorCode != nil {
+		code := string(*entry.ErrorCode)
+		errorCode = &code
+	}
+
+	return AuditLog{
+		ID:        entry.Id.String(),
+		Timestamp: entry.Timestamp,
+		RequestID: entry.RequestId.String(),
+		Action:    string(entry.Action),
+		Issuer:    entry.Issuer,
+		Subject:   entry.Subject,
+		KeyID:     entry.KeyId,
+		Success:   entry.Success,
+		ErrorCode: errorCode,
+		Metadata:  metadata,
+	}
+}
+
+// revive:enable:var-naming
+
+func buildAuditParams(filter AuditFilter) *api.GetAdminAuditParams {
+	params := &api.GetAdminAuditParams{}
+
+	if filter.Limit > 0 {
+		limit := filter.Limit
+		params.Limit = &limit
+	}
+	if filter.Offset > 0 {
+		offset := filter.Offset
+		params.Offset = &offset
+	}
+	if filter.Action != "" {
+		params.Action = &filter.Action
+	}
+	if filter.Subject != "" {
+		params.Subject = &filter.Subject
+	}
+	if !filter.StartDate.IsZero() {
+		params.StartDate = &filter.StartDate
+	}
+	if !filter.EndDate.IsZero() {
+		params.EndDate = &filter.EndDate
+	}
+
+	return params
+}
+
+func mapSignResponseError(resp *api.PostSignResponse) error {
+	switch {
+	case resp.JSON400 != nil:
+		return &ValidationError{
+			Code:    string(resp.JSON400.Code),
+			Message: resp.JSON400.Error,
+		}
+	case resp.JSON404 != nil:
+		return &ServiceError{
+			Code:       string(resp.JSON404.Code),
+			Message:    resp.JSON404.Error,
+			StatusCode: 404,
+		}
+	case resp.JSON429 != nil:
+		return &RateLimitError{
+			Message:    resp.JSON429.Error,
+			RetryAfter: time.Duration(resp.JSON429.RetryAfter) * time.Second,
+		}
+	case resp.JSON500 != nil || resp.JSON503 != nil:
+		return mapServerError(resp)
+	default:
+		return nil
+	}
+}
+
+func parseSignSuccess(resp *api.PostSignResponse) (*SignResult, bool) {
+	if resp.StatusCode() != 200 {
+		return nil, false
+	}
+
+	result := &SignResult{
+		Signature: string(resp.Body),
+	}
+	parseRateLimitHeaders(resp, result)
+
+	return result, true
+}
+
+func mapServerError(resp *api.PostSignResponse) *ServiceError {
+	errResp := resp.JSON500
+	statusCode := 500
+	if errResp == nil {
+		errResp = resp.JSON503
+		statusCode = 503
+	}
+
+	serviceErr := &ServiceError{
+		Code:       string(errResp.Code),
+		Message:    errResp.Error,
+		StatusCode: statusCode,
+	}
+	if errResp.RequestId != nil {
+		serviceErr.RequestID = errResp.RequestId.String()
+	}
+
+	return serviceErr
+}
+
+func parseRateLimitHeaders(resp *api.PostSignResponse, result *SignResult) {
+	remaining := resp.HTTPResponse.Header.Get("X-RateLimit-Remaining")
+	if remaining != "" {
+		if val, err := strconv.Atoi(remaining); err == nil {
+			result.RateLimitRemaining = &val
+		}
+	}
+
+	reset := resp.HTTPResponse.Header.Get("X-RateLimit-Reset")
+	if reset != "" {
+		if val, err := strconv.ParseInt(reset, 10, 64); err == nil {
+			t := time.Unix(val, 0)
+			result.RateLimitReset = &t
+		}
+	}
+}
+
+func buildSignParams(keyID string) *api.PostSignParams {
+	var keyIDPtr *string
+	if keyID != "" {
+		keyIDPtr = &keyID
+	}
+	return &api.PostSignParams{KeyId: keyIDPtr}
+}
+
+func validateSignInput(commitData string) error {
+	if commitData != "" {
+		return nil
+	}
+	return &ValidationError{
+		Code:    "INVALID_REQUEST",
+		Message: "commitData cannot be empty",
+	}
 }

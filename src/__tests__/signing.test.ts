@@ -1,7 +1,7 @@
 /** biome-ignore-all lint/style/noNonNullAssertion: This is a test file */
 import * as openpgp from "openpgp";
 import { describe, expect, it, vi } from "vitest";
-import type { StoredKey } from "~/types";
+import type { StoredKey } from "~/schemas/keys";
 import {
   createArmoredPrivateKey,
   createKeyFingerprint,
@@ -16,21 +16,27 @@ import {
 
 vi.mock("openpgp", async (importOriginal) => {
   const actual = await importOriginal<typeof import("openpgp")>();
-  return {
-    ...actual,
-    readPrivateKey: vi.fn(actual.readPrivateKey),
-  };
+  return { ...actual, readPrivateKey: vi.fn(actual.readPrivateKey) };
 });
 
 // Generate a test key for use in tests
 async function generateTestKey(passphrase?: string) {
-  const { privateKey, publicKey } = await openpgp.generateKey({
-    type: "ecc",
-    curve: "ed25519Legacy",
-    userIDs: [{ name: "Test User", email: "test@example.com" }],
-    passphrase,
-    format: "armored",
-  });
+  const options = passphrase
+    ? {
+      type: "ecc" as const,
+      curve: "ed25519Legacy" as const,
+      userIDs: [{ name: "Test User", email: "test@example.com" }],
+      passphrase,
+      format: "armored" as const,
+    }
+    : {
+      type: "ecc" as const,
+      curve: "ed25519Legacy" as const,
+      userIDs: [{ name: "Test User", email: "test@example.com" }],
+      format: "armored" as const,
+    };
+
+  const { privateKey, publicKey } = await openpgp.generateKey(options);
 
   const parsedKey = await openpgp.readPrivateKey({ armoredKey: privateKey });
   const keyId = parsedKey.getKeyID().toHex().toUpperCase();

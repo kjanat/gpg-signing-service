@@ -35,13 +35,13 @@ architecture-beta
 
     gha{group}:R -- L:worker{group}
     gitlab{group}:R -- L:worker{group}
-  
+
     admincli{group}:R -- L:worker{group}
-  
+
     worker:T -- B:kv
     worker:R -- L:d1
     worker:B -- T:durable
-  
+
     worker{group}:T -- B:jwks
 ```
 
@@ -203,7 +203,18 @@ This ensures the client is always in sync with the server API.
 | `KEY_ID`          | Default signing key ID           |
 | `KEY_PASSPHRASE`  | Secret: Key passphrase           |
 
+## License
+
+Dual-licensed under your choice of [MIT](LICENSE-MIT) or [AGPL-3.0](LICENSE-AGPL-3.0).
+
+See [LICENSE.md](LICENSE.md) for details:
+
+- **Private/personal use**: MIT License
+- **Commercial/business use**: AGPL-3.0
+
 <!-- link definitions -->
+
+<!--prettier-ignore-start-->
 
 [actions:sign-commits]: .github/workflows/sign-commits.yml "Example GitHub Actions workflow"
 [cloudflare:dashboard]: https://dash.cloudflare.com/ "Cloudflare Dashboard"
@@ -211,3 +222,5 @@ This ensures the client is always in sync with the server API.
 [gitlab:sign-commits]: .gitlab-ci.yml "Example GitLab CI pipeline"
 [npm:@hono/zod-openapi]: https://www.npmjs.com/package/@hono/zod-openapi "npm package: @hono/zod-openapi"
 [wrangler:install]: https://developers.cloudflare.com/workers/wrangler/install-and-update/ "Install Wrangler CLI"
+
+<!--prettier-ignore-end-->

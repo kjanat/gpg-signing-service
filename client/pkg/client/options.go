@@ -49,7 +49,7 @@ func WithAdminToken(token string) Option {
 }
 
 // WithMaxRetries sets the maximum number of retry attempts.
-// Default is 3. Set to 0 to disable retries.
+// The default is 3. Set to 0 to disable retries.
 func WithMaxRetries(n int) Option {
 	return func(o *Options) {
 		o.maxRetries = n
@@ -57,11 +57,11 @@ func WithMaxRetries(n int) Option {
 }
 
 // WithRetryWait sets the min/max retry backoff duration.
-// Default is 1s min, 30s max.
-func WithRetryWait(min, max time.Duration) Option {
+// Default is 1 s minWait, 30s maxWait.
+func WithRetryWait(minWait, maxWait time.Duration) Option {
 	return func(o *Options) {
-		o.retryWaitMin = min
-		o.retryWaitMax = max
+		o.retryWaitMin = minWait
+		o.retryWaitMax = maxWait
 	}
 }
 

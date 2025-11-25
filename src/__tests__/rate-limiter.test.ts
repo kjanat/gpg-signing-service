@@ -2,9 +2,6 @@ import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import type { RateLimitResult } from "~/types";
 
-const parseJson = async <T>(response: Response): Promise<T> =>
-  (await response.json()) as T;
-
 describe("RateLimiter Durable Object", () => {
   // Get a fresh DO stub for each test
   function getRateLimiter(name = "test") {
@@ -182,24 +179,6 @@ describe("RateLimiter Durable Object", () => {
       const response = await stub.fetch("http://localhost/unknown");
 
       expect(response.status).toBe(404);
-    });
-
-    it("should catch unexpected errors", async () => {
-      const stub = getRateLimiter("error-test");
-      const response = await stub.fetch("http://localhost/_debug/throw");
-
-      expect(response.status).toBe(500);
-      const body = await parseJson<{ error: string }>(response);
-      expect(body.error).toBe("Debug error");
-    });
-
-    it("should handle non-Error exceptions", async () => {
-      const stub = getRateLimiter("error-string-test");
-      const response = await stub.fetch("http://localhost/_debug/throw-string");
-
-      expect(response.status).toBe(500);
-      const body = await parseJson<{ error: string }>(response);
-      expect(body.error).toBe("Unknown error");
     });
   });
 });

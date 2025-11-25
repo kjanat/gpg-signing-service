@@ -1,8 +1,9 @@
 import type { Context } from "hono";
+import { logger } from "./logger";
 
 /**
  * Schedules a promise for background execution using executionCtx.waitUntil.
- * Automatically handles errors by logging them to console.
+ * Automatically handles errors by logging them.
  * Falls back to await if executionCtx is unavailable (test environments).
  *
  * @param ctx - Hono context with optional executionCtx
@@ -16,14 +17,13 @@ export async function scheduleBackgroundTask(
   promise: Promise<unknown>,
 ): Promise<void> {
   const taskWithErrorHandling = promise.catch((error) => {
-    console.log("DEBUG: scheduleBackgroundTask catch block entered", {
+    logger.error("Background task failed", {
       requestId,
-      error,
+      error: error instanceof Error ? error.message : String(error),
     });
-    console.error("Background task failed:", { requestId, error });
   });
 
-  console.log("DEBUG: scheduleBackgroundTask called", {
+  logger.debug("Scheduling background task", {
     requestId,
     hasExecutionCtx: !!ctx.executionCtx,
   });

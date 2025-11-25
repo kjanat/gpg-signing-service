@@ -15,26 +15,20 @@ import {
   it,
   vi,
 } from "vitest";
+import { logger } from "~/utils/logger";
 
 const parseJson = async <T>(response: Response): Promise<T> =>
   (await response.json()) as T;
 
 // Mock fetch for JWKS
-const { signFetchMock } = vi.hoisted(() => ({
-  signFetchMock: vi.fn(),
-}));
+const { signFetchMock } = vi.hoisted(() => ({ signFetchMock: vi.fn() }));
 
-vi.mock("~/utils/fetch", () => ({
-  fetchWithTimeout: signFetchMock,
-}));
+vi.mock("~/utils/fetch", () => ({ fetchWithTimeout: signFetchMock }));
 
 // Mock audit logging to avoid D1 dependency in tests
 vi.mock("~/utils/audit", async (importOriginal) => {
   const actual = await importOriginal<typeof import("~/utils/audit")>();
-  return {
-    ...actual,
-    logAuditEvent: vi.fn(async () => undefined),
-  };
+  return { ...actual, logAuditEvent: vi.fn(async () => undefined) };
 });
 
 // Helper to make requests
@@ -323,9 +317,7 @@ describe("Sign Route", () => {
         ({
           fetch: async () =>
             new Response(
-              JSON.stringify({
-                armoredPrivateKey: "invalid-key-data",
-              }),
+              JSON.stringify({ armoredPrivateKey: "invalid-key-data" }),
             ),
         }) as unknown as DurableObjectStub;
 
@@ -352,9 +344,7 @@ describe("Sign Route", () => {
       const originalGet = env.KEY_STORAGE.get;
       const mockFetch = vi.fn().mockRejectedValue("String error");
       env.KEY_STORAGE.get = () =>
-        ({
-          fetch: mockFetch,
-        }) as unknown as DurableObjectStub;
+        ({ fetch: mockFetch }) as unknown as DurableObjectStub;
 
       try {
         const response = await makeRequest("/sign?keyId=8888888888888888", {
@@ -406,7 +396,7 @@ describe("Sign Route", () => {
       const token = await createToken();
 
       // Spy on console.error to verify catch handler executes
-      const consoleSpy = vi.spyOn(console, "error");
+      const loggerSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
       const { logAuditEvent } = await import("~/utils/audit");
 
       // Upload a key first
@@ -433,21 +423,21 @@ describe("Sign Route", () => {
       await waitOnExecutionContext(ctx);
 
       // Verify catch handler logged the error
-      expect(consoleSpy).toHaveBeenCalledWith(
-        "Background task failed:",
+      expect(loggerSpy).toHaveBeenCalledWith(
+        "Background task failed",
         expect.objectContaining({
           requestId: expect.any(String),
-          error: expect.any(Error),
+          error: expect.any(String),
         }),
       );
 
-      consoleSpy.mockRestore();
+      loggerSpy.mockRestore();
     });
 
     it("should log audit failures via catch handler on sign error", async () => {
       await setupJWKSMock();
       const token = await createToken();
-      const consoleSpy = vi.spyOn(console, "error");
+      const loggerSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
       const { logAuditEvent } = await import("~/utils/audit");
 
       // Mock to reject for error audit
@@ -468,15 +458,15 @@ describe("Sign Route", () => {
 
       await waitOnExecutionContext(ctx);
 
-      expect(consoleSpy).toHaveBeenCalledWith(
-        "Background task failed:",
+      expect(loggerSpy).toHaveBeenCalledWith(
+        "Background task failed",
         expect.objectContaining({
           requestId: expect.any(String),
-          error: expect.any(Error),
+          error: expect.any(String),
         }),
       );
 
-      consoleSpy.mockRestore();
+      loggerSpy.mockRestore();
     });
   });
 });

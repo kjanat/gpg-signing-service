@@ -5,7 +5,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+PROJECT_DIR="$(dirname "${SCRIPT_DIR}")"
 KEYS_DIR="${PROJECT_DIR}/.keys"
 
 # Show help by default
@@ -41,12 +41,12 @@ EOF
 }
 
 # Show help if no arguments or help flag
-if [ $# -eq 0 ] || [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+if [[ $# -eq 0 ]] || [[ ${1:-} == "-h"  ]] || [[ ${1:-} == "--help"  ]]; then
 	show_help
 fi
 
 # Require at least name and email
-if [ $# -lt 2 ]; then
+if [[ $# -lt 2 ]]; then
 	echo "Error: name and email are required" >&2
 	echo "Run '$(basename "$0") --help' for usage information" >&2
 	exit 1
@@ -59,22 +59,26 @@ KEY_COMMENT="${3:-Cloudflare Worker Signing Key}"
 PASSPHRASE="${4:-}"
 
 # Create keys directory if it doesn't exist
-mkdir -p "$KEYS_DIR"
+mkdir -p "${KEYS_DIR}"
 
 # Set GNUPGHOME to project directory - NOT touching ~/.gnupg
 export GNUPGHOME="${KEYS_DIR}/gnupg"
-mkdir -p "$GNUPGHOME"
-chmod 700 "$GNUPGHOME"
+mkdir -p "${GNUPGHOME}"
+chmod 700 "${GNUPGHOME}"
 
 echo "Generating GPG key..."
-echo "  Name:       $KEY_NAME"
-echo "  Email:      $KEY_EMAIL"
-echo "  Comment:    $KEY_COMMENT"
-echo "  GNUPGHOME:  $GNUPGHOME (NOT ~/.gnupg)"
-echo "  Passphrase: ${PASSPHRASE:-none}"
+echo "  Name:       ${KEY_NAME}"
+echo "  Email:      ${KEY_EMAIL}"
+echo "  Comment:    ${KEY_COMMENT}"
+echo "  GNUPGHOME:  ${GNUPGHOME} (NOT ~/.gnupg)"
+if [[ -n ${PASSPHRASE}   ]]; then
+	echo "  Passphrase: set"
+else
+	echo "  Passphrase: none"
+fi
 
 # Generate key using batch mode
-if [ -n "$PASSPHRASE" ]; then
+if [[ -n ${PASSPHRASE}   ]]; then
 	gpg --batch --gen-key <<EOF
 Key-Type: EDDSA
 Key-Curve: ed25519
@@ -106,31 +110,32 @@ KEY_ID=$(gpg --list-keys --keyid-format long "${KEY_EMAIL}" | grep -E "^pub" | a
 {
 	echo ""
 	echo "Key generated successfully!"
-	echo "  Key ID: $KEY_ID"
+	echo "  Key ID: ${KEY_ID}"
 }
 
 # Export private key
 PRIVATE_KEY_FILE="${KEYS_DIR}/private-key.asc"
-if [ -n "$PASSPHRASE" ]; then
-	gpg --batch --pinentry-mode loopback --passphrase "$PASSPHRASE" --armor --export-secret-keys "$KEY_ID" >"$PRIVATE_KEY_FILE"
+if [[ -n ${PASSPHRASE}   ]]; then
+	gpg --batch --pinentry-mode loopback --passphrase "${PASSPHRASE}" --armor --export-secret-keys "${KEY_ID}" >"${PRIVATE_KEY_FILE}"
 else
-	gpg --armor --export-secret-keys "$KEY_ID" >"$PRIVATE_KEY_FILE"
+	gpg --armor --export-secret-keys "${KEY_ID}" >"${PRIVATE_KEY_FILE}"
 fi
 
 # Export public key
 PUBLIC_KEY_FILE="${KEYS_DIR}/public-key.asc"
-gpg --armor --export "$KEY_ID" >"$PUBLIC_KEY_FILE"
+gpg --armor --export "${KEY_ID}" >"${PUBLIC_KEY_FILE}"
 
 # Get fingerprint
-FINGERPRINT=$(gpg --fingerprint "$KEY_ID" | grep -A1 "pub" | tail -1 | tr -d ' ')
+FINGERPRINT=$(gpg --fingerprint "${KEY_ID}" | grep -A1 "pub" | tail -1 | tr -d ' ')
+ESCAPED_KEY=$(sed ':a;N;$!ba;s/\n/\\n/g' <"${PRIVATE_KEY_FILE}")
 
 {
 	echo ""
 	echo "Keys exported to:"
-	echo "  Private: $PRIVATE_KEY_FILE"
-	echo "  Public:  $PUBLIC_KEY_FILE"
+	echo "  Private: ${PRIVATE_KEY_FILE}"
+	echo "  Public:  ${PUBLIC_KEY_FILE}"
 	echo ""
-	echo "Fingerprint: $FINGERPRINT"
+	echo "Fingerprint: ${FINGERPRINT}"
 	echo ""
 	echo "Next steps:"
 	echo "  1. Set passphrase as secret: wrangler secret put KEY_PASSPHRASE"
@@ -141,7 +146,7 @@ FINGERPRINT=$(gpg --fingerprint "$KEY_ID" | grep -A1 "pub" | tail -1 | tr -d ' '
 	echo '       -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \'
 	# shellcheck disable=SC1003
 	echo '       -H "Content-Type: application/json" \'
-	echo "       -d '{\"armoredPrivateKey\": \"$(cat "$PRIVATE_KEY_FILE" | sed ':a;N;$!ba;s/\n/\\n/g')\", \"keyId\": \"signing-key-v1\"}'"
+	echo "       -d '{\"armoredPrivateKey\": \"${ESCAPED_KEY}\", \"keyId\": \"signing-key-v1\"}'"
 	echo ""
-	echo "IMPORTANT: Keep $PRIVATE_KEY_FILE secure and add .keys/ to .gitignore!"
+	echo "IMPORTANT: Keep ${PRIVATE_KEY_FILE} secure and add .keys/ to .gitignore!"
 }

@@ -4,11 +4,11 @@
 version: "3"
 
 includes:
-  gpg-sign:
+  client:
     taskfile: ./client
     dir: ./client
     flatten: false
-    aliases: [client]
+    aliases: [gpg-sign, c]
 
 vars:
   DATABASE_NAME: gpg-signing-audit
@@ -38,32 +38,39 @@ tasks:
   test:
     desc: Run tests
     aliases: [t]
-    deps: [install]
+    deps: [install:noscripts]
     cmd: bunx vitest run
 
   test:coverage:
     desc: Run tests with coverage
     aliases: [tc]
-    deps: [install]
+    deps: [install:noscripts]
     cmd: bunx vitest run --coverage
 
   test:watch:
     desc: Run tests in watch mode
     aliases: [tw]
-    deps: [install]
+    deps: [install:noscripts]
     cmd: bunx vitest
 
   lint:
     desc: Lint code
     aliases: [l]
-    deps: [install]
-    cmd: bunx eslint src/
+    deps: [install:noscripts]
+    cmds:
+      - task: format
+      - bun eslint src/
+      - bun biome lint
 
   lint:fix:
     desc: Lint and fix code
     aliases: [lf]
-    deps: [install]
-    cmd: bunx eslint src/ --fix
+    deps: [install:noscripts]
+    cmds:
+      - bunx eslint src/ --fix
+      - bun biome check --fix
+      - defer:
+          task: format
 
   format:
     silent: true
@@ -72,13 +79,15 @@ tasks:
     env:
       CONFIG: "{{.DPRINT_CONFIG}}"
       DPRINT_CONFIG_DISCOVERY: "false"
-    cmd: bun dprint fmt {{.CLI_ARGS}} --config=$CONFIG --allow-no-files
+    cmds:
+      - task: client:format
+      - bun dprint fmt {{.CLI_ARGS}} --config=$CONFIG --allow-no-files
 
   format:check:
     silent: true
     desc: Check code formatting
     aliases: [fc]
-    deps: [install]
+    deps: [install:noscripts]
     env:
       CONFIG: "{{.DPRINT_CONFIG}}"
       DPRINT_CONFIG_DISCOVERY: "false"
@@ -87,7 +96,7 @@ tasks:
   typecheck:
     desc: Typecheck code
     aliases: [ts, type, tsc, tsgo]
-    deps: [install]
+    deps: [install:noscripts]
     sources:
       - "**/*.ts"
     cmds:
@@ -96,17 +105,21 @@ tasks:
   typegen:
     desc: Generate Worker types
     aliases: [tg]
-    deps: [install]
+    deps: [install:noscripts]
+    sources:
+      - "**/*.ts"
     generates:
-      - ./worker-configuration.d.ts
+      - worker-configuration.d.ts
     cmd: bunx wrangler types
 
   generate:api:
     desc: Generate OpenAPI spec and client
-    aliases: [gapi]
-    deps: [install]
+    aliases: [gapi, gen]
+    deps: [install:noscripts]
     sources:
       - "**/*.ts"
+    generates:
+      - client/openapi.json
     cmds:
       - bun run scripts/generate-openapi.ts
       - task: client:generate
@@ -156,3 +169,8 @@ tasks:
     desc: Install dependencies
     silent: true
     cmd: bun install
+
+  install:noscripts:
+    desc: Install dependencies without scripts
+    silent: true
+    cmd: bun install --ignore-scripts >/dev/null

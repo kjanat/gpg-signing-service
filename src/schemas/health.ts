@@ -4,7 +4,9 @@ import { TimestampSchema } from "./audit";
 /**
  * Health status levels
  */
-export const HealthStatusSchema = z.enum(["healthy", "degraded"]);
+export const HealthStatusSchema = z
+  .enum(["healthy", "degraded"])
+  .openapi("HealthStatus");
 
 /**
  * Health check response schema

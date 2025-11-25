@@ -417,9 +417,11 @@ func TestIsServiceError(t *testing.T) {
 
 // TestErrorCodes tests error code constants
 func TestErrorCodes(t *testing.T) {
+	//goland:noinspection GoBoolExpressions
 	if ErrCodeDegraded != "SERVICE_DEGRADED" {
 		t.Errorf("expected ErrCodeDegraded 'SERVICE_DEGRADED', got %q", ErrCodeDegraded)
 	}
+	//goland:noinspection GoBoolExpressions
 	if ErrCodeKeyNotFound != "KEY_NOT_FOUND" {
 		t.Errorf("expected ErrCodeKeyNotFound 'KEY_NOT_FOUND', got %q", ErrCodeKeyNotFound)
 	}

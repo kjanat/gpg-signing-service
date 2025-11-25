@@ -12,7 +12,7 @@ import (
 
 // Example demonstrates basic usage of the GPG Signing Service client.
 func Example() {
-	// Create a client with OIDC token
+	// Create a client with an OIDC token
 	c, err := client.New("https://gpg.kajkowalski.nl",
 		client.WithOIDCToken(os.Getenv("OIDC_TOKEN")),
 		client.WithTimeout(30*time.Second),
@@ -54,7 +54,7 @@ func Example() {
 
 // ExampleClient_adminOperations demonstrates admin operations.
 func ExampleClient_adminOperations() {
-	// Create admin client
+	// Create an admin client
 	admin, err := client.New("https://gpg.kajkowalski.nl",
 		client.WithAdminToken(os.Getenv("ADMIN_TOKEN")),
 	)

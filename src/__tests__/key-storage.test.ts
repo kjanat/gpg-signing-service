@@ -96,47 +96,16 @@ describe("KeyStorage Durable Object", () => {
     const id = env.KEY_STORAGE.idFromName("test-unexpected-error");
     const stub = env.KEY_STORAGE.get(id);
 
-    // To test the global catch block (lines 42-48), we need to throw an error
-    // that isn't caught by specific handlers.
-    // Since we can't easily mock `this.getKey` from outside, we can rely on
-    // the fact that `request.url` parsing could theoretically fail if we could pass a bad URL,
-    // but Request constructor validates it.
-    // Instead, we can use the same trick as "should handle internal errors" but verify the response structure matches the global handler.
-
+    // Test error handling by providing malformed JSON which triggers request.json() parse error
     const response = await stub.fetch(
       new Request("http://internal/store-key", {
         method: "POST",
-        body: "invalid-json", // This throws in request.json()
+        body: "invalid-json",
       }),
     );
 
     expect(response.status).toBe(500);
     const body = await parseJson<{ error: string }>(response);
-    // The global handler returns { error: message }
     expect(body.error).toContain("Unexpected token"); // JSON parse error message
-  });
-
-  it("should handle non-Error exceptions", async () => {
-    const id = env.KEY_STORAGE.idFromName("test-string-error");
-    const stub = env.KEY_STORAGE.get(id);
-
-    const response = await stub.fetch(
-      new Request("http://internal/_debug/throw-string"),
-    );
-
-    expect(response.status).toBe(500);
-    const body = await parseJson<{ error: string }>(response);
-    expect(body.error).toBe("Unknown error");
-  });
-
-  it("should handle standard Error exceptions", async () => {
-    const id = env.KEY_STORAGE.idFromName("test-standard-error");
-    const stub = env.KEY_STORAGE.get(id);
-    const response = await stub.fetch(
-      new Request("http://internal/_debug/throw"),
-    );
-    expect(response.status).toBe(500);
-    const body = await parseJson<{ error: string }>(response);
-    expect(body.error).toBe("Debug error");
   });
 });

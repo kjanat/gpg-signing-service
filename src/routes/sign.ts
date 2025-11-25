@@ -8,17 +8,14 @@ import {
   SignRequestSchema,
   SignResponseSchema,
 } from "~/schemas";
-import type {
-  ErrorCode,
-  Identity,
-  RateLimitResult,
-  StoredKey,
-  ValidatedOIDCClaims,
-} from "~/types";
-import { createKeyId } from "~/types";
+import type { ErrorCode } from "~/schemas/errors";
+import type { StoredKey } from "~/schemas/keys";
+import type { Identity, RateLimitResult, ValidatedOIDCClaims } from "~/types";
+import { createKeyId, HEADERS, HTTP, TIME } from "~/types";
 import { logAuditEvent } from "~/utils/audit";
 import { fetchKeyStorage, fetchRateLimiter } from "~/utils/durable-objects";
 import { scheduleBackgroundTask } from "~/utils/execution";
+import { logger } from "~/utils/logger";
 import { signCommitData } from "~/utils/signing";
 
 const app = createOpenAPIApp();
@@ -28,13 +25,10 @@ const signRoute = createRoute({
   path: "/",
   summary: "Sign commit data",
   description: "Sign git commit data using the stored GPG key",
+  security: [{ oidcAuth: [] }],
   request: {
     body: {
-      content: {
-        "text/plain": {
-          schema: SignRequestSchema,
-        },
-      },
+      content: { "text/plain": { schema: SignRequestSchema } },
       required: true,
     },
     query: PublicKeyQuerySchema,
@@ -42,58 +36,34 @@ const signRoute = createRoute({
   },
   responses: {
     200: {
-      content: {
-        "text/plain": {
-          schema: SignResponseSchema,
-        },
-      },
+      content: { "text/plain": { schema: SignResponseSchema } },
       description: "PGP Signature",
     },
     400: {
-      content: {
-        "application/json": {
-          schema: ErrorResponseSchema,
-        },
-      },
+      content: { "application/json": { schema: ErrorResponseSchema } },
       description: "Bad Request",
     },
     404: {
-      content: {
-        "application/json": {
-          schema: ErrorResponseSchema,
-        },
-      },
+      content: { "application/json": { schema: ErrorResponseSchema } },
       description: "Key not found",
     },
     429: {
-      content: {
-        "application/json": {
-          schema: RateLimitErrorSchema,
-        },
-      },
+      content: { "application/json": { schema: RateLimitErrorSchema } },
       description: "Rate limit exceeded",
     },
     500: {
-      content: {
-        "application/json": {
-          schema: ErrorResponseSchema,
-        },
-      },
+      content: { "application/json": { schema: ErrorResponseSchema } },
       description: "Internal Server Error",
     },
     503: {
-      content: {
-        "application/json": {
-          schema: ErrorResponseSchema,
-        },
-      },
+      content: { "application/json": { schema: ErrorResponseSchema } },
       description: "Service Unavailable",
     },
   },
 });
 
 app.openapi(signRoute, async (c) => {
-  const { "X-Request-ID": requestIdHeader } = c.req.valid("header");
+  const { [HEADERS.REQUEST_ID]: requestIdHeader } = c.req.valid("header");
   const requestId = requestIdHeader || crypto.randomUUID();
   const claims = c.get("oidcClaims") as ValidatedOIDCClaims;
   const identity = c.get("identity") as Identity;
@@ -136,7 +106,10 @@ app.openapi(signRoute, async (c) => {
 
     // Process rate limit
     if (!rateLimitResponse.ok) {
-      console.error("Rate limiter failed:", rateLimitResponse.status);
+      logger.error("Rate limiter failed", {
+        status: rateLimitResponse.status,
+        requestId,
+      });
       return c.json(
         {
           error: "Service temporarily unavailable",
@@ -195,17 +168,23 @@ app.openapi(signRoute, async (c) => {
     );
 
     // Set rate limit headers
-    c.header("X-RateLimit-Remaining", String(rateLimit.remaining));
-    c.header("X-RateLimit-Reset", String(Math.ceil(rateLimit.resetAt / 1000)));
-    c.header("X-Request-ID", requestId);
+    c.header(HEADERS.RATE_LIMIT_REMAINING, String(rateLimit.remaining));
+    c.header(
+      HEADERS.RATE_LIMIT_RESET,
+      String(Math.ceil(rateLimit.resetAt / TIME.SECOND)),
+    );
+    c.header(HEADERS.REQUEST_ID, requestId);
 
-    return c.text(result.signature, 200);
+    return c.text(result.signature, HTTP.OK);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Signing failed";
 
     // Check if this is a rate limiter error from the fetch phase
     if (message.includes("Rate limiter")) {
-      console.error("Rate limiter critical failure:", error);
+      logger.error("Rate limiter critical failure", {
+        error: message,
+        requestId,
+      });
       return c.json(
         {
           error: "Service temporarily unavailable",

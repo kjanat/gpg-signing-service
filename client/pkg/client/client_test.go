@@ -9,6 +9,10 @@ import (
 	"time"
 )
 
+const (
+	testAuthToken = "test-token"
+)
+
 // TestNewClient tests the New() constructor with various scenarios
 func TestNewClient(t *testing.T) {
 	tests := []struct {
@@ -166,7 +170,7 @@ func TestNewClient(t *testing.T) {
 			baseURL: "http://localhost:8080",
 			opts: []Option{
 				WithTimeout(45 * time.Second),
-				WithOIDCToken("test-token"),
+				WithOIDCToken(testAuthToken),
 				WithMaxRetries(2),
 				WithRetryWait(100*time.Millisecond, 20*time.Second),
 			},
@@ -175,8 +179,8 @@ func TestNewClient(t *testing.T) {
 				if c.opts.timeout != 45*time.Second {
 					t.Errorf("expected timeout 45s, got %v", c.opts.timeout)
 				}
-				if c.opts.authToken != "test-token" {
-					t.Errorf("expected authToken 'test-token', got %q", c.opts.authToken)
+				if c.opts.authToken != testAuthToken {
+					t.Errorf("expected authToken '%s', got %q", testAuthToken, c.opts.authToken)
 				}
 				if c.opts.maxRetries != 2 {
 					t.Errorf("expected maxRetries 2, got %d", c.opts.maxRetries)
@@ -238,7 +242,7 @@ func TestNewClient(t *testing.T) {
 // TestNewClientWithHTTPServer validates client works with real HTTP server
 func TestNewClientWithHTTPServer(t *testing.T) {
 	// Create a simple test server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	}))
@@ -288,8 +292,9 @@ func TestNewClientAuthorizationHeader(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		if auth != "Bearer test-token" {
-			t.Errorf("expected Authorization header 'Bearer test-token', got %q", auth)
+		expectedAuth := "Bearer " + testAuthToken
+		if auth != expectedAuth {
+			t.Errorf("expected Authorization header '%s', got %q", expectedAuth, auth)
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -297,19 +302,19 @@ func TestNewClientAuthorizationHeader(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c, err := New(server.URL, WithOIDCToken("test-token"))
+	c, err := New(server.URL, WithOIDCToken(testAuthToken))
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
 
-	if c.opts.authToken != "test-token" {
-		t.Errorf("expected authToken 'test-token', got %q", c.opts.authToken)
+	if c.opts.authToken != testAuthToken {
+		t.Errorf("expected authToken '%s', got %q", testAuthToken, c.opts.authToken)
 	}
 }
 
-// TestNewClientTimeout validates timeout option is applied to HTTP client
+// TestNewClientTimeout validates the timeout option was applied to the HTTP client
 func TestNewClientTimeout(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(100 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
 	}))

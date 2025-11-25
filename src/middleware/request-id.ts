@@ -1,23 +1,28 @@
 import type { MiddlewareHandler } from "hono";
-import type { Env, Variables } from "~/types";
+import { HEADERS } from "~/types";
 
 /**
- * Request ID middleware
- * - Extracts or generates request ID
- * - Sets it in context for use in handlers
- * - Adds X-Request-ID header to response
- *
- * Eliminates duplication across route handlers
+ * Get request ID from header or generate a new one
  */
-export const requestIdMiddleware: MiddlewareHandler<{
-  Bindings: Env;
-  Variables: Variables;
-}> = async (c, next) => {
-  const requestId = c.req.header("X-Request-ID") || crypto.randomUUID();
+export function getRequestId(headerValue?: string | null): string {
+  return headerValue || crypto.randomUUID();
+}
+
+/**
+ * Request ID middleware - ensures every request has a unique ID
+ */
+export const requestId: MiddlewareHandler = async (c, next) => {
+  const requestId = getRequestId(c.req.header(HEADERS.REQUEST_ID));
+
+  // Store in context
   c.set("requestId", requestId);
 
+  // Call next middleware
   await next();
 
-  // Add request ID to response headers
-  c.header("X-Request-ID", requestId);
+  // Add to response headers
+  c.header(HEADERS.REQUEST_ID, requestId);
 };
+
+// Export with old name for backwards compatibility
+export const requestIdMiddleware = requestId;

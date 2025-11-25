@@ -12,7 +12,7 @@ const (
 	ErrCodeKeyNotFound = "KEY_NOT_FOUND"
 )
 
-// Common errors
+// ErrUnexpectedStatus is a sentinel error returned when the server responds with an unexpected status code.
 var (
 	ErrUnexpectedStatus = errors.New("unexpected status code")
 )
@@ -42,7 +42,7 @@ func (e *AuthError) Error() string {
 	return fmt.Sprintf("authentication failed: %s", e.Message)
 }
 
-// RateLimitError represents rate limit exceeded.
+// RateLimitError represents the rate limit having been exceeded.
 type RateLimitError struct {
 	Message    string
 	RetryAfter time.Duration

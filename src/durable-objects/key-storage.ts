@@ -1,4 +1,5 @@
-import type { StoredKey } from "~/types";
+import type { StoredKey } from "~/schemas/keys";
+import { HTTP, MediaType } from "~/types";
 
 export class KeyStorage implements DurableObject {
   private state: DurableObjectState;
@@ -18,7 +19,9 @@ export class KeyStorage implements DurableObject {
 
         case "/store-key":
           if (request.method !== "POST") {
-            return new Response("Method not allowed", { status: 405 });
+            return new Response("Method not allowed", {
+              status: HTTP.MethodNotAllowed,
+            });
           }
           return await this.storeKey(await request.json());
 
@@ -27,27 +30,23 @@ export class KeyStorage implements DurableObject {
 
         case "/delete-key":
           if (request.method !== "DELETE") {
-            return new Response("Method not allowed", { status: 405 });
+            return new Response("Method not allowed", {
+              status: HTTP.MethodNotAllowed,
+            });
           }
           return await this.deleteKey(url.searchParams.get("keyId") || "");
 
         case "/health":
           return await this.healthCheck();
 
-        case "/_debug/throw":
-          throw new Error("Debug error");
-
-        case "/_debug/throw-string":
-          throw "Debug string error";
-
         default:
-          return new Response("Not found", { status: 404 });
+          return new Response("Not found", { status: HTTP.NotFound });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
       return new Response(JSON.stringify({ error: message }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
+        status: HTTP.InternalServerError,
+        headers: { "Content-Type": MediaType.ApplicationJson },
       });
     }
   }
@@ -57,14 +56,14 @@ export class KeyStorage implements DurableObject {
 
     if (!key) {
       return new Response(JSON.stringify({ error: "Key not found" }), {
-        status: 404,
-        headers: { "Content-Type": "application/json" },
+        status: HTTP.NotFound,
+        headers: { "Content-Type": MediaType.ApplicationJson },
       });
     }
 
     return new Response(JSON.stringify(key), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
+      status: HTTP.OK,
+      headers: { "Content-Type": MediaType.ApplicationJson },
     });
   }
 
@@ -72,7 +71,10 @@ export class KeyStorage implements DurableObject {
     if (!data.armoredPrivateKey || !data.keyId) {
       return new Response(
         JSON.stringify({ error: "Missing required fields" }),
-        { status: 400, headers: { "Content-Type": "application/json" } },
+        {
+          status: HTTP.BadRequest,
+          headers: { "Content-Type": MediaType.ApplicationJson },
+        },
       );
     }
 
@@ -84,7 +86,10 @@ export class KeyStorage implements DurableObject {
         keyId: data.keyId,
         fingerprint: data.fingerprint,
       }),
-      { status: 201, headers: { "Content-Type": "application/json" } },
+      {
+        status: HTTP.Created,
+        headers: { "Content-Type": MediaType.ApplicationJson },
+      },
     );
   }
 
@@ -98,24 +103,24 @@ export class KeyStorage implements DurableObject {
     }));
 
     return new Response(JSON.stringify({ keys: keyList }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
+      status: HTTP.OK,
+      headers: { "Content-Type": MediaType.ApplicationJson },
     });
   }
 
   private async deleteKey(keyId: string): Promise<Response> {
     if (!keyId) {
       return new Response(JSON.stringify({ error: "Key ID required" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
+        status: HTTP.BadRequest,
+        headers: { "Content-Type": MediaType.ApplicationJson },
       });
     }
 
     const existed = await this.state.storage.delete(`key:${keyId}`);
 
     return new Response(JSON.stringify({ success: true, deleted: existed }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
+      status: HTTP.OK,
+      headers: { "Content-Type": MediaType.ApplicationJson },
     });
   }
 
@@ -123,8 +128,8 @@ export class KeyStorage implements DurableObject {
     const keyCount = (await this.state.storage.list({ prefix: "key:" })).size;
 
     return new Response(JSON.stringify({ healthy: true, keyCount }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
+      status: HTTP.OK,
+      headers: { "Content-Type": MediaType.ApplicationJson },
     });
   }
 }

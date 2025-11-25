@@ -5,13 +5,13 @@ import (
 	"time"
 )
 
-// HealthStatus represents service health check result.
+// HealthStatus represents a service health check result.
 type HealthStatus struct {
-	Status     string
-	Version    string
-	Timestamp  time.Time
-	KeyStorage bool
-	Database   bool
+	Status     string    `json:"status"`
+	Version    string    `json:"version"`
+	Timestamp  time.Time `json:"timestamp"`
+	KeyStorage bool      `json:"keyStorage"`
+	Database   bool      `json:"database"`
 }
 
 // IsHealthy returns true if the service is healthy.
@@ -21,23 +21,23 @@ func (h *HealthStatus) IsHealthy() bool {
 
 // SignResult represents a successful signing operation.
 type SignResult struct {
-	Signature          string
-	RateLimitRemaining *int
-	RateLimitReset     *time.Time
+	Signature          string     `json:"signature"`
+	RateLimitRemaining *int       `json:"rateLimitRemaining,omitempty"`
+	RateLimitReset     *time.Time `json:"rateLimitReset,omitempty"`
 }
 
 // KeyInfo represents uploaded key information.
 type KeyInfo struct {
-	KeyID       string
-	Fingerprint string
+	KeyID       string `json:"keyId"`
+	Fingerprint string `json:"fingerprint"`
 }
 
 // KeyMetadata represents key listing information.
 type KeyMetadata struct {
-	KeyID       string
-	Fingerprint string
-	Algorithm   string
-	CreatedAt   time.Time
+	KeyID       string    `json:"keyId"`
+	Fingerprint string    `json:"fingerprint"`
+	Algorithm   string    `json:"algorithm"`
+	CreatedAt   time.Time `json:"createdAt"`
 }
 
 // AuditFilter configures audit log queries.
@@ -52,20 +52,20 @@ type AuditFilter struct {
 
 // AuditLog represents a single audit log entry.
 type AuditLog struct {
-	ID        string
-	Timestamp time.Time
-	RequestID string
-	Action    string
-	Issuer    string
-	Subject   string
-	KeyID     string
-	Success   bool
-	ErrorCode *string
-	Metadata  json.RawMessage
+	ID        string          `json:"id"`
+	Timestamp time.Time       `json:"timestamp"`
+	RequestID string          `json:"requestId"`
+	Action    string          `json:"action"`
+	Issuer    string          `json:"issuer"`
+	Subject   string          `json:"subject"`
+	KeyID     string          `json:"keyId"`
+	Success   bool            `json:"success"`
+	ErrorCode *string         `json:"errorCode,omitempty"`
+	Metadata  json.RawMessage `json:"metadata,omitempty"`
 }
 
 // AuditResult represents audit query results.
 type AuditResult struct {
-	Logs  []AuditLog
-	Count int
+	Logs  []AuditLog `json:"logs"`
+	Count int        `json:"count"`
 }

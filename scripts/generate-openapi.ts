@@ -6,6 +6,17 @@ import { openApiConfig } from "~/lib/openapi";
 
 const doc = app.getOpenAPIDocument(openApiConfig);
 
+// Ensure securitySchemes are included in components
+if (!doc.components) {
+  doc.components = {};
+}
+if (
+  !doc.components.securitySchemes
+  && openApiConfig.components?.securitySchemes
+) {
+  doc.components.securitySchemes = openApiConfig.components.securitySchemes;
+}
+
 const output = Bun.file("./client/openapi.json");
 
 try {

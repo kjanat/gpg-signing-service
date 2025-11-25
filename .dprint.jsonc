@@ -61,12 +61,13 @@
     ]
   },
   "excludes": [
+    "**/*-lock.json",
     "**/.keys",
     "**/.venv",
-    "**/*-lock.json",
     "**/node_modules",
     "**/openapi.json",
-    "**/worker-configuration.d.ts"
+    "**/worker-configuration.d.ts",
+    "tsconfig.json"
   ],
   "plugins": [
     "https://plugins.dprint.dev/typescript-0.95.12.wasm",

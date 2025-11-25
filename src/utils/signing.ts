@@ -1,10 +1,6 @@
 import * as openpgp from "openpgp";
-import type {
-  ArmoredPrivateKey,
-  ParsedKeyInfo,
-  SigningResult,
-  StoredKey,
-} from "~/types";
+import type { StoredKey } from "~/schemas/keys";
+import type { ArmoredPrivateKey, ParsedKeyInfo, SigningResult } from "~/types";
 import {
   createArmoredPrivateKey,
   createKeyFingerprint,
@@ -90,12 +86,13 @@ export async function parseAndValidateKey(
   return { keyId, fingerprint, algorithm, userId };
 }
 
-export function extractPublicKey(
+export async function extractPublicKey(
   armoredPrivateKey: ArmoredPrivateKey | string,
 ): Promise<string> {
-  return openpgp
-    .readPrivateKey({ armoredKey: armoredPrivateKey })
-    .then((privateKey) => privateKey.toPublic().armor());
+  const privateKey = await openpgp.readPrivateKey({
+    armoredKey: armoredPrivateKey,
+  });
+  return privateKey.toPublic().armor();
 }
 
 /**

@@ -4,7 +4,8 @@ A developer-friendly Go client library for the GPG Signing Service API.
 
 ## Overview
 
-This package wraps the auto-generated API client (`pkg/api`) with a cleaner interface that provides:
+This package wraps the auto-generated API client (`pkg/api`) with a cleaner
+interface that provides:
 
 - ✅ **Simple API** - No pointer management, clean method signatures
 - ✅ **Automatic retry** - Built-in exponential backoff with jitter
@@ -63,7 +64,7 @@ func main() {
 }
 ```
 
-## Comparison: Before vs After
+## Comparison: Before vs. After
 
 ### Before (Raw Generated Client)
 
@@ -321,4 +322,10 @@ result, err := c.Sign(ctx, data, keyID)
 
 ## License
 
-[MIT License](../../../LICENSE)
+Dual-licensed: [MIT][license:mit] or [AGPL-3.0][license:agpl]
+
+See [LICENSE.md][license] for details.
+
+[license]: ../../../LICENSE.md
+[license:mit]: ../../../LICENSE-MIT
+[license:agpl]: ../../../LICENSE-AGPL-3.0

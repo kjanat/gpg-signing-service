@@ -50,3 +50,8 @@ redoc-static.html
 
 # Docs
 _*.md
+
+# Logs
+*.log
+
+**/__pycache__/

@@ -31,7 +31,7 @@ func (r *Retrier) Do(ctx context.Context, fn func() error) error {
 	var lastErr error
 
 	for attempt := 0; attempt <= r.maxRetries; attempt++ {
-		// Exponential backoff before retry (skip on first attempt)
+		// Exponential backoff before retry (skip on the first attempt)
 		if attempt > 0 {
 			wait := r.backoff(attempt)
 			select {
@@ -56,12 +56,13 @@ func (r *Retrier) Do(ctx context.Context, fn func() error) error {
 		if errors.As(lastErr, &rateLimitErr) && r.retryOnRateLimit {
 			if rateLimitErr.RetryAfter > 0 {
 				timer := time.NewTimer(rateLimitErr.RetryAfter)
-				defer timer.Stop()
 				select {
 				case <-timer.C:
 				case <-ctx.Done():
+					stopTimer(timer)
 					return ctx.Err()
 				}
+				stopTimer(timer)
 			}
 		}
 	}
@@ -89,7 +90,7 @@ func (r *Retrier) shouldRetry(err error) bool {
 		return false
 	}
 
-	// Check for key not found
+	// Check for keys not found
 	if IsKeyNotFound(err) {
 		return false
 	}
@@ -104,12 +105,19 @@ func (r *Retrier) backoff(attempt int) time.Duration {
 		attempt = 10
 	}
 
+	// Defensive: normalize minWait to prevent Int64N panic
+	minWait := r.retryWaitMin
+	if minWait <= 0 {
+		return r.retryWaitMax
+	}
+
 	// Exponential backoff with jitter
 	mult := math.Pow(2, float64(attempt))
-	wait := time.Duration(mult) * r.retryWaitMin
+	wait := time.Duration(mult) * minWait
 
-	// Add jitter (0-100% of retryWaitMin) - using math/rand/v2 (goroutine-safe)
-	jitter := time.Duration(rand.Int64N(int64(r.retryWaitMin)))
+	// Add jitter (0-100% of minWait) - using math/rand/v2 (goroutine-safe)
+	// #nosec G404 - using weak RNG is acceptable for backoff jitter (non-cryptographic use)
+	jitter := time.Duration(rand.Int64N(int64(minWait)))
 	wait += jitter
 
 	if wait > r.retryWaitMax {
@@ -117,4 +125,17 @@ func (r *Retrier) backoff(attempt int) time.Duration {
 	}
 
 	return wait
+}
+
+func stopTimer(t *time.Timer) {
+	if t == nil {
+		return
+	}
+
+	if !t.Stop() {
+		select {
+		case <-t.C:
+		default:
+		}
+	}
 }

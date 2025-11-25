@@ -1,4 +1,5 @@
-import type { AuditAction, AuditLogEntry, ErrorCode } from "~/types";
+import type { AuditAction, AuditLogEntry } from "~/schemas/audit";
+import type { ErrorCode } from "~/schemas/errors";
 
 export async function logAuditEvent(
   db: D1Database,

@@ -69,7 +69,7 @@ No authentication required. These endpoints are rate-limited by global defaults.
 
 **Headers**:
 
-```
+```text
 Authorization: Bearer <oidc-token>
 ```
 
@@ -77,30 +77,30 @@ Authorization: Bearer <oidc-token>
 
 1. Add `id-token: write` to workflow permissions:
 
-```yaml
-permissions:
-  id-token: write
-```
+   ```yaml
+   permissions:
+     id-token: write
+   ```
 
 2. Request OIDC token:
 
-```yaml
-- name: Get OIDC Token
-  run: |
-    OIDC_TOKEN=$(curl -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-      "$ACTIONS_ID_TOKEN_REQUEST_URL" | jq -r '.token')
-    echo "OIDC_TOKEN=$OIDC_TOKEN" >> $GITHUB_ENV
-```
+   ```yaml
+   - name: Get OIDC Token
+     run: |
+       OIDC_TOKEN=$(curl -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+         "$ACTIONS_ID_TOKEN_REQUEST_URL" | jq -r '.token')
+       echo "OIDC_TOKEN=$OIDC_TOKEN" >> $GITHUB_ENV
+   ```
 
 3. Use in API calls:
 
-```yaml
-- name: Sign with service
-  run: |
-    curl -X POST https://gpg.kajkowalski.nl/sign \
-      -H "Authorization: Bearer $OIDC_TOKEN" \
-      --data-raw "$(git cat-file commit HEAD)"
-```
+   ```yaml
+   - name: Sign with service
+     run: |
+       curl -X POST https://gpg.kajkowalski.nl/sign \
+         -H "Authorization: Bearer $OIDC_TOKEN" \
+         --data-raw "$(git cat-file commit HEAD)"
+   ```
 
 #### GitLab CI
 
@@ -122,7 +122,7 @@ sign_with_service:
 
 **Headers**:
 
-```
+```text
 Authorization: Bearer <admin-token>
 ```
 
@@ -564,12 +564,14 @@ Audit logs are retained indefinitely in the database. Query with:
 
 ```bash
 # All operations from last 7 days
-curl "https://gpg.kajkowalski.nl/admin/audit?startDate=$(date -u -d '7 days ago' +%Y-%m-%dT00:00:00Z)" \
-  -H "Authorization: Bearer $ADMIN_TOKEN"
+curl "https://gpg.kajkowalski.nl/admin/audit?startDate=$(
+  date -u -d '7 days ago' +%Y-%m-%dT00:00:00Z
+)" \
+  -H "Authorization: Bearer ${ADMIN_TOKEN}"
 
 # Failed operations only
 curl "https://gpg.kajkowalski.nl/admin/audit?limit=100" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
   | jq '.logs | map(select(.success == false))'
 ```
 
@@ -742,7 +744,10 @@ docker run \
 
 [repo]: https://github.com/kjanat/gpg-signing-service
 [repo:issues]: https://github.com/kjanat/gpg-signing-service/issues
-[repo:security]: https://github.com/kjanat/gpg-signing-service/security/advisories
-[repo:license]: https://github.com/kjanat/gpg-signing-service/blob/master/LICENSE
+
+<!--[repo:security]: https://github.com/kjanat/gpg-signing-service/security/advisories-->
+<!--[repo:license]: https://github.com/kjanat/gpg-signing-service/blob/master/LICENSE.md-->
 
 <!-- prettier-ignore-end -->
+
+<!-- markdownlint-disable-file MD013 MD024 -->

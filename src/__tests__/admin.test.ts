@@ -7,14 +7,12 @@ import {
 import app from "gpg-signing-service";
 import * as openpgp from "openpgp";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { logger } from "~/utils/logger";
 
 // Mock audit logging to avoid database errors in tests
 vi.mock("~/utils/audit", async (importOriginal) => {
   const actual = await importOriginal<typeof import("~/utils/audit")>();
-  return {
-    ...actual,
-    logAuditEvent: vi.fn(async () => undefined),
-  };
+  return { ...actual, logAuditEvent: vi.fn(async () => undefined) };
 });
 
 // Helper to make authenticated requests
@@ -222,9 +220,7 @@ describe("Admin Routes", () => {
       const originalGet = env.KEY_STORAGE.get;
       const mockFetch = vi.fn().mockRejectedValue("String error");
       env.KEY_STORAGE.get = () =>
-        ({
-          fetch: mockFetch,
-        }) as unknown as DurableObjectStub;
+        ({ fetch: mockFetch }) as unknown as DurableObjectStub;
 
       try {
         const response = await adminRequest("/keys", {
@@ -507,9 +503,7 @@ describe("Admin Routes", () => {
       const originalGet = env.KEY_STORAGE.get;
       const mockFetch = vi.fn().mockRejectedValue("Delete string error");
       env.KEY_STORAGE.get = () =>
-        ({
-          fetch: mockFetch,
-        }) as unknown as DurableObjectStub;
+        ({ fetch: mockFetch }) as unknown as DurableObjectStub;
 
       try {
         const response = await adminRequest("/keys/7777777777777777", {
@@ -527,8 +521,8 @@ describe("Admin Routes", () => {
 
   describe("Audit Logging Catch Handlers", () => {
     it("should log audit failures via catch handler on upload success", async () => {
-      // Spy on console.error to verify catch handler executes
-      const consoleSpy = vi.spyOn(console, "error");
+      // Spy on logger.error to verify catch handler executes
+      const loggerSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
       const { logAuditEvent } = await import("~/utils/audit");
 
       // Save original implementation
@@ -561,13 +555,11 @@ describe("Admin Routes", () => {
       // Wait for background tasks
       await waitOnExecutionContext(ctx);
 
-      consoleSpy.mockRestore();
+      loggerSpy.mockRestore();
     });
 
     it("should log audit failures via catch handler on upload error", async () => {
-      const consoleSpy = vi
-        .spyOn(console, "error")
-        .mockImplementation(() => {});
+      const loggerSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
       const { logAuditEvent } = await import("~/utils/audit");
 
       vi.mocked(logAuditEvent).mockRejectedValue(
@@ -594,19 +586,19 @@ describe("Admin Routes", () => {
       await waitOnExecutionContext(ctx);
 
       expect(logAuditEvent).toHaveBeenCalled();
-      expect(consoleSpy).toHaveBeenCalledWith(
-        "Background task failed:",
+      expect(loggerSpy).toHaveBeenCalledWith(
+        "Background task failed",
         expect.objectContaining({
           requestId: expect.any(String),
-          error: expect.any(Error),
+          error: expect.any(String),
         }),
       );
 
-      consoleSpy.mockRestore();
+      loggerSpy.mockRestore();
     });
 
     it("should log audit failures via catch handler on delete success", async () => {
-      const consoleSpy = vi.spyOn(console, "error");
+      const loggerSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
       const { logAuditEvent } = await import("~/utils/audit");
       const privateKey = await generateTestKey();
 
@@ -628,9 +620,7 @@ describe("Admin Routes", () => {
       await app.fetch(
         new Request("http://localhost/admin/keys/CATCH3234567890C", {
           method: "DELETE",
-          headers: {
-            Authorization: `Bearer ${env.ADMIN_TOKEN}`,
-          },
+          headers: { Authorization: `Bearer ${env.ADMIN_TOKEN}` },
         }),
         env,
         ctx,
@@ -638,19 +628,19 @@ describe("Admin Routes", () => {
 
       await waitOnExecutionContext(ctx);
 
-      expect(consoleSpy).toHaveBeenCalledWith(
-        "Background task failed:",
+      expect(loggerSpy).toHaveBeenCalledWith(
+        "Background task failed",
         expect.objectContaining({
           requestId: expect.any(String),
-          error: expect.any(Error),
+          error: expect.any(String),
         }),
       );
 
-      consoleSpy.mockRestore();
+      loggerSpy.mockRestore();
     });
 
     it("should log audit failures via catch handler on delete error", async () => {
-      const consoleSpy = vi.spyOn(console, "error");
+      const loggerSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
       const { logAuditEvent } = await import("~/utils/audit");
 
       // Mock storage to fail
@@ -668,9 +658,7 @@ describe("Admin Routes", () => {
       await app.fetch(
         new Request("http://localhost/admin/keys/CATCH4234567890D", {
           method: "DELETE",
-          headers: {
-            Authorization: `Bearer ${env.ADMIN_TOKEN}`,
-          },
+          headers: { Authorization: `Bearer ${env.ADMIN_TOKEN}` },
         }),
         env,
         ctx,
@@ -678,15 +666,15 @@ describe("Admin Routes", () => {
 
       await waitOnExecutionContext(ctx);
 
-      expect(consoleSpy).toHaveBeenCalledWith(
-        "Background task failed:",
+      expect(loggerSpy).toHaveBeenCalledWith(
+        "Background task failed",
         expect.objectContaining({
           requestId: expect.any(String),
-          error: expect.any(Error),
+          error: expect.any(String),
         }),
       );
 
-      consoleSpy.mockRestore();
+      loggerSpy.mockRestore();
       env.KEY_STORAGE.get = originalGet;
     });
   });

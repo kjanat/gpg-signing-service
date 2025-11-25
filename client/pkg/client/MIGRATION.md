@@ -1,14 +1,15 @@
 # Migration Guide: CLI to Wrapper Client
 
-Guide for migrating `cmd/gpg-sign/main.go` from using the raw generated client to the wrapper client.
+Guide for migrating `cmd/gpg-sign/main.go` from using the raw generated client
+to the wrapper client.
 
 ## Benefits of Migration
 
-- **70% less boilerplate** - No pointer management, cleaner error handling
-- **Automatic retry** - Built-in exponential backoff
-- **Type-safe errors** - Use helper functions instead of manual checks
-- **Rate limit aware** - Extract rate limit info automatically
-- **Maintainable** - Changes to wrapper benefit all consumers
+- **70% less boilerplate** — No pointer management, cleaner error handling
+- **Automatic retry** — Built-in exponential backoff
+- **Type-safe errors** — Use helper functions instead of manual checks
+- **Rate limit aware** — Extract rate limit info automatically
+- **Maintainable** — Changes to wrapper benefit all consumers
 
 ## Example Migration
 
@@ -216,7 +217,7 @@ if err != nil {
 
 1. **Phase 1**: Add wrapper alongside existing code (no breaking changes)
 2. **Phase 2**: Migrate one command at a time (e.g., health → sign → admin)
-3. **Phase 3**: Remove old raw client helpers once migration complete
+3. **Phase 3**: Remove old raw client helpers once the migration is complete
 4. **Phase 4**: Remove `pkg/api` import once fully migrated
 
 ## Testing Migration

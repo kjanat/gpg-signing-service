@@ -17,8 +17,10 @@ import {
   PublicKeyQuerySchema,
   PublicKeyResponseSchema,
 } from "~/schemas";
-import type { HealthResponse } from "~/types";
+import type { HealthResponse } from "~/schemas/health";
+import { HTTP, MediaType } from "~/types";
 import { fetchKeyStorage } from "~/utils/durable-objects";
+import { logger as customLogger } from "~/utils/logger";
 
 // Export Durable Objects
 export { KeyStorage } from "~/durable-objects/key-storage";
@@ -39,19 +41,11 @@ const healthRoute = createRoute({
   description: "Check the health of the service",
   responses: {
     200: {
-      content: {
-        "application/json": {
-          schema: HealthResponseSchema,
-        },
-      },
+      content: { "application/json": { schema: HealthResponseSchema } },
       description: "Service is healthy",
     },
     503: {
-      content: {
-        "application/json": {
-          schema: HealthResponseSchema,
-        },
-      },
+      content: { "application/json": { schema: HealthResponseSchema } },
       description: "Service is degraded",
     },
   },
@@ -65,7 +59,9 @@ app.openapi(healthRoute, async (c) => {
     const keyHealthResponse = await fetchKeyStorage(c.env, "/health");
     checks.keyStorage = keyHealthResponse.ok;
   } catch (error) {
-    console.error("Key storage health check failed:", error);
+    customLogger.error("Key storage health check failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     checks.keyStorage = false;
   }
 
@@ -74,7 +70,9 @@ app.openapi(healthRoute, async (c) => {
     const result = await c.env.AUDIT_DB.prepare("SELECT 1").first();
     checks.database = result !== null;
   } catch (error) {
-    console.error("Database health check failed:", error);
+    customLogger.error("Database health check failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     checks.database = false;
   }
 
@@ -87,7 +85,7 @@ app.openapi(healthRoute, async (c) => {
     checks,
   };
 
-  return c.json(response, allHealthy ? 200 : 503);
+  return c.json(response, allHealthy ? HTTP.OK : HTTP.ServiceUnavailable);
 });
 
 // Public key endpoint (no auth) - for git to verify signatures
@@ -96,32 +94,18 @@ const publicKeyRoute = createRoute({
   path: "/public-key",
   summary: "Get public key",
   description: "Get the public key for signature verification",
-  request: {
-    query: PublicKeyQuerySchema,
-  },
+  request: { query: PublicKeyQuerySchema },
   responses: {
     200: {
-      content: {
-        "application/pgp-keys": {
-          schema: PublicKeyResponseSchema,
-        },
-      },
+      content: { "application/pgp-keys": { schema: PublicKeyResponseSchema } },
       description: "Public Key",
     },
     404: {
-      content: {
-        "application/json": {
-          schema: ErrorResponseSchema,
-        },
-      },
+      content: { "application/json": { schema: ErrorResponseSchema } },
       description: "Key not found",
     },
     500: {
-      content: {
-        "application/json": {
-          schema: ErrorResponseSchema,
-        },
-      },
+      content: { "application/json": { schema: ErrorResponseSchema } },
       description: "Internal server error",
     },
   },
@@ -137,7 +121,10 @@ app.openapi(publicKeyRoute, async (c) => {
   );
 
   if (!keyResponse.ok) {
-    return c.json({ error: "Key not found", code: "KEY_NOT_FOUND" }, 404);
+    return c.json(
+      { error: "Key not found", code: "KEY_NOT_FOUND" },
+      HTTP.NotFound,
+    );
   }
 
   try {
@@ -149,15 +136,17 @@ app.openapi(publicKeyRoute, async (c) => {
     });
     const publicKey = privateKey.toPublic().armor();
 
-    return c.text(publicKey, 200, { "Content-Type": "application/pgp-keys" });
+    return c.text(publicKey, HTTP.OK, {
+      "Content-Type": MediaType.ApplicationPgpKeys,
+    });
   } catch (error) {
-    console.error("Key processing error:", error);
+    customLogger.error("Key processing error", {
+      error: error instanceof Error ? error.message : String(error),
+      keyId: c.req.query("keyId"),
+    });
     return c.json(
-      {
-        error: "Key processing error",
-        code: "KEY_PROCESSING_ERROR",
-      },
-      500,
+      { error: "Key processing error", code: "KEY_PROCESSING_ERROR" },
+      HTTP.InternalServerError,
     );
   }
 });
@@ -185,16 +174,20 @@ app.get("/ui", swaggerUI({ url: "/doc" }));
 
 // 404 handler
 app.notFound((c) => {
-  return c.json({ error: "Not found", code: "NOT_FOUND" }, 404);
+  return c.json({ error: "Not found", code: "NOT_FOUND" }, HTTP.NotFound);
 });
 
 // Error handler
 app.onError((err, c) => {
   const requestId = crypto.randomUUID();
-  console.error("Unhandled error:", { requestId, error: err });
+  customLogger.error("Unhandled error", {
+    requestId,
+    error: err instanceof Error ? err.message : String(err),
+    stack: err instanceof Error ? err.stack : undefined,
+  });
   return c.json(
     { error: "Internal server error", code: "INTERNAL_ERROR", requestId },
-    500,
+    HTTP.InternalServerError,
   );
 });
 

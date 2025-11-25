@@ -1,20 +1,23 @@
 {
-  "openapi": "3.0.4",
+  "openapi": "3.0.0",
   "info": {
     "version": "1.0.0",
     "title": "GPG Signing Service API"
   },
   "components": {
     "schemas": {
+      "HealthStatus": {
+        "type": "string",
+        "enum": [
+          "healthy",
+          "degraded"
+        ]
+      },
       "HealthResponse": {
         "type": "object",
         "properties": {
           "status": {
-            "type": "string",
-            "enum": [
-              "healthy",
-              "degraded"
-            ]
+            "$ref": "#/components/schemas/HealthStatus"
           },
           "timestamp": {
             "type": "string",
@@ -51,6 +54,25 @@
         "type": "string",
         "example": "-----BEGIN PGP PUBLIC KEY BLOCK-----\n..."
       },
+      "ErrorCode": {
+        "type": "string",
+        "enum": [
+          "AUTH_MISSING",
+          "AUTH_INVALID",
+          "KEY_NOT_FOUND",
+          "KEY_PROCESSING_ERROR",
+          "KEY_LIST_ERROR",
+          "KEY_UPLOAD_ERROR",
+          "KEY_DELETE_ERROR",
+          "SIGN_ERROR",
+          "RATE_LIMIT_ERROR",
+          "RATE_LIMITED",
+          "INVALID_REQUEST",
+          "AUDIT_ERROR",
+          "NOT_FOUND",
+          "INTERNAL_ERROR"
+        ]
+      },
       "ErrorResponse": {
         "type": "object",
         "properties": {
@@ -59,23 +81,7 @@
             "minLength": 1
           },
           "code": {
-            "type": "string",
-            "enum": [
-              "AUTH_MISSING",
-              "AUTH_INVALID",
-              "KEY_NOT_FOUND",
-              "KEY_PROCESSING_ERROR",
-              "KEY_LIST_ERROR",
-              "KEY_UPLOAD_ERROR",
-              "KEY_DELETE_ERROR",
-              "SIGN_ERROR",
-              "RATE_LIMIT_ERROR",
-              "RATE_LIMITED",
-              "INVALID_REQUEST",
-              "AUDIT_ERROR",
-              "NOT_FOUND",
-              "INTERNAL_ERROR"
-            ]
+            "$ref": "#/components/schemas/ErrorCode"
           },
           "requestId": {
             "type": "string",
@@ -99,23 +105,7 @@
             "minLength": 1
           },
           "code": {
-            "type": "string",
-            "enum": [
-              "AUTH_MISSING",
-              "AUTH_INVALID",
-              "KEY_NOT_FOUND",
-              "KEY_PROCESSING_ERROR",
-              "KEY_LIST_ERROR",
-              "KEY_UPLOAD_ERROR",
-              "KEY_DELETE_ERROR",
-              "SIGN_ERROR",
-              "RATE_LIMIT_ERROR",
-              "RATE_LIMITED",
-              "INVALID_REQUEST",
-              "AUDIT_ERROR",
-              "NOT_FOUND",
-              "INTERNAL_ERROR"
-            ]
+            "$ref": "#/components/schemas/ErrorCode"
           },
           "retryAfter": {
             "type": "integer",
@@ -144,13 +134,13 @@
             "type": "string",
             "minLength": 16,
             "maxLength": 16,
-            "pattern": "^[A-F0-9]{16}$/i"
+            "pattern": "^[A-Fa-f0-9]{16}$"
           },
           "fingerprint": {
             "type": "string",
             "minLength": 40,
             "maxLength": 40,
-            "pattern": "^[A-F0-9]{40}$/i"
+            "pattern": "^[A-Fa-f0-9]{40}$"
           },
           "algorithm": {
             "type": "string"
@@ -178,16 +168,157 @@
             "type": "string",
             "minLength": 16,
             "maxLength": 16,
-            "pattern": "^[A-F0-9]{16}$/i"
+            "pattern": "^[A-Fa-f0-9]{16}$"
           }
         },
         "required": [
           "armoredPrivateKey",
           "keyId"
         ]
+      },
+      "KeyListItem": {
+        "type": "object",
+        "properties": {
+          "keyId": {
+            "type": "string"
+          },
+          "fingerprint": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "algorithm": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "keyId",
+          "fingerprint",
+          "createdAt",
+          "algorithm"
+        ]
+      },
+      "KeyListResponse": {
+        "type": "object",
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KeyListItem"
+            }
+          }
+        },
+        "required": [
+          "keys"
+        ]
+      },
+      "KeyDeletionResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "deleted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "deleted"
+        ]
+      },
+      "AuditAction": {
+        "type": "string",
+        "enum": [
+          "sign",
+          "key_upload",
+          "key_rotate"
+        ]
+      },
+      "AuditLogsResponse": {
+        "type": "object",
+        "properties": {
+          "logs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "timestamp": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "requestId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "action": {
+                  "$ref": "#/components/schemas/AuditAction"
+                },
+                "issuer": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "subject": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "keyId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "success": {
+                  "type": "boolean"
+                },
+                "errorCode": {
+                  "$ref": "#/components/schemas/ErrorCode"
+                },
+                "metadata": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "timestamp",
+                "requestId",
+                "action",
+                "issuer",
+                "subject",
+                "keyId",
+                "success"
+              ]
+            }
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "logs",
+          "count"
+        ]
       }
     },
-    "parameters": {}
+    "parameters": {},
+    "securitySchemes": {
+      "oidcAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "OIDC token from GitHub Actions or GitLab CI"
+      },
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Admin token for /admin/* endpoints"
+      }
+    }
   },
   "paths": {
     "/health": {
@@ -271,6 +402,11 @@
       "post": {
         "summary": "Sign commit data",
         "description": "Sign git commit data using the stored GPG key",
+        "security": [
+          {
+            "oidcAuth": []
+          }
+        ],
         "parameters": [
           {
             "schema": {
@@ -369,6 +505,11 @@
       "post": {
         "summary": "Upload a new signing key",
         "description": "Upload a GPG private key for signing",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -415,44 +556,18 @@
       "get": {
         "summary": "List all keys",
         "description": "List metadata for all stored keys",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "responses": {
           "200": {
             "description": "List of keys",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "keys": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "keyId": {
-                            "type": "string"
-                          },
-                          "fingerprint": {
-                            "type": "string"
-                          },
-                          "createdAt": {
-                            "type": "string"
-                          },
-                          "algorithm": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "keyId",
-                          "fingerprint",
-                          "createdAt",
-                          "algorithm"
-                        ]
-                      }
-                    }
-                  },
-                  "required": [
-                    "keys"
-                  ]
+                  "$ref": "#/components/schemas/KeyListResponse"
                 }
               }
             }
@@ -474,6 +589,11 @@
       "get": {
         "summary": "Get public key",
         "description": "Get the public key for a specific key ID",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "schema": {
@@ -523,6 +643,11 @@
       "delete": {
         "summary": "Delete a key",
         "description": "Delete a stored key",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "schema": {
@@ -540,19 +665,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "success": {
-                      "type": "boolean"
-                    },
-                    "deleted": {
-                      "type": "boolean"
-                    }
-                  },
-                  "required": [
-                    "success",
-                    "deleted"
-                  ]
+                  "$ref": "#/components/schemas/KeyDeletionResponse"
                 }
               }
             }
@@ -574,6 +687,11 @@
       "get": {
         "summary": "Get audit logs",
         "description": "Retrieve audit logs with filtering",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "parameters": [
           {
             "schema": {
@@ -640,64 +758,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "logs": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "id": {
-                            "type": "string"
-                          },
-                          "timestamp": {
-                            "type": "string"
-                          },
-                          "requestId": {
-                            "type": "string"
-                          },
-                          "action": {
-                            "type": "string"
-                          },
-                          "issuer": {
-                            "type": "string"
-                          },
-                          "subject": {
-                            "type": "string"
-                          },
-                          "keyId": {
-                            "type": "string"
-                          },
-                          "success": {
-                            "type": "boolean"
-                          },
-                          "errorCode": {
-                            "type": "string"
-                          },
-                          "metadata": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "id",
-                          "timestamp",
-                          "requestId",
-                          "action",
-                          "issuer",
-                          "subject",
-                          "keyId",
-                          "success"
-                        ]
-                      }
-                    },
-                    "count": {
-                      "type": "number"
-                    }
-                  },
-                  "required": [
-                    "logs",
-                    "count"
-                  ]
+                  "$ref": "#/components/schemas/AuditLogsResponse"
                 }
               }
             }

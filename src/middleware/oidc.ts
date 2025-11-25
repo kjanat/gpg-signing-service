@@ -1,8 +1,10 @@
 import type { MiddlewareHandler } from "hono";
 import { createLocalJWKSet, type JWTPayload, jwtVerify } from "jose";
 import type { Env, LegacyJWKSResponse, OIDCClaims, Variables } from "~/types";
-import { createIdentity, markClaimsAsValidated } from "~/types";
+import { createIdentity, HTTP, markClaimsAsValidated, TIME } from "~/types";
+import { CACHE_TTL } from "~/utils/constants";
 import { fetchWithTimeout } from "~/utils/fetch";
+import { logger } from "~/utils/logger";
 
 // OIDC validation middleware
 export const oidcAuth: MiddlewareHandler<{
@@ -20,7 +22,7 @@ export const oidcAuth: MiddlewareHandler<{
 
   const token = authHeader.split(" ")[1];
   if (!token) {
-    return c.json({ error: "Missing token" }, 401);
+    return c.json({ error: "Missing token" }, HTTP.Unauthorized);
   }
 
   try {
@@ -34,7 +36,7 @@ export const oidcAuth: MiddlewareHandler<{
     return next();
   } catch (error) {
     const message = error instanceof Error ? error.message : "Invalid token";
-    return c.json({ error: message, code: "AUTH_INVALID" }, 401);
+    return c.json({ error: message, code: "AUTH_INVALID" }, HTTP.Unauthorized);
   }
 };
 
@@ -57,7 +59,10 @@ export const adminAuth: MiddlewareHandler<{ Bindings: Env }> = async (
   // Use constant-time comparison to prevent timing attacks
   const isValid = await timingSafeEqual(token, c.env.ADMIN_TOKEN);
   if (!isValid) {
-    return c.json({ error: "Invalid admin token", code: "AUTH_INVALID" }, 401);
+    return c.json(
+      { error: "Invalid admin token", code: "AUTH_INVALID" },
+      HTTP.Unauthorized,
+    );
   }
 
   return next();
@@ -135,15 +140,17 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
     throw new Error("Invalid token audience");
   }
 
-  // Fetch JWKS and verify signature
-  const jwks = await getJWKS(payload.iss, env);
+  // Fetch JWKS and verify signature. If the cached JWKS doesn't have the
+  // required key id, getJWKS will refresh from the network.
+  const jwks = await getJWKS(payload.iss, env, header.kid);
 
   // Pre-flight: make sure a matching key exists and is intended for signatures.
   const matchingKey = jwks.keys.find((key) => key.kid === header.kid);
-  if (!matchingKey) {
-    throw new Error("Key not found");
-  }
-  if (matchingKey.use && matchingKey.use !== "sig") {
+  // If we can positively identify the key in the JWKS and it declares a
+  // non-signature use, reject early with a clear message. If no matching key
+  // is found here, defer to jose's key selection which will yield a precise
+  // error that we map below.
+  if (matchingKey?.use && matchingKey.use !== "sig") {
     throw new Error("Key not intended for signatures");
   }
 
@@ -177,13 +184,27 @@ export function mapJoseError(err: Error & { code?: string }): never {
   throw err;
 }
 
-async function getJWKS(issuer: string, env: Env): Promise<LegacyJWKSResponse> {
+async function getJWKS(
+  issuer: string,
+  env: Env,
+  expectedKid?: string,
+): Promise<LegacyJWKSResponse> {
   const cacheKey = `jwks:${issuer}`;
 
   // Check cache first
   const cached = await env.JWKS_CACHE.get(cacheKey, "json");
   if (cached) {
-    return cached as LegacyJWKSResponse;
+    const cachedJWKS = cached as LegacyJWKSResponse;
+    // If an expected kid is provided and it's not in the cached JWKS, refresh
+    // from the origin to pick up key rotations.
+    if (
+      expectedKid
+      && !cachedJWKS.keys?.some((k: { kid?: string }) => k.kid === expectedKid)
+    ) {
+      // fall through to network fetch below
+    } else {
+      return cachedJWKS;
+    }
   }
 
   // Fetch JWKS from issuer with timeout
@@ -206,10 +227,13 @@ async function getJWKS(issuer: string, env: Env): Promise<LegacyJWKSResponse> {
   // Cache for 5 minutes (non-critical, don't fail on cache errors)
   try {
     await env.JWKS_CACHE.put(cacheKey, JSON.stringify(jwks), {
-      expirationTtl: 300,
+      expirationTtl: CACHE_TTL.JWKS / TIME.SECOND,
     });
   } catch (error) {
-    console.error("Failed to cache JWKS:", error);
+    logger.warn("Failed to cache JWKS", {
+      error: error instanceof Error ? error.message : String(error),
+      issuer,
+    });
     // Continue - caching is optimization, not critical path
   }
 

@@ -1,4 +1,11 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.14"
+# dependencies = [
+#     "requests",
+#     "urllib3",
+# ]
+# ///
 """Manage GPG signing keys via the GPG Signing Service API."""
 
 import argparse
@@ -6,11 +13,59 @@ import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import TypedDict
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+
+class KeyResponse(TypedDict):
+    """Response from key upload endpoint."""
+
+    success: bool
+    keyId: str
+    fingerprint: str
+    algorithm: str
+    userId: str
+
+
+class KeyListItem(TypedDict):
+    """Individual key in list response."""
+
+    keyId: str
+    fingerprint: str
+    createdAt: str
+    algorithm: str
+
+
+class AuditLogEntry(TypedDict):
+    """Individual audit log entry."""
+
+    id: str
+    timestamp: str
+    requestId: str
+    action: str
+    issuer: str
+    subject: str
+    keyId: str
+    success: bool
+    errorCode: str | None
+    metadata: str | None
+
+
+class AuditLogsResponse(TypedDict):
+    """Response from audit logs endpoint."""
+
+    logs: list[AuditLogEntry]
+    count: int
+
+
+class KeyDeletionResponse(TypedDict):
+    """Response from key deletion endpoint."""
+
+    success: bool
+    deleted: bool
 
 
 class GPGSigningServiceClient:
@@ -19,7 +74,7 @@ class GPGSigningServiceClient:
     def __init__(
         self,
         base_url: str = "https://gpg.kajkowalski.nl",
-        admin_token: Optional[str] = None,
+        admin_token: str | None = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.admin_token = admin_token or os.environ.get("ADMIN_TOKEN")
@@ -52,8 +107,16 @@ class GPGSigningServiceClient:
             "Content-Type": "application/json",
         }
 
-    def upload_key(self, key_id: str, armored_private_key: str) -> dict:
+    def _validate_key_id(self, key_id: str) -> None:
+        """Validate key ID format (16 hex chars)."""
+        if not isinstance(key_id, str) or len(key_id) != 16:
+            raise ValueError(f"Key ID must be exactly 16 characters, got {len(key_id)}")
+        if not all(c in "0123456789ABCDEFabcdef" for c in key_id):
+            raise ValueError(f"Key ID must be hexadecimal, got: {key_id}")
+
+    def upload_key(self, key_id: str, armored_private_key: str) -> KeyResponse:
         """Upload a new signing key."""
+        self._validate_key_id(key_id)
         payload = {
             "keyId": key_id,
             "armoredPrivateKey": armored_private_key,
@@ -67,7 +130,7 @@ class GPGSigningServiceClient:
         response.raise_for_status()
         return response.json()
 
-    def list_keys(self) -> list:
+    def list_keys(self) -> list[KeyListItem]:
         """List all signing keys."""
         response = self.session.get(
             f"{self.base_url}/admin/keys",
@@ -86,8 +149,9 @@ class GPGSigningServiceClient:
         response.raise_for_status()
         return response.text
 
-    def delete_key(self, key_id: str) -> dict:
+    def delete_key(self, key_id: str) -> KeyDeletionResponse:
         """Delete a signing key."""
+        self._validate_key_id(key_id)
         response = self.session.delete(
             f"{self.base_url}/admin/keys/{key_id}",
             headers=self._admin_headers(),
@@ -97,15 +161,15 @@ class GPGSigningServiceClient:
 
     def get_audit_logs(
         self,
-        action: Optional[str] = None,
-        subject: Optional[str] = None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
+        action: str | None = None,
+        subject: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> dict:
+    ) -> AuditLogsResponse:
         """Query audit logs."""
-        params = {
+        params: dict[str, str | int] = {
             "limit": limit,
             "offset": offset,
         }
@@ -131,7 +195,7 @@ class GPGSigningServiceClient:
         self,
         new_key_id: str,
         armored_private_key: str,
-        old_key_id: Optional[str] = None,
+        old_key_id: str | None = None,
         grace_period_hours: int = 24,
     ) -> dict:
         """Rotate signing keys (upload new, delete old after grace period)."""
@@ -143,6 +207,7 @@ class GPGSigningServiceClient:
         print("✓ New key uploaded successfully")
         print(f"  Fingerprint: {results['new_key']['fingerprint']}")
         print(f"  Algorithm: {results['new_key']['algorithm']}")
+        print(f"  User ID: {results['new_key']['userId']}")
 
         # Wait grace period if old key specified
         if old_key_id:
@@ -223,12 +288,16 @@ def main():
                 print()
 
         elif args.command == "upload":
-            with open(args.key_file, "r") as f:
+            with open(args.key_file) as f:
                 armored_key = f.read()
 
             print(f"Uploading key: {args.key_id}")
             result = client.upload_key(args.key_id, armored_key)
-            print(json.dumps(result, indent=2))
+            print("✓ Key uploaded successfully")
+            print(f"  Key ID: {result['keyId']}")
+            print(f"  Fingerprint: {result['fingerprint']}")
+            print(f"  Algorithm: {result['algorithm']}")
+            print(f"  User ID: {result['userId']}")
 
         elif args.command == "delete":
             print(f"Deleting key: {args.key_id}")
@@ -237,10 +306,8 @@ def main():
 
         elif args.command == "audit":
             start_date = (
-                (datetime.now(timezone.utc) - timedelta(days=args.days))
-                .isoformat()
-                .replace("+00:00", "Z")
-            )
+                datetime.now(timezone.utc) - timedelta(days=args.days)
+            ).isoformat()
             result = client.get_audit_logs(
                 action=args.action,
                 subject=args.subject,
@@ -251,13 +318,22 @@ def main():
             print(f"Audit logs (last {args.days} days):")
             print("-" * 80)
             for log in result["logs"]:
-                print(
-                    f"{log['timestamp']} | {log['action']:12} | {log['subject']:20} | {'✓' if log['success'] else '✗'}"
+                status = (
+                    "✓" if log["success"] else f"✗ ({log.get('errorCode', 'unknown')})"
                 )
-            print(f"\nTotal: {result['count']} entries")
+                print(
+                    f"{log['timestamp']} | {log['action']:12} | {log['subject']:20} | {status}"
+                )
+                print(
+                    f"  ID: {log['id']} | Request: {log['requestId']} | Key: {log['keyId']}"
+                )
+                if log.get("metadata"):
+                    print(f"  Metadata: {log['metadata']}")
+                print()
+            print(f"Total: {result['count']} entries")
 
         elif args.command == "rotate":
-            with open(args.key_file, "r") as f:
+            with open(args.key_file) as f:
                 armored_key = f.read()
 
             result = client.rotate_keys(
@@ -268,8 +344,20 @@ def main():
             )
             print(json.dumps(result, indent=2))
 
+    except requests.HTTPError as e:
+        try:
+            error_data = e.response.json()
+            print(
+                f"API Error [{error_data.get('code', 'UNKNOWN')}]: {error_data.get('error', str(e))}",
+                file=sys.stderr,
+            )
+            if "requestId" in error_data:
+                print(f"Request ID: {error_data['requestId']}", file=sys.stderr)
+        except ValueError:
+            print(f"HTTP {e.response.status_code}: {e.response.text}", file=sys.stderr)
+        sys.exit(1)
     except requests.RequestException as e:
-        print(f"API Error: {e}", file=sys.stderr)
+        print(f"Network Error: {e}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)

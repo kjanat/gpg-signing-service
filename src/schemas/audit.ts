@@ -1,4 +1,5 @@
 import { z } from "@hono/zod-openapi";
+import { LIMITS } from "~/utils/constants";
 import { ErrorCodeSchema } from "./errors";
 
 /**
@@ -22,9 +23,7 @@ export const DateRangeSchema = z
       if (!data.startDate || !data.endDate) return true;
       return new Date(data.startDate) <= new Date(data.endDate);
     },
-    {
-      message: "startDate must be before or equal to endDate",
-    },
+    { message: "startDate must be before or equal to endDate" },
   );
 
 /**
@@ -36,7 +35,7 @@ export const AuditQuerySchema = z
       .number()
       .int()
       .min(1)
-      .max(1000)
+      .max(LIMITS.MAX_AUDIT_LOGS)
       .default(100)
       .openapi({ example: 100 }),
     offset: z.coerce.number().int().min(0).default(0).openapi({ example: 0 }),
@@ -50,7 +49,9 @@ export const AuditQuerySchema = z
 /**
  * Audit action types
  */
-export const AuditActionSchema = z.enum(["sign", "key_upload", "key_rotate"]);
+export const AuditActionSchema = z
+  .enum(["sign", "key_upload", "key_rotate"])
+  .openapi("AuditAction");
 
 /**
  * Audit log entry schema
@@ -68,8 +69,21 @@ export const AuditLogEntrySchema = z.object({
   metadata: z.string().optional(),
 });
 
+/**
+ * Audit logs response schema
+ */
+export const AuditLogsResponseSchema = z
+  .object({
+    logs: z.array(AuditLogEntrySchema),
+    count: z.number().int().min(0),
+  })
+  .openapi("AuditLogsResponse");
+
 /** Type inferred from AuditActionSchema */
 export type AuditAction = z.infer<typeof AuditActionSchema>;
 
 /** Type inferred from AuditLogEntrySchema */
 export type AuditLogEntry = z.infer<typeof AuditLogEntrySchema>;
+
+/** Type inferred from AuditLogsResponseSchema */
+export type AuditLogsResponse = z.infer<typeof AuditLogsResponseSchema>;

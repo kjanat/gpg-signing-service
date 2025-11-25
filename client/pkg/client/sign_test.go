@@ -13,7 +13,7 @@ import (
 
 // TestSignValidation tests Sign() input validation
 func TestSignValidation(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprint(w, "signature")
@@ -59,7 +59,7 @@ func TestSignValidation(t *testing.T) {
 func TestSignSuccessResponse(t *testing.T) {
 	signature := "test-signature-data"
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprint(w, signature)
@@ -68,7 +68,6 @@ func TestSignSuccessResponse(t *testing.T) {
 
 	client, _ := New(server.URL)
 	result, err := client.Sign(context.Background(), "commit data", "")
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -84,7 +83,7 @@ func TestSignSuccessResponse(t *testing.T) {
 func TestSignWithRateLimitHeaders(t *testing.T) {
 	resetTime := time.Now().Add(time.Hour).Unix()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.Header().Set("X-RateLimit-Remaining", "95")
 		w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(resetTime, 10))
@@ -95,7 +94,6 @@ func TestSignWithRateLimitHeaders(t *testing.T) {
 
 	client, _ := New(server.URL)
 	result, err := client.Sign(context.Background(), "commit data", "")
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -109,7 +107,7 @@ func TestSignWithRateLimitHeaders(t *testing.T) {
 
 // TestSignWithKeyID tests Sign() with specific keyID
 func TestSignWithKeyID(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprint(w, "signature")
@@ -118,7 +116,6 @@ func TestSignWithKeyID(t *testing.T) {
 
 	client, _ := New(server.URL)
 	result, err := client.Sign(context.Background(), "commit data", "test-key-123")
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -129,8 +126,8 @@ func TestSignWithKeyID(t *testing.T) {
 
 // TestSignContextCancellation tests Sign() with cancelled context
 func TestSignContextCancellation(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(500 * time.Millisecond)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprint(w, "signature")
 	}))
@@ -152,7 +149,7 @@ func TestSignContextCancellation(t *testing.T) {
 
 // TestSignContextDeadline tests Sign() with deadline exceeded
 func TestSignContextDeadline(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(200 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprint(w, "signature")
@@ -187,7 +184,7 @@ func TestRetrier(t *testing.T) {
 			name:         "success on first attempt",
 			maxRetries:   3,
 			attempts:     0,
-			returnErr:    func(i int) error { return nil },
+			returnErr:    func(_ int) error { return nil },
 			wantErr:      false,
 			wantAttempts: 1,
 		},
@@ -208,7 +205,7 @@ func TestRetrier(t *testing.T) {
 			name:       "fails with max retries exceeded",
 			maxRetries: 2,
 			attempts:   0,
-			returnErr: func(i int) error {
+			returnErr: func(_ int) error {
 				return &ServiceError{Code: "ERROR", Message: "test", StatusCode: 500}
 			},
 			wantErr:      true,
@@ -218,7 +215,7 @@ func TestRetrier(t *testing.T) {
 			name:       "no retry on validation error",
 			maxRetries: 3,
 			attempts:   0,
-			returnErr: func(i int) error {
+			returnErr: func(_ int) error {
 				return &ValidationError{Code: "INVALID", Message: "invalid"}
 			},
 			wantErr:      true,
@@ -294,7 +291,7 @@ func TestRetrierRateLimitRetry(t *testing.T) {
 		{
 			name:             "no retry on rate limit when disabled",
 			retryOnRateLimit: false,
-			returnErr: func(i int) error {
+			returnErr: func(_ int) error {
 				return &RateLimitError{
 					Message:    "rate limit exceeded",
 					RetryAfter: 1 * time.Millisecond,
@@ -345,7 +342,7 @@ func TestRetrierContextCancellation(t *testing.T) {
 	}
 
 	attempts := 0
-	// Cancel context after first failure to prevent retry
+	// Cancel context after the first failure to prevent retry
 	go func() {
 		time.Sleep(10 * time.Millisecond)
 		cancel()
@@ -405,7 +402,7 @@ func TestRetrierBackoffMax(t *testing.T) {
 
 // BenchmarkSign benchmarks signing operation
 func BenchmarkSign(b *testing.B) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprint(w, "signature")
 	}))

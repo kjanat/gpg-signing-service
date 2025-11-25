@@ -38,11 +38,11 @@ func TestOptionChaining(t *testing.T) {
 
 // TestOptionOverwriting tests that later options overwrite earlier ones
 func TestOptionOverwriting(t *testing.T) {
-	// Create options with first value
+	// Create options with the first value
 	opts := defaultOptions()
 	WithTimeout(10 * time.Second)(opts)
 
-	// Overwrite with second value
+	// Overwrite with the second value
 	WithTimeout(20 * time.Second)(opts)
 
 	if opts.timeout != 20*time.Second {
@@ -59,7 +59,7 @@ func TestOptionTokenOverwriting(t *testing.T) {
 		t.Errorf("expected authToken 'first-token', got %q", opts.authToken)
 	}
 
-	// Overwrite with admin token
+	// Overwrite with the admin token
 	WithAdminToken("admin-token")(opts)
 
 	if opts.authToken != "admin-token" {
@@ -119,12 +119,10 @@ func TestOptionRetryWaitValidation(t *testing.T) {
 				if opts.retryWaitMax != tt.max {
 					t.Errorf("expected retryWaitMax %v, got %v", tt.max, opts.retryWaitMax)
 				}
-			} else {
+			} else if opts.retryWaitMin != tt.min {
 				// For invalid options, the values should still be set at the Options level,
 				// but client creation will reject them
-				if opts.retryWaitMin != tt.min {
-					t.Errorf("expected retryWaitMin %v, got %v", tt.min, opts.retryWaitMin)
-				}
+				t.Errorf("expected retryWaitMin %v, got %v", tt.min, opts.retryWaitMin)
 			}
 		})
 	}
@@ -158,7 +156,7 @@ func TestWithMaxRetriesVariations(t *testing.T) {
 	retries := []int{0, 1, 2, 5, 10, 100}
 
 	for _, retryCount := range retries {
-		t.Run(("retries-" + string(rune(retryCount))), func(t *testing.T) {
+		t.Run("retries-"+string(rune(retryCount)), func(t *testing.T) {
 			opts := defaultOptions()
 			WithMaxRetries(retryCount)(opts)
 
@@ -257,7 +255,6 @@ func BenchmarkOptionApplication(b *testing.B) {
 
 // BenchmarkDefaultOptions benchmarks creating default options
 func BenchmarkDefaultOptions(b *testing.B) {
-
 	for b.Loop() {
 		_ = defaultOptions()
 	}

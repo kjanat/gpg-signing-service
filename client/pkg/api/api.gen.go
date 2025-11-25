@@ -22,57 +22,71 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
-// Defines values for ErrorResponseCode.
 const (
-	ErrorResponseCodeAUDITERROR         ErrorResponseCode = "AUDIT_ERROR"
-	ErrorResponseCodeAUTHINVALID        ErrorResponseCode = "AUTH_INVALID"
-	ErrorResponseCodeAUTHMISSING        ErrorResponseCode = "AUTH_MISSING"
-	ErrorResponseCodeINTERNALERROR      ErrorResponseCode = "INTERNAL_ERROR"
-	ErrorResponseCodeINVALIDREQUEST     ErrorResponseCode = "INVALID_REQUEST"
-	ErrorResponseCodeKEYDELETEERROR     ErrorResponseCode = "KEY_DELETE_ERROR"
-	ErrorResponseCodeKEYLISTERROR       ErrorResponseCode = "KEY_LIST_ERROR"
-	ErrorResponseCodeKEYNOTFOUND        ErrorResponseCode = "KEY_NOT_FOUND"
-	ErrorResponseCodeKEYPROCESSINGERROR ErrorResponseCode = "KEY_PROCESSING_ERROR"
-	ErrorResponseCodeKEYUPLOADERROR     ErrorResponseCode = "KEY_UPLOAD_ERROR"
-	ErrorResponseCodeNOTFOUND           ErrorResponseCode = "NOT_FOUND"
-	ErrorResponseCodeRATELIMITED        ErrorResponseCode = "RATE_LIMITED"
-	ErrorResponseCodeRATELIMITERROR     ErrorResponseCode = "RATE_LIMIT_ERROR"
-	ErrorResponseCodeSIGNERROR          ErrorResponseCode = "SIGN_ERROR"
+	BearerAuthScopes = "bearerAuth.Scopes"
+	OidcAuthScopes   = "oidcAuth.Scopes"
 )
 
-// Defines values for HealthResponseStatus.
+// Defines values for AuditAction.
 const (
-	Degraded HealthResponseStatus = "degraded"
-	Healthy  HealthResponseStatus = "healthy"
+	AuditActionKeyRotate AuditAction = "key_rotate"
+	AuditActionKeyUpload AuditAction = "key_upload"
+	AuditActionSign      AuditAction = "sign"
 )
 
-// Defines values for RateLimitErrorCode.
+// Defines values for ErrorCode.
 const (
-	RateLimitErrorCodeAUDITERROR         RateLimitErrorCode = "AUDIT_ERROR"
-	RateLimitErrorCodeAUTHINVALID        RateLimitErrorCode = "AUTH_INVALID"
-	RateLimitErrorCodeAUTHMISSING        RateLimitErrorCode = "AUTH_MISSING"
-	RateLimitErrorCodeINTERNALERROR      RateLimitErrorCode = "INTERNAL_ERROR"
-	RateLimitErrorCodeINVALIDREQUEST     RateLimitErrorCode = "INVALID_REQUEST"
-	RateLimitErrorCodeKEYDELETEERROR     RateLimitErrorCode = "KEY_DELETE_ERROR"
-	RateLimitErrorCodeKEYLISTERROR       RateLimitErrorCode = "KEY_LIST_ERROR"
-	RateLimitErrorCodeKEYNOTFOUND        RateLimitErrorCode = "KEY_NOT_FOUND"
-	RateLimitErrorCodeKEYPROCESSINGERROR RateLimitErrorCode = "KEY_PROCESSING_ERROR"
-	RateLimitErrorCodeKEYUPLOADERROR     RateLimitErrorCode = "KEY_UPLOAD_ERROR"
-	RateLimitErrorCodeNOTFOUND           RateLimitErrorCode = "NOT_FOUND"
-	RateLimitErrorCodeRATELIMITED        RateLimitErrorCode = "RATE_LIMITED"
-	RateLimitErrorCodeRATELIMITERROR     RateLimitErrorCode = "RATE_LIMIT_ERROR"
-	RateLimitErrorCodeSIGNERROR          RateLimitErrorCode = "SIGN_ERROR"
+	AUDITERROR         ErrorCode = "AUDIT_ERROR"
+	AUTHINVALID        ErrorCode = "AUTH_INVALID"
+	AUTHMISSING        ErrorCode = "AUTH_MISSING"
+	INTERNALERROR      ErrorCode = "INTERNAL_ERROR"
+	INVALIDREQUEST     ErrorCode = "INVALID_REQUEST"
+	KEYDELETEERROR     ErrorCode = "KEY_DELETE_ERROR"
+	KEYLISTERROR       ErrorCode = "KEY_LIST_ERROR"
+	KEYNOTFOUND        ErrorCode = "KEY_NOT_FOUND"
+	KEYPROCESSINGERROR ErrorCode = "KEY_PROCESSING_ERROR"
+	KEYUPLOADERROR     ErrorCode = "KEY_UPLOAD_ERROR"
+	NOTFOUND           ErrorCode = "NOT_FOUND"
+	RATELIMITED        ErrorCode = "RATE_LIMITED"
+	RATELIMITERROR     ErrorCode = "RATE_LIMIT_ERROR"
+	SIGNERROR          ErrorCode = "SIGN_ERROR"
 )
+
+// Defines values for HealthStatus.
+const (
+	Degraded HealthStatus = "degraded"
+	Healthy  HealthStatus = "healthy"
+)
+
+// AuditAction defines model for AuditAction.
+type AuditAction string
+
+// AuditLogsResponse defines model for AuditLogsResponse.
+type AuditLogsResponse struct {
+	Count int `json:"count"`
+	Logs  []struct {
+		Action    AuditAction        `json:"action"`
+		ErrorCode *ErrorCode         `json:"errorCode,omitempty"`
+		Id        openapi_types.UUID `json:"id"`
+		Issuer    string             `json:"issuer"`
+		KeyId     string             `json:"keyId"`
+		Metadata  *string            `json:"metadata,omitempty"`
+		RequestId openapi_types.UUID `json:"requestId"`
+		Subject   string             `json:"subject"`
+		Success   bool               `json:"success"`
+		Timestamp time.Time          `json:"timestamp"`
+	} `json:"logs"`
+}
+
+// ErrorCode defines model for ErrorCode.
+type ErrorCode string
 
 // ErrorResponse defines model for ErrorResponse.
 type ErrorResponse struct {
-	Code      ErrorResponseCode   `json:"code"`
+	Code      ErrorCode           `json:"code"`
 	Error     string              `json:"error"`
 	RequestId *openapi_types.UUID `json:"requestId,omitempty"`
 }
-
-// ErrorResponseCode defines model for ErrorResponse.Code.
-type ErrorResponseCode string
 
 // HealthResponse defines model for HealthResponse.
 type HealthResponse struct {
@@ -80,13 +94,32 @@ type HealthResponse struct {
 		Database   bool `json:"database"`
 		KeyStorage bool `json:"keyStorage"`
 	} `json:"checks"`
-	Status    HealthResponseStatus `json:"status"`
-	Timestamp time.Time            `json:"timestamp"`
-	Version   string               `json:"version"`
+	Status    HealthStatus `json:"status"`
+	Timestamp time.Time    `json:"timestamp"`
+	Version   string       `json:"version"`
 }
 
-// HealthResponseStatus defines model for HealthResponse.Status.
-type HealthResponseStatus string
+// HealthStatus defines model for HealthStatus.
+type HealthStatus string
+
+// KeyDeletionResponse defines model for KeyDeletionResponse.
+type KeyDeletionResponse struct {
+	Deleted bool `json:"deleted"`
+	Success bool `json:"success"`
+}
+
+// KeyListItem defines model for KeyListItem.
+type KeyListItem struct {
+	Algorithm   string `json:"algorithm"`
+	CreatedAt   string `json:"createdAt"`
+	Fingerprint string `json:"fingerprint"`
+	KeyId       string `json:"keyId"`
+}
+
+// KeyListResponse defines model for KeyListResponse.
+type KeyListResponse struct {
+	Keys []KeyListItem `json:"keys"`
+}
 
 // KeyResponse defines model for KeyResponse.
 type KeyResponse struct {
@@ -108,13 +141,10 @@ type PublicKeyResponse = string
 
 // RateLimitError defines model for RateLimitError.
 type RateLimitError struct {
-	Code       RateLimitErrorCode `json:"code"`
-	Error      string             `json:"error"`
-	RetryAfter int                `json:"retryAfter"`
+	Code       ErrorCode `json:"code"`
+	Error      string    `json:"error"`
+	RetryAfter int       `json:"retryAfter"`
 }
-
-// RateLimitErrorCode defines model for RateLimitError.Code.
-type RateLimitErrorCode string
 
 // SignRequest defines model for SignRequest.
 type SignRequest = string
@@ -859,23 +889,9 @@ type ClientWithResponsesInterface interface {
 type GetAdminAuditResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *struct {
-		Count float32 `json:"count"`
-		Logs  []struct {
-			Action    string  `json:"action"`
-			ErrorCode *string `json:"errorCode,omitempty"`
-			Id        string  `json:"id"`
-			Issuer    string  `json:"issuer"`
-			KeyId     string  `json:"keyId"`
-			Metadata  *string `json:"metadata,omitempty"`
-			RequestId string  `json:"requestId"`
-			Subject   string  `json:"subject"`
-			Success   bool    `json:"success"`
-			Timestamp string  `json:"timestamp"`
-		} `json:"logs"`
-	}
-	JSON400 *ErrorResponse
-	JSON500 *ErrorResponse
+	JSON200      *AuditLogsResponse
+	JSON400      *ErrorResponse
+	JSON500      *ErrorResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -897,15 +913,8 @@ func (r GetAdminAuditResponse) StatusCode() int {
 type GetAdminKeysResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *struct {
-		Keys []struct {
-			Algorithm   string `json:"algorithm"`
-			CreatedAt   string `json:"createdAt"`
-			Fingerprint string `json:"fingerprint"`
-			KeyId       string `json:"keyId"`
-		} `json:"keys"`
-	}
-	JSON500 *ErrorResponse
+	JSON200      *KeyListResponse
+	JSON500      *ErrorResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -951,11 +960,8 @@ func (r PostAdminKeysResponse) StatusCode() int {
 type DeleteAdminKeysKeyIdResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON200      *struct {
-		Deleted bool `json:"deleted"`
-		Success bool `json:"success"`
-	}
-	JSON500 *ErrorResponse
+	JSON200      *KeyDeletionResponse
+	JSON500      *ErrorResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -1172,21 +1178,7 @@ func ParseGetAdminAuditResponse(rsp *http.Response) (*GetAdminAuditResponse, err
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest struct {
-			Count float32 `json:"count"`
-			Logs  []struct {
-				Action    string  `json:"action"`
-				ErrorCode *string `json:"errorCode,omitempty"`
-				Id        string  `json:"id"`
-				Issuer    string  `json:"issuer"`
-				KeyId     string  `json:"keyId"`
-				Metadata  *string `json:"metadata,omitempty"`
-				RequestId string  `json:"requestId"`
-				Subject   string  `json:"subject"`
-				Success   bool    `json:"success"`
-				Timestamp string  `json:"timestamp"`
-			} `json:"logs"`
-		}
+		var dest AuditLogsResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1226,14 +1218,7 @@ func ParseGetAdminKeysResponse(rsp *http.Response) (*GetAdminKeysResponse, error
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest struct {
-			Keys []struct {
-				Algorithm   string `json:"algorithm"`
-				CreatedAt   string `json:"createdAt"`
-				Fingerprint string `json:"fingerprint"`
-				KeyId       string `json:"keyId"`
-			} `json:"keys"`
-		}
+		var dest KeyListResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1306,10 +1291,7 @@ func ParseDeleteAdminKeysKeyIdResponse(rsp *http.Response) (*DeleteAdminKeysKeyI
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest struct {
-			Deleted bool `json:"deleted"`
-			Success bool `json:"success"`
-		}
+		var dest KeyDeletionResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1483,36 +1465,39 @@ func ParsePostSignResponse(rsp *http.Response) (*PostSignResponse, error) {
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
-	"usdeJi5FQwUKklKe/xcAAP//jT5BT9MhAAA=",
+	"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",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

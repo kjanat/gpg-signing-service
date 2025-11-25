@@ -20,7 +20,7 @@ runs:
   steps:
     - name: Install Node.js (just in case)
       id: setup-node
-      if: ${{ inputs.setup-node }}
+      if: ${{ inputs.setup-node == 'true' }}
       uses: actions/setup-node@v6
       with: { node-version: "${{ inputs.node-version }}" }
 
@@ -40,6 +40,6 @@ runs:
 
     - name: Install dependencies
       id: bun-install
-      if: ${{ ! inputs.skip-install }}
+      if: ${{ inputs.skip-install != 'true' }}
       run: bun install
       shell: bash

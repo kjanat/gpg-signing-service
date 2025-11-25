@@ -15,7 +15,8 @@
       "!!**/bun.lockb",
       "!!**/client",
       "!!**/wrangler",
-      "!!**/worker-configuration.d.ts"
+      "!!**/worker-configuration.d.ts",
+      "!tsconfig.json"
     ]
   },
   "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2 },

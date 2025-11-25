@@ -116,7 +116,7 @@ var healthCmd = &cobra.Command{
 	Use:   "health",
 	Short: "Check service health",
 	Long:  "Performs a health check on the GPG signing service.",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, _ []string) error {
 		c, err := newClient()
 		if err != nil {
 			return fmt.Errorf("failed to create client: %w", err)
@@ -128,7 +128,7 @@ var healthCmd = &cobra.Command{
 		health, err := c.Health(ctx)
 		if err != nil {
 			if client.IsServiceError(err) {
-				// Even if degraded, we might have health info
+				// Even if degraded, we might have health info.
 				// But here we just return the error as the wrapper handles it
 				return fmt.Errorf("health check failed: %w", err)
 			}
@@ -159,7 +159,7 @@ var publicKeyCmd = &cobra.Command{
 	Use:   "public-key",
 	Short: "Get public key",
 	Long:  "Retrieves the public signing key from the service.",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		keyID, _ := cmd.Flags().GetString("key-id")
 
 		c, err := newClient()
@@ -200,7 +200,7 @@ var signCmd = &cobra.Command{
 Example:
   echo "commit data" | gpg-sign sign --key-id=my-key
   git log -1 --format='%B' | gpg-sign sign`,
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		keyID, _ := cmd.Flags().GetString("key-id")
 
 		// Read data from stdin
@@ -234,7 +234,7 @@ Example:
 		}
 
 		if jsonOutput {
-			// Convert result to map for JSON output to match previous structure
+			// Convert result to map for JSON output to match the previous structure
 			out := map[string]any{
 				"signature": result.Signature,
 			}
@@ -273,7 +273,7 @@ var adminUploadCmd = &cobra.Command{
 	Use:   "upload",
 	Short: "Upload a signing key",
 	Long:  "Uploads an armored private key to the service.",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		keyID, _ := cmd.Flags().GetString("key-id")
 		filePath, _ := cmd.Flags().GetString("file")
 
@@ -284,8 +284,8 @@ var adminUploadCmd = &cobra.Command{
 			return fmt.Errorf("--file is required")
 		}
 
-		// Read key file
-		keyData, err := os.ReadFile(filePath)
+		// Read the key file
+		keyData, err := os.ReadFile(filePath) // #nosec G304 - file path from trusted CLI user
 		if err != nil {
 			return fmt.Errorf("failed to read key file: %w", err)
 		}
@@ -328,7 +328,7 @@ var adminListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all keys",
 	Long:  "Lists metadata for all stored signing keys.",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, _ []string) error {
 		c, err := newAdminClient()
 		if err != nil {
 			return fmt.Errorf("failed to create client: %w", err)
@@ -371,7 +371,7 @@ var adminDeleteCmd = &cobra.Command{
 	Use:   "delete",
 	Short: "Delete a key",
 	Long:  "Permanently deletes a signing key from the service.",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		keyID, _ := cmd.Flags().GetString("key-id")
 
 		if keyID == "" {
@@ -396,7 +396,7 @@ var adminDeleteCmd = &cobra.Command{
 				if jsonOutput {
 					return outputJSON(map[string]bool{"deleted": false})
 				}
-				return nil // Or should this be an error? Original code didn't error on not found for delete
+				return nil // Or should this be an error? The original code didn't error on not found for delete
 			}
 			return fmt.Errorf("failed to delete key: %w", err)
 		}
@@ -419,7 +419,7 @@ var adminPublicKeyCmd = &cobra.Command{
 	Use:   "public-key",
 	Short: "Get public key (admin)",
 	Long:  "Retrieves the public key for a specific key ID via admin endpoint.",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		keyID, _ := cmd.Flags().GetString("key-id")
 
 		if keyID == "" {
@@ -464,7 +464,7 @@ var adminAuditCmd = &cobra.Command{
 	Use:   "audit",
 	Short: "Query audit logs",
 	Long:  "Retrieves audit log entries with optional filtering.",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		limit, _ := cmd.Flags().GetInt("limit")
 		offset, _ := cmd.Flags().GetInt("offset")
 		action, _ := cmd.Flags().GetString("action")
@@ -510,10 +510,11 @@ var adminAuditCmd = &cobra.Command{
 			return fmt.Errorf("failed to get audit logs: %w", err)
 		}
 
+		//goland:noinspection GrazieInspection
 		if jsonOutput {
 			// We need to match the structure of the original output if possible, or just dump the result
-			// The wrapper returns AuditResult which has Logs []AuditLog
-			// The original returned the raw JSON200 which had Logs *[]AuditLog
+			// The wrapper returns `AuditResult` which has `Logs []AuditLog`
+			// The original returned the raw `JSON200` which had `Logs *[]AuditLog`
 			// It should be close enough.
 			return outputJSON(result)
 		}

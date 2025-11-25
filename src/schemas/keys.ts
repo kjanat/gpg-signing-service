@@ -4,6 +4,7 @@ import {
   createKeyFingerprint,
   createKeyId,
 } from "~/types";
+import { LIMITS } from "~/utils/constants";
 
 /**
  * GPG Key ID validation
@@ -14,7 +15,7 @@ import {
 export const KeyIdSchema = z
   .string()
   .length(16, "Key ID must be exactly 16 characters")
-  .regex(/^[A-F0-9]{16}$/i, "Key ID must be 16 hexadecimal characters")
+  .regex(/^[A-Fa-f0-9]{16}$/, "Key ID must be 16 hexadecimal characters")
   .transform((s) => createKeyId(s.toUpperCase()));
 
 /**
@@ -26,7 +27,7 @@ export const KeyIdSchema = z
 export const FingerprintSchema = z
   .string()
   .length(40, "Fingerprint must be exactly 40 characters")
-  .regex(/^[A-F0-9]{40}$/i, "Fingerprint must be 40 hexadecimal characters")
+  .regex(/^[A-Fa-f0-9]{40}$/, "Fingerprint must be 40 hexadecimal characters")
   .transform((s) => createKeyFingerprint(s.toUpperCase()));
 
 /**
@@ -39,7 +40,10 @@ export const FingerprintSchema = z
 export const ArmoredPrivateKeySchema = z
   .string()
   .min(100, "Private key too short - minimum 100 characters")
-  .max(10_000, "Private key too large - maximum 10,000 characters")
+  .max(
+    LIMITS.MAX_KEY_SIZE,
+    `Private key too large - maximum ${LIMITS.MAX_KEY_SIZE} characters`,
+  )
   .refine(
     (val) => {
       // Match standard PGP private key block headers
@@ -96,10 +100,7 @@ export const ArmoredPrivateKeySchema = z
  * Key upload request schema
  */
 export const KeyUploadSchema = z
-  .object({
-    armoredPrivateKey: ArmoredPrivateKeySchema,
-    keyId: KeyIdSchema,
-  })
+  .object({ armoredPrivateKey: ArmoredPrivateKeySchema, keyId: KeyIdSchema })
   .openapi("KeyUpload");
 
 /**
@@ -136,3 +137,29 @@ export type StoredKey = z.infer<typeof StoredKeySchema>;
 export const PublicKeyResponseSchema = z.string().openapi("PublicKeyResponse", {
   example: "-----BEGIN PGP PUBLIC KEY BLOCK-----\n...",
 });
+
+/**
+ * Key list item schema
+ */
+export const KeyListItemSchema = z
+  .object({
+    keyId: z.string(),
+    fingerprint: z.string(),
+    createdAt: z.string(),
+    algorithm: z.string(),
+  })
+  .openapi("KeyListItem");
+
+/**
+ * Key list response schema
+ */
+export const KeyListResponseSchema = z
+  .object({ keys: z.array(KeyListItemSchema) })
+  .openapi("KeyListResponse");
+
+/**
+ * Key deletion response schema
+ */
+export const KeyDeletionResponseSchema = z
+  .object({ success: z.boolean(), deleted: z.boolean() })
+  .openapi("KeyDeletionResponse");

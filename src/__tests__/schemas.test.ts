@@ -180,7 +180,7 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
       const hugeKey = header + hugeData + footer;
 
       expect(() => ArmoredPrivateKeySchema.parse(hugeKey)).toThrow(
-        "Private key too large - maximum 10,000 characters",
+        "Private key too large - maximum 10000 characters",
       );
     });
 
@@ -434,9 +434,7 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
     });
 
     it("should accept missing startDate", () => {
-      const result = DateRangeSchema.parse({
-        endDate: "2025-12-31T23:59:59Z",
-      });
+      const result = DateRangeSchema.parse({ endDate: "2025-12-31T23:59:59Z" });
 
       expect(result.endDate).toBe("2025-12-31T23:59:59Z");
       expect(result.startDate).toBeUndefined();
@@ -795,12 +793,8 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
     });
 
     it("should reject missing fields", () => {
-      expect(() =>
-        KeyResponseSchema.parse({
-          success: true,
-          keyId: "ABC",
-        })
-      ).toThrow();
+      expect(() => KeyResponseSchema.parse({ success: true, keyId: "ABC" }))
+        .toThrow();
     });
   });
 });

@@ -1,6 +1,6 @@
 /** biome-ignore-all lint/style/noNonNullAssertion: This is a test file */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AuditLogEntry } from "~/types";
+import type { AuditLogEntry } from "~/schemas/audit";
 import { getAuditLogs, logAuditEvent } from "~/utils/audit";
 
 // Mock D1Database

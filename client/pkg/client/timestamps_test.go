@@ -99,10 +99,9 @@ func TestParseTimestampRoundtrip(t *testing.T) {
 		t.Fatal("failed to parse roundtrip timestamp")
 	}
 
-	// Verify they're approximately equal (allow 1 second difference for parsing)
-	diff := now.Sub(result).Seconds()
-	if diff < -1 || diff > 1 {
-		t.Errorf("timestamp roundtrip mismatch: difference is %f seconds", diff)
+	// RFC3339 format truncates to seconds, so times should be equal at second precision
+	if now.Truncate(time.Second) != result.Truncate(time.Second) {
+		t.Errorf("timestamp roundtrip mismatch: now=%v, result=%v", now, result)
 	}
 }
 

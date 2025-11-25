@@ -15,14 +15,12 @@ insert_final_newline = true
 trim_trailing_whitespace = false
 
 [*.sql]
-indent_style = space
 indent_size = 4
 
 [*.go]
 indent_style = tab
 indent_size = 4
 
-[*.{json,jsonc}]
-indent_style = space
+[*.sh]
+indent_style = tab
 indent_size = 2
-

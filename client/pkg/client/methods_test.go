@@ -10,6 +10,58 @@ import (
 	"time"
 )
 
+// runPublicKeyTest is a helper function to test public key retrieval methods
+func runPublicKeyTest(
+	t *testing.T,
+	keyContent string,
+	callMethod func(*Client, context.Context, string) (string, error),
+	tests []struct {
+		name         string
+		keyID        string
+		serverStatus int
+		wantErr      bool
+		validateResp func(t *testing.T, key string)
+	},
+) {
+	t.Helper()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					t.Errorf("expected GET, got %s", r.Method)
+				}
+				if tt.serverStatus == 200 {
+					w.Header().Set("Content-Type", "text/plain")
+					w.WriteHeader(http.StatusOK)
+					_, _ = fmt.Fprint(w, keyContent)
+				} else {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(tt.serverStatus)
+					_ = json.NewEncoder(w).Encode(map[string]string{
+						"code":  "KEY_NOT_FOUND",
+						"error": "key not found",
+					})
+				}
+			}))
+			defer server.Close()
+
+			client, _ := New(server.URL)
+			key, err := callMethod(client, context.Background(), tt.keyID)
+
+			if tt.wantErr && err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tt.validateResp != nil {
+				tt.validateResp(t, key)
+			}
+		})
+	}
+}
+
 // TestHealth tests the Health() method
 func TestHealth(t *testing.T) {
 	tests := []struct {
@@ -157,41 +209,7 @@ test-key-data
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodGet {
-					t.Errorf("expected GET, got %s", r.Method)
-				}
-				if tt.serverStatus == 200 {
-					w.Header().Set("Content-Type", "text/plain")
-					w.WriteHeader(http.StatusOK)
-					_, _ = fmt.Fprint(w, publicKeyPEM)
-				} else {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(tt.serverStatus)
-					_ = json.NewEncoder(w).Encode(map[string]string{
-						"code":  "KEY_NOT_FOUND",
-						"error": "key not found",
-					})
-				}
-			}))
-			defer server.Close()
-
-			client, _ := New(server.URL)
-			key, err := client.PublicKey(context.Background(), tt.keyID)
-
-			if tt.wantErr && err == nil {
-				t.Fatalf("expected error, got nil")
-			}
-			if !tt.wantErr && err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if tt.validateResp != nil {
-				tt.validateResp(t, key)
-			}
-		})
-	}
+	runPublicKeyTest(t, publicKeyPEM, (*Client).PublicKey, tests)
 }
 
 // TestUploadKey tests the UploadKey() method
@@ -295,7 +313,6 @@ func TestListKeys(t *testing.T) {
 
 	client, _ := New(server.URL)
 	keys, err := client.ListKeys(context.Background())
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -387,9 +404,9 @@ func TestAuditLogs(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"logs": []map[string]any{
 				{
-					"id":        "log-1",
+					"id":        "550e8400-e29b-41d4-a716-446655440000",
 					"timestamp": time.Now().Format(time.RFC3339),
-					"requestId": "req-123",
+					"requestId": "550e8400-e29b-41d4-a716-446655440001",
 					"action":    "sign",
 					"issuer":    "user@example.com",
 					"subject":   "key-1",
@@ -408,7 +425,6 @@ func TestAuditLogs(t *testing.T) {
 		Limit: 10,
 	}
 	result, err := client.AuditLogs(context.Background(), filter)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -464,41 +480,7 @@ test-key
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodGet {
-					t.Errorf("expected GET, got %s", r.Method)
-				}
-				if tt.serverStatus == 200 {
-					w.Header().Set("Content-Type", "text/plain")
-					w.WriteHeader(http.StatusOK)
-					_, _ = fmt.Fprint(w, publicKey)
-				} else {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(tt.serverStatus)
-					_ = json.NewEncoder(w).Encode(map[string]string{
-						"code":  "KEY_NOT_FOUND",
-						"error": "key not found",
-					})
-				}
-			}))
-			defer server.Close()
-
-			client, _ := New(server.URL)
-			key, err := client.AdminPublicKey(context.Background(), tt.keyID)
-
-			if tt.wantErr && err == nil {
-				t.Fatalf("expected error, got nil")
-			}
-			if !tt.wantErr && err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if tt.validateResp != nil {
-				tt.validateResp(t, key)
-			}
-		})
-	}
+	runPublicKeyTest(t, publicKey, (*Client).AdminPublicKey, tests)
 }
 
 // TestAuditFilterWithAllFields tests AuditFilter with all fields populated
@@ -506,7 +488,7 @@ func TestAuditFilterWithAllFields(t *testing.T) {
 	startDate := time.Now().Add(-24 * time.Hour)
 	endDate := time.Now()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -528,7 +510,6 @@ func TestAuditFilterWithAllFields(t *testing.T) {
 	}
 
 	result, err := client.AuditLogs(context.Background(), filter)
-
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -539,7 +520,7 @@ func TestAuditFilterWithAllFields(t *testing.T) {
 
 // BenchmarkHealth benchmarks Health() method
 func BenchmarkHealth(b *testing.B) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -563,7 +544,7 @@ func BenchmarkHealth(b *testing.B) {
 
 // BenchmarkPublicKey benchmarks PublicKey() method
 func BenchmarkPublicKey(b *testing.B) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusOK)
 		_, _ = fmt.Fprint(w, "-----BEGIN PGP PUBLIC KEY-----\ntest\n-----END PGP PUBLIC KEY-----")

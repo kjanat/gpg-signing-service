@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { scheduleBackgroundTask } from "~/utils/execution";
+import { logger } from "~/utils/logger";
 
 describe("scheduleBackgroundTask", () => {
   it("uses waitUntil when executionCtx is present", async () => {
@@ -26,9 +27,7 @@ describe("scheduleBackgroundTask", () => {
     const mockPromise = Promise.resolve().then(() => {
       resolved = true;
     });
-    const ctx = {
-      executionCtx: undefined,
-    } as unknown as Context;
+    const ctx = { executionCtx: undefined } as unknown as Context;
 
     // Act
     await scheduleBackgroundTask(ctx, "test-request-id", mockPromise);
@@ -39,21 +38,19 @@ describe("scheduleBackgroundTask", () => {
 
   it("handles rejected promises with error logging", async () => {
     // Arrange
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const loggerSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
     const error = new Error("Background task failed");
     const mockPromise = Promise.reject(error);
-    const ctx = {
-      executionCtx: undefined,
-    } as unknown as Context;
+    const ctx = { executionCtx: undefined } as unknown as Context;
 
     // Act - should not throw
     await scheduleBackgroundTask(ctx, "req-123", mockPromise);
 
     // Assert - error logged with requestId
-    expect(consoleSpy).toHaveBeenCalledWith("Background task failed:", {
-      requestId: "req-123",
-      error,
-    });
-    consoleSpy.mockRestore();
+    expect(loggerSpy).toHaveBeenCalledWith(
+      "Background task failed",
+      expect.objectContaining({ requestId: "req-123", error: error.message }),
+    );
+    loggerSpy.mockRestore();
   });
 });

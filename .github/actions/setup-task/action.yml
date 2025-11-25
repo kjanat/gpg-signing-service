@@ -4,13 +4,8 @@ description: "Setup Task"
 runs:
   using: "composite"
   steps:
-    - shell: bash
-      run: |
-        if command -v task; then
-          echo "TASK_AVAILABLE=true" >> $GITHUB_ENV
-        else
-          echo "TASK_AVAILABLE=false" >> $GITHUB_ENV
-        fi
+    - run: ${{ github.action_path }}/task_available.sh
+      shell: bash
 
     - name: Setup Task
       if: ${{ env.TASK_AVAILABLE == 'false' }}
