@@ -15,19 +15,14 @@ Complete, production-ready API documentation for the GPG Signing Service.
 
 ### Specifications
 
-**openapi.yaml** - 🔧 Complete API specification (YAML)
+**client/openapi.json** - 🔧 Complete API specification (JSON)
 
 - OpenAPI 3.1.0 format (industry standard)
 - Machine-readable endpoint definitions
 - All request/response schemas
 - Error codes and security schemes
-- Import into Swagger UI, ReDoc, Postman
-
-**openapi.json** - 🔧 Same specification in JSON format
-
-- Auto-generated from openapi.yaml
-- Use with code generators and tools
-- Programmatic access via JSON parsers
+- Auto-generated from Hono route definitions
+- Use with code generators, Swagger UI, ReDoc, Postman
 
 ### Documentation
 
@@ -71,10 +66,9 @@ Complete, production-ready API documentation for the GPG Signing Service.
 
 Includes:
 
-- **Bash scripts** - `sign-commit.sh`, `manage-keys.sh`, `query-audit.sh`
-- **Python SDK** - Client library with retry logic, key management
-- **GitHub Actions** - Complete signing workflow example
-- **GitLab CI** - Complete signing pipeline example
+- **Bash scripts** - `sign-commit.sh`, `query-audit.sh`
+- **Python SDK** - `manage_keys.py` with key management CLI
+- **CI/CD examples** - Inline examples in README for GitHub Actions and GitLab CI
 
 ## Documentation Quality
 
@@ -98,17 +92,17 @@ Includes:
 
 ### For API Integration
 
-1. Import **openapi.yaml** into Postman, Insomnia, or Swagger UI
+1. Import **client/openapi.json** into Postman, Insomnia, or Swagger UI
 2. Follow authentication setup in **API.md**
 3. Test endpoints using examples from **examples/**
-4. Generate client SDKs from **openapi.json** if needed
+4. Generate client SDKs from **client/openapi.json** if needed
 
 ### For API Documentation Hosting
 
-1. Use **openapi.yaml** with Swagger UI or ReDoc
+1. Use **client/openapi.json** with Swagger UI or ReDoc
 2. Include **API.md** for additional context
 3. Host **examples/** for developer reference
-4. Setup auto-generation from openapi specification
+4. Setup auto-generation from OpenAPI specification
 
 ### For Administration
 
@@ -149,26 +143,20 @@ See **API.md** and **examples/** for complete examples.
 
 ```tree
 gpg-signing-service/
-├── openapi.yaml         # OpenAPI 3.1 specification (YAML)
-├── openapi.json         # OpenAPI 3.1 specification (JSON)
 ├── API.md               # Developer guide with examples
 ├── DOCUMENTATION.md     # Overview and navigation
 ├── DEVELOPER_GUIDE.md   # Context and key concepts
 ├── DOCS_SUMMARY.txt     # Quick reference summary
 ├── docs-index.md        # This file
+├── client/
+│   └── openapi.json     # OpenAPI 3.1 specification (JSON)
 └── examples/
-    ├── README.md        # Examples guide
+    ├── README.md        # Examples guide with inline CI/CD examples
     ├── bash/
     │   ├── sign-commit.sh
-    │   ├── manage-keys.sh
     │   └── query-audit.sh
-    ├── python/
-    │   ├── sign_commit.py
-    │   └── manage_keys.py
-    ├── github-actions/
-    │   └── sign-commits.yml
-    └── gitlab-ci/
-        └── sign-commits.yml
+    └── python/
+        └── manage_keys.py
 ```
 
 ## Documentation Standards
@@ -213,11 +201,10 @@ All documentation follows industry best practices:
 
 ---
 
-**Total Documentation**: 4,000+ lines across 7 files\
+**Total Documentation**: 4,000+ lines across documentation files\
 **Endpoints Covered**: 8 (all)\
 **Error Codes**: 16 (all)\
-**Examples**: Complete implementations in bash, python, GitHub Actions, GitLab
-CI\
+**Examples**: Complete implementations in Bash and Python with inline CI/CD examples\
 **Quality**: Production-ready and ready for developer portals
 
 Start with **API.md** or **DOCS_SUMMARY.txt** based on your needs.
