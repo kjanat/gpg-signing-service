@@ -27,7 +27,7 @@ export type { ParsedKeyInfo, SigningResult };
 /**
  * Module-level cache instance for decrypted keys.
  * Safe in Workers: each V8 isolate has its own instance.
- * Keys are cached for the lifetime of the isolate (~50ms after request).
+ * Cache persists for the isolate lifetime, which varies based on traffic.
  */
 const decryptedKeyCache = new DecryptedKeyCache();
 

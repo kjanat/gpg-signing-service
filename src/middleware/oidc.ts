@@ -127,8 +127,11 @@ export const adminAuth: MiddlewareHandler<{ Bindings: Env }> = async (
 /**
  * Performs constant-time string comparison to prevent timing attacks.
  *
- * Pads both strings to equal length before comparison to ensure
- * comparison time is independent of string content.
+ * Implementation details:
+ * 1. Encodes strings to byte arrays
+ * 2. Pads shorter array to match longer length (ensures constant-time comparison)
+ * 3. Uses `crypto.subtle.timingSafeEqual` for byte comparison
+ * 4. Also verifies original lengths matched (prevents length-related timing)
  *
  * @param a - First string to compare
  * @param b - Second string to compare
