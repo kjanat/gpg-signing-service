@@ -149,8 +149,7 @@ See **API.md** and **examples/** for complete examples.
 
 ```tree
 gpg-signing-service/
-├── openapi.yaml         # OpenAPI 3.1 specification (YAML)
-├── openapi.json         # OpenAPI 3.1 specification (JSON)
+├── client/openapi.json  # OpenAPI 3.1 specification (JSON)
 ├── API.md               # Developer guide with examples
 ├── DOCUMENTATION.md     # Overview and navigation
 ├── DEVELOPER_GUIDE.md   # Context and key concepts
@@ -160,15 +159,9 @@ gpg-signing-service/
     ├── README.md        # Examples guide
     ├── bash/
     │   ├── sign-commit.sh
-    │   ├── manage-keys.sh
     │   └── query-audit.sh
-    ├── python/
-    │   ├── sign_commit.py
-    │   └── manage_keys.py
-    ├── github-actions/
-    │   └── sign-commits.yml
-    └── gitlab-ci/
-        └── sign-commits.yml
+    └── python/
+        └── manage_keys.py
 ```
 
 ## Documentation Standards

@@ -17,13 +17,11 @@ the GPG Signing Service.
 
 ### Examples
 
-| File                            | Purpose                          |
-| ------------------------------- | -------------------------------- |
-| **`examples/README.md`**        | Complete working code examples   |
-| `examples/bash/*.sh`            | Shell scripts for common tasks   |
-| `examples/python/*.py`          | Python SDK examples              |
-| `examples/github-actions/*.yml` | GitHub Actions workflow examples |
-| `examples/gitlab-ci/*.yml`      | GitLab CI pipeline examples      |
+| File                       | Purpose                        |
+| -------------------------- | ------------------------------ |
+| **`examples/README.md`**   | Complete working code examples |
+| `examples/bash/*.sh`       | Shell scripts for common tasks |
+| `examples/python/*.py`     | Python SDK examples            |
 
 ## Where to Start
 
@@ -117,12 +115,14 @@ Query via `GET /admin/audit` with filtering.
 
 ### Add Signing to Workflow
 
-See `examples/` for platform-specific:
+See `examples/` for platform-specific examples:
 
-- GitHub Actions: `examples/github-actions/sign-commits.yml`
-- GitLab CI: `examples/gitlab-ci/sign-commits.yml`
 - Bash: `examples/bash/sign-commit.sh`
-- Python: `examples/python/sign_commit.py`
+
+See also:
+
+- GitHub Actions: `.github/workflows/sign-commits.yml`
+- GitLab CI: `.gitlab-ci.yml`
 
 ### Upload New Key
 
@@ -154,10 +154,6 @@ curl "https://gpg.kajkowalski.nl/admin/audit?action=sign&startDate=$DAYS_AGO" \
 ```
 
 See examples/bash/query-audit.sh for advanced queries.
-
-### Rotate Keys
-
-See examples/python/manage_keys.py rotate command for complete implementation.
 
 ## Integration Checklist
 
@@ -287,7 +283,7 @@ When API changes:
 ## Support
 
 - **Issues/Questions**: GitHub repository issues
-- **Specification**: See `openapi.yaml` for complete definition
+- **Specification**: See `client/openapi.json` for complete definition
 - **Examples**: See `examples/` directory
 - **Troubleshooting**: See DOCUMENTATION.md
 
@@ -296,11 +292,10 @@ When API changes:
 ### Documentation (in root directory)
 
 ```
-openapi.yaml          888 lines - Full OpenAPI 3.1 specification
-openapi.json         1086 lines - Same spec in JSON format
-API.md                722 lines - Developer guide with examples
-DOCUMENTATION.md      386 lines - Overview and usage
-DEVELOPER_GUIDE.md              - This file
+client/openapi.json  - OpenAPI 3.0 specification (JSON)
+API.md               - Developer guide with examples
+DOCUMENTATION.md     - Overview and usage
+DEVELOPER_GUIDE.md   - This file
 ```
 
 ### Examples (in examples/ directory)
@@ -308,29 +303,21 @@ DEVELOPER_GUIDE.md              - This file
 ```tree
 bash/
   sign-commit.sh      - Production-quality signing script
-  manage-keys.sh      - Key management operations
   query-audit.sh      - Audit log queries
 
 python/
-  sign_commit.py      - Complete Python signing example
   manage_keys.py      - Python key management client
-
-github-actions/
-  sign-commits.yml    - GitHub Actions workflow
-
-gitlab-ci/
-  sign-commits.yml    - GitLab CI pipeline
 ```
 
-## Statistics
+### CI/CD Workflows (in repository root)
 
-- **OpenAPI Schema**: 888 lines (YAML), 1086 lines (JSON)
-- **API Documentation**: 722 lines (markdown)
-- **Complete Examples**: 4 bash scripts, 2 Python modules, 2 CI workflows
-- **Total Documentation**: 3000+ lines of production-ready content
+```
+.github/workflows/sign-commits.yml  - GitHub Actions workflow
+.gitlab-ci.yml                      - GitLab CI pipeline
+```
 
 ---
 
-Last updated: 2025-11-19\
-OpenAPI Version: `3.1.0`\
+Last updated: 2025-11-25\
+OpenAPI Version: `3.0.0`\
 API Version: `1.0.0`

@@ -1,3 +1,16 @@
+/**
+ * @fileoverview OpenPGP signing utilities for Git commit data.
+ *
+ * This module provides functions for signing Git commit data using OpenPGP
+ * private keys. It uses openpgp.js v6 for cryptographic operations and
+ * implements caching for decrypted keys to optimize performance.
+ *
+ * @see {@link https://openpgpjs.org/} - OpenPGP.js documentation
+ * @see {@link https://datatracker.ietf.org/doc/html/rfc4880} - RFC 4880 (OpenPGP)
+ *
+ * @module utils/signing
+ */
+
 import * as openpgp from "openpgp";
 import type { StoredKey } from "~/schemas/keys";
 import type { ArmoredPrivateKey, ParsedKeyInfo, SigningResult } from "~/types";
@@ -11,10 +24,42 @@ import { DecryptedKeyCache } from "./key-cache";
 // Re-export types for convenience
 export type { ParsedKeyInfo, SigningResult };
 
-// Module-level cache instance for decrypted keys
-// Safe in Workers: each isolate has its own instance
+/**
+ * Module-level cache instance for decrypted keys.
+ * Safe in Workers: each V8 isolate has its own instance.
+ * Keys are cached for the lifetime of the isolate (~50ms after request).
+ */
 const decryptedKeyCache = new DecryptedKeyCache();
 
+/**
+ * Signs Git commit data using an OpenPGP private key.
+ *
+ * This function creates a detached ASCII-armored GPG signature compatible with
+ * `git verify-commit`. The signature is generated using the stored private key,
+ * which is decrypted with the provided passphrase.
+ *
+ * Performance optimizations:
+ * - Decrypted keys are cached in memory to avoid repeated decryption
+ * - Cache is per-isolate and cleared when the Worker terminates
+ *
+ * @param commitData - Raw Git commit data (output of `git cat-file commit <ref>`)
+ * @param storedKey - Stored key object containing the armored private key
+ * @param passphrase - Passphrase to decrypt the private key
+ * @returns Promise resolving to signing result with signature and key metadata
+ *
+ * @throws {Error} If key decryption fails (wrong passphrase)
+ * @throws {Error} If signing operation fails
+ *
+ * @example
+ * ```typescript
+ * const result = await signCommitData(
+ *   'tree abc123\nparent def456\nauthor ...',
+ *   storedKey,
+ *   'my-passphrase'
+ * );
+ * console.log(result.signature); // -----BEGIN PGP SIGNATURE-----...
+ * ```
+ */
 export async function signCommitData(
   commitData: string,
   storedKey: StoredKey,
@@ -58,6 +103,27 @@ export async function signCommitData(
   };
 }
 
+/**
+ * Parses and validates an ASCII-armored OpenPGP private key.
+ *
+ * This function extracts metadata from a private key and optionally validates
+ * that the provided passphrase can decrypt it. Used during key upload to
+ * verify key integrity and extract information for storage.
+ *
+ * @param armoredKey - ASCII-armored private key string
+ * @param passphrase - Optional passphrase to verify decryption capability
+ * @returns Promise resolving to parsed key information
+ *
+ * @throws {Error} If key format is invalid or cannot be parsed
+ * @throws {Error} If passphrase is provided but incorrect
+ *
+ * @example
+ * ```typescript
+ * const keyInfo = await parseAndValidateKey(armoredKey, 'passphrase');
+ * console.log(keyInfo.fingerprint); // 1234567890ABCDEF...
+ * console.log(keyInfo.algorithm);   // EdDSA
+ * ```
+ */
 export async function parseAndValidateKey(
   armoredKey: string,
   passphrase?: string,
@@ -99,6 +165,24 @@ export async function parseAndValidateKey(
   return { keyId, fingerprint, algorithm, userId };
 }
 
+/**
+ * Extracts the public key component from an ASCII-armored private key.
+ *
+ * This function derives the public key from a private key without requiring
+ * decryption (passphrase not needed). The resulting public key can be
+ * distributed for signature verification.
+ *
+ * @param armoredPrivateKey - ASCII-armored private key string
+ * @returns Promise resolving to ASCII-armored public key string
+ *
+ * @throws {Error} If private key format is invalid
+ *
+ * @example
+ * ```typescript
+ * const publicKey = await extractPublicKey(armoredPrivateKey);
+ * console.log(publicKey); // -----BEGIN PGP PUBLIC KEY BLOCK-----...
+ * ```
+ */
 export async function extractPublicKey(
   armoredPrivateKey: ArmoredPrivateKey | string,
 ): Promise<string> {
