@@ -219,16 +219,67 @@ describe("getAuditLogs", () => {
     expect(db._mockBind).toHaveBeenCalledWith("sign", 100, 0);
   });
 
-  it("should apply subject filter with LIKE", async () => {
+  it("should apply subject filter with LIKE and ESCAPE clause", async () => {
     const db = createMockDb();
     db._mockAll.mockResolvedValue({ results: [] });
 
     await getAuditLogs(db, { subject: "owner/repo" });
 
     expect(db.prepare).toHaveBeenCalledWith(
-      expect.stringContaining("AND subject LIKE ?"),
+      expect.stringContaining("AND subject LIKE ? ESCAPE '\\'"),
     );
     expect(db._mockBind).toHaveBeenCalledWith("%owner/repo%", 100, 0);
+  });
+
+  it("should escape % wildcard in subject filter to prevent pattern injection", async () => {
+    const db = createMockDb();
+    db._mockAll.mockResolvedValue({ results: [] });
+
+    // Attacker tries to use % to match all records
+    await getAuditLogs(db, { subject: "%" });
+
+    expect(db.prepare).toHaveBeenCalledWith(
+      expect.stringContaining("ESCAPE '\\'"),
+    );
+    // % should be escaped as \% so it matches literal %
+    expect(db._mockBind).toHaveBeenCalledWith("%\\%%", 100, 0);
+  });
+
+  it("should escape _ wildcard in subject filter to prevent single-char matching", async () => {
+    const db = createMockDb();
+    db._mockAll.mockResolvedValue({ results: [] });
+
+    // Attacker tries to use _ to match any single character
+    await getAuditLogs(db, { subject: "user_name" });
+
+    // _ should be escaped as \_ so it matches literal underscore
+    expect(db._mockBind).toHaveBeenCalledWith("%user\\_name%", 100, 0);
+  });
+
+  it("should escape backslash in subject filter", async () => {
+    const db = createMockDb();
+    db._mockAll.mockResolvedValue({ results: [] });
+
+    // Input containing backslash should be double-escaped
+    await getAuditLogs(db, { subject: "path\\to\\file" });
+
+    // Each \ becomes \\ in the escaped output
+    expect(db._mockBind).toHaveBeenCalledWith("%path\\\\to\\\\file%", 100, 0);
+  });
+
+  it("should handle combined SQL injection attempt in subject", async () => {
+    const db = createMockDb();
+    db._mockAll.mockResolvedValue({ results: [] });
+
+    // Combined attack: wildcards + SQL injection attempt
+    await getAuditLogs(db, { subject: "%'; DROP TABLE audit_logs; --" });
+
+    // % escaped, _ in "audit_logs" escaped, SQL injection neutralized by parameterized query
+    expect(db._mockBind).toHaveBeenCalledWith(
+      "%\\%'; DROP TABLE audit\\_logs; --%",
+      100,
+      0,
+    );
   });
 
   it("should apply date range filters", async () => {

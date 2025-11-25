@@ -59,9 +59,10 @@ export async function getAuditLogs(
   }
 
   if (subject) {
-    query += " AND subject LIKE ?";
-    // Escape LIKE wildcards to prevent pattern injection
-    const escapedSubject = subject.replace(/[%_]/g, "\\$&");
+    // SECURITY: Escape LIKE wildcards to prevent pattern injection (OWASP A03:2021)
+    // Must specify ESCAPE clause for SQLite to recognize the escape character
+    query += " AND subject LIKE ? ESCAPE '\\'";
+    const escapedSubject = subject.replace(/[%_\\]/g, "\\$&");
     params.push(`%${escapedSubject}%`);
   }
 
