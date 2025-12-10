@@ -39,7 +39,7 @@
     "./**/*.ts",
     "src",
     "scripts",
-    ".commitlint.ts",
+    ".commitlintrc.ts",
     "eslint.config.ts",
     "vitest.config.ts",
     "worker-configuration.d.ts"

@@ -1,3 +1,6 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/evilmartians/lefthook/master/schema.json
+# https://lefthook.dev/configuration/
+---
 pre-commit:
   jobs:
     - name: lint
@@ -33,4 +36,4 @@ pre-push:
 commit-msg:
   commands:
     "lint commit message":
-      run: bunx commitlint --config .commitlint.ts --edit {1}
+      run: bunx commitlint --edit {1}

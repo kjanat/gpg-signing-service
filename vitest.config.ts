@@ -27,7 +27,7 @@ export default defineWorkersConfig({
       provider: "istanbul",
       reporter: ["text", "html", "json"],
       include: ["src/**/*.ts"],
-      exclude: ["scripts", "dist", ".commitlint.ts", "vitest.config.ts"],
+      exclude: ["scripts", "dist", ".commitlintrc.ts", "vitest.config.ts"],
       // strict thresholds, if you modify this, you are fired !!!
       thresholds: { lines: 95, functions: 98, branches: 95, statements: 95 },
     },
