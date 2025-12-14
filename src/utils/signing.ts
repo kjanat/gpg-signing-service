@@ -15,6 +15,27 @@ export type { ParsedKeyInfo, SigningResult };
 // Safe in Workers: each isolate has its own instance
 const decryptedKeyCache = new DecryptedKeyCache();
 
+/**
+ * Sign commit data using a stored GPG key.
+ *
+ * Creates a detached armored PGP signature for the provided commit data.
+ * Uses cached decrypted keys when available for performance.
+ *
+ * @param commitData - Raw git commit data to sign
+ * @param storedKey - Stored key with armored private key and metadata
+ * @param passphrase - Passphrase to decrypt the private key
+ * @returns Signing result with signature and key metadata
+ *
+ * @example
+ * ```ts
+ * const result = await signCommitData(
+ *   "tree abc123\nparent def456\n...",
+ *   storedKey,
+ *   env.KEY_PASSPHRASE,
+ * );
+ * console.log(result.signature); // "-----BEGIN PGP SIGNATURE-----\n..."
+ * ```
+ */
 export async function signCommitData(
   commitData: string,
   storedKey: StoredKey,
@@ -58,6 +79,16 @@ export async function signCommitData(
   };
 }
 
+/**
+ * Parse and validate an armored GPG private key.
+ *
+ * Extracts key metadata and optionally verifies the passphrase works.
+ *
+ * @param armoredKey - Armored PGP private key block
+ * @param passphrase - Optional passphrase to verify decryption
+ * @returns Parsed key information (keyId, fingerprint, algorithm, userId)
+ * @throws Error if key is invalid or passphrase is incorrect
+ */
 export async function parseAndValidateKey(
   armoredKey: string,
   passphrase?: string,
@@ -99,6 +130,12 @@ export async function parseAndValidateKey(
   return { keyId, fingerprint, algorithm, userId };
 }
 
+/**
+ * Extract the public key from an armored private key.
+ *
+ * @param armoredPrivateKey - Armored PGP private key block
+ * @returns Armored PGP public key block
+ */
 export async function extractPublicKey(
   armoredPrivateKey: ArmoredPrivateKey | string,
 ): Promise<string> {

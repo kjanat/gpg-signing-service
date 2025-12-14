@@ -7,44 +7,39 @@ Service:
 
 ### Files
 
-1. **openapi.yaml** - OpenAPI 3.1 specification in YAML format
+1. **client/openapi.json** - OpenAPI 3.1 specification in JSON format
    - Machine-readable API contract
-   - Compatible with code generators, documentation tools, and testing
-     frameworks
+   - Auto-generated from Hono route definitions via `task generate:api`
+   - Compatible with code generators, documentation tools, and testing frameworks
    - Includes all endpoints, parameters, request/response schemas
    - Security schemes and error codes defined
 
-2. **openapi.json** - Same specification in JSON format
-   - Generated from openapi.yaml
-   - Easier to parse programmatically
-   - Use with API tools that prefer JSON
-
-3. **API.md** - Developer-friendly API documentation
+2. **API.md** - Developer-friendly API documentation
    - Quick start examples
    - Authentication flows for GitHub Actions and GitLab CI
    - Endpoint documentation with examples
    - Error reference and rate limiting explanation
    - Integration guides and code samples
 
-4. **DOCUMENTATION.md** (this file) - Overview and usage guide
+3. **DOCUMENTATION.md** (this file) - Overview and usage guide
 
 ## Quick Links
 
 ### For Developers
 
 - Start with **API.md** for quick start and examples
-- Reference **openapi.yaml** for detailed specs
+- Reference **client/openapi.json** for detailed specs
 - Use integration guides for GitHub Actions or GitLab CI
 
 ### For API Consumers
 
-- Import openapi.yaml into Swagger UI for interactive testing
+- Import **client/openapi.json** into Swagger UI for interactive testing
 - Generate client SDKs in your preferred language
 - Use with Postman, Insomnia, or other API clients
 
 ### For DevOps/Tools
 
-- Use openapi.json with code generation tools
+- Use **client/openapi.json** with code generation tools
 - Reference error codes in monitoring/alerting
 - Query audit logs via GET /admin/audit endpoint
 
@@ -89,37 +84,28 @@ All responses include:
 
 ### Swagger UI (Interactive Testing)
 
-Host the specification with Swagger UI:
+The service exposes a built-in Swagger UI at `/ui` and OpenAPI spec at `/doc`.
+
+Alternatively, host the specification locally:
 
 ```bash
-# Using npm
-bunx swagger-ui-dist --config src/swagger-initializer.js
-
-# Using Docker
+# Using Docker with local openapi.json
 docker run -p 8080:8080 \
-  -v $(pwd)/openapi.yaml:/openapi.yaml:ro \
-  -e SWAGGER_JSON=/openapi.yaml \
+  -v $(pwd)/client/openapi.json:/openapi.json:ro \
+  -e SWAGGER_JSON=/openapi.json \
   swaggerapi/swagger-ui
-
-# Using custom HTML
-# Create index.html that loads openapi.yaml with SwaggerUI
 ```
 
 ### Postman
 
-1. File → Import → Enter:
-
-   ```text
-   https://gpg.kajkowalski.nl/openapi.yaml
-   ```
-
+1. File → Import → Select `client/openapi.json` from the repository
 2. Create environment variables for authentication tokens
 3. Use generated examples for all endpoints
 
 ### ReDoc (Beautiful Documentation)
 
 ```bash
-bunx @redocly/cli build-docs openapi.yaml
+bunx @redocly/cli build-docs client/openapi.json
 ```
 
 or
@@ -137,7 +123,7 @@ or
     </style>
   </head>
   <body>
-    <redoc spec-url="./openapi.yaml"></redoc>
+    <redoc spec-url="./client/openapi.json"></redoc>
     <script src="https://cdn.jsdelivr.net/npm/redoc@2/bundles/redoc.standalone.js"></script>
   </body>
 </html>
@@ -150,19 +136,19 @@ Generate client libraries in multiple languages:
 ```bash
 # Using openapi-generator-cli
 bunx @openapitools/openapi-generator-cli generate \
-  -i openapi.yaml \
+  -i client/openapi.json \
   -g python \
   -o ./python-client
 
 # JavaScript/TypeScript
 bunx @openapitools/openapi-generator-cli generate \
-  -i openapi.yaml \
+  -i client/openapi.json \
   -g typescript-fetch \
   -o ./typescript-client
 
-# Go
+# Go (already generated in client/pkg/api/)
 bunx @openapitools/openapi-generator-cli generate \
-  -i openapi.yaml \
+  -i client/openapi.json \
   -g go \
   -o ./go-client
 ```
@@ -415,7 +401,8 @@ Breaking changes will result in new version. Current approach:
 ## Support Resources
 
 - **Documentation**: See `API.md` for detailed examples
-- **OpenAPI Spec**: Import `openapi.yaml` into API tools
+- **OpenAPI Spec**: Import `client/openapi.json` into API tools
+- **Live Swagger UI**: Available at `/ui` on the deployed service
 - **Repository**: https://github.com/kjanat/gpg-signing-service
 - **Issues**: https://github.com/kjanat/gpg-signing-service/issues
 - **Security**: GitHub security advisory process

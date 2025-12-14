@@ -1,6 +1,24 @@
 import type { AuditAction, AuditLogEntry } from "~/schemas/audit";
 import type { ErrorCode } from "~/schemas/errors";
 
+/**
+ * Log an audit event to the D1 database.
+ *
+ * @param db - D1 database binding
+ * @param entry - Audit log entry data (id and timestamp are auto-generated)
+ *
+ * @example
+ * ```ts
+ * await logAuditEvent(env.AUDIT_DB, {
+ *   requestId: "uuid",
+ *   action: "sign",
+ *   issuer: "https://token.actions.githubusercontent.com",
+ *   subject: "owner/repo",
+ *   keyId: "signing-key-v1",
+ *   success: true,
+ * });
+ * ```
+ */
 export async function logAuditEvent(
   db: D1Database,
   entry: Omit<AuditLogEntry, "id" | "timestamp">,
@@ -30,6 +48,28 @@ export async function logAuditEvent(
     .run();
 }
 
+/**
+ * Query audit logs from the D1 database with optional filtering.
+ *
+ * @param db - D1 database binding
+ * @param options - Query options for filtering and pagination
+ * @param options.limit - Maximum entries to return (default: 100)
+ * @param options.offset - Number of entries to skip (default: 0)
+ * @param options.action - Filter by action type (sign, key_upload, key_rotate)
+ * @param options.subject - Filter by subject (partial match)
+ * @param options.startDate - Filter from this date (ISO 8601)
+ * @param options.endDate - Filter until this date (ISO 8601)
+ * @returns Array of audit log entries, ordered by timestamp descending
+ *
+ * @example
+ * ```ts
+ * const logs = await getAuditLogs(env.AUDIT_DB, {
+ *   action: "sign",
+ *   limit: 50,
+ *   startDate: "2024-01-01T00:00:00Z",
+ * });
+ * ```
+ */
 export async function getAuditLogs(
   db: D1Database,
   options: {

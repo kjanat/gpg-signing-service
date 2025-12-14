@@ -7,23 +7,20 @@ the GPG Signing Service.
 
 ### Core Documentation
 
-| File                   | Purpose                                | Audience                              |
-| ---------------------- | -------------------------------------- | ------------------------------------- |
-| **openapi.yaml**       | OpenAPI 3.1 specification (YAML)       | Tools, code generators, API platforms |
-| **openapi.json**       | OpenAPI 3.1 specification (JSON)       | Programmatic access, automation       |
-| **API.md**             | Developer-friendly guide with examples | Software engineers, integrators       |
-| **DOCUMENTATION.md**   | Overview and usage guide               | Everyone                              |
-| **DEVELOPER_GUIDE.md** | This file - navigation and context     | Contributors, API users               |
+| File                    | Purpose                                | Audience                              |
+| ----------------------- | -------------------------------------- | ------------------------------------- |
+| **client/openapi.json** | OpenAPI 3.1 specification (JSON)       | Tools, code generators, API platforms |
+| **API.md**              | Developer-friendly guide with examples | Software engineers, integrators       |
+| **DOCUMENTATION.md**    | Overview and usage guide               | Everyone                              |
+| **DEVELOPER_GUIDE.md**  | This file - navigation and context     | Contributors, API users               |
 
 ### Examples
 
-| File                            | Purpose                          |
-| ------------------------------- | -------------------------------- |
-| **`examples/README.md`**        | Complete working code examples   |
-| `examples/bash/*.sh`            | Shell scripts for common tasks   |
-| `examples/python/*.py`          | Python SDK examples              |
-| `examples/github-actions/*.yml` | GitHub Actions workflow examples |
-| `examples/gitlab-ci/*.yml`      | GitLab CI pipeline examples      |
+| File                     | Purpose                                        |
+| ------------------------ | ---------------------------------------------- |
+| **`examples/README.md`** | Complete working examples with inline CI/CD    |
+| `examples/bash/*.sh`     | Shell scripts (sign-commit.sh, query-audit.sh) |
+| `examples/python/*.py`   | Python SDK (manage_keys.py)                    |
 
 ## Where to Start
 
@@ -36,14 +33,14 @@ the GPG Signing Service.
 
 ### For API Integration
 
-1. **OpenAPI Import**: Load `openapi.yaml` into Swagger UI or Postman
-2. **Code Generation**: Use `openapi.json` with code generators
-3. **Documentation**: Host `openapi.yaml` with ReDoc or similar
+1. **OpenAPI Import**: Load `client/openapi.json` into Swagger UI or Postman
+2. **Code Generation**: Use `client/openapi.json` with code generators
+3. **Live Docs**: Use built-in Swagger UI at `/ui` on deployed service
 4. **Testing**: Use examples as test cases
 
 ### For Administration
 
-1. **Key Management**: See `examples/bash/manage-keys.sh`
+1. **Key Management**: See `examples/python/manage_keys.py`
 2. **Audit Queries**: See `examples/bash/query-audit.sh`
 3. **Monitoring**: Setup via health check endpoint
 4. **Troubleshooting**: See "Troubleshooting" in `DOCUMENTATION.md`
@@ -117,12 +114,12 @@ Query via `GET /admin/audit` with filtering.
 
 ### Add Signing to Workflow
 
-See `examples/` for platform-specific:
+See `examples/README.md` for platform-specific examples:
 
-- GitHub Actions: `examples/github-actions/sign-commits.yml`
-- GitLab CI: `examples/gitlab-ci/sign-commits.yml`
+- GitHub Actions: Inline example in `examples/README.md`
+- GitLab CI: Inline example in `examples/README.md`
 - Bash: `examples/bash/sign-commit.sh`
-- Python: `examples/python/sign_commit.py`
+- Python: `examples/python/manage_keys.py` (for key management)
 
 ### Upload New Key
 
@@ -161,7 +158,7 @@ See examples/python/manage_keys.py rotate command for complete implementation.
 
 ## Integration Checklist
 
-- [ ] Import openapi.yaml into API documentation tool
+- [ ] Import `client/openapi.json` into API documentation tool
 - [ ] Setup OIDC token retrieval in CI/CD
 - [ ] Test signing with public key retrieval
 - [ ] Configure admin token as secret
@@ -197,7 +194,7 @@ See examples/python/manage_keys.py rotate command for complete implementation.
 
 ### With Postman
 
-1. Import openapi.yaml as Postman collection
+1. Import `client/openapi.json` as Postman collection
 2. Create environment with variables:
    - `base_url`: https://gpg.kajkowalski.nl
    - `admin_token`: your token value
@@ -206,11 +203,13 @@ See examples/python/manage_keys.py rotate command for complete implementation.
 
 ### With Swagger UI
 
+The service has built-in Swagger UI at `/ui`. Alternatively, run locally:
+
 ```bash
-# Local Swagger UI pointing to openapi.yaml
+# Local Swagger UI pointing to openapi.json
 docker run -p 8080:8080 \
-  -v $(pwd)/openapi.yaml:/openapi.yaml:ro \
-  -e SWAGGER_JSON=/openapi.yaml \
+  -v $(pwd)/client/openapi.json:/openapi.json:ro \
+  -e SWAGGER_JSON=/openapi.json \
   swaggerapi/swagger-ui
 ```
 
@@ -262,32 +261,31 @@ OpenAPI 3.1.0 with:
 
 ### Specification Compliance
 
-All endpoints and responses validate against `openapi.yaml` schema.\
+All endpoints and responses validate against `client/openapi.json` schema.\
 Use tools like:
 
 ```bash
 # Validate response against spec
-swagger-cli validate openapi.yaml
+swagger-cli validate client/openapi.json
 
 # Generate tests from spec
-dredd openapi.yaml https://gpg.kajkowalski.nl
+dredd client/openapi.json https://gpg.kajkowalski.nl
 ```
 
 ## Keeping Documentation Updated
 
 When API changes:
 
-1. **Update openapi.yaml** with new endpoints/parameters
-2. **Validate**: `swagger-cli validate openapi.yaml`
-3. **Regenerate JSON**: `yq . openapi.yaml | jq . > openapi.json`
-4. **Update API.md** with new examples
-5. **Update examples/** directory
-6. **Commit and push** documentation changes
+1. **Update route definitions** in `src/routes/*.ts` with Zod schemas
+2. **Regenerate spec**: `task generate:api` (auto-generates OpenAPI + Go client)
+3. **Update API.md** with new examples
+4. **Update examples/** directory if needed
+5. **Commit and push** documentation changes
 
 ## Support
 
 - **Issues/Questions**: GitHub repository issues
-- **Specification**: See `openapi.yaml` for complete definition
+- **Specification**: See `client/openapi.json` for complete definition
 - **Examples**: See `examples/` directory
 - **Troubleshooting**: See DOCUMENTATION.md
 
@@ -296,41 +294,33 @@ When API changes:
 ### Documentation (in root directory)
 
 ```
-openapi.yaml          888 lines - Full OpenAPI 3.1 specification
-openapi.json         1086 lines - Same spec in JSON format
-API.md                722 lines - Developer guide with examples
-DOCUMENTATION.md      386 lines - Overview and usage
-DEVELOPER_GUIDE.md              - This file
+client/openapi.json   - OpenAPI 3.1 specification (auto-generated)
+API.md                - Developer guide with examples
+DOCUMENTATION.md      - Overview and usage
+DEVELOPER_GUIDE.md    - This file
 ```
 
 ### Examples (in examples/ directory)
 
 ```tree
-bash/
-  sign-commit.sh      - Production-quality signing script
-  manage-keys.sh      - Key management operations
-  query-audit.sh      - Audit log queries
-
-python/
-  sign_commit.py      - Complete Python signing example
-  manage_keys.py      - Python key management client
-
-github-actions/
-  sign-commits.yml    - GitHub Actions workflow
-
-gitlab-ci/
-  sign-commits.yml    - GitLab CI pipeline
+examples/
+├── README.md         - Complete examples with inline CI/CD workflows
+├── bash/
+│   ├── sign-commit.sh    - Production-quality signing script
+│   └── query-audit.sh    - Audit log queries
+└── python/
+    └── manage_keys.py    - Python key management client
 ```
 
 ## Statistics
 
-- **OpenAPI Schema**: 888 lines (YAML), 1086 lines (JSON)
-- **API Documentation**: 722 lines (markdown)
-- **Complete Examples**: 4 bash scripts, 2 Python modules, 2 CI workflows
+- **OpenAPI Schema**: Auto-generated from Hono route definitions
+- **API Documentation**: Comprehensive markdown guides
+- **Complete Examples**: 2 bash scripts, 1 Python module, inline CI/CD examples
 - **Total Documentation**: 3000+ lines of production-ready content
 
 ---
 
-Last updated: 2025-11-19\
+Last updated: 2025-11-25\
 OpenAPI Version: `3.1.0`\
 API Version: `1.0.0`

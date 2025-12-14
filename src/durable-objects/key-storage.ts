@@ -1,6 +1,26 @@
 import type { StoredKey } from "~/schemas/keys";
 import { HTTP, MediaType } from "~/types";
 
+/**
+ * Secure key storage implemented as a Durable Object.
+ *
+ * Stores encrypted GPG private keys with metadata.
+ * Provides CRUD operations for key management.
+ *
+ * Keys are stored with the prefix `key:` followed by the keyId.
+ *
+ * @example
+ * ```ts
+ * // Store a key
+ * const response = await fetchKeyStorage(env, "/store-key", {
+ *   method: "POST",
+ *   body: JSON.stringify(storedKey),
+ * });
+ *
+ * // Retrieve a key
+ * const response = await fetchKeyStorage(env, "/get-key?keyId=signing-v1");
+ * ```
+ */
 export class KeyStorage implements DurableObject {
   private state: DurableObjectState;
 

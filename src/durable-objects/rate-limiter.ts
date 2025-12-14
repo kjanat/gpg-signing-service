@@ -6,11 +6,30 @@ import {
   MediaType,
 } from "~/types";
 
+/** Internal representation of a rate limit token bucket */
 interface TokenBucket {
+  /** Current number of available tokens */
   tokens: number;
+  /** Timestamp of last token refill */
   lastRefill: number;
 }
 
+/**
+ * Token bucket rate limiter implemented as a Durable Object.
+ *
+ * Provides per-identity rate limiting with automatic token refill.
+ * Uses the token bucket algorithm with configurable limits.
+ *
+ * @example
+ * ```ts
+ * // Check and consume a token for an identity
+ * const response = await fetchRateLimiter(env, "owner/repo");
+ * const result = await response.json();
+ * if (!result.allowed) {
+ *   return c.json({ error: "Rate limited" }, 429);
+ * }
+ * ```
+ */
 export class RateLimiter implements DurableObject {
   private state: DurableObjectState;
 
