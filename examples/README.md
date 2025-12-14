@@ -8,17 +8,16 @@ Complete, working examples for integrating with the GPG Signing Service API.
 gpg-signing-service/examples/
 ├── bash/                  # Shell script examples
 │   ├── sign-commit.sh
-│   ├── manage-keys.sh
 │   └── query-audit.sh
-├── github-actions/        # GitHub Actions workflows
-│   └── sign-commits.yml
-├── gitlab-ci/             # GitLab CI pipelines
-│   └── sign-commits.yml
 ├── python/                # Python SDK examples
-│   ├── sign_commit.py
 │   └── manage_keys.py
 └── README.md              << This file
 ```
+
+See also CI/CD workflow examples in the repository root:
+
+- `.github/workflows/sign-commits.yml` - GitHub Actions workflow
+- `.gitlab-ci.yml` - GitLab CI pipeline
 
 ## Quick Start
 
