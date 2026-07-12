@@ -1,46 +1,46 @@
 #:schema node_modules/wrangler/config-schema.json
 
-name = "gpg-signing-service-test"
-main = "src/index.ts"
-compatibility_date = "2025-11-13"
+name                = "gpg-signing-service-test"
+main                = "src/index.ts"
+compatibility_date  = "2025-11-13"
 compatibility_flags = ["nodejs_compat"]
-observability = { enabled = true }
+observability       = { enabled = true }
 
 # Durable Objects
 [[durable_objects.bindings]]
-name = "KEY_STORAGE"
+name       = "KEY_STORAGE"
 class_name = "KeyStorage"
 
 [[durable_objects.bindings]]
-name = "RATE_LIMITER"
+name       = "RATE_LIMITER"
 class_name = "RateLimiter"
 
 # Migrations for Durable Objects
 [[migrations]]
-tag = "v1"
+tag                = "v1"
 new_sqlite_classes = ["KeyStorage", "RateLimiter"]
 
 # D1 Database for audit logs (use local database for tests)
 [[d1_databases]]
-binding = "AUDIT_DB"
+binding       = "AUDIT_DB"
 database_name = "gpg-signing-audit-test"
-database_id = "test-database-id"
+database_id   = "test-database-id"
 
 # KV for JWKS caching (use local KV for tests)
 [[kv_namespaces]]
 binding = "JWKS_CACHE"
-id = "test-kv-id"
+id      = "test-kv-id"
 
 # Custom domain
 [[routes]]
-pattern = "test-gpg.kajkowalski.nl"
+pattern       = "test-gpg.kajkowalski.nl"
 custom_domain = true
 
 # Environment variables for testing
 [vars]
-BUN_VERSION = "1.3.3"
+BUN_VERSION     = "1.3.3"
 # SKIP_DEPENDENCY_INSTALL = "1"
 ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com,https://token.actions.githubusercontent.com/unique-test-issuer"
-KEY_ID = "62E75E54497815DD"
-ADMIN_TOKEN = "test-admin-token"
-KEY_PASSPHRASE = "test-passphrase"
+KEY_ID          = "62E75E54497815DD"
+ADMIN_TOKEN     = "test-admin-token"
+KEY_PASSPHRASE  = "test-passphrase"

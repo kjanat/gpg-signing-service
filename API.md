@@ -691,11 +691,11 @@ sign_commits:
     - git config user.email "ci@gitlab.com"
     - git config user.name "GitLab CI"
     - |
-        git config user.signingkey "$(
-          curl -s https://gpg.kajkowalski.nl/public-key |
-          gpg --import-options show-only --import --with-colons 2>/dev/null |
-          awk -F: '/^fpr:/{print $10; exit}'
-        )"
+      git config user.signingkey "$(
+        curl -s https://gpg.kajkowalski.nl/public-key |
+        gpg --import-options show-only --import --with-colons 2>/dev/null |
+        awk -F: '/^fpr:/{print $10; exit}'
+      )"
 
     # Sign and push
     - git commit --amend -S --no-edit || true

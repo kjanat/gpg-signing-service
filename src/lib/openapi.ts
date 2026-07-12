@@ -23,6 +23,12 @@ export const openApiConfig = {
         bearerFormat: "JWT",
         description: "Admin token for /admin/* endpoints",
       },
+      serviceTokenAuth: {
+        type: "http" as const,
+        scheme: "bearer",
+        bearerFormat: "gst_...",
+        description: "Service token minted via POST /admin/tokens",
+      },
     },
   },
 };

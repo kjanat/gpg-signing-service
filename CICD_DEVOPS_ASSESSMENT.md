@@ -377,15 +377,15 @@ migrations/
 
 ```toml
 [[durable_objects.bindings]]
-name = "KEY_STORAGE"
+name       = "KEY_STORAGE"
 class_name = "KeyStorage"
 
 [[durable_objects.bindings]]
-name = "RATE_LIMITER"
+name       = "RATE_LIMITER"
 class_name = "RateLimiter"
 
 [[migrations]]
-tag = "v1"
+tag                = "v1"
 new_sqlite_classes = ["KeyStorage", "RateLimiter"]
 ```
 
@@ -401,9 +401,9 @@ new_sqlite_classes = ["KeyStorage", "RateLimiter"]
 
 ```toml
 [vars]
-BUN_VERSION = "1.3.3"
+BUN_VERSION     = "1.3.3"
 ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com"
-KEY_ID = "62E75E54497815DD"
+KEY_ID          = "62E75E54497815DD"
 ```
 
 **Issues**:

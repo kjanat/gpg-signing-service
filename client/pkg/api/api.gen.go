@@ -23,15 +23,18 @@ import (
 )
 
 const (
-	BearerAuthScopes = "bearerAuth.Scopes"
-	OidcAuthScopes   = "oidcAuth.Scopes"
+	BearerAuthScopes       = "bearerAuth.Scopes"
+	OidcAuthScopes         = "oidcAuth.Scopes"
+	ServiceTokenAuthScopes = "serviceTokenAuth.Scopes"
 )
 
 // Defines values for AuditAction.
 const (
-	AuditActionKeyRotate AuditAction = "key_rotate"
-	AuditActionKeyUpload AuditAction = "key_upload"
-	AuditActionSign      AuditAction = "sign"
+	AuditActionKeyRotate   AuditAction = "key_rotate"
+	AuditActionKeyUpload   AuditAction = "key_upload"
+	AuditActionSign        AuditAction = "sign"
+	AuditActionTokenCreate AuditAction = "token_create"
+	AuditActionTokenRevoke AuditAction = "token_revoke"
 )
 
 // Defines values for ErrorCode.
@@ -152,6 +155,49 @@ type SignRequest = string
 // SignResponse defines model for SignResponse.
 type SignResponse = string
 
+// TokenCreate defines model for TokenCreate.
+type TokenCreate struct {
+	ExpiresInDays *int      `json:"expiresInDays,omitempty"`
+	KeyIds        *[]string `json:"keyIds,omitempty"`
+	Name          TokenName `json:"name"`
+}
+
+// TokenCreatedResponse defines model for TokenCreatedResponse.
+type TokenCreatedResponse struct {
+	ExpiresAt *string   `json:"expiresAt"`
+	Id        string    `json:"id"`
+	KeyIds    *[]string `json:"keyIds"`
+	Name      TokenName `json:"name"`
+
+	// Token Plaintext token; shown exactly once
+	Token string `json:"token"`
+}
+
+// TokenListResponse defines model for TokenListResponse.
+type TokenListResponse struct {
+	Tokens []TokenSummary `json:"tokens"`
+}
+
+// TokenName defines model for TokenName.
+type TokenName = string
+
+// TokenRevokeResponse defines model for TokenRevokeResponse.
+type TokenRevokeResponse struct {
+	Id      string `json:"id"`
+	Success bool   `json:"success"`
+}
+
+// TokenSummary defines model for TokenSummary.
+type TokenSummary struct {
+	CreatedAt  string    `json:"createdAt"`
+	ExpiresAt  *string   `json:"expiresAt"`
+	Id         string    `json:"id"`
+	KeyIds     *[]string `json:"keyIds"`
+	LastUsedAt *string   `json:"lastUsedAt"`
+	Name       TokenName `json:"name"`
+	RevokedAt  *string   `json:"revokedAt"`
+}
+
 // GetAdminAuditParams defines parameters for GetAdminAudit.
 type GetAdminAuditParams struct {
 	Limit     *int       `form:"limit,omitempty" json:"limit,omitempty"`
@@ -175,6 +221,9 @@ type PostSignParams struct {
 
 // PostAdminKeysJSONRequestBody defines body for PostAdminKeys for application/json ContentType.
 type PostAdminKeysJSONRequestBody = KeyUpload
+
+// PostAdminTokensJSONRequestBody defines body for PostAdminTokens for application/json ContentType.
+type PostAdminTokensJSONRequestBody = TokenCreate
 
 // PostSignTextRequestBody defines body for PostSign for text/plain ContentType.
 type PostSignTextRequestBody = SignRequest
@@ -269,6 +318,17 @@ type ClientInterface interface {
 	// GetAdminKeysKeyIdPublic request
 	GetAdminKeysKeyIdPublic(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetAdminTokens request
+	GetAdminTokens(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostAdminTokensWithBody request with any body
+	PostAdminTokensWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PostAdminTokens(ctx context.Context, body PostAdminTokensJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteAdminTokensId request
+	DeleteAdminTokensId(ctx context.Context, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetHealth request
 	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -343,6 +403,54 @@ func (c *Client) DeleteAdminKeysKeyId(ctx context.Context, keyId string, reqEdit
 
 func (c *Client) GetAdminKeysKeyIdPublic(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAdminKeysKeyIdPublicRequest(c.Server, keyId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetAdminTokens(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAdminTokensRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostAdminTokensWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostAdminTokensRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostAdminTokens(ctx context.Context, body PostAdminTokensJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostAdminTokensRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteAdminTokensId(ctx context.Context, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteAdminTokensIdRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -665,6 +773,107 @@ func NewGetAdminKeysKeyIdPublicRequest(server string, keyId string) (*http.Reque
 	return req, nil
 }
 
+// NewGetAdminTokensRequest generates requests for GetAdminTokens
+func NewGetAdminTokensRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/tokens")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPostAdminTokensRequest calls the generic PostAdminTokens builder with application/json body
+func NewPostAdminTokensRequest(server string, body PostAdminTokensJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPostAdminTokensRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewPostAdminTokensRequestWithBody generates requests for PostAdminTokens with any type of body
+func NewPostAdminTokensRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/tokens")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteAdminTokensIdRequest generates requests for DeleteAdminTokensId
+func NewDeleteAdminTokensIdRequest(server string, id openapi_types.UUID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/tokens/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetHealthRequest generates requests for GetHealth
 func NewGetHealthRequest(server string) (*http.Request, error) {
 	var err error
@@ -874,6 +1083,17 @@ type ClientWithResponsesInterface interface {
 	// GetAdminKeysKeyIdPublicWithResponse request
 	GetAdminKeysKeyIdPublicWithResponse(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*GetAdminKeysKeyIdPublicResponse, error)
 
+	// GetAdminTokensWithResponse request
+	GetAdminTokensWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAdminTokensResponse, error)
+
+	// PostAdminTokensWithBodyWithResponse request with any body
+	PostAdminTokensWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostAdminTokensResponse, error)
+
+	PostAdminTokensWithResponse(ctx context.Context, body PostAdminTokensJSONRequestBody, reqEditors ...RequestEditorFn) (*PostAdminTokensResponse, error)
+
+	// DeleteAdminTokensIdWithResponse request
+	DeleteAdminTokensIdWithResponse(ctx context.Context, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*DeleteAdminTokensIdResponse, error)
+
 	// GetHealthWithResponse request
 	GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error)
 
@@ -1003,6 +1223,78 @@ func (r GetAdminKeysKeyIdPublicResponse) StatusCode() int {
 	return 0
 }
 
+type GetAdminTokensResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *TokenListResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAdminTokensResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAdminTokensResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type PostAdminTokensResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *TokenCreatedResponse
+	JSON400      *ErrorResponse
+	JSON409      *ErrorResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r PostAdminTokensResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostAdminTokensResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteAdminTokensIdResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *TokenRevokeResponse
+	JSON404      *ErrorResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteAdminTokensIdResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteAdminTokensIdResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetHealthResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -1053,6 +1345,7 @@ type PostSignResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON400      *ErrorResponse
+	JSON403      *ErrorResponse
 	JSON404      *ErrorResponse
 	JSON429      *RateLimitError
 	JSON500      *ErrorResponse
@@ -1126,6 +1419,41 @@ func (c *ClientWithResponses) GetAdminKeysKeyIdPublicWithResponse(ctx context.Co
 		return nil, err
 	}
 	return ParseGetAdminKeysKeyIdPublicResponse(rsp)
+}
+
+// GetAdminTokensWithResponse request returning *GetAdminTokensResponse
+func (c *ClientWithResponses) GetAdminTokensWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAdminTokensResponse, error) {
+	rsp, err := c.GetAdminTokens(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAdminTokensResponse(rsp)
+}
+
+// PostAdminTokensWithBodyWithResponse request with arbitrary body returning *PostAdminTokensResponse
+func (c *ClientWithResponses) PostAdminTokensWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostAdminTokensResponse, error) {
+	rsp, err := c.PostAdminTokensWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostAdminTokensResponse(rsp)
+}
+
+func (c *ClientWithResponses) PostAdminTokensWithResponse(ctx context.Context, body PostAdminTokensJSONRequestBody, reqEditors ...RequestEditorFn) (*PostAdminTokensResponse, error) {
+	rsp, err := c.PostAdminTokens(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostAdminTokensResponse(rsp)
+}
+
+// DeleteAdminTokensIdWithResponse request returning *DeleteAdminTokensIdResponse
+func (c *ClientWithResponses) DeleteAdminTokensIdWithResponse(ctx context.Context, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*DeleteAdminTokensIdResponse, error) {
+	rsp, err := c.DeleteAdminTokensId(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteAdminTokensIdResponse(rsp)
 }
 
 // GetHealthWithResponse request returning *GetHealthResponse
@@ -1342,6 +1670,126 @@ func ParseGetAdminKeysKeyIdPublicResponse(rsp *http.Response) (*GetAdminKeysKeyI
 	return response, nil
 }
 
+// ParseGetAdminTokensResponse parses an HTTP response from a GetAdminTokensWithResponse call
+func ParseGetAdminTokensResponse(rsp *http.Response) (*GetAdminTokensResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAdminTokensResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TokenListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePostAdminTokensResponse parses an HTTP response from a PostAdminTokensWithResponse call
+func ParsePostAdminTokensResponse(rsp *http.Response) (*PostAdminTokensResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostAdminTokensResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest TokenCreatedResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteAdminTokensIdResponse parses an HTTP response from a DeleteAdminTokensIdWithResponse call
+func ParseDeleteAdminTokensIdResponse(rsp *http.Response) (*DeleteAdminTokensIdResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteAdminTokensIdResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TokenRevokeResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetHealthResponse parses an HTTP response from a GetHealthWithResponse call
 func ParseGetHealthResponse(rsp *http.Response) (*GetHealthResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -1429,6 +1877,13 @@ func ParsePostSignResponse(rsp *http.Response) (*PostSignResponse, error) {
 		}
 		response.JSON400 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -1465,39 +1920,49 @@ func ParsePostSignResponse(rsp *http.Response) (*PostSignResponse, error) {
 // Base64 encoded, gzipped, json marshaled Swagger object
 var swaggerSpec = []string{
 
-	"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",
+	"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",
+	"8dv/NjvT2TSTSZXo9f8CAAD//92mDXhsNAAA",
 }
 
 // GetSwagger returns the content of the embedded swagger specification file

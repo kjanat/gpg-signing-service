@@ -81,11 +81,11 @@ sign_commits:
     - curl https://gpg.kajkowalski.nl/public-key | gpg --import
     # Sign commit
     - |
-        SIGNATURE=$(curl -X POST \
-          -H "Authorization: Bearer $CI_JOB_JWT" \
-          --data-raw "$(git cat-file commit HEAD)" \
-          https://gpg.kajkowalski.nl/sign)
-        echo "Signed successfully"
+      SIGNATURE=$(curl -X POST \
+        -H "Authorization: Bearer $CI_JOB_JWT" \
+        --data-raw "$(git cat-file commit HEAD)" \
+        https://gpg.kajkowalski.nl/sign)
+      echo "Signed successfully"
 ```
 
 ### 3. Manage Keys (Admin)

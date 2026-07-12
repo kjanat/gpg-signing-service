@@ -14,6 +14,8 @@ export interface Variables {
   identity: Identity;
   /** Request ID */
   requestId: string;
+  /** Service-token key allowlist; null/absent means every key */
+  allowedKeyIds?: string[] | null;
 }
 
 /** Cloudflare Workers environment bindings */

@@ -3,7 +3,8 @@ import { createRoute } from "@hono/zod-openapi";
 import { logger } from "hono/logger";
 import * as openpgp from "openpgp";
 import { createOpenAPIApp, openApiConfig } from "~/lib/openapi";
-import { adminAuth, oidcAuth } from "~/middleware/oidc";
+import { callerAuth } from "~/middleware/caller-auth";
+import { adminAuth } from "~/middleware/oidc";
 import {
   adminRateLimit,
   productionCors,
@@ -11,6 +12,7 @@ import {
 } from "~/middleware/security";
 import adminRoutes from "~/routes/admin";
 import signRoutes from "~/routes/sign";
+import tokenRoutes from "~/routes/tokens";
 import {
   ErrorResponseSchema,
   HealthResponseSchema,
@@ -151,10 +153,10 @@ app.openapi(publicKeyRoute, async (c) => {
   }
 });
 
-// Sign endpoint with OIDC auth
+// Sign endpoint: OIDC or service-token auth
 app.route(
   "/sign",
-  createOpenAPIApp().use("*", oidcAuth).route("/", signRoutes),
+  createOpenAPIApp().use("*", callerAuth).route("/", signRoutes),
 );
 
 // Admin endpoints with rate limiting and admin auth
@@ -163,7 +165,8 @@ app.route(
   createOpenAPIApp()
     .use("*", adminRateLimit) // Rate limit before auth to prevent brute force
     .use("*", adminAuth)
-    .route("/", adminRoutes),
+    .route("/", adminRoutes)
+    .route("/", tokenRoutes),
 );
 
 // OpenAPI Docs

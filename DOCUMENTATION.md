@@ -130,10 +130,10 @@ or
   <head>
     <title>GPG Signing Service API</title>
     <style>
-      body {
-        margin: 0;
-        padding: 0;
-      }
+    body {
+      margin: 0;
+      padding: 0;
+    }
     </style>
   </head>
   <body>

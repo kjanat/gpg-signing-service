@@ -25,7 +25,7 @@ const signRoute = createRoute({
   path: "/",
   summary: "Sign commit data",
   description: "Sign git commit data using the stored GPG key",
-  security: [{ oidcAuth: [] }],
+  security: [{ oidcAuth: [] }, { serviceTokenAuth: [] }],
   request: {
     body: {
       content: { "text/plain": { schema: SignRequestSchema } },
@@ -42,6 +42,10 @@ const signRoute = createRoute({
     400: {
       content: { "application/json": { schema: ErrorResponseSchema } },
       description: "Bad Request",
+    },
+    403: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Token not allowed to use this key",
     },
     404: {
       content: { "application/json": { schema: ErrorResponseSchema } },
@@ -88,6 +92,19 @@ app.openapi(signRoute, async (c) => {
   // Get key ID from query param or use default
   const { keyId: keyIdQuery } = c.req.valid("query");
   const keyIdParam = keyIdQuery || c.env.KEY_ID;
+
+  // Service tokens may carry a key allowlist; enforce it before any work.
+  const allowedKeyIds = c.get("allowedKeyIds");
+  if (allowedKeyIds && !allowedKeyIds.includes(keyIdParam)) {
+    return c.json(
+      {
+        error: `Token is not allowed to sign with key ${keyIdParam}`,
+        code: "INVALID_REQUEST" as const satisfies ErrorCode,
+        requestId,
+      },
+      403,
+    );
+  }
 
   // Parallel execution: Rate limit + Key fetch (performance optimization ~15ms gain)
   // Security: Rate limit enforced BEFORE signing, parallel fetch is read-only

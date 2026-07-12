@@ -178,48 +178,48 @@ jobs:
 ```toml
 #:schema ./node_modules/wrangler/config-schema.json
 
-name = "gpg-signing-service-staging"
-main = "src/index.ts"
-compatibility_date = "2025-11-13"
+name                = "gpg-signing-service-staging"
+main                = "src/index.ts"
+compatibility_date  = "2025-11-13"
 compatibility_flags = ["nodejs_compat"]
-observability = { enabled = true }
-placement = { mode = "smart" }
+observability       = { enabled = true }
+placement           = { mode = "smart" }
 
 # Durable Objects (staging instances)
 [[durable_objects.bindings]]
-name = "KEY_STORAGE"
+name       = "KEY_STORAGE"
 class_name = "KeyStorage"
 
 [[durable_objects.bindings]]
-name = "RATE_LIMITER"
+name       = "RATE_LIMITER"
 class_name = "RateLimiter"
 
 [[migrations]]
-tag = "v1"
+tag                = "v1"
 new_sqlite_classes = ["KeyStorage", "RateLimiter"]
 
 # D1 Database (staging instance)
 [[d1_databases]]
-binding = "AUDIT_DB"
+binding       = "AUDIT_DB"
 database_name = "gpg-signing-audit-staging"
-database_id = "STAGING_DB_ID_HERE"
+database_id   = "STAGING_DB_ID_HERE"
 
 # KV namespace (staging)
 [[kv_namespaces]]
 binding = "JWKS_CACHE"
-id = "STAGING_KV_ID_HERE"
+id      = "STAGING_KV_ID_HERE"
 
 # Staging domain
 [[routes]]
-pattern = "gpg-staging.kajkowalski.nl"
+pattern       = "gpg-staging.kajkowalski.nl"
 custom_domain = true
 
 [vars]
-BUN_VERSION = "1.3.3"
+BUN_VERSION     = "1.3.3"
 ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com"
-KEY_ID = "62E75E54497815DD"
-ENVIRONMENT = "staging"
-LOG_LEVEL = "debug"
+KEY_ID          = "62E75E54497815DD"
+ENVIRONMENT     = "staging"
+LOG_LEVEL       = "debug"
 ```
 
 ### Update Taskfile for multi-env deploy
@@ -747,9 +747,9 @@ db:migrate:create:
     - "Migration name (e.g., add_users_table):"
   cmds:
     - |
-        NEXT_NUM=$(ls migrations/ | grep -E '^[0-9]+_' | tail -1 | cut -d_ -f1 | awk '{printf "%04d", $1+1}')
-        cp scripts/migration-template.sql "migrations/${NEXT_NUM}_{{.CLI_ARGS}}.sql"
-        echo "Created: migrations/${NEXT_NUM}_{{.CLI_ARGS}}.sql"
+      NEXT_NUM=$(ls migrations/ | grep -E '^[0-9]+_' | tail -1 | cut -d_ -f1 | awk '{printf "%04d", $1+1}')
+      cp scripts/migration-template.sql "migrations/${NEXT_NUM}_{{.CLI_ARGS}}.sql"
+      echo "Created: migrations/${NEXT_NUM}_{{.CLI_ARGS}}.sql"
 
 db:migrate:rollback:
   desc: Rollback last migration

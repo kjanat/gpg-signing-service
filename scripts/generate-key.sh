@@ -41,7 +41,7 @@ EOF
 }
 
 # Show help if no arguments or help flag
-if [[ $# -eq 0 ]] || [[ ${1:-} == "-h"  ]] || [[ ${1:-} == "--help"  ]]; then
+if [[ $# -eq 0 ]] || [[ ${1:-} == "-h" ]] || [[ ${1:-} == "--help" ]]; then
 	show_help
 fi
 
@@ -71,14 +71,14 @@ echo "  Name:       ${KEY_NAME}"
 echo "  Email:      ${KEY_EMAIL}"
 echo "  Comment:    ${KEY_COMMENT}"
 echo "  GNUPGHOME:  ${GNUPGHOME} (NOT ~/.gnupg)"
-if [[ -n ${PASSPHRASE}   ]]; then
+if [[ -n ${PASSPHRASE} ]]; then
 	echo "  Passphrase: set"
 else
 	echo "  Passphrase: none"
 fi
 
 # Generate key using batch mode
-if [[ -n ${PASSPHRASE}   ]]; then
+if [[ -n ${PASSPHRASE} ]]; then
 	gpg --batch --gen-key <<EOF
 Key-Type: EDDSA
 Key-Curve: ed25519
@@ -115,7 +115,7 @@ KEY_ID=$(gpg --list-keys --keyid-format long "${KEY_EMAIL}" | grep -E "^pub" | a
 
 # Export private key
 PRIVATE_KEY_FILE="${KEYS_DIR}/private-key.asc"
-if [[ -n ${PASSPHRASE}   ]]; then
+if [[ -n ${PASSPHRASE} ]]; then
 	gpg --batch --pinentry-mode loopback --passphrase "${PASSPHRASE}" --armor --export-secret-keys "${KEY_ID}" >"${PRIVATE_KEY_FILE}"
 else
 	gpg --armor --export-secret-keys "${KEY_ID}" >"${PRIVATE_KEY_FILE}"

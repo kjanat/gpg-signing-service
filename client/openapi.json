@@ -6,13 +6,6 @@
   },
   "components": {
     "schemas": {
-      "HealthStatus": {
-        "type": "string",
-        "enum": [
-          "healthy",
-          "degraded"
-        ]
-      },
       "HealthResponse": {
         "type": "object",
         "properties": {
@@ -50,28 +43,16 @@
           "checks"
         ]
       },
+      "HealthStatus": {
+        "type": "string",
+        "enum": [
+          "healthy",
+          "degraded"
+        ]
+      },
       "PublicKeyResponse": {
         "type": "string",
         "example": "-----BEGIN PGP PUBLIC KEY BLOCK-----\n..."
-      },
-      "ErrorCode": {
-        "type": "string",
-        "enum": [
-          "AUTH_MISSING",
-          "AUTH_INVALID",
-          "KEY_NOT_FOUND",
-          "KEY_PROCESSING_ERROR",
-          "KEY_LIST_ERROR",
-          "KEY_UPLOAD_ERROR",
-          "KEY_DELETE_ERROR",
-          "SIGN_ERROR",
-          "RATE_LIMIT_ERROR",
-          "RATE_LIMITED",
-          "INVALID_REQUEST",
-          "AUDIT_ERROR",
-          "NOT_FOUND",
-          "INTERNAL_ERROR"
-        ]
       },
       "ErrorResponse": {
         "type": "object",
@@ -91,6 +72,25 @@
         "required": [
           "error",
           "code"
+        ]
+      },
+      "ErrorCode": {
+        "type": "string",
+        "enum": [
+          "AUTH_MISSING",
+          "AUTH_INVALID",
+          "KEY_NOT_FOUND",
+          "KEY_PROCESSING_ERROR",
+          "KEY_LIST_ERROR",
+          "KEY_UPLOAD_ERROR",
+          "KEY_DELETE_ERROR",
+          "SIGN_ERROR",
+          "RATE_LIMIT_ERROR",
+          "RATE_LIMITED",
+          "INVALID_REQUEST",
+          "AUDIT_ERROR",
+          "NOT_FOUND",
+          "INTERNAL_ERROR"
         ]
       },
       "SignResponse": {
@@ -176,6 +176,20 @@
           "keyId"
         ]
       },
+      "KeyListResponse": {
+        "type": "object",
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KeyListItem"
+            }
+          }
+        },
+        "required": [
+          "keys"
+        ]
+      },
       "KeyListItem": {
         "type": "object",
         "properties": {
@@ -199,20 +213,6 @@
           "algorithm"
         ]
       },
-      "KeyListResponse": {
-        "type": "object",
-        "properties": {
-          "keys": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/KeyListItem"
-            }
-          }
-        },
-        "required": [
-          "keys"
-        ]
-      },
       "KeyDeletionResponse": {
         "type": "object",
         "properties": {
@@ -226,14 +226,6 @@
         "required": [
           "success",
           "deleted"
-        ]
-      },
-      "AuditAction": {
-        "type": "string",
-        "enum": [
-          "sign",
-          "key_upload",
-          "key_rotate"
         ]
       },
       "AuditLogsResponse": {
@@ -302,6 +294,149 @@
           "logs",
           "count"
         ]
+      },
+      "AuditAction": {
+        "type": "string",
+        "enum": [
+          "sign",
+          "key_upload",
+          "key_rotate",
+          "token_create",
+          "token_revoke"
+        ]
+      },
+      "TokenCreatedResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "$ref": "#/components/schemas/TokenName"
+          },
+          "token": {
+            "type": "string",
+            "description": "Plaintext token; shown exactly once"
+          },
+          "keyIds": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string"
+            }
+          },
+          "expiresAt": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "token",
+          "keyIds",
+          "expiresAt"
+        ]
+      },
+      "TokenName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._/-]*$"
+      },
+      "TokenCreate": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/TokenName"
+          },
+          "keyIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Fa-f0-9]{16}$"
+            }
+          },
+          "expiresInDays": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3650
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "TokenListResponse": {
+        "type": "object",
+        "properties": {
+          "tokens": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TokenSummary"
+            }
+          }
+        },
+        "required": [
+          "tokens"
+        ]
+      },
+      "TokenSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "$ref": "#/components/schemas/TokenName"
+          },
+          "keyIds": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string"
+            }
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "revokedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "lastUsedAt": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "keyIds",
+          "createdAt",
+          "expiresAt",
+          "revokedAt",
+          "lastUsedAt"
+        ]
+      },
+      "TokenRevokeResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "success",
+          "id"
+        ]
       }
     },
     "parameters": {},
@@ -317,6 +452,12 @@
         "scheme": "bearer",
         "bearerFormat": "JWT",
         "description": "Admin token for /admin/* endpoints"
+      },
+      "serviceTokenAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "gst_...",
+        "description": "Service token minted via POST /admin/tokens"
       }
     }
   },
@@ -405,6 +546,9 @@
         "security": [
           {
             "oidcAuth": []
+          },
+          {
+            "serviceTokenAuth": []
           }
         ],
         "parameters": [
@@ -450,6 +594,16 @@
           },
           "400": {
             "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Token not allowed to use this key",
             "content": {
               "application/json": {
                 "schema": {
@@ -765,6 +919,154 @@
           },
           "400": {
             "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/tokens": {
+      "post": {
+        "summary": "Mint a service token",
+        "description": "Create a long-lived bearer token for CI systems without an OIDC issuer. The plaintext token is returned exactly once.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Token minted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenCreatedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Token name already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List service tokens",
+        "description": "List all service tokens; secret material never leaves the DB",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tokens",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenListResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/tokens/{id}": {
+      "delete": {
+        "summary": "Revoke a service token",
+        "description": "Revoke a token by id; revocation is immediate and permanent",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Token revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenRevokeResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Token not found or already revoked",
             "content": {
               "application/json": {
                 "schema": {

@@ -50,7 +50,7 @@ export const AuditQuerySchema = z
  * Audit action types
  */
 export const AuditActionSchema = z
-  .enum(["sign", "key_upload", "key_rotate"])
+  .enum(["sign", "key_upload", "key_rotate", "token_create", "token_revoke"])
   .openapi("AuditAction");
 
 /**

@@ -63,11 +63,11 @@ Value: {
 
 ```toml
 [[durable_objects.bindings]]
-name = "KEY_STORAGE"
+name       = "KEY_STORAGE"
 class_name = "KeyStorage"
 
 [[migrations]]
-tag = "v1"
+tag                = "v1"
 new_sqlite_classes = ["KeyStorage"]
 ```
 
@@ -119,9 +119,9 @@ CREATE INDEX IF NOT EXISTS idx_subject ON audit_logs(subject);
 
 ```toml
 [[d1_databases]]
-binding = "AUDIT_DB"
+binding       = "AUDIT_DB"
 database_name = "gpg-signing-audit"
-database_id = "46e29014-341c-47d1-adbb-e644ae28691c"
+database_id   = "46e29014-341c-47d1-adbb-e644ae28691c"
 ```
 
 **Background Writes** (`src/routes/sign.ts:153-168`):
@@ -163,7 +163,7 @@ TTL: 300 seconds (5 minutes)
 ```toml
 [[kv_namespaces]]
 binding = "JWKS_CACHE"
-id = "b4e1807f785b4b66b012004b14316d6a"
+id      = "b4e1807f785b4b66b012004b14316d6a"
 ```
 
 **Key Rotation Handling** (`src/middleware/oidc.ts:212-219`):
