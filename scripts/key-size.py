@@ -6,7 +6,7 @@ import math
 
 
 # Base64 encoding formula: ceil(n/3) * 4 for padded output
-def calculate_base64_length(binary_bytes):
+def calculate_base64_length(binary_bytes: float) -> int:
     """Calculate base64 encoded length from binary bytes"""
     return math.ceil(binary_bytes / 3) * 4
 

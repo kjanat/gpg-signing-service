@@ -1,22 +1,17 @@
-#:schema ./node_modules/wrangler/config-schema.json
-# https://www.unpkg.com/wrangler/config-schema.json
+#:schema node_modules/wrangler/config-schema.json
 
 name                = "gpg-signing-service"
 main                = "src/index.ts"
-compatibility_date  = "2025-11-13"
+compatibility_date  = "2026-07-12"
 compatibility_flags = ["nodejs_compat"]
 observability       = { enabled = true }
 workers_dev         = true
-# Smart placement
-# Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
-placement           = { mode = "smart" }
+placement.mode      = "smart"                # Smart placement (docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement)
 
 # Bindings
 # Bindings allow your Worker to interact with resources on the Cloudflare Developer Platform, including
-# databases, object storage, AI inference, real-time communication and more.
-# Docs: https://developers.cloudflare.com/workers/runtime-apis/bindings/
-# # Durable Objects
-# # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#durable-objects
+# databases, object storage, AI inference, real-time communication and more. (docs: https://developers.cloudflare.com/workers/runtime-apis/bindings/)
+## Durable Objects (docs: https://developers.cloudflare.com/workers/wrangler/configuration/#durable-objects)
 [[durable_objects.bindings]]
 name       = "KEY_STORAGE"
 class_name = "KeyStorage"
@@ -25,41 +20,28 @@ class_name = "KeyStorage"
 name       = "RATE_LIMITER"
 class_name = "RateLimiter"
 
-# Migrations for Durable Objects (SQLite-backed for free plan)
-[[migrations]]
+[[migrations]]  # Migrations for Durable Objects (SQLite-backed for free plan)
 tag                = "v1"
 new_sqlite_classes = ["KeyStorage", "RateLimiter"]
 
-# D1 Database for audit logs
-# Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#d1-databases
-[[d1_databases]]
+[[d1_databases]]  # D1 Database for audit logs (docs: https://developers.cloudflare.com/workers/wrangler/configuration/#d1-databases)
 binding       = "AUDIT_DB"
 database_name = "gpg-signing-audit"
-# Set after `wrangler d1 create gpg-signing-audit`
-database_id   = "46e29014-341c-47d1-adbb-e644ae28691c"
+database_id   = "46e29014-341c-47d1-adbb-e644ae28691c"  # Set after `wrangler d1 create gpg-signing-audit`
 
-# KV for JWKS caching
-# Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#kv-namespaces
-[[kv_namespaces]]
+[[kv_namespaces]]  # KV for JWKS caching (docs: https://developers.cloudflare.com/workers/wrangler/configuration/#kv-namespaces)
 binding = "JWKS_CACHE"
-# Set after `wrangler kv namespace create JWKS_CACHE`
-id      = "b4e1807f785b4b66b012004b14316d6a"
+id      = "b4e1807f785b4b66b012004b14316d6a"  # Set after `wrangler kv namespace create JWKS_CACHE`
 
-# Custom domain
-# Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#custom-domains
-[[routes]]
+[[routes]]  # Custom domain (docs: https://developers.cloudflare.com/workers/wrangler/configuration/#custom-domains)
 pattern       = "gpg.kajkowalski.nl"
 custom_domain = true
 
-# Environment variables (non-sensitive)
-# Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
-# # Note: Use secrets to store sensitive data.
-# # https://developers.cloudflare.com/workers/configuration/secrets/
+# Environment variables (non-sensitive) (docs: https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables)
+## Note: Use secrets to store sensitive data. (https://developers.cloudflare.com/workers/configuration/secrets/)
 [vars]
-BUN_VERSION     = "1.3.3"
-# SKIP_DEPENDENCY_INSTALL = "1"
 ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com"
-KEY_ID          = "62E75E54497815DD"
+KEY_ID          = "D8BC04E534E7706F"
 
 # Secrets (set via `wrangler secret put`)
 # - KEY_PASSPHRASE: Passphrase for encrypted private key
@@ -87,20 +69,16 @@ class_name = "KeyStorage"
 name       = "RATE_LIMITER"
 class_name = "RateLimiter"
 
-# Staging D1 Database - create with: wrangler d1 create gpg-signing-audit-staging
-[[env.staging.d1_databases]]
+[[env.staging.d1_databases]]  # Staging D1 Database - create with: wrangler d1 create gpg-signing-audit-staging
 binding       = "AUDIT_DB"
 database_name = "gpg-signing-audit-staging"
 database_id   = "22ec5e27-27d6-48d6-a921-61344dd5d7c2"
 
-# Staging KV - create with: wrangler kv namespace create JWKS_CACHE --env staging
-[[env.staging.kv_namespaces]]
+[[env.staging.kv_namespaces]]  # Staging KV - create with: wrangler kv namespace create JWKS_CACHE --env staging
 binding = "JWKS_CACHE"
 id      = "1a1c95b63a59458a9347be82f1b961df"
 
-# Staging environment variables
-[env.staging.vars]
-BUN_VERSION     = "1.3.3"
+[env.staging.vars]  # Staging environment variables
 ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com"
-KEY_ID          = "62E75E54497815DD"
+KEY_ID          = "D8BC04E534E7706F"
 ENVIRONMENT     = "staging"

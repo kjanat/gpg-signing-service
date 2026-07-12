@@ -8,31 +8,29 @@
  * @throws Error if request times out or fails
  */
 export async function fetchWithTimeout(
-  url: string | URL,
-  options: RequestInit = {},
-  timeoutMs = 10000,
+	url: string | URL,
+	options: RequestInit = {},
+	timeoutMs = 10000,
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => {
-    controller.abort();
-  }, timeoutMs);
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => {
+		controller.abort();
+	}, timeoutMs);
 
-  try {
-    const response = await fetch(url, {
-      ...options,
-      signal: controller.signal,
-    });
-    return response;
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(
-        `Request to ${url.toString()} timed out after ${timeoutMs}ms`,
-      );
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
-  }
+	try {
+		const response = await fetch(url, {
+			...options,
+			signal: controller.signal,
+		});
+		return response;
+	} catch (error) {
+		if (error instanceof Error && error.name === "AbortError") {
+			throw new Error(`Request to ${url.toString()} timed out after ${timeoutMs}ms`);
+		}
+		throw error;
+	} finally {
+		clearTimeout(timeoutId);
+	}
 }
 
 /**
@@ -45,15 +43,15 @@ export async function fetchWithTimeout(
  * @throws Error if request times out, fails, or response is not OK
  */
 export async function fetchJsonWithTimeout<T>(
-  url: string | URL,
-  options: RequestInit = {},
-  timeoutMs = 10000,
+	url: string | URL,
+	options: RequestInit = {},
+	timeoutMs = 10000,
 ): Promise<T> {
-  const response = await fetchWithTimeout(url, options, timeoutMs);
+	const response = await fetchWithTimeout(url, options, timeoutMs);
 
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-  }
+	if (!response.ok) {
+		throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+	}
 
-  return response.json() as Promise<T>;
+	return response.json() as Promise<T>;
 }

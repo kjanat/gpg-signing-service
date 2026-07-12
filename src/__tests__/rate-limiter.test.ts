@@ -1,184 +1,166 @@
-import { env } from "cloudflare:test";
+import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import type { RateLimitResult } from "~/types";
+import type { RateLimitResult } from "#types";
 
 describe("RateLimiter Durable Object", () => {
-  // Get a fresh DO stub for each test
-  function getRateLimiter(name = "test") {
-    const id = env.RATE_LIMITER.idFromName(name);
-    return env.RATE_LIMITER.get(id);
-  }
+	// Get a fresh DO stub for each test
+	function getRateLimiter(name = "test") {
+		const id = env.RATE_LIMITER.idFromName(name);
+		return env.RATE_LIMITER.get(id);
+	}
 
-  describe("/check endpoint", () => {
-    it("should return allowed for new identity", async () => {
-      const stub = getRateLimiter("check-new");
-      const response = await stub.fetch(
-        "http://localhost/check?identity=new-user",
-      );
+	describe("/check endpoint", () => {
+		it("should return allowed for new identity", async () => {
+			const stub = getRateLimiter("check-new");
+			const response = await stub.fetch("http://localhost/check?identity=new-user");
 
-      expect(response.status).toBe(200);
+			expect(response.status).toBe(200);
 
-      const result = (await response.json()) as RateLimitResult;
-      expect(result.allowed).toBe(true);
-      if (result.allowed) {
-        expect(result.remaining).toBe(100); // maxTokens
-        expect(result.resetAt).toBeGreaterThan(Date.now());
-      }
-    });
+			const result = (await response.json()) as RateLimitResult;
+			expect(result.allowed).toBe(true);
+			if (result.allowed) {
+				expect(result.remaining).toBe(100); // maxTokens
+				expect(result.resetAt).toBeGreaterThan(Date.now());
+			}
+		});
 
-    it("should use default identity when not provided", async () => {
-      const stub = getRateLimiter("check-default");
-      const response = await stub.fetch("http://localhost/check");
+		it("should use default identity when not provided", async () => {
+			const stub = getRateLimiter("check-default");
+			const response = await stub.fetch("http://localhost/check");
 
-      expect(response.status).toBe(200);
-      const result = (await response.json()) as RateLimitResult;
-      expect(result.allowed).toBe(true);
-    });
+			expect(response.status).toBe(200);
+			const result = (await response.json()) as RateLimitResult;
+			expect(result.allowed).toBe(true);
+		});
 
-    it("should return denied when tokens are exhausted", async () => {
-      const stub = getRateLimiter("check-exhausted");
+		it("should return denied when tokens are exhausted", async () => {
+			const stub = getRateLimiter("check-exhausted");
 
-      // Consume all tokens first
-      for (let i = 0; i < 105; i++) {
-        await stub.fetch("http://localhost/consume?identity=exhausted-user");
-      }
+			// Consume all tokens first
+			for (let i = 0; i < 105; i++) {
+				await stub.fetch("http://localhost/consume?identity=exhausted-user");
+			}
 
-      // Now check
-      const response = await stub.fetch(
-        "http://localhost/check?identity=exhausted-user",
-      );
-      expect(response.status).toBe(200);
-      const result = (await response.json()) as RateLimitResult;
-      expect(result.allowed).toBe(false);
-      expect(result.remaining).toBe(0);
-    });
-  });
+			// Now check
+			const response = await stub.fetch("http://localhost/check?identity=exhausted-user");
+			expect(response.status).toBe(200);
+			const result = (await response.json()) as RateLimitResult;
+			expect(result.allowed).toBe(false);
+			expect(result.remaining).toBe(0);
+		});
+	});
 
-  describe("/consume endpoint", () => {
-    it("should consume token and return remaining", async () => {
-      const stub = getRateLimiter("consume-basic");
-      const response = await stub.fetch(
-        "http://localhost/consume?identity=user1",
-      );
+	describe("/consume endpoint", () => {
+		it("should consume token and return remaining", async () => {
+			const stub = getRateLimiter("consume-basic");
+			const response = await stub.fetch("http://localhost/consume?identity=user1");
 
-      expect(response.status).toBe(200);
+			expect(response.status).toBe(200);
 
-      const result = (await response.json()) as RateLimitResult;
-      expect(result.allowed).toBe(true);
-      if (result.allowed) {
-        expect(result.remaining).toBe(99); // 100 - 1
-      }
-    });
+			const result = (await response.json()) as RateLimitResult;
+			expect(result.allowed).toBe(true);
+			if (result.allowed) {
+				expect(result.remaining).toBe(99); // 100 - 1
+			}
+		});
 
-    it("should decrement tokens with multiple consumes", async () => {
-      const stub = getRateLimiter("consume-multiple");
+		it("should decrement tokens with multiple consumes", async () => {
+			const stub = getRateLimiter("consume-multiple");
 
-      // First consume
-      let response = await stub.fetch(
-        "http://localhost/consume?identity=user2",
-      );
-      let result = (await response.json()) as RateLimitResult;
-      expect(result.allowed && result.remaining).toBe(99);
+			// First consume
+			let response = await stub.fetch("http://localhost/consume?identity=user2");
+			let result = (await response.json()) as RateLimitResult;
+			expect(result.allowed && result.remaining).toBe(99);
 
-      // Second consume
-      response = await stub.fetch("http://localhost/consume?identity=user2");
-      result = (await response.json()) as RateLimitResult;
-      expect(result.allowed && result.remaining).toBe(98);
+			// Second consume
+			response = await stub.fetch("http://localhost/consume?identity=user2");
+			result = (await response.json()) as RateLimitResult;
+			expect(result.allowed && result.remaining).toBe(98);
 
-      // Third consume
-      response = await stub.fetch("http://localhost/consume?identity=user2");
-      result = (await response.json()) as RateLimitResult;
-      expect(result.allowed && result.remaining).toBe(97);
-    });
+			// Third consume
+			response = await stub.fetch("http://localhost/consume?identity=user2");
+			result = (await response.json()) as RateLimitResult;
+			expect(result.allowed && result.remaining).toBe(97);
+		});
 
-    it("should return 429 when tokens exhausted", async () => {
-      const stub = getRateLimiter("consume-exhausted");
+		it("should return 429 when tokens exhausted", async () => {
+			const stub = getRateLimiter("consume-exhausted");
 
-      let hitLimit = false;
-      // Consume all tokens (plus buffer for refill)
-      for (let i = 0; i < 200; i++) {
-        const res = await stub.fetch(
-          "http://localhost/consume?identity=test-user",
-        );
-        if (res.status === 429) {
-          hitLimit = true;
-          break;
-        }
-      }
+			let hitLimit = false;
+			// Consume all tokens (plus buffer for refill)
+			for (let i = 0; i < 200; i++) {
+				const res = await stub.fetch("http://localhost/consume?identity=test-user");
+				if (res.status === 429) {
+					hitLimit = true;
+					break;
+				}
+			}
 
-      expect(hitLimit).toBe(true);
-    });
+			expect(hitLimit).toBe(true);
+		});
 
-    it("should use default identity when not provided", async () => {
-      const stub = getRateLimiter("consume-default");
-      const response = await stub.fetch("http://localhost/consume");
+		it("should use default identity when not provided", async () => {
+			const stub = getRateLimiter("consume-default");
+			const response = await stub.fetch("http://localhost/consume");
 
-      expect(response.status).toBe(200);
-      const result = (await response.json()) as RateLimitResult;
-      expect(result.allowed).toBe(true);
-    });
-  });
+			expect(response.status).toBe(200);
+			const result = (await response.json()) as RateLimitResult;
+			expect(result.allowed).toBe(true);
+		});
+	});
 
-  describe("/reset endpoint", () => {
-    it("should reset limit for identity", async () => {
-      const stub = getRateLimiter("reset-test");
+	describe("/reset endpoint", () => {
+		it("should reset limit for identity", async () => {
+			const stub = getRateLimiter("reset-test");
 
-      // Consume some tokens
-      await stub.fetch("http://localhost/consume?identity=reset-user");
-      await stub.fetch("http://localhost/consume?identity=reset-user");
-      await stub.fetch("http://localhost/consume?identity=reset-user");
+			// Consume some tokens
+			await stub.fetch("http://localhost/consume?identity=reset-user");
+			await stub.fetch("http://localhost/consume?identity=reset-user");
+			await stub.fetch("http://localhost/consume?identity=reset-user");
 
-      // Verify tokens consumed
-      let response = await stub.fetch(
-        "http://localhost/check?identity=reset-user",
-      );
-      let result = (await response.json()) as RateLimitResult;
-      expect(result.allowed && result.remaining).toBeLessThan(100);
+			// Verify tokens consumed
+			let response = await stub.fetch("http://localhost/check?identity=reset-user");
+			let result = (await response.json()) as RateLimitResult;
+			expect(result.allowed && result.remaining).toBeLessThan(100);
 
-      // Reset
-      response = await stub.fetch(
-        "http://localhost/reset?identity=reset-user",
-        { method: "POST" },
-      );
-      expect(response.status).toBe(200);
+			// Reset
+			response = await stub.fetch("http://localhost/reset?identity=reset-user", { method: "POST" });
+			expect(response.status).toBe(200);
 
-      const resetResult = (await response.json()) as { success: boolean };
-      expect(resetResult.success).toBe(true);
+			const resetResult = (await response.json()) as { success: boolean };
+			expect(resetResult.success).toBe(true);
 
-      // Check tokens are back to max
-      response = await stub.fetch("http://localhost/check?identity=reset-user");
-      result = (await response.json()) as RateLimitResult;
-      expect(result.allowed && result.remaining).toBe(100);
-    });
+			// Check tokens are back to max
+			response = await stub.fetch("http://localhost/check?identity=reset-user");
+			result = (await response.json()) as RateLimitResult;
+			expect(result.allowed && result.remaining).toBe(100);
+		});
 
-    it("should return 400 when identity not provided", async () => {
-      const stub = getRateLimiter("reset-no-id");
-      const response = await stub.fetch("http://localhost/reset", {
-        method: "POST",
-      });
+		it("should return 400 when identity not provided", async () => {
+			const stub = getRateLimiter("reset-no-id");
+			const response = await stub.fetch("http://localhost/reset", {
+				method: "POST",
+			});
 
-      expect(response.status).toBe(400);
-      const body = (await response.json()) as { error: string };
-      expect(body.error).toBe("Identity required");
-    });
+			expect(response.status).toBe(400);
+			const body = (await response.json()) as { error: string };
+			expect(body.error).toBe("Identity required");
+		});
 
-    it("should return 405 for non-POST requests", async () => {
-      const stub = getRateLimiter("reset-method");
-      const response = await stub.fetch(
-        "http://localhost/reset?identity=test",
-        { method: "GET" },
-      );
+		it("should return 405 for non-POST requests", async () => {
+			const stub = getRateLimiter("reset-method");
+			const response = await stub.fetch("http://localhost/reset?identity=test", { method: "GET" });
 
-      expect(response.status).toBe(405);
-    });
-  });
+			expect(response.status).toBe(405);
+		});
+	});
 
-  describe("error handling", () => {
-    it("should return 404 for unknown paths", async () => {
-      const stub = getRateLimiter("unknown-path");
-      const response = await stub.fetch("http://localhost/unknown");
+	describe("error handling", () => {
+		it("should return 404 for unknown paths", async () => {
+			const stub = getRateLimiter("unknown-path");
+			const response = await stub.fetch("http://localhost/unknown");
 
-      expect(response.status).toBe(404);
-    });
-  });
+			expect(response.status).toBe(404);
+		});
+	});
 });

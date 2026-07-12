@@ -5,7 +5,7 @@
  * - branded: Security-critical branded string types
  * - env: Environment bindings and context
  * - headers: HTTP header names
- * - http: HTTP status codes enum
+ * - http: HTTP status code constants
  * - jwks: JSON Web Key Set types
  * - media-types: IANA media types
  * - oidc: OpenID Connect authentication types
@@ -15,22 +15,22 @@
  */
 
 // Branded types
-export * from "./branded";
+export * from "#types/branded";
 // Environment & context
-export * from "./env";
+export * from "#types/env";
 // HTTP headers
-export { HEADERS } from "./headers";
+export { HEADERS } from "#types/headers";
 // HTTP status codes
-export { HTTP } from "./http";
+export { HTTP } from "#types/http";
 // JWKS types
-export * from "./jwks";
+export * from "#types/jwks";
 // Media types (IANA registry)
-export { MediaType } from "./media-types";
+export { MediaType } from "#types/media-types";
 // OIDC types
-export * from "./oidc";
+export * from "#types/oidc";
 // Rate limiting
-export * from "./rate-limit";
+export * from "#types/rate-limit";
 // Signing types
-export * from "./signing";
+export * from "#types/signing";
 // Time constants
-export { TIME } from "./time";
+export { TIME } from "#types/time";

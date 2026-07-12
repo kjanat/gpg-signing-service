@@ -383,49 +383,45 @@ echo "Monitoring setup complete"
  * Supports Honeycomb, Datadog, or Cloudflare Analytics Engine
  */
 export async function logEvent(
-  c: Context,
-  event: {
-    level: "info" | "warn" | "error" | "debug";
-    message: string;
-    context?: Record<string, unknown>;
-  },
+	c: Context,
+	event: {
+		level: "info" | "warn" | "error" | "debug";
+		message: string;
+		context?: Record<string, unknown>;
+	},
 ) {
-  const logEntry = {
-    timestamp: new Date().toISOString(),
-    level: event.level,
-    message: event.message,
-    requestId: c.get("requestId"),
-    ...event.context,
-  };
+	const logEntry = {
+		timestamp: new Date().toISOString(),
+		level: event.level,
+		message: event.message,
+		requestId: c.get("requestId"),
+		...event.context,
+	};
 
-  // Log to Cloudflare Workers console
-  console.log(JSON.stringify(logEntry));
+	// Log to Cloudflare Workers console
+	console.log(JSON.stringify(logEntry));
 
-  // Send to Honeycomb if configured
-  if (c.env.HONEYCOMB_API_KEY) {
-    try {
-      await fetch("https://api.honeycomb.io/1/events/gpg-signing", {
-        method: "POST",
-        headers: {
-          "X-Honeycomb-Team": c.env.HONEYCOMB_API_KEY,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(logEntry),
-      });
-    } catch (err) {
-      console.error("Failed to send to Honeycomb:", err);
-    }
-  }
+	// Send to Honeycomb if configured
+	if (c.env.HONEYCOMB_API_KEY) {
+		try {
+			await fetch("https://api.honeycomb.io/1/events/gpg-signing", {
+				method: "POST",
+				headers: {
+					"X-Honeycomb-Team": c.env.HONEYCOMB_API_KEY,
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify(logEntry),
+			});
+		} catch (err) {
+			console.error("Failed to send to Honeycomb:", err);
+		}
+	}
 
-  // Send to Analytics Engine for dashboards
-  c.env.ANALYTICS_ENGINE?.writeDataPoint({
-    blobs: [
-      event.level,
-      event.message,
-      c.get("requestId"),
-    ],
-    doubles: [Date.now()],
-  });
+	// Send to Analytics Engine for dashboards
+	c.env.ANALYTICS_ENGINE?.writeDataPoint({
+		blobs: [event.level, event.message, c.get("requestId")],
+		doubles: [Date.now()],
+	});
 }
 ```
 

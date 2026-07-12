@@ -68,5 +68,10 @@ func main() {
 
 ## Documentation
 
-For full documentation, see [DOCUMENTATION.md](../DOCUMENTATION.md).
-For API details, see [API.md](../API.md).
+For full documentation, see [DOCUMENTATION].
+For API details, see [API].
+
+[API]: ../API.md
+[DOCUMENTATION]: ../DOCUMENTATION.md
+
+<!-- rumdl-disable-file MD013 -->

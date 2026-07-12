@@ -2,7 +2,7 @@
 
 name                = "gpg-signing-service-test"
 main                = "src/index.ts"
-compatibility_date  = "2025-11-13"
+compatibility_date  = "2026-07-12"
 compatibility_flags = ["nodejs_compat"]
 observability       = { enabled = true }
 
@@ -38,9 +38,7 @@ custom_domain = true
 
 # Environment variables for testing
 [vars]
-BUN_VERSION     = "1.3.3"
-# SKIP_DEPENDENCY_INSTALL = "1"
 ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com,https://token.actions.githubusercontent.com/unique-test-issuer"
-KEY_ID          = "62E75E54497815DD"
+KEY_ID          = "D8BC04E534E7706F"
 ADMIN_TOKEN     = "test-admin-token"
 KEY_PASSPHRASE  = "test-passphrase"

@@ -1,176 +1,158 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchJsonWithTimeout, fetchWithTimeout } from "~/utils/fetch";
+import { fetchJsonWithTimeout, fetchWithTimeout } from "#utils/fetch";
 
 describe("fetchWithTimeout", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
 
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.restoreAllMocks();
-  });
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.restoreAllMocks();
+	});
 
-  it("should return response for successful fetch", async () => {
-    const mockResponse = new Response(JSON.stringify({ data: "test" }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
+	it("should return response for successful fetch", async () => {
+		const mockResponse = new Response(JSON.stringify({ data: "test" }), {
+			status: 200,
+			headers: { "Content-Type": "application/json" },
+		});
 
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(mockResponse);
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(mockResponse);
 
-    const response = await fetchWithTimeout("https://example.com/api");
+		const response = await fetchWithTimeout("https://example.com/api");
 
-    expect(response.status).toBe(200);
-    expect(fetch).toHaveBeenCalledWith(
-      "https://example.com/api",
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
-  });
+		expect(response.status).toBe(200);
+		expect(fetch).toHaveBeenCalledWith(
+			"https://example.com/api",
+			expect.objectContaining({ signal: expect.any(AbortSignal) }),
+		);
+	});
 
-  it("should pass options to fetch", async () => {
-    const mockResponse = new Response("ok");
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(mockResponse);
+	it("should pass options to fetch", async () => {
+		const mockResponse = new Response("ok");
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(mockResponse);
 
-    await fetchWithTimeout("https://example.com/api", {
-      method: "POST",
-      headers: { "X-Custom": "header" },
-    });
+		await fetchWithTimeout("https://example.com/api", {
+			method: "POST",
+			headers: { "X-Custom": "header" },
+		});
 
-    expect(fetch).toHaveBeenCalledWith(
-      "https://example.com/api",
-      expect.objectContaining({
-        method: "POST",
-        headers: { "X-Custom": "header" },
-        signal: expect.any(AbortSignal),
-      }),
-    );
-  });
+		expect(fetch).toHaveBeenCalledWith(
+			"https://example.com/api",
+			expect.objectContaining({
+				method: "POST",
+				headers: { "X-Custom": "header" },
+				signal: expect.any(AbortSignal),
+			}),
+		);
+	});
 
-  it("should throw timeout error when request exceeds timeout", async () => {
-    const abortError = new Error("Aborted");
-    abortError.name = "AbortError";
+	it("should throw timeout error when request exceeds timeout", async () => {
+		const abortError = new Error("Aborted");
+		abortError.name = "AbortError";
 
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(abortError);
+		vi.spyOn(globalThis, "fetch").mockRejectedValue(abortError);
 
-    await expect(
-      fetchWithTimeout("https://example.com/slow", {}, 5000),
-    ).rejects.toThrow(
-      "Request to https://example.com/slow timed out after 5000ms",
-    );
-  });
+		await expect(fetchWithTimeout("https://example.com/slow", {}, 5000)).rejects.toThrow(
+			"Request to https://example.com/slow timed out after 5000ms",
+		);
+	});
 
-  it("should abort request on timeout", async () => {
-    const abortSpy = vi.spyOn(AbortController.prototype, "abort");
+	it("should abort request on timeout", async () => {
+		const abortSpy = vi.spyOn(AbortController.prototype, "abort");
 
-    // Mock fetch to respect abort signal
-    vi.spyOn(globalThis, "fetch").mockImplementation((_url, options) => {
-      return new Promise((_, reject) => {
-        const signal = options?.signal as AbortSignal;
-        if (signal?.aborted) {
-          reject(new DOMException("Aborted", "AbortError"));
-          return;
-        }
-        signal?.addEventListener("abort", () => {
-          reject(new DOMException("Aborted", "AbortError"));
-        });
-      });
-    });
+		// Mock fetch to respect abort signal
+		vi.spyOn(globalThis, "fetch").mockImplementation((_url, options) => {
+			return new Promise((_, reject) => {
+				const signal = options?.signal as AbortSignal;
+				if (signal?.aborted) {
+					reject(new DOMException("Aborted", "AbortError"));
+					return;
+				}
+				signal?.addEventListener("abort", () => {
+					reject(new DOMException("Aborted", "AbortError"));
+				});
+			});
+		});
 
-    const fetchPromise = fetchWithTimeout(
-      "https://example.com/timeout",
-      {},
-      1000,
-    );
+		const fetchPromise = fetchWithTimeout("https://example.com/timeout", {}, 1000);
 
-    // Advance time to trigger timeout
-    vi.advanceTimersByTime(1000);
+		// Advance time to trigger timeout
+		vi.advanceTimersByTime(1000);
 
-    await expect(fetchPromise).rejects.toThrow("timed out");
-    expect(abortSpy).toHaveBeenCalled();
-  });
+		await expect(fetchPromise).rejects.toThrow("timed out");
+		expect(abortSpy).toHaveBeenCalled();
+	});
 
-  it("should re-throw non-abort errors", async () => {
-    const networkError = new Error("Network failure");
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(networkError);
+	it("should re-throw non-abort errors", async () => {
+		const networkError = new Error("Network failure");
+		vi.spyOn(globalThis, "fetch").mockRejectedValue(networkError);
 
-    await expect(fetchWithTimeout("https://example.com/api")).rejects.toThrow(
-      "Network failure",
-    );
-  });
+		await expect(fetchWithTimeout("https://example.com/api")).rejects.toThrow("Network failure");
+	});
 
-  it("should accept URL object", async () => {
-    const mockResponse = new Response("ok");
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(mockResponse);
+	it("should accept URL object", async () => {
+		const mockResponse = new Response("ok");
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(mockResponse);
 
-    const url = new URL("https://example.com/api");
-    await fetchWithTimeout(url);
+		const url = new URL("https://example.com/api");
+		await fetchWithTimeout(url);
 
-    expect(fetch).toHaveBeenCalledWith(url, expect.any(Object));
-  });
+		expect(fetch).toHaveBeenCalledWith(url, expect.any(Object));
+	});
 });
 
 describe("fetchJsonWithTimeout", () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
 
-  it("should return parsed JSON for successful response", async () => {
-    const mockData = { name: "test", value: 123 };
-    const mockResponse = new Response(JSON.stringify(mockData), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
+	it("should return parsed JSON for successful response", async () => {
+		const mockData = { name: "test", value: 123 };
+		const mockResponse = new Response(JSON.stringify(mockData), {
+			status: 200,
+			headers: { "Content-Type": "application/json" },
+		});
 
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(mockResponse);
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(mockResponse);
 
-    const result = await fetchJsonWithTimeout<{ name: string; value: number }>(
-      "https://example.com/api",
-    );
+		const result = await fetchJsonWithTimeout<{ name: string; value: number }>("https://example.com/api");
 
-    expect(result).toEqual(mockData);
-  });
+		expect(result).toEqual(mockData);
+	});
 
-  it("should throw error for non-OK response", async () => {
-    const mockResponse = new Response("Not Found", {
-      status: 404,
-      statusText: "Not Found",
-    });
+	it("should throw error for non-OK response", async () => {
+		const mockResponse = new Response("Not Found", {
+			status: 404,
+			statusText: "Not Found",
+		});
 
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(mockResponse);
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(mockResponse);
 
-    await expect(
-      fetchJsonWithTimeout("https://example.com/missing"),
-    ).rejects.toThrow("HTTP 404: Not Found");
-  });
+		await expect(fetchJsonWithTimeout("https://example.com/missing")).rejects.toThrow("HTTP 404: Not Found");
+	});
 
-  it("should throw error for 500 response", async () => {
-    const mockResponse = new Response("Server Error", {
-      status: 500,
-      statusText: "Internal Server Error",
-    });
+	it("should throw error for 500 response", async () => {
+		const mockResponse = new Response("Server Error", {
+			status: 500,
+			statusText: "Internal Server Error",
+		});
 
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(mockResponse);
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(mockResponse);
 
-    await expect(
-      fetchJsonWithTimeout("https://example.com/error"),
-    ).rejects.toThrow("HTTP 500: Internal Server Error");
-  });
+		await expect(fetchJsonWithTimeout("https://example.com/error")).rejects.toThrow("HTTP 500: Internal Server Error");
+	});
 
-  it("should use custom timeout", async () => {
-    const mockData = { test: true };
-    const mockResponse = new Response(JSON.stringify(mockData), {
-      status: 200,
-    });
+	it("should use custom timeout", async () => {
+		const mockData = { test: true };
+		const mockResponse = new Response(JSON.stringify(mockData), {
+			status: 200,
+		});
 
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(mockResponse);
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(mockResponse);
 
-    const result = await fetchJsonWithTimeout(
-      "https://example.com/api",
-      {},
-      30000,
-    );
+		const result = await fetchJsonWithTimeout("https://example.com/api", {}, 30000);
 
-    expect(result).toEqual(mockData);
-  });
+		expect(result).toEqual(mockData);
+	});
 });

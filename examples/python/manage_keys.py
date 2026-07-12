@@ -13,7 +13,7 @@ import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
-from typing import TypedDict
+from typing import NotRequired, Protocol, TypedDict, TypeIs
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -68,6 +68,125 @@ class KeyDeletionResponse(TypedDict):
     deleted: bool
 
 
+class RotationResult(TypedDict):
+    """Result of a key rotation."""
+
+    new_key: KeyResponse
+    deleted: NotRequired[KeyDeletionResponse]
+
+
+class SupportsJson(Protocol):
+    """Typed view of a response whose body parses to an arbitrary JSON value."""
+
+    def json(self) -> object: ...
+
+
+def _is_json_object(value: object) -> TypeIs[dict[str, object]]:
+    """JSON object keys are always strings, so a dict check suffices."""
+    return isinstance(value, dict)
+
+
+def _is_json_array(value: object) -> TypeIs[list[object]]:
+    return isinstance(value, list)
+
+
+def _as_object_dict(value: object) -> dict[str, object]:
+    """Narrow an arbitrary JSON value to an object with string keys."""
+    if not _is_json_object(value):
+        raise TypeError(f"Expected JSON object, got {type(value).__name__}")
+    return value
+
+
+def _json_object(response: SupportsJson) -> dict[str, object]:
+    """Parse a response body as a JSON object."""
+    return _as_object_dict(response.json())
+
+
+def _require_str(obj: dict[str, object], key: str) -> str:
+    value = obj.get(key)
+    if not isinstance(value, str):
+        raise TypeError(f"Expected string field {key!r}, got {type(value).__name__}")
+    return value
+
+
+def _require_bool(obj: dict[str, object], key: str) -> bool:
+    value = obj.get(key)
+    if not isinstance(value, bool):
+        raise TypeError(f"Expected boolean field {key!r}, got {type(value).__name__}")
+    return value
+
+
+def _require_int(obj: dict[str, object], key: str) -> int:
+    value = obj.get(key)
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise TypeError(f"Expected integer field {key!r}, got {type(value).__name__}")
+    return value
+
+
+def _require_list(obj: dict[str, object], key: str) -> list[object]:
+    value = obj.get(key)
+    if not _is_json_array(value):
+        raise TypeError(f"Expected array field {key!r}, got {type(value).__name__}")
+    return value
+
+
+def _optional_str(obj: dict[str, object], key: str) -> str | None:
+    value = obj.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError(f"Expected string field {key!r}, got {type(value).__name__}")
+    return value
+
+
+def _parse_key_response(obj: dict[str, object]) -> KeyResponse:
+    return KeyResponse(
+        success=_require_bool(obj, "success"),
+        keyId=_require_str(obj, "keyId"),
+        fingerprint=_require_str(obj, "fingerprint"),
+        algorithm=_require_str(obj, "algorithm"),
+        userId=_require_str(obj, "userId"),
+    )
+
+
+def _parse_key_list_item(obj: dict[str, object]) -> KeyListItem:
+    return KeyListItem(
+        keyId=_require_str(obj, "keyId"),
+        fingerprint=_require_str(obj, "fingerprint"),
+        createdAt=_require_str(obj, "createdAt"),
+        algorithm=_require_str(obj, "algorithm"),
+    )
+
+
+def _parse_deletion_response(obj: dict[str, object]) -> KeyDeletionResponse:
+    return KeyDeletionResponse(
+        success=_require_bool(obj, "success"),
+        deleted=_require_bool(obj, "deleted"),
+    )
+
+
+def _parse_audit_entry(obj: dict[str, object]) -> AuditLogEntry:
+    return AuditLogEntry(
+        id=_require_str(obj, "id"),
+        timestamp=_require_str(obj, "timestamp"),
+        requestId=_require_str(obj, "requestId"),
+        action=_require_str(obj, "action"),
+        issuer=_require_str(obj, "issuer"),
+        subject=_require_str(obj, "subject"),
+        keyId=_require_str(obj, "keyId"),
+        success=_require_bool(obj, "success"),
+        errorCode=_optional_str(obj, "errorCode"),
+        metadata=_optional_str(obj, "metadata"),
+    )
+
+
+def _parse_audit_logs(obj: dict[str, object]) -> AuditLogsResponse:
+    logs = [
+        _parse_audit_entry(_as_object_dict(item)) for item in _require_list(obj, "logs")
+    ]
+    return AuditLogsResponse(logs=logs, count=_require_int(obj, "count"))
+
+
 class GPGSigningServiceClient:
     """Client for GPG Signing Service API."""
 
@@ -76,9 +195,9 @@ class GPGSigningServiceClient:
         base_url: str = "https://gpg.kajkowalski.nl",
         admin_token: str | None = None,
     ):
-        self.base_url = base_url.rstrip("/")
-        self.admin_token = admin_token or os.environ.get("ADMIN_TOKEN")
-        self.session = self._create_session()
+        self.base_url: str = base_url.rstrip("/")
+        self.admin_token: str | None = admin_token or os.environ.get("ADMIN_TOKEN")
+        self.session: requests.Session = self._create_session()
 
     def _create_session(self) -> requests.Session:
         """Create a requests session with retries."""
@@ -98,7 +217,7 @@ class GPGSigningServiceClient:
 
         return session
 
-    def _admin_headers(self) -> dict:
+    def _admin_headers(self) -> dict[str, str]:
         """Get headers for admin requests."""
         if not self.admin_token:
             raise ValueError("Admin token not configured")
@@ -109,7 +228,7 @@ class GPGSigningServiceClient:
 
     def _validate_key_id(self, key_id: str) -> None:
         """Validate key ID format (16 hex chars)."""
-        if not isinstance(key_id, str) or len(key_id) != 16:
+        if len(key_id) != 16:
             raise ValueError(f"Key ID must be exactly 16 characters, got {len(key_id)}")
         if not all(c in "0123456789ABCDEFabcdef" for c in key_id):
             raise ValueError(f"Key ID must be hexadecimal, got: {key_id}")
@@ -128,7 +247,7 @@ class GPGSigningServiceClient:
             json=payload,
         )
         response.raise_for_status()
-        return response.json()
+        return _parse_key_response(_json_object(response))
 
     def list_keys(self) -> list[KeyListItem]:
         """List all signing keys."""
@@ -137,8 +256,13 @@ class GPGSigningServiceClient:
             headers=self._admin_headers(),
         )
         response.raise_for_status()
-        data = response.json()
-        return data.get("keys", [])
+        data = _json_object(response)
+        if "keys" not in data:
+            return []
+        return [
+            _parse_key_list_item(_as_object_dict(item))
+            for item in _require_list(data, "keys")
+        ]
 
     def get_public_key(self, key_id: str) -> str:
         """Get public key for a specific key ID."""
@@ -157,7 +281,7 @@ class GPGSigningServiceClient:
             headers=self._admin_headers(),
         )
         response.raise_for_status()
-        return response.json()
+        return _parse_deletion_response(_json_object(response))
 
     def get_audit_logs(
         self,
@@ -189,7 +313,7 @@ class GPGSigningServiceClient:
             params=params,
         )
         response.raise_for_status()
-        return response.json()
+        return _parse_audit_logs(_json_object(response))
 
     def rotate_keys(
         self,
@@ -197,17 +321,17 @@ class GPGSigningServiceClient:
         armored_private_key: str,
         old_key_id: str | None = None,
         grace_period_hours: int = 24,
-    ) -> dict:
+    ) -> RotationResult:
         """Rotate signing keys (upload new, delete old after grace period)."""
-        results = {}
-
         # Upload new key
         print(f"Uploading new key: {new_key_id}")
-        results["new_key"] = self.upload_key(new_key_id, armored_private_key)
+        new_key = self.upload_key(new_key_id, armored_private_key)
         print("✓ New key uploaded successfully")
-        print(f"  Fingerprint: {results['new_key']['fingerprint']}")
-        print(f"  Algorithm: {results['new_key']['algorithm']}")
-        print(f"  User ID: {results['new_key']['userId']}")
+        print(f"  Fingerprint: {new_key['fingerprint']}")
+        print(f"  Algorithm: {new_key['algorithm']}")
+        print(f"  User ID: {new_key['userId']}")
+
+        results: RotationResult = {"new_key": new_key}
 
         # Wait grace period if old key specified
         if old_key_id:
@@ -226,8 +350,29 @@ class GPGSigningServiceClient:
         return results
 
 
-def main():
-    """CLI for key management."""
+class Args(argparse.Namespace):
+    """Typed view of the parsed CLI arguments.
+
+    The class attribute values exist for the type checker only: subparsers
+    parse into a fresh sub-namespace and copy every attribute onto this one,
+    so runtime defaults always come from add_argument(default=...). The
+    placeholders below are never observable for the invoked subcommand.
+    """
+
+    command: str = ""
+    key_id: str = ""
+    key_file: str = ""
+    action: str | None = None
+    subject: str | None = None
+    days: int = 7
+    limit: int = 50
+    new_key_id: str = ""
+    old_key_id: str | None = None
+    grace_hours: int = 24
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the CLI argument parser."""
     parser = argparse.ArgumentParser(
         description="Manage GPG signing keys via GPG Signing Service API"
     )
@@ -235,131 +380,165 @@ def main():
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # List command
-    subparsers.add_parser("list", help="List all signing keys")
+    _ = subparsers.add_parser("list", help="List all signing keys")
 
     # Upload command
     upload_parser = subparsers.add_parser("upload", help="Upload a new signing key")
-    upload_parser.add_argument("key_id", help="Key identifier")
-    upload_parser.add_argument("key_file", help="Path to armored private key file")
+    _ = upload_parser.add_argument("key_id", help="Key identifier")
+    _ = upload_parser.add_argument("key_file", help="Path to armored private key file")
 
     # Delete command
     delete_parser = subparsers.add_parser("delete", help="Delete a signing key")
-    delete_parser.add_argument("key_id", help="Key identifier to delete")
+    _ = delete_parser.add_argument("key_id", help="Key identifier to delete")
 
     # Audit command
     audit_parser = subparsers.add_parser("audit", help="Query audit logs")
-    audit_parser.add_argument(
+    _ = audit_parser.add_argument(
         "--action", help="Filter by action (sign, key_upload, key_rotate)"
     )
-    audit_parser.add_argument("--subject", help="Filter by subject")
-    audit_parser.add_argument("--days", type=int, default=7, help="Days to include")
-    audit_parser.add_argument("--limit", type=int, default=50, help="Max entries")
+    _ = audit_parser.add_argument("--subject", help="Filter by subject")
+    _ = audit_parser.add_argument(
+        "--days", type=int, default=7, help="Days to include (default: 7)"
+    )
+    _ = audit_parser.add_argument(
+        "--limit", type=int, default=50, help="Max entries (default: 50)"
+    )
 
     # Rotate command
     rotate_parser = subparsers.add_parser("rotate", help="Rotate signing keys")
-    rotate_parser.add_argument("new_key_id", help="New key identifier")
-    rotate_parser.add_argument("key_file", help="Path to armored private key file")
-    rotate_parser.add_argument("--old-key-id", help="Old key to delete")
-    rotate_parser.add_argument(
+    _ = rotate_parser.add_argument("new_key_id", help="New key identifier")
+    _ = rotate_parser.add_argument("key_file", help="Path to armored private key file")
+    _ = rotate_parser.add_argument("--old-key-id", help="Old key to delete")
+    _ = rotate_parser.add_argument(
         "--grace-hours",
         type=int,
         default=24,
-        help="Grace period before deleting old key",
+        help="Grace period in hours before deleting old key (default: 24)",
     )
 
-    args = parser.parse_args()
+    return parser
 
+
+def _cmd_list(client: GPGSigningServiceClient) -> None:
+    keys = client.list_keys()
+    if not keys:
+        print("No keys found")
+        return
+
+    print("Signing Keys:")
+    print("-" * 80)
+    for key in keys:
+        print(f"ID: {key['keyId']}")
+        print(f"   Fingerprint: {key['fingerprint']}")
+        print(f"   Algorithm: {key['algorithm']}")
+        print(f"   Created: {key['createdAt']}")
+        print()
+
+
+def _cmd_upload(client: GPGSigningServiceClient, args: Args) -> None:
+    with open(args.key_file) as f:
+        armored_key = f.read()
+
+    print(f"Uploading key: {args.key_id}")
+    result = client.upload_key(args.key_id, armored_key)
+    print("✓ Key uploaded successfully")
+    print(f"  Key ID: {result['keyId']}")
+    print(f"  Fingerprint: {result['fingerprint']}")
+    print(f"  Algorithm: {result['algorithm']}")
+    print(f"  User ID: {result['userId']}")
+
+
+def _cmd_delete(client: GPGSigningServiceClient, args: Args) -> None:
+    print(f"Deleting key: {args.key_id}")
+    result = client.delete_key(args.key_id)
+    print(json.dumps(result, indent=2))
+
+
+def _cmd_audit(client: GPGSigningServiceClient, args: Args) -> None:
+    start_date = (datetime.now(timezone.utc) - timedelta(days=args.days)).isoformat()
+    result = client.get_audit_logs(
+        action=args.action,
+        subject=args.subject,
+        start_date=start_date,
+        limit=args.limit,
+    )
+
+    print(f"Audit logs (last {args.days} days):")
+    print("-" * 80)
+    for log in result["logs"]:
+        status = "✓" if log["success"] else f"✗ ({log['errorCode'] or 'unknown'})"
+        print(
+            f"{log['timestamp']} | {log['action']:12} | {log['subject']:20} | {status}"
+        )
+        print(f"  ID: {log['id']} | Request: {log['requestId']} | Key: {log['keyId']}")
+        if log["metadata"]:
+            print(f"  Metadata: {log['metadata']}")
+        print()
+    print(f"Total: {result['count']} entries")
+
+
+def _cmd_rotate(client: GPGSigningServiceClient, args: Args) -> None:
+    with open(args.key_file) as f:
+        armored_key = f.read()
+
+    result = client.rotate_keys(
+        args.new_key_id,
+        armored_key,
+        old_key_id=args.old_key_id,
+        grace_period_hours=args.grace_hours,
+    )
+    print(json.dumps(result, indent=2))
+
+
+def _dispatch(client: GPGSigningServiceClient, args: Args) -> None:
+    """Run the handler for the invoked subcommand."""
+    if args.command == "list":
+        _cmd_list(client)
+    elif args.command == "upload":
+        _cmd_upload(client, args)
+    elif args.command == "delete":
+        _cmd_delete(client, args)
+    elif args.command == "audit":
+        _cmd_audit(client, args)
+    elif args.command == "rotate":
+        _cmd_rotate(client, args)
+
+
+def _print_http_error(e: requests.HTTPError) -> None:
+    """Print a readable description of an HTTP error response."""
+    response = e.response
+    if response is None:
+        print(f"HTTP Error: {e}", file=sys.stderr)
+        return
+
+    try:
+        error_data = _json_object(response)
+    except (TypeError, ValueError):
+        print(f"HTTP {response.status_code}: {response.text}", file=sys.stderr)
+    else:
+        code = error_data.get("code", "UNKNOWN")
+        message = error_data.get("error", str(e))
+        print(f"API Error [{code}]: {message}", file=sys.stderr)
+        if "requestId" in error_data:
+            print(f"Request ID: {error_data['requestId']}", file=sys.stderr)
+
+
+def main() -> None:
+    """CLI for key management."""
+    args = _build_parser().parse_args(namespace=Args())
     client = GPGSigningServiceClient()
 
     try:
-        if args.command == "list":
-            keys = client.list_keys()
-            if not keys:
-                print("No keys found")
-                return
-
-            print("Signing Keys:")
-            print("-" * 80)
-            for key in keys:
-                print(f"ID: {key['keyId']}")
-                print(f"   Fingerprint: {key['fingerprint']}")
-                print(f"   Algorithm: {key['algorithm']}")
-                print(f"   Created: {key['createdAt']}")
-                print()
-
-        elif args.command == "upload":
-            with open(args.key_file) as f:
-                armored_key = f.read()
-
-            print(f"Uploading key: {args.key_id}")
-            result = client.upload_key(args.key_id, armored_key)
-            print("✓ Key uploaded successfully")
-            print(f"  Key ID: {result['keyId']}")
-            print(f"  Fingerprint: {result['fingerprint']}")
-            print(f"  Algorithm: {result['algorithm']}")
-            print(f"  User ID: {result['userId']}")
-
-        elif args.command == "delete":
-            print(f"Deleting key: {args.key_id}")
-            result = client.delete_key(args.key_id)
-            print(json.dumps(result, indent=2))
-
-        elif args.command == "audit":
-            start_date = (
-                datetime.now(timezone.utc) - timedelta(days=args.days)
-            ).isoformat()
-            result = client.get_audit_logs(
-                action=args.action,
-                subject=args.subject,
-                start_date=start_date,
-                limit=args.limit,
-            )
-
-            print(f"Audit logs (last {args.days} days):")
-            print("-" * 80)
-            for log in result["logs"]:
-                status = (
-                    "✓" if log["success"] else f"✗ ({log.get('errorCode', 'unknown')})"
-                )
-                print(
-                    f"{log['timestamp']} | {log['action']:12} | {log['subject']:20} | {status}"
-                )
-                print(
-                    f"  ID: {log['id']} | Request: {log['requestId']} | Key: {log['keyId']}"
-                )
-                if log.get("metadata"):
-                    print(f"  Metadata: {log['metadata']}")
-                print()
-            print(f"Total: {result['count']} entries")
-
-        elif args.command == "rotate":
-            with open(args.key_file) as f:
-                armored_key = f.read()
-
-            result = client.rotate_keys(
-                args.new_key_id,
-                armored_key,
-                old_key_id=args.old_key_id,
-                grace_period_hours=args.grace_hours,
-            )
-            print(json.dumps(result, indent=2))
-
+        _dispatch(client, args)
     except requests.HTTPError as e:
-        try:
-            error_data = e.response.json()
-            print(
-                f"API Error [{error_data.get('code', 'UNKNOWN')}]: {error_data.get('error', str(e))}",
-                file=sys.stderr,
-            )
-            if "requestId" in error_data:
-                print(f"Request ID: {error_data['requestId']}", file=sys.stderr)
-        except ValueError:
-            print(f"HTTP {e.response.status_code}: {e.response.text}", file=sys.stderr)
+        _print_http_error(e)
         sys.exit(1)
     except requests.RequestException as e:
         print(f"Network Error: {e}", file=sys.stderr)
         sys.exit(1)
-    except Exception as e:
+    except (OSError, TypeError, ValueError) as e:
+        # Key file problems, malformed API responses, invalid key IDs,
+        # or a missing admin token. Anything else is a bug — let it crash.
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 

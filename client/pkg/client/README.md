@@ -7,12 +7,12 @@ A developer-friendly Go client library for the GPG Signing Service API.
 This package wraps the auto-generated API client (`pkg/api`) with a cleaner
 interface that provides:
 
-- ✅ **Simple API** - No pointer management, clean method signatures
-- ✅ **Automatic retry** - Built-in exponential backoff with jitter
-- ✅ **Type-safe errors** - Custom error types with helper functions
-- ✅ **Rate limit aware** - Returns rate limit info in responses
-- ✅ **Context support** - Proper timeout/cancellation handling
-- ✅ **Production-ready** - Error handling, retries, timeouts built-in
+- **Simple API** - No pointer management, clean method signatures
+- **Automatic retry** - Built-in exponential backoff with jitter
+- **Type-safe errors** - Custom error types with helper functions
+- **Rate limit aware** - Returns rate limit info in responses
+- **Context support** - Proper timeout/cancellation handling
+- **Production-ready** - Error handling, retries, timeouts built-in
 
 ## Installation
 
@@ -252,11 +252,14 @@ fmt.Printf("Found %d audit entries\n", logs.Count)
 
 The client automatically retries:
 
-- ✅ Rate limit errors (respects `Retry-After` header)
-- ✅ Service errors (5xx status codes)
-- ❌ Authentication errors (401)
-- ❌ Validation errors (400)
-- ❌ Not found errors (404)
+- Rate limit errors (respects `Retry-After` header)
+- Service errors (5xx status codes)
+
+It never retries:
+
+- Authentication errors (401)
+- Validation errors (400)
+- Not found errors (404)
 
 Retry strategy:
 

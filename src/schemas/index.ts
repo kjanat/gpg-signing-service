@@ -1,8 +1,8 @@
 // Centralized schemas for strict validation
 
-export * from "./audit";
-export * from "./errors";
-export * from "./health";
-export * from "./keys";
-export * from "./requests";
-export * from "./tokens";
+export * from "#schemas/audit";
+export * from "#schemas/errors";
+export * from "#schemas/health";
+export * from "#schemas/keys";
+export * from "#schemas/requests";
+export * from "#schemas/tokens";

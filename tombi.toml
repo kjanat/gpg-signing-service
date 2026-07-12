@@ -47,3 +47,7 @@ workspace-diagnostic.enabled = true
 [schema]
 enabled = true
 strict  = true
+
+[[schemas]]
+path    = "https://www.unpkg.com/wrangler@4/config-schema.json"
+include = ["wrangler.toml", "wrangler.test.toml"]

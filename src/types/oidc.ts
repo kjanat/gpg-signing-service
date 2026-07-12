@@ -18,39 +18,39 @@
  * @param pipeline_source - GitLab-specific pipeline source
  */
 export interface OIDCClaims {
-  /** Issuer URL */
-  iss: string;
-  /** Subject (repository or project) */
-  sub: string;
-  /** Audience */
-  aud: string | string[];
-  /** Expiration */
-  exp: number;
-  /** Issued at */
-  iat: number;
-  /** Not before */
-  nbf?: number;
+	/** Issuer URL */
+	iss: string;
+	/** Subject (repository or project) */
+	sub: string;
+	/** Audience */
+	aud: string | string[];
+	/** Expiration */
+	exp: number;
+	/** Issued at */
+	iat: number;
+	/** Not before */
+	nbf?: number;
 
-  /** GitHub-specific repository */
-  repository?: string;
-  /** GitHub-specific repository owner */
-  repository_owner?: string;
-  /** GitHub-specific workflow */
-  workflow?: string;
-  /** GitHub-specific ref */
-  ref?: string;
+	/** GitHub-specific repository */
+	repository?: string;
+	/** GitHub-specific repository owner */
+	repository_owner?: string;
+	/** GitHub-specific workflow */
+	workflow?: string;
+	/** GitHub-specific ref */
+	ref?: string;
 
-  /** GitLab-specific project path */
-  project_path?: string;
-  /** GitLab-specific namespace path */
-  namespace_path?: string;
-  /** GitLab-specific pipeline source */
-  pipeline_source?: string;
+	/** GitLab-specific project path */
+	project_path?: string;
+	/** GitLab-specific namespace path */
+	namespace_path?: string;
+	/** GitLab-specific pipeline source */
+	pipeline_source?: string;
 }
 
 /** Marker interface for OIDC claims that have passed validation */
 export interface ValidatedOIDCClaims extends OIDCClaims {
-  readonly __validated: true;
+	readonly __validated: true;
 }
 
 /** Helper to mark claims as validated after verification
@@ -62,5 +62,5 @@ export interface ValidatedOIDCClaims extends OIDCClaims {
  * ```
  */
 export function markClaimsAsValidated(claims: OIDCClaims): ValidatedOIDCClaims {
-  return { ...claims, __validated: true as const };
+	return { ...claims, __validated: true as const };
 }
