@@ -1,12 +1,14 @@
 # GPG Signing Service
 
 Edge-deployed Git commit signing API using Hono on Cloudflare Workers with
-openpgp.js.
+openpgp.js and micro509.
 
 ## Features
 
 - GPG-compatible commit signing via REST API
+- X.509 commit signing via detached PKCS#7 (`git -c gpg.format=x509`)
 - OIDC authentication for GitHub Actions and GitLab CI
+- Service tokens (`gst_`) for one-secret CI auth, with a per-token key allowlist
 - Durable Objects for secure key storage
 - D1 database for audit logging
 - Rate limiting per CI identity
@@ -14,35 +16,75 @@ openpgp.js.
 
 ## Architecture
 
+Deployed topology and bindings:
+
 ```mermaid
 architecture-beta
-    group cf(cloud)[Cloudflare Platform]
+    group callers(cloud)[Callers]
+    service gha(server)[GitHub Actions] in callers
+    service gitlab(server)[GitLab CI] in callers
+    service admin(server)[Admin and CLI] in callers
+    junction jin in callers
+
+    group cf(cloud)[Cloudflare]
     service worker(server)[Signing Worker] in cf
-    service durable(database)[Durable Object Key Store] in cf
-    service d1(database)[Audit Log DB] in cf
-    service kv(disk)[Rate Limit KV] in cf
+    service kv(disk)[KV JWKS cache] in cf
+    service d1(database)[D1 audit and tokens] in cf
+    junction jdo in cf
+    service keys(database)[KeyStorage DO] in cf
+    service rl(database)[RateLimiter DO] in cf
 
-    group ext(cloud)[Integrations]
+    service issuers(internet)[OIDC Issuers]
 
-    group ci(cloud)[CI Pipelines] in ext
-    service gha(cloud)[GitHub Actions] in ci
-    service gitlab(cloud)[GitLab CI] in ci
+    gha:B --> T:jin
+    gitlab:R --> L:jin
+    admin:T --> B:jin
+    jin:R --> L:worker
 
-    group admin(cloud)[Admin Channel] in ext
-    service admincli(server)[Admin Client] in admin
+    worker:T --> B:kv
+    kv:T --> B:issuers
+    worker:B --> T:d1
 
-    service jwks(internet)[OIDC Issuers]
+    worker:R --> L:jdo
+    jdo:T --> B:keys
+    jdo:B --> T:rl
+```
 
-    gha{group}:R -- L:worker{group}
-    gitlab{group}:R -- L:worker{group}
+How a signing request flows, and which credential opens which door:
 
-    admincli{group}:R -- L:worker{group}
+```mermaid
+flowchart LR
+    subgraph callers["Callers"]
+        gha["GitHub Actions"]
+        gitlab["GitLab CI"]
+        admin["Admin / gpg-sign CLI"]
+    end
 
-    worker:T -- B:kv
-    worker:R -- L:d1
-    worker:B -- T:durable
+    issuers[["OIDC Issuers<br/>token.actions.githubusercontent.com<br/>gitlab.com"]]
 
-    worker{group}:T -- B:jwks
+    subgraph cf["Cloudflare"]
+        worker{{"Signing Worker (Hono)<br/>POST /sign · /admin/*"}}
+
+        subgraph state["Bound state"]
+            kv[("KV<br/>JWKS_CACHE")]
+            rl[("RateLimiter DO<br/>per-identity quota")]
+            ks[("KeyStorage DO<br/>private keys")]
+            d1[("D1<br/>audit_logs · service_tokens")]
+        end
+    end
+
+    gha -- "OIDC JWT" --> worker
+    gitlab -- "OIDC JWT" --> worker
+    admin -- "gst_ token / ADMIN_TOKEN" --> worker
+
+    worker -- "verify JWT" --> kv
+    kv -. "fetch JWKS on miss" .-> issuers
+    worker -- "check quota" --> rl
+    worker -- "look up gst_ token hash" --> d1
+    worker -- "load signing key" --> ks
+    worker -- "log every attempt" --> d1
+
+    worker == "PGP armor or detached PKCS#7" ==> gha
 ```
 
 ## Setup
