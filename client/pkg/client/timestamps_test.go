@@ -15,7 +15,7 @@ func TestParseTimestamp(t *testing.T) {
 	}{
 		{
 			name:     "valid RFC3339 timestamp",
-			input:    "2023-11-20T10:30:45Z",
+			input:    testTimestamp,
 			wantErr:  false,
 			wantZero: false,
 		},
@@ -148,7 +148,7 @@ func TestParseTimestampEdgeCases(t *testing.T) {
 
 // TestParseTimestampConcurrency tests concurrent timestamp parsing
 func TestParseTimestampConcurrency(t *testing.T) {
-	timestamp := "2023-11-20T10:30:45Z"
+	timestamp := testTimestamp
 	results := make(chan time.Time, 100)
 
 	// Run 100 concurrent parses
@@ -170,7 +170,7 @@ func TestParseTimestampConcurrency(t *testing.T) {
 
 // BenchmarkParseTimestamp benchmarks timestamp parsing
 func BenchmarkParseTimestamp(b *testing.B) {
-	timestamp := "2023-11-20T10:30:45Z"
+	timestamp := testTimestamp
 
 	for b.Loop() {
 		_ = parseTimestamp(timestamp)

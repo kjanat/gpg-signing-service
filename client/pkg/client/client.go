@@ -210,13 +210,13 @@ func (c *Client) Sign(ctx context.Context, commitData string, keyID string) (*Si
 func (c *Client) UploadKey(ctx context.Context, keyID string, armoredPrivateKey string) (*KeyInfo, error) {
 	if keyID == "" {
 		return nil, &ValidationError{
-			Code:    "INVALID_REQUEST",
+			Code:    ErrCodeInvalidRequest,
 			Message: "keyID cannot be empty",
 		}
 	}
 	if armoredPrivateKey == "" {
 		return nil, &ValidationError{
-			Code:    "INVALID_REQUEST",
+			Code:    ErrCodeInvalidRequest,
 			Message: "armoredPrivateKey cannot be empty",
 		}
 	}
@@ -363,7 +363,7 @@ func (c *Client) AuditLogs(ctx context.Context, filter AuditFilter) (*AuditResul
 func (c *Client) AdminPublicKey(ctx context.Context, keyID string) (string, error) {
 	if keyID == "" {
 		return "", &ValidationError{
-			Code:    "INVALID_REQUEST",
+			Code:    ErrCodeInvalidRequest,
 			Message: "keyID cannot be empty",
 		}
 	}
@@ -606,7 +606,7 @@ func validateSignInput(commitData string) error {
 		return nil
 	}
 	return &ValidationError{
-		Code:    "INVALID_REQUEST",
+		Code:    ErrCodeInvalidRequest,
 		Message: "commitData cannot be empty",
 	}
 }

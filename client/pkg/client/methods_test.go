@@ -39,8 +39,8 @@ func runPublicKeyTest(
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(tt.serverStatus)
 					_ = json.NewEncoder(w).Encode(map[string]string{
-						"code":  "KEY_NOT_FOUND",
-						"error": "key not found",
+						fieldCode:  "KEY_NOT_FOUND",
+						fieldError: testMsgKeyNotFound,
 					})
 				}
 			}))
@@ -75,12 +75,12 @@ func TestHealth(t *testing.T) {
 			name:         "healthy service",
 			serverStatus: 200,
 			responseBody: map[string]any{
-				"status":    "healthy",
-				"version":   "1.0.0",
-				"timestamp": time.Now().Format(time.RFC3339),
-				"checks": map[string]any{
-					"keyStorage": true,
-					"database":   true,
+				fieldStatus:    StatusHealthy,
+				fieldVersion:   testVersion,
+				fieldTimestamp: time.Now().Format(time.RFC3339),
+				fieldChecks: map[string]any{
+					fieldKeyStorage: true,
+					fieldDatabase:   true,
 				},
 			},
 			wantErr: false,
@@ -88,10 +88,10 @@ func TestHealth(t *testing.T) {
 				if status == nil {
 					t.Fatal("health status is nil")
 				}
-				if status.Status != "healthy" {
+				if status.Status != StatusHealthy {
 					t.Errorf("expected status 'healthy', got %q", status.Status)
 				}
-				if status.Version != "1.0.0" {
+				if status.Version != testVersion {
 					t.Errorf("expected version '1.0.0', got %q", status.Version)
 				}
 				if !status.KeyStorage {
@@ -109,12 +109,12 @@ func TestHealth(t *testing.T) {
 			name:         "degraded service (503)",
 			serverStatus: 503,
 			responseBody: map[string]any{
-				"status":    "degraded",
-				"version":   "1.0.0",
-				"timestamp": time.Now().Format(time.RFC3339),
-				"checks": map[string]any{
-					"keyStorage": false,
-					"database":   true,
+				fieldStatus:    "degraded",
+				fieldVersion:   testVersion,
+				fieldTimestamp: time.Now().Format(time.RFC3339),
+				fieldChecks: map[string]any{
+					fieldKeyStorage: false,
+					fieldDatabase:   true,
 				},
 			},
 			wantErr: true,
@@ -186,7 +186,7 @@ test-key-data
 		},
 		{
 			name:         "get specific public key",
-			keyID:        "key-123",
+			keyID:        testKeyID,
 			serverStatus: 200,
 			wantErr:      false,
 			validateResp: func(t *testing.T, key string) {
@@ -196,14 +196,14 @@ test-key-data
 			},
 		},
 		{
-			name:         "key not found",
-			keyID:        "nonexistent",
+			name:         testMsgKeyNotFound,
+			keyID:        testKeyIDMissing,
 			serverStatus: 404,
 			wantErr:      true,
 		},
 		{
-			name:         "server error",
-			keyID:        "key-123",
+			name:         testMsgServerError,
+			keyID:        testKeyID,
 			serverStatus: 500,
 			wantErr:      true,
 		},
@@ -230,13 +230,13 @@ func TestUploadKey(t *testing.T) {
 		},
 		{
 			name:       "empty private key",
-			keyID:      "key-123",
+			keyID:      testKeyID,
 			privateKey: "",
 			wantErr:    true,
 		},
 		{
 			name:         "successful upload",
-			keyID:        "key-123",
+			keyID:        testKeyID,
 			privateKey:   "-----BEGIN PGP PRIVATE KEY-----\ntest\n-----END PGP PRIVATE KEY-----",
 			serverStatus: 201,
 			wantErr:      false,
@@ -244,7 +244,7 @@ func TestUploadKey(t *testing.T) {
 				if info == nil {
 					t.Fatal("KeyInfo is nil")
 				}
-				if info.KeyID != "key-123" {
+				if info.KeyID != testKeyID {
 					t.Errorf("expected KeyID 'key-123', got %q", info.KeyID)
 				}
 			},
@@ -260,10 +260,10 @@ func TestUploadKey(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(tt.serverStatus)
 				_ = json.NewEncoder(w).Encode(map[string]string{
-					"keyId":       "key-123",
-					"fingerprint": "ABC123",
-					"algorithm":   "RSA",
-					"userId":      "test@example.com",
+					fieldKeyID:       testKeyID,
+					fieldFingerprint: "ABC123",
+					fieldAlgorithm:   testAlgorithmRSA,
+					"userId":         "test@example.com",
 				})
 			}))
 			defer server.Close()
@@ -295,16 +295,16 @@ func TestListKeys(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"keys": []map[string]any{
 				{
-					"keyId":       "key-1",
-					"fingerprint": "AAAA",
-					"algorithm":   "RSA",
-					"createdAt":   time.Now().Format(time.RFC3339),
+					fieldKeyID:       testKeyID1,
+					fieldFingerprint: "AAAA",
+					fieldAlgorithm:   testAlgorithmRSA,
+					"createdAt":      time.Now().Format(time.RFC3339),
 				},
 				{
-					"keyId":       "key-2",
-					"fingerprint": "BBBB",
-					"algorithm":   "ED25519",
-					"createdAt":   time.Now().Format(time.RFC3339),
+					fieldKeyID:       "key-2",
+					fieldFingerprint: "BBBB",
+					fieldAlgorithm:   "ED25519",
+					"createdAt":      time.Now().Format(time.RFC3339),
 				},
 			},
 		})
@@ -319,7 +319,7 @@ func TestListKeys(t *testing.T) {
 	if len(keys) != 2 {
 		t.Errorf("expected 2 keys, got %d", len(keys))
 	}
-	if keys[0].KeyID != "key-1" {
+	if keys[0].KeyID != testKeyID1 {
 		t.Errorf("expected first key 'key-1', got %q", keys[0].KeyID)
 	}
 	if keys[1].Algorithm != "ED25519" {
@@ -338,21 +338,21 @@ func TestDeleteKey(t *testing.T) {
 	}{
 		{
 			name:         "successful delete",
-			keyID:        "key-123",
+			keyID:        testKeyID,
 			serverStatus: 200,
 			deleted:      true,
 			wantErr:      false,
 		},
 		{
-			name:         "key not found",
-			keyID:        "nonexistent",
+			name:         testMsgKeyNotFound,
+			keyID:        testKeyIDMissing,
 			serverStatus: 200,
 			deleted:      false,
 			wantErr:      true,
 		},
 		{
-			name:         "server error",
-			keyID:        "key-123",
+			name:         testMsgServerError,
+			keyID:        testKeyID,
 			serverStatus: 500,
 			deleted:      false,
 			wantErr:      true,
@@ -402,19 +402,19 @@ func TestAuditLogs(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"logs": []map[string]any{
+			fieldLogs: []map[string]any{
 				{
-					"id":        "550e8400-e29b-41d4-a716-446655440000",
-					"timestamp": time.Now().Format(time.RFC3339),
-					"requestId": "550e8400-e29b-41d4-a716-446655440001",
-					"action":    "sign",
-					"issuer":    "user@example.com",
-					"subject":   "key-1",
-					"keyId":     "key-1",
-					"success":   true,
+					"id":           testRequestID,
+					fieldTimestamp: time.Now().Format(time.RFC3339),
+					"requestId":    "550e8400-e29b-41d4-a716-446655440001",
+					"action":       testOpSignLower,
+					"issuer":       "user@example.com",
+					"subject":      testKeyID1,
+					fieldKeyID:     testKeyID1,
+					fieldSuccess:   true,
 				},
 			},
-			"count": 1,
+			fieldCount: 1,
 		})
 	}))
 	defer server.Close()
@@ -437,7 +437,7 @@ func TestAuditLogs(t *testing.T) {
 	if result.Count != 1 {
 		t.Errorf("expected count 1, got %d", result.Count)
 	}
-	if result.Logs[0].Action != "sign" {
+	if result.Logs[0].Action != testOpSignLower {
 		t.Errorf("expected action 'sign', got %q", result.Logs[0].Action)
 	}
 }
@@ -463,7 +463,7 @@ test-key
 		},
 		{
 			name:         "successful retrieval",
-			keyID:        "key-123",
+			keyID:        testKeyID,
 			serverStatus: 200,
 			wantErr:      false,
 			validateResp: func(t *testing.T, key string) {
@@ -473,8 +473,8 @@ test-key
 			},
 		},
 		{
-			name:         "key not found",
-			keyID:        "nonexistent",
+			name:         testMsgKeyNotFound,
+			keyID:        testKeyIDMissing,
 			serverStatus: 404,
 			wantErr:      true,
 		},
@@ -492,8 +492,8 @@ func TestAuditFilterWithAllFields(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"logs":  []map[string]any{},
-			"count": 0,
+			fieldLogs:  []map[string]any{},
+			fieldCount: 0,
 		})
 	}))
 	defer server.Close()
@@ -503,7 +503,7 @@ func TestAuditFilterWithAllFields(t *testing.T) {
 	filter := AuditFilter{
 		Limit:     20,
 		Offset:    10,
-		Action:    "sign",
+		Action:    testOpSignLower,
 		Subject:   "user-123",
 		StartDate: startDate,
 		EndDate:   endDate,
@@ -524,12 +524,12 @@ func BenchmarkHealth(b *testing.B) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status":    "healthy",
-			"version":   "1.0.0",
-			"timestamp": time.Now().Format(time.RFC3339),
-			"checks": map[string]any{
-				"keyStorage": true,
-				"database":   true,
+			fieldStatus:    StatusHealthy,
+			fieldVersion:   testVersion,
+			fieldTimestamp: time.Now().Format(time.RFC3339),
+			fieldChecks: map[string]any{
+				fieldKeyStorage: true,
+				fieldDatabase:   true,
 			},
 		})
 	}))

@@ -5,6 +5,9 @@ import (
 	"time"
 )
 
+// StatusHealthy is the Status value a service reports when all checks pass.
+const StatusHealthy = "healthy"
+
 // HealthStatus represents a service health check result.
 type HealthStatus struct {
 	Status     string    `json:"status"`
@@ -16,7 +19,7 @@ type HealthStatus struct {
 
 // IsHealthy returns true if the service is healthy.
 func (h *HealthStatus) IsHealthy() bool {
-	return h.Status == "healthy"
+	return h.Status == StatusHealthy
 }
 
 // SignResult represents a successful signing operation.

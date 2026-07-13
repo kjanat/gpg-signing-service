@@ -20,7 +20,7 @@ func TestServiceError(t *testing.T) {
 	}{
 		{
 			name:       "service error with request ID",
-			code:       "INTERNAL_ERROR",
+			code:       ErrCodeInternalError,
 			message:    "internal server error",
 			statusCode: 500,
 			requestID:  "req-123",
@@ -114,7 +114,7 @@ func TestRateLimitError(t *testing.T) {
 		},
 		{
 			name:       "rate limit without retry-after",
-			message:    "rate limit exceeded",
+			message:    testMsgRateLimited,
 			retryAfter: 0,
 			wantError:  "rate limited: rate limit exceeded",
 		},
@@ -150,14 +150,14 @@ func TestValidationError(t *testing.T) {
 		wantError string
 	}{
 		{
-			name:      "validation error",
-			code:      "INVALID_REQUEST",
+			name:      testNameValidation,
+			code:      ErrCodeInvalidRequest,
 			message:   "invalid request data",
 			wantError: "validation error: invalid request data",
 		},
 		{
 			name:      "validation error empty message",
-			code:      "INVALID",
+			code:      testCodeInvalid,
 			message:   "",
 			wantError: "validation error: ",
 		},
@@ -189,7 +189,7 @@ func TestIsKeyNotFound(t *testing.T) {
 			name: "key not found error",
 			err: &ServiceError{
 				Code:       ErrCodeKeyNotFound,
-				Message:    "key not found",
+				Message:    testMsgKeyNotFound,
 				StatusCode: 404,
 			},
 			match: true,
@@ -204,12 +204,12 @@ func TestIsKeyNotFound(t *testing.T) {
 			match: false,
 		},
 		{
-			name:  "nil error",
+			name:  testNameNilError,
 			err:   nil,
 			match: false,
 		},
 		{
-			name:  "other error type",
+			name:  testNameOtherErrType,
 			err:   errors.New("some error"),
 			match: false,
 		},
@@ -241,17 +241,17 @@ func TestIsAuthError(t *testing.T) {
 			match: true,
 		},
 		{
-			name:  "validation error",
-			err:   &ValidationError{Code: "INVALID", Message: "bad request"},
+			name:  testNameValidation,
+			err:   &ValidationError{Code: testCodeInvalid, Message: testMsgBadRequest},
 			match: false,
 		},
 		{
-			name:  "nil error",
+			name:  testNameNilError,
 			err:   nil,
 			match: false,
 		},
 		{
-			name:  "other error type",
+			name:  testNameOtherErrType,
 			err:   errors.New("some error"),
 			match: false,
 		},
@@ -283,17 +283,17 @@ func TestIsRateLimitError(t *testing.T) {
 			match: true,
 		},
 		{
-			name:  "validation error",
-			err:   &ValidationError{Code: "INVALID", Message: "bad request"},
+			name:  testNameValidation,
+			err:   &ValidationError{Code: testCodeInvalid, Message: testMsgBadRequest},
 			match: false,
 		},
 		{
-			name:  "nil error",
+			name:  testNameNilError,
 			err:   nil,
 			match: false,
 		},
 		{
-			name:  "other error type",
+			name:  testNameOtherErrType,
 			err:   errors.New("some error"),
 			match: false,
 		},
@@ -317,25 +317,25 @@ func TestIsValidationError(t *testing.T) {
 		match bool
 	}{
 		{
-			name: "validation error",
+			name: testNameValidation,
 			err: &ValidationError{
-				Code:    "INVALID_REQUEST",
+				Code:    ErrCodeInvalidRequest,
 				Message: "invalid request data",
 			},
 			match: true,
 		},
 		{
 			name:  "service error",
-			err:   &ServiceError{Code: "ERROR", Message: "error", StatusCode: 500},
+			err:   &ServiceError{Code: testCodeError, Message: fieldError, StatusCode: 500},
 			match: false,
 		},
 		{
-			name:  "nil error",
+			name:  testNameNilError,
 			err:   nil,
 			match: false,
 		},
 		{
-			name:  "other error type",
+			name:  testNameOtherErrType,
 			err:   errors.New("some error"),
 			match: false,
 		},
@@ -361,8 +361,8 @@ func TestIsServiceError(t *testing.T) {
 		{
 			name: "500 service error",
 			err: &ServiceError{
-				Code:       "INTERNAL_ERROR",
-				Message:    "server error",
+				Code:       ErrCodeInternalError,
+				Message:    testMsgServerError,
 				StatusCode: 500,
 			},
 			match: true,
@@ -380,7 +380,7 @@ func TestIsServiceError(t *testing.T) {
 			name: "400 client error",
 			err: &ServiceError{
 				Code:       "BAD_REQUEST",
-				Message:    "bad request",
+				Message:    testMsgBadRequest,
 				StatusCode: 400,
 			},
 			match: false,
@@ -395,12 +395,12 @@ func TestIsServiceError(t *testing.T) {
 			match: false,
 		},
 		{
-			name:  "validation error",
-			err:   &ValidationError{Code: "INVALID", Message: "bad request"},
+			name:  testNameValidation,
+			err:   &ValidationError{Code: testCodeInvalid, Message: testMsgBadRequest},
 			match: false,
 		},
 		{
-			name:  "nil error",
+			name:  testNameNilError,
 			err:   nil,
 			match: false,
 		},
@@ -439,7 +439,7 @@ func TestErrUnexpectedStatus(t *testing.T) {
 func TestErrorWrapping(t *testing.T) {
 	// Test that errors can be properly unwrapped with errors.As
 	serviceErr := &ServiceError{
-		Code:       "TEST",
+		Code:       testCodeTest,
 		Message:    "test error",
 		StatusCode: 500,
 	}
@@ -449,7 +449,7 @@ func TestErrorWrapping(t *testing.T) {
 	if !errors.As(err, &unwrapped) {
 		t.Fatal("failed to unwrap ServiceError with errors.As")
 	}
-	if unwrapped.Code != "TEST" {
+	if unwrapped.Code != testCodeTest {
 		t.Errorf("expected Code 'TEST', got %q", unwrapped.Code)
 	}
 }
@@ -463,22 +463,22 @@ func TestErrorTypeAssertions(t *testing.T) {
 	}{
 		{
 			name:    "ServiceError",
-			err:     &ServiceError{Code: "TEST", Message: "test", StatusCode: 500},
+			err:     &ServiceError{Code: testCodeTest, Message: testMsgTest, StatusCode: 500},
 			errType: (*ServiceError)(nil),
 		},
 		{
 			name:    "AuthError",
-			err:     &AuthError{Code: "TEST", Message: "test"},
+			err:     &AuthError{Code: testCodeTest, Message: testMsgTest},
 			errType: (*AuthError)(nil),
 		},
 		{
 			name:    "RateLimitError",
-			err:     &RateLimitError{Message: "test", RetryAfter: 60 * time.Second},
+			err:     &RateLimitError{Message: testMsgTest, RetryAfter: 60 * time.Second},
 			errType: (*RateLimitError)(nil),
 		},
 		{
 			name:    "ValidationError",
-			err:     &ValidationError{Code: "TEST", Message: "test"},
+			err:     &ValidationError{Code: testCodeTest, Message: testMsgTest},
 			errType: (*ValidationError)(nil),
 		},
 	}
@@ -535,8 +535,8 @@ func TestErrorMessageFormatting(t *testing.T) {
 // BenchmarkIsServiceError benchmarks error type checking
 func BenchmarkIsServiceError(b *testing.B) {
 	err := &ServiceError{
-		Code:       "TEST",
-		Message:    "test",
+		Code:       testCodeTest,
+		Message:    testMsgTest,
 		StatusCode: 500,
 	}
 
@@ -548,8 +548,8 @@ func BenchmarkIsServiceError(b *testing.B) {
 // BenchmarkIsValidationError benchmarks error type checking
 func BenchmarkIsValidationError(b *testing.B) {
 	err := &ValidationError{
-		Code:    "TEST",
-		Message: "test",
+		Code:    testCodeTest,
+		Message: testMsgTest,
 	}
 
 	for b.Loop() {

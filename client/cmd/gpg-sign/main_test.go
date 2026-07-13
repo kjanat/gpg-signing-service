@@ -30,14 +30,14 @@ func TestGetBaseURL(t *testing.T) {
 		{
 			name:     "flag takes precedence",
 			flagURL:  "http://flag.com",
-			envURL:   "http://env.com",
+			envURL:   testEnvAPIURL,
 			expected: "http://flag.com",
 		},
 		{
 			name:     "env when no flag",
 			flagURL:  "",
-			envURL:   "http://env.com",
-			expected: "http://env.com",
+			envURL:   testEnvAPIURL,
+			expected: testEnvAPIURL,
 		},
 		{
 			name:     "default when neither",
@@ -91,14 +91,14 @@ func TestGetToken(t *testing.T) {
 		{
 			name:      "flag takes precedence",
 			flagToken: "flag-token",
-			envToken:  "env-token",
+			envToken:  testEnvToken,
 			expected:  "flag-token",
 		},
 		{
 			name:      "env when no flag",
 			flagToken: "",
-			envToken:  "env-token",
-			expected:  "env-token",
+			envToken:  testEnvToken,
+			expected:  testEnvToken,
 		},
 		{
 			name:      "empty when neither",
@@ -252,7 +252,7 @@ func TestHealthCommand(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{
-			"status":    "healthy",
+			"status":    client.StatusHealthy,
 			"version":   "1.0.0",
 			"timestamp": time.Now().Format(time.RFC3339),
 			"checks":    map[string]bool{"keyStorage": true, "database": true},
@@ -301,7 +301,7 @@ func TestHealthCommandJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{
-			"status":    "healthy",
+			"status":    client.StatusHealthy,
 			"version":   "1.0.0",
 			"timestamp": time.Now().Format(time.RFC3339),
 			"checks":    map[string]bool{"keyStorage": true, "database": true},
@@ -348,7 +348,7 @@ func TestHealthCommandJSON(t *testing.T) {
 	if err := json.Unmarshal(out, &result); err != nil {
 		t.Errorf("invalid JSON output: %v", err)
 	}
-	if result.Status != "healthy" {
+	if result.Status != client.StatusHealthy {
 		t.Error("expected healthy status in JSON")
 	}
 }
@@ -639,8 +639,8 @@ func TestAdminDeleteCommand(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		if err := json.NewEncoder(w).Encode(map[string]bool{
-			"success": true,
-			"deleted": true,
+			"success":    true,
+			fieldDeleted: true,
 		}); err != nil {
 			t.Errorf("failed to encode response: %v", err)
 		}
@@ -758,7 +758,7 @@ func TestAdminListCommand(t *testing.T) {
 // TestRootCommand tests the root command
 func TestRootCommand(t *testing.T) {
 	// Test that root command doesn't error without subcommand
-	rootCmd.SetArgs([]string{"--help"})
+	rootCmd.SetArgs([]string{flagHelp})
 
 	previousStdout := os.Stdout
 	r, w, err := os.Pipe()
@@ -797,7 +797,7 @@ func TestMainFunc(t *testing.T) {
 	defer func() { os.Args = previousArgs }()
 
 	// Set args to trigger help
-	os.Args = []string{"gpg-sign", "--help"}
+	os.Args = []string{"gpg-sign", flagHelp}
 
 	// Capture output to avoid polluting test output
 	previousStdout := os.Stdout
@@ -828,7 +828,7 @@ func TestMainFunc(t *testing.T) {
 		_ = exitCalled
 
 		// We can't actually override os.Exit, so just call rootCmd.Execute instead
-		rootCmd.SetArgs([]string{"--help"})
+		rootCmd.SetArgs([]string{flagHelp})
 		if err := rootCmd.Execute(); err != nil && !strings.Contains(err.Error(), "help") {
 			t.Errorf("unexpected error executing rootCmd: %v", err)
 		}

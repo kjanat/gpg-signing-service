@@ -6,10 +6,12 @@ import (
 	"time"
 )
 
-// Error codes
+// Error codes returned by the service in the `code` field of an error response.
 const (
-	ErrCodeDegraded    = "SERVICE_DEGRADED"
-	ErrCodeKeyNotFound = "KEY_NOT_FOUND"
+	ErrCodeDegraded       = "SERVICE_DEGRADED"
+	ErrCodeKeyNotFound    = "KEY_NOT_FOUND"
+	ErrCodeInvalidRequest = "INVALID_REQUEST"
+	ErrCodeInternalError  = "INTERNAL_ERROR"
 )
 
 // ErrUnexpectedStatus is a sentinel error returned when the server responds with an unexpected status code.

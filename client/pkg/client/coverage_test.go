@@ -22,7 +22,7 @@ func TestUnexpectedStatusResponses(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client, _ := New(server.URL, WithAdminToken("test"))
+			client, _ := New(server.URL, WithAdminToken(testMsgTest))
 			ctx := context.Background()
 
 			// Test Health
@@ -83,17 +83,17 @@ func TestMalformedJSONResponses(t *testing.T) {
 		method string
 		body   string
 	}{
-		{"Health", "GET", `{"status": "healthy", INVALID}`},
-		{"Sign", "POST", `{"signature": "sig", BROKEN`},
+		{"Health", http.MethodGet, `{"status": "healthy", INVALID}`},
+		{testOpSign, "POST", `{"signature": "sig", BROKEN`},
 		{"UploadKey", "POST", `{"success": true MISSING_BRACE`},
-		{"ListKeys", "GET", `{"keys": [`},
-		{"AuditLogs", "GET", `{"logs": [{"id": "not-a-uuid"}]}`},
+		{"ListKeys", http.MethodGet, `{"keys": [`},
+		{"AuditLogs", http.MethodGet, `{"logs": [{"id": "not-a-uuid"}]}`},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				if tc.name == "Sign" {
+				if tc.name == testOpSign {
 					w.WriteHeader(http.StatusOK)
 					_, _ = w.Write([]byte("invalid signature format"))
 					return
@@ -104,7 +104,7 @@ func TestMalformedJSONResponses(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client, err := New(server.URL, WithAdminToken("test"))
+			client, err := New(server.URL, WithAdminToken(testMsgTest))
 			if err != nil {
 				t.Fatalf("failed to create client: %v", err)
 			}
@@ -116,7 +116,7 @@ func TestMalformedJSONResponses(t *testing.T) {
 				if err == nil {
 					t.Error("expected JSON unmarshal error")
 				}
-			case "Sign":
+			case testOpSign:
 				// Sign returns text content directly, not JSON,
 				// so this test is not applicable, skip it
 				return
@@ -204,13 +204,13 @@ func TestUploadKeyEdgeCases(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"success": true,
-				"keyId":   "test",
+				fieldSuccess: true,
+				fieldKeyID:   testMsgTest,
 			})
 		}))
 		defer server.Close()
 
-		client, err := New(server.URL, WithAdminToken("test"))
+		client, err := New(server.URL, WithAdminToken(testMsgTest))
 		if err != nil {
 			t.Fatalf("failed to create client: %v", err)
 		}
@@ -239,13 +239,13 @@ func TestAuditLogsComplexFilters(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"logs":  []map[string]any{},
-			"count": 0,
+			fieldLogs:  []map[string]any{},
+			fieldCount: 0,
 		})
 	}))
 	defer server.Close()
 
-	client, err := New(server.URL, WithAdminToken("test"))
+	client, err := New(server.URL, WithAdminToken(testMsgTest))
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestAuditLogsComplexFilters(t *testing.T) {
 	filter := AuditFilter{
 		Limit:     100,
 		Offset:    50,
-		Action:    "sign",
+		Action:    testOpSignLower,
 		Subject:   "test-subject",
 		StartDate: now.Add(-24 * time.Hour),
 		EndDate:   now,

@@ -1,8 +1,7 @@
 name: Sign Commits
 
 on:
-  # push:
-  #   branches: [master, main]
+  # push: { branches: [master] }
   workflow_dispatch:
 
 permissions:
@@ -14,13 +13,13 @@ jobs:
     name: Sign Commits
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
-      - uses: go-task/setup-task@v1
+      - uses: go-task/setup-task@v2
 
       - name: Get OIDC Token
         id: oidc
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const token = await core.getIDToken('gpg-signing-service');
@@ -54,8 +53,7 @@ jobs:
           fi
 
       - name: Apply Signature
-        env:
-          SIGNATURE_FILE: ${{ steps.sign.outputs.signature_file }}
+        env: { SIGNATURE_FILE: "${{ steps.sign.outputs.signature_file }}" }
         run: |
           # Get the tree
           TREE="$(git cat-file -p HEAD | grep ^tree | cut -d' ' -f2)"
@@ -88,8 +86,7 @@ jobs:
           git update-ref HEAD "$(cat "${_NEW_COMMIT}")"
 
       - name: Verify Signature
-        env:
-          SIGNING_SERVICE_URL: ${{ vars.SIGNING_SERVICE_URL }}
+        env: { SIGNING_SERVICE_URL: "${{ vars.SIGNING_SERVICE_URL }}" }
         run: |
           # Import public key
           curl -s "${SIGNING_SERVICE_URL}/public-key" | gpg --import
@@ -98,5 +95,4 @@ jobs:
           git verify-commit HEAD || echo "Note: Signature verification may fail until key is trusted"
 
       - name: Push Signed Commit
-        run: |
-          git push origin HEAD --force-with-lease
+        run: git push origin HEAD --force-with-lease

@@ -194,7 +194,7 @@ func TestRetrier(t *testing.T) {
 			attempts:   0,
 			returnErr: func(i int) error {
 				if i < 1 {
-					return &ServiceError{Code: "ERROR", Message: "test", StatusCode: 500}
+					return &ServiceError{Code: testCodeError, Message: testMsgTest, StatusCode: 500}
 				}
 				return nil
 			},
@@ -206,7 +206,7 @@ func TestRetrier(t *testing.T) {
 			maxRetries: 2,
 			attempts:   0,
 			returnErr: func(_ int) error {
-				return &ServiceError{Code: "ERROR", Message: "test", StatusCode: 500}
+				return &ServiceError{Code: testCodeError, Message: testMsgTest, StatusCode: 500}
 			},
 			wantErr:      true,
 			wantAttempts: 3,
@@ -216,7 +216,7 @@ func TestRetrier(t *testing.T) {
 			maxRetries: 3,
 			attempts:   0,
 			returnErr: func(_ int) error {
-				return &ValidationError{Code: "INVALID", Message: "invalid"}
+				return &ValidationError{Code: testCodeInvalid, Message: "invalid"}
 			},
 			wantErr:      true,
 			wantAttempts: 1,
@@ -227,7 +227,7 @@ func TestRetrier(t *testing.T) {
 			attempts:   0,
 			returnErr: func(i int) error {
 				if i == 0 {
-					return &ServiceError{Code: "ERROR", Message: "test", StatusCode: 500}
+					return &ServiceError{Code: testCodeError, Message: testMsgTest, StatusCode: 500}
 				}
 				return nil
 			},
@@ -279,7 +279,7 @@ func TestRetrierRateLimitRetry(t *testing.T) {
 			returnErr: func(i int) error {
 				if i < 1 {
 					return &RateLimitError{
-						Message:    "rate limit exceeded",
+						Message:    testMsgRateLimited,
 						RetryAfter: 1 * time.Millisecond,
 					}
 				}
@@ -293,7 +293,7 @@ func TestRetrierRateLimitRetry(t *testing.T) {
 			retryOnRateLimit: false,
 			returnErr: func(_ int) error {
 				return &RateLimitError{
-					Message:    "rate limit exceeded",
+					Message:    testMsgRateLimited,
 					RetryAfter: 1 * time.Millisecond,
 				}
 			},
@@ -350,7 +350,7 @@ func TestRetrierContextCancellation(t *testing.T) {
 
 	err := retrier.Do(ctx, func() error {
 		attempts++
-		return &ServiceError{Code: "ERROR", Message: "test", StatusCode: 500}
+		return &ServiceError{Code: testCodeError, Message: testMsgTest, StatusCode: 500}
 	})
 
 	if err == nil {

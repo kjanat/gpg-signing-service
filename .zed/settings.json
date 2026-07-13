@@ -10,7 +10,7 @@
   "prettier": { "allowed": false },
   "languages": {
     "TypeScript": {
-      "language_servers": ["typescript", "biome", "eslint", "vtsls"],
+      "language_servers": ["typescript", "biome", "eslint", "!vtsls"],
       "code_actions_on_format": {
         "source.fixAll.biome": true,
         "source.organizeImports.biome": true

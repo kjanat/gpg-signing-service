@@ -32,7 +32,7 @@ export default defineConfig(
 			},
 		},
 		rules: {
-			// Disable formatting rules (handled by prettier)
+			// Disable formatting rules (handled by dprint)
 			"@typescript-eslint/comma-dangle": "off",
 			"@typescript-eslint/indent": "off",
 			"@typescript-eslint/member-delimiter-style": "off",

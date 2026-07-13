@@ -14,6 +14,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// fieldDeleted is the JSON field reporting whether a key was removed.
+const fieldDeleted = "deleted"
+
 var (
 	// Global flags
 	apiURL     string
@@ -146,7 +149,7 @@ var healthCmd = &cobra.Command{
 		fmt.Printf("  Key Storage: %v\n", health.KeyStorage)
 		fmt.Printf("  Database: %v\n", health.Database)
 
-		if health.Status != "healthy" {
+		if health.Status != client.StatusHealthy {
 			return fmt.Errorf("service is not healthy: %s", health.Status)
 		}
 
@@ -394,7 +397,7 @@ var adminDeleteCmd = &cobra.Command{
 			if client.IsKeyNotFound(err) {
 				fmt.Printf("Key '%s' was not found\n", keyID)
 				if jsonOutput {
-					return outputJSON(map[string]bool{"deleted": false})
+					return outputJSON(map[string]bool{fieldDeleted: false})
 				}
 				return nil // Idempotent delete: treat not-found as success
 			}
@@ -402,7 +405,7 @@ var adminDeleteCmd = &cobra.Command{
 		}
 
 		if jsonOutput {
-			return outputJSON(map[string]bool{"deleted": true})
+			return outputJSON(map[string]bool{fieldDeleted: true})
 		}
 
 		fmt.Printf("Key '%s' deleted successfully\n", keyID)

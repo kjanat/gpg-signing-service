@@ -25,7 +25,7 @@ func TestNewClient(t *testing.T) {
 	}{
 		{
 			name:    "valid client with default options",
-			baseURL: "http://localhost:8080",
+			baseURL: testBaseURL,
 			opts:    nil,
 			wantErr: false,
 			validate: func(t *testing.T, c *Client) {
@@ -52,7 +52,7 @@ func TestNewClient(t *testing.T) {
 		},
 		{
 			name:    "client with custom timeout",
-			baseURL: "http://localhost:8080",
+			baseURL: testBaseURL,
 			opts:    []Option{WithTimeout(60 * time.Second)},
 			wantErr: false,
 			validate: func(t *testing.T, c *Client) {
@@ -63,21 +63,21 @@ func TestNewClient(t *testing.T) {
 		},
 		{
 			name:    "zero timeout returns error",
-			baseURL: "http://localhost:8080",
+			baseURL: testBaseURL,
 			opts:    []Option{WithTimeout(0)},
 			wantErr: true,
 			errMsg:  "timeout must be positive",
 		},
 		{
 			name:    "negative timeout returns error",
-			baseURL: "http://localhost:8080",
+			baseURL: testBaseURL,
 			opts:    []Option{WithTimeout(-1 * time.Second)},
 			wantErr: true,
 			errMsg:  "timeout must be positive",
 		},
 		{
 			name:    "client with OIDC token",
-			baseURL: "http://localhost:8080",
+			baseURL: testBaseURL,
 			opts:    []Option{WithOIDCToken("test-token-123")},
 			wantErr: false,
 			validate: func(t *testing.T, c *Client) {
@@ -88,7 +88,7 @@ func TestNewClient(t *testing.T) {
 		},
 		{
 			name:    "client with admin token",
-			baseURL: "http://localhost:8080",
+			baseURL: testBaseURL,
 			opts:    []Option{WithAdminToken("admin-token-456")},
 			wantErr: false,
 			validate: func(t *testing.T, c *Client) {
@@ -99,7 +99,7 @@ func TestNewClient(t *testing.T) {
 		},
 		{
 			name:    "client with maxRetries",
-			baseURL: "http://localhost:8080",
+			baseURL: testBaseURL,
 			opts:    []Option{WithMaxRetries(5)},
 			wantErr: false,
 			validate: func(t *testing.T, c *Client) {
@@ -110,7 +110,7 @@ func TestNewClient(t *testing.T) {
 		},
 		{
 			name:    "zero maxRetries disables retries",
-			baseURL: "http://localhost:8080",
+			baseURL: testBaseURL,
 			opts:    []Option{WithMaxRetries(0)},
 			wantErr: false,
 			validate: func(t *testing.T, c *Client) {
@@ -121,14 +121,14 @@ func TestNewClient(t *testing.T) {
 		},
 		{
 			name:    "negative maxRetries returns error",
-			baseURL: "http://localhost:8080",
+			baseURL: testBaseURL,
 			opts:    []Option{WithMaxRetries(-1)},
 			wantErr: true,
 			errMsg:  "maxRetries cannot be negative",
 		},
 		{
 			name:    "client with custom retry wait",
-			baseURL: "http://localhost:8080",
+			baseURL: testBaseURL,
 			opts:    []Option{WithRetryWait(500*time.Millisecond, 60*time.Second)},
 			wantErr: false,
 			validate: func(t *testing.T, c *Client) {
@@ -142,21 +142,21 @@ func TestNewClient(t *testing.T) {
 		},
 		{
 			name:    "retryWaitMin >= retryWaitMax returns error",
-			baseURL: "http://localhost:8080",
+			baseURL: testBaseURL,
 			opts:    []Option{WithRetryWait(30*time.Second, 1*time.Second)},
 			wantErr: true,
 			errMsg:  "retryWaitMin must be less than retryWaitMax",
 		},
 		{
 			name:    "retryWaitMin equal to retryWaitMax returns error",
-			baseURL: "http://localhost:8080",
+			baseURL: testBaseURL,
 			opts:    []Option{WithRetryWait(5*time.Second, 5*time.Second)},
 			wantErr: true,
 			errMsg:  "retryWaitMin must be less than retryWaitMax",
 		},
 		{
 			name:    "disable rate limit retry",
-			baseURL: "http://localhost:8080",
+			baseURL: testBaseURL,
 			opts:    []Option{WithoutRateLimitRetry()},
 			wantErr: false,
 			validate: func(t *testing.T, c *Client) {
@@ -167,7 +167,7 @@ func TestNewClient(t *testing.T) {
 		},
 		{
 			name:    "multiple options applied in order",
-			baseURL: "http://localhost:8080",
+			baseURL: testBaseURL,
 			opts: []Option{
 				WithTimeout(45 * time.Second),
 				WithOIDCToken(testAuthToken),
@@ -192,7 +192,7 @@ func TestNewClient(t *testing.T) {
 		},
 		{
 			name:    "retrier is properly initialized",
-			baseURL: "http://localhost:8080",
+			baseURL: testBaseURL,
 			opts:    []Option{WithMaxRetries(4)},
 			wantErr: false,
 			validate: func(t *testing.T, c *Client) {
@@ -206,7 +206,7 @@ func TestNewClient(t *testing.T) {
 		},
 		{
 			name:    "raw API client is initialized",
-			baseURL: "http://localhost:8080",
+			baseURL: testBaseURL,
 			opts:    nil,
 			wantErr: false,
 			validate: func(t *testing.T, c *Client) {
@@ -244,7 +244,7 @@ func TestNewClientWithHTTPServer(t *testing.T) {
 	// Create a simple test server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		_ = json.NewEncoder(w).Encode(map[string]string{fieldStatus: "ok"})
 	}))
 	defer server.Close()
 
@@ -263,7 +263,7 @@ func TestNewClientWithHTTPServer(t *testing.T) {
 
 // TestClientConcurrency validates client structure for concurrent use
 func TestClientConcurrency(t *testing.T) {
-	c, err := New("http://localhost:8080")
+	c, err := New(testBaseURL)
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}
@@ -333,7 +333,7 @@ func TestNewClientTimeout(t *testing.T) {
 // BenchmarkNewClient benchmarks client creation
 func BenchmarkNewClient(b *testing.B) {
 	for b.Loop() {
-		_, err := New("http://localhost:8080", WithTimeout(30*time.Second))
+		_, err := New(testBaseURL, WithTimeout(30*time.Second))
 		if err != nil {
 			b.Fatalf("failed to create client: %v", err)
 		}
@@ -342,7 +342,7 @@ func BenchmarkNewClient(b *testing.B) {
 
 // TestNewClientWithValidContext ensures client is compatible with context
 func TestNewClientWithValidContext(t *testing.T) {
-	c, err := New("http://localhost:8080")
+	c, err := New(testBaseURL)
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)
 	}

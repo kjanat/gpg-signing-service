@@ -16,8 +16,8 @@ func TestSignMethodAllPaths(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"error": "bad request",
-				"code":  "INVALID_REQUEST",
+				fieldError: testMsgBadRequest,
+				fieldCode:  ErrCodeInvalidRequest,
 			})
 		}))
 		defer server.Close()
@@ -52,9 +52,9 @@ func TestSignMethodAllPaths(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"error":     "internal error",
-				"code":      "INTERNAL_ERROR",
-				"requestId": "550e8400-e29b-41d4-a716-446655440000",
+				fieldError:  "internal error",
+				fieldCode:   ErrCodeInternalError,
+				"requestId": testRequestID,
 			})
 		}))
 		defer server.Close()
@@ -66,7 +66,7 @@ func TestSignMethodAllPaths(t *testing.T) {
 		}
 		se := &ServiceError{}
 		if errors.As(err, &se) {
-			if se.RequestID != "550e8400-e29b-41d4-a716-446655440000" {
+			if se.RequestID != testRequestID {
 				t.Errorf("expected request ID 550e8400-e29b-41d4-a716-446655440000, got %s", se.RequestID)
 			}
 		} else {
@@ -95,16 +95,16 @@ func TestUploadKeyAllPaths(t *testing.T) {
 			// Return 200 instead of 201 to test the fallback path
 			w.WriteHeader(http.StatusOK)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"success":     true,
-				"keyId":       "test-key",
-				"fingerprint": "ABCD1234",
-				"algorithm":   "RSA",
-				"userId":      "test@example.com",
+				fieldSuccess:     true,
+				fieldKeyID:       "test-key",
+				fieldFingerprint: "ABCD1234",
+				fieldAlgorithm:   testAlgorithmRSA,
+				"userId":         "test@example.com",
 			})
 		}))
 		defer server.Close()
 
-		client, _ := New(server.URL, WithAdminToken("test"))
+		client, _ := New(server.URL, WithAdminToken(testMsgTest))
 		_, err := client.UploadKey(context.Background(), "id", "key")
 		// Should get unexpected status error since 200 is not expected
 		if err == nil {
@@ -116,13 +116,13 @@ func TestUploadKeyAllPaths(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"error": "invalid key",
-				"code":  "INVALID_KEY",
+				fieldError: "invalid key",
+				fieldCode:  "INVALID_KEY",
 			})
 		}))
 		defer server.Close()
 
-		client, _ := New(server.URL, WithAdminToken("test"))
+		client, _ := New(server.URL, WithAdminToken(testMsgTest))
 		_, err := client.UploadKey(context.Background(), "id", "key")
 		if err == nil {
 			t.Error("expected validation error")
@@ -135,7 +135,7 @@ func TestUploadKeyAllPaths(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, _ := New(server.URL, WithAdminToken("test"))
+		client, _ := New(server.URL, WithAdminToken(testMsgTest))
 		_, err := client.UploadKey(context.Background(), "id", "key")
 		if err == nil {
 			t.Error("expected service error")
@@ -150,13 +150,13 @@ func TestAuditLogsAllPaths(t *testing.T) {
 			// Return 206 to test unexpected status
 			w.WriteHeader(http.StatusPartialContent)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"logs":  []any{},
-				"count": 0,
+				fieldLogs:  []any{},
+				fieldCount: 0,
 			})
 		}))
 		defer server.Close()
 
-		client, _ := New(server.URL, WithAdminToken("test"))
+		client, _ := New(server.URL, WithAdminToken(testMsgTest))
 		_, err := client.AuditLogs(context.Background(), AuditFilter{})
 		if err == nil {
 			t.Error("expected unexpected status error for 206")
@@ -167,13 +167,13 @@ func TestAuditLogsAllPaths(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"error": "invalid filter",
-				"code":  "INVALID_REQUEST",
+				fieldError: "invalid filter",
+				fieldCode:  ErrCodeInvalidRequest,
 			})
 		}))
 		defer server.Close()
 
-		client, _ := New(server.URL, WithAdminToken("test"))
+		client, _ := New(server.URL, WithAdminToken(testMsgTest))
 		_, err := client.AuditLogs(context.Background(), AuditFilter{})
 		if err == nil {
 			t.Error("expected validation error")
@@ -186,7 +186,7 @@ func TestAuditLogsAllPaths(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, _ := New(server.URL, WithAdminToken("test"))
+		client, _ := New(server.URL, WithAdminToken(testMsgTest))
 		_, err := client.AuditLogs(context.Background(), AuditFilter{})
 		if err == nil {
 			t.Error("expected service error")

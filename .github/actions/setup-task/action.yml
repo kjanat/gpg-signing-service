@@ -9,4 +9,4 @@ runs:
 
     - name: Setup Task
       if: ${{ env.TASK_AVAILABLE == 'false' }}
-      uses: go-task/setup-task@v1
+      uses: go-task/setup-task@v2

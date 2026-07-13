@@ -2,9 +2,9 @@ name: Security
 
 on:
   push:
-    branches: [master, main]
+    branches: [master]
   pull_request:
-    branches: [master, main]
+    branches: [master]
   schedule:
     # Weekly security scan (Sunday 00:00 UTC)
     - cron: "0 0 * * 0"
@@ -23,14 +23,11 @@ jobs:
       fail-fast: false
       matrix:
         language: [javascript-typescript, go]
-        include:
-          - language: go
-            build-dir: client
+        include: [{ language: go, build-dir: client }]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
+        uses: actions/checkout@v7
+        with: { fetch-depth: 0 }
 
       - name: Setup dependencies (Go)
         if: matrix.language == 'go'
@@ -57,8 +54,7 @@ jobs:
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
-        with:
-          category: /language:${{ matrix.language }}
+        with: { category: "/language:${{ matrix.language }}" }
 
   dependency-review:
     name: Dependency Review
@@ -66,10 +62,10 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Review dependencies
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@v5.0.0
         with:
           fail-on-severity: high
           # GPL-3.0 excluded (only affects go-task/setup-task GH Action, not distributed code)
@@ -80,7 +76,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
@@ -96,15 +92,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
+        uses: actions/checkout@v7
+        with: { fetch-depth: 0 }
 
       - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITLEAKS_ENABLE_COMMENTS: true
+          GITLEAKS_CONFIG: .gitleaks.toml
 
   security-summary:
     name: Security Checks Summary

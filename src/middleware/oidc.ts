@@ -164,10 +164,10 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
 	} catch (e) {
 		const err = e as Error & { code?: string };
 		if (err.code === "ERR_JWKS_NO_MATCHING_KEY") {
-			throw new Error("Key not found");
+			throw new Error("Key not found", { cause: e });
 		}
 		if (err.message?.includes("signature verification failed")) {
-			throw new Error("Invalid token signature");
+			throw new Error("Invalid token signature", { cause: e });
 		}
 		throw err;
 	}
@@ -214,7 +214,7 @@ async function getJWKS(issuer: string, env: Env, expectedKid?: string): Promise<
 			url: wellKnownUrl,
 			error: message,
 		});
-		throw new Error(`SSRF protection: ${message}`);
+		throw new Error(`SSRF protection: ${message}`, { cause: error });
 	}
 
 	const configResponse = await fetchWithTimeout(wellKnownUrl, {}, 10000);
@@ -235,7 +235,7 @@ async function getJWKS(issuer: string, env: Env, expectedKid?: string): Promise<
 			jwks_uri: config.jwks_uri,
 			error: message,
 		});
-		throw new Error(`SSRF protection: ${message}`);
+		throw new Error(`SSRF protection: ${message}`, { cause: error });
 	}
 
 	const jwksResponse = await fetchWithTimeout(config.jwks_uri, {}, 10000);
