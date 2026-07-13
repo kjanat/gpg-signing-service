@@ -1,4 +1,5 @@
-import type { StoredKey } from "#schemas/keys";
+import type { AnyStoredKey } from "#schemas/keys";
+import { isX509Key } from "#schemas/keys";
 import { HTTP, MediaType } from "#types";
 
 export class KeyStorage implements DurableObject {
@@ -52,7 +53,7 @@ export class KeyStorage implements DurableObject {
 	}
 
 	private async getKey(keyId: string): Promise<Response> {
-		const key = await this.state.storage.get<StoredKey>(`key:${keyId}`);
+		const key = await this.state.storage.get<AnyStoredKey>(`key:${keyId}`);
 
 		if (!key) {
 			return new Response(JSON.stringify({ error: "Key not found" }), {
@@ -67,8 +68,11 @@ export class KeyStorage implements DurableObject {
 		});
 	}
 
-	private async storeKey(data: StoredKey): Promise<Response> {
-		if (!data.armoredPrivateKey || !data.keyId) {
+	private async storeKey(data: AnyStoredKey): Promise<Response> {
+		const hasKeyMaterial = isX509Key(data)
+			? Boolean(data.privateKeyPem && data.certificatePem)
+			: Boolean(data.armoredPrivateKey);
+		if (!hasKeyMaterial || !data.keyId) {
 			return new Response(JSON.stringify({ error: "Missing required fields" }), {
 				status: HTTP.BadRequest,
 				headers: { "Content-Type": MediaType.ApplicationJson },
@@ -91,7 +95,7 @@ export class KeyStorage implements DurableObject {
 	}
 
 	private async listKeys(): Promise<Response> {
-		const keys = await this.state.storage.list<StoredKey>({ prefix: "key:" });
+		const keys = await this.state.storage.list<AnyStoredKey>({ prefix: "key:" });
 		const keyList = Array.from(keys.values()).map((key) => ({
 			keyId: key.keyId,
 			fingerprint: key.fingerprint,

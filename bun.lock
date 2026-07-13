@@ -8,6 +8,7 @@
         "@hono/swagger-ui": "0.6.1",
         "@hono/zod-openapi": "1.4.0",
         "hono": "4.12.29",
+        "micro509": "0.11.0",
         "openpgp": "6.3.1",
         "zod": "4.4.3",
       },
@@ -731,6 +732,8 @@
     "magicast": ["magicast@0.5.3", "", { "dependencies": { "@babel/parser": "^7.29.3", "@babel/types": "^7.29.0", "source-map-js": "^1.2.1" } }, "sha512-pVKE4UdSQ7DvHzivsCIFx2BJn1mHG6KsyrFcaxFx6tONdneEuThrDx0Cj3AMg58KyN4pzYT+LHOotxDQDjNvkw=="],
 
     "make-dir": ["make-dir@4.0.0", "", { "dependencies": { "semver": "^7.5.3" } }, "sha512-hXdUTZYIVOt1Ex//jAQi+wTZZpUpwBj/0QsOzqegb3rGMMeJiSEu5xLHnYfBrRV4RH2+OCSOO95Is/7x1WJ4bw=="],
+
+    "micro509": ["micro509@0.11.0", "", {}, "sha512-pkl9TvOHeQuXQdXceve+XYnYBe9FjlVC1W14m/TuZHd1Dqqs2OE7RZTlurLQEI17w0fFFWZc0Nxla5EsWeiSnw=="],
 
     "miniflare": ["miniflare@4.20260708.1", "", { "dependencies": { "@cspotcode/source-map-support": "0.8.1", "sharp": "0.34.5", "undici": "7.28.0", "workerd": "1.20260708.1", "ws": "8.21.0", "youch": "4.1.0-beta.10" }, "bin": { "miniflare": "bootstrap.js" } }, "sha512-c94O9zRDISdqO18EHt6l0iF/fWgWt8p18PJvRsA/L/NJZ9Cfke3s/F5Blg1XXF7WDutVRzWVWy8Vy4LaT5ifsA=="],
 

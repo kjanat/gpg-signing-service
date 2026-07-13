@@ -48,6 +48,16 @@ describe("Public Key Route", () => {
 		const body = await response.text();
 		expect(body).toContain("-----BEGIN PGP PUBLIC KEY BLOCK-----");
 	});
+
+	it("should return 404 for a key that was never stored", async () => {
+		const ctx = createExecutionContext();
+		const response = await app.fetch(new Request("http://localhost/public-key?keyId=EEEEEEEEEEEEEEEE"), env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(404);
+		const body = (await response.json()) as { code: string };
+		expect(body.code).toBe("KEY_NOT_FOUND");
+	});
 });
 
 describe("Global Error Handling", () => {
@@ -77,5 +87,28 @@ describe("Global Error Handling", () => {
 		expect(response.status).toBe(500);
 		const body = (await response.json()) as { code: string };
 		expect(body.code).toBe("KEY_PROCESSING_ERROR");
+	});
+
+	it("should handle unhandled errors via the global error handler", async () => {
+		// Cause an error that's NOT caught by route handlers: a null DO stub
+		// blows up when the route tries to call .fetch() on it.
+		const originalGet = env.KEY_STORAGE.get;
+		env.KEY_STORAGE.get = () => {
+			return null as unknown as DurableObjectStub;
+		};
+
+		try {
+			const ctx = createExecutionContext();
+			const response = await app.fetch(new Request("http://localhost/public-key"), env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(500);
+			const body = (await response.json()) as { code: string; requestId: string };
+			expect(body.code).toBe("INTERNAL_ERROR");
+			expect(body.requestId).toBeTruthy();
+		} finally {
+			// Restore
+			env.KEY_STORAGE.get = originalGet;
+		}
 	});
 });

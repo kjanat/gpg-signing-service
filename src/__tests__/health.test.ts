@@ -1,7 +1,9 @@
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import app from "#gpg-signing-service";
+
+const parseJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
 
 describe("Health Endpoint", () => {
 	it("should respond to health check", async () => {
@@ -29,6 +31,74 @@ describe("Health Endpoint", () => {
 		await waitOnExecutionContext(ctx);
 
 		expect(response.headers.get("content-type")).toContain("application/json");
+	});
+});
+
+describe("Health Check Failures", () => {
+	it("should handle key storage failure", async () => {
+		// Mock KEY_STORAGE to fail
+		const originalIdFromName = env.KEY_STORAGE.idFromName;
+		env.KEY_STORAGE.idFromName = () => {
+			throw new Error("Key storage failure");
+		};
+
+		try {
+			const ctx = createExecutionContext();
+			const response = await app.fetch(new Request("http://localhost/health"), env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(503);
+			const body = await parseJson<{ checks: { keyStorage: unknown } }>(response);
+			expect(body.checks.keyStorage).toBe(false);
+		} finally {
+			// Restore
+			env.KEY_STORAGE.idFromName = originalIdFromName;
+		}
+	});
+
+	it("should handle database failure", async () => {
+		// Mock AUDIT_DB to fail
+		const originalPrepare = env.AUDIT_DB.prepare;
+		env.AUDIT_DB.prepare = () => {
+			throw new Error("Database failure");
+		};
+
+		try {
+			const ctx = createExecutionContext();
+			const response = await app.fetch(new Request("http://localhost/health"), env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(503);
+			const body = await parseJson<{ checks: { database: unknown } }>(response);
+			expect(body.checks.database).toBe(false);
+		} finally {
+			// Restore
+			env.AUDIT_DB.prepare = originalPrepare;
+		}
+	});
+
+	it("reports unhealthy when dependencies throw non-Error values", async () => {
+		vi.spyOn(env.KEY_STORAGE, "get").mockReturnValue({
+			fetch: async () => {
+				throw "key storage string failure";
+			},
+		} as unknown as DurableObjectStub);
+		vi.spyOn(env.AUDIT_DB, "prepare").mockImplementation(() => {
+			throw "database string failure";
+		});
+
+		try {
+			const ctx = createExecutionContext();
+			const response = await app.fetch(new Request("http://localhost/health"), env, ctx);
+			await waitOnExecutionContext(ctx);
+
+			expect(response.status).toBe(503);
+			const body = await parseJson<{ checks: { keyStorage: boolean; database: boolean } }>(response);
+			expect(body.checks.keyStorage).toBe(false);
+			expect(body.checks.database).toBe(false);
+		} finally {
+			vi.restoreAllMocks();
+		}
 	});
 });
 

@@ -10,7 +10,8 @@ import {
 	SignResponseSchema,
 } from "#schemas";
 import type { ErrorCode } from "#schemas/errors";
-import type { StoredKey } from "#schemas/keys";
+import type { AnyStoredKey } from "#schemas/keys";
+import { AnyStoredKeySchema, isX509Key } from "#schemas/keys";
 import type { Identity, RateLimitResult, ValidatedOIDCClaims } from "#types";
 import { createKeyId, HEADERS, HTTP, TIME } from "#types";
 import { logAuditEvent } from "#utils/audit";
@@ -18,6 +19,7 @@ import { fetchKeyStorage, fetchRateLimiter } from "#utils/durable-objects";
 import { scheduleBackgroundTask } from "#utils/execution";
 import { logger } from "#utils/logger";
 import { signCommitData } from "#utils/signing";
+import { signCommitDataX509 } from "#utils/x509";
 
 const app = createOpenAPIApp();
 
@@ -110,7 +112,7 @@ app.openapi(signRoute, async (c) => {
 	// Parallel execution: Rate limit + Key fetch (performance optimization ~15ms gain)
 	// Security: Rate limit enforced BEFORE signing, parallel fetch is read-only
 	let rateLimit: RateLimitResult;
-	let storedKey: StoredKey;
+	let storedKey: AnyStoredKey;
 
 	try {
 		createKeyId(keyIdParam); // Validate key ID format (inside try so errors are caught)
@@ -155,10 +157,12 @@ app.openapi(signRoute, async (c) => {
 			throw new Error(error.error || "Key not found");
 		}
 
-		storedKey = (await keyResponse.json()) as StoredKey;
+		storedKey = AnyStoredKeySchema.parse(await keyResponse.json());
 
-		// Sign the commit data
-		const result = await signCommitData(commitData, storedKey, c.env.KEY_PASSPHRASE);
+		// Sign the commit data (PGP armored or detached PKCS#7, per key type)
+		const result = isX509Key(storedKey)
+			? await signCommitDataX509(commitData, storedKey, c.env.KEY_PASSPHRASE)
+			: await signCommitData(commitData, storedKey, c.env.KEY_PASSPHRASE);
 
 		// Log successful signing (non-blocking for performance)
 		await scheduleBackgroundTask(

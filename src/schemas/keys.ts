@@ -119,6 +119,87 @@ export const StoredKeySchema = z.object({
 export type StoredKey = z.infer<typeof StoredKeySchema>;
 
 /**
+ * PEM-encoded PKCS#8 private key (plain or PBES2-encrypted)
+ */
+export const X509PrivateKeyPemSchema = z
+	.string()
+	.min(100, "Private key too short - minimum 100 characters")
+	.max(LIMITS.MAX_KEY_SIZE, `Private key too large - maximum ${LIMITS.MAX_KEY_SIZE} characters`)
+	.refine(
+		(val) =>
+			/^-----BEGIN (?:ENCRYPTED )?PRIVATE KEY-----/m.test(val) && /-----END (?:ENCRYPTED )?PRIVATE KEY-----/m.test(val),
+		{ message: "Must be a PEM-encoded PKCS#8 private key (PRIVATE KEY or ENCRYPTED PRIVATE KEY block)" },
+	);
+
+/**
+ * PEM-encoded X.509 certificate (single block or bundle)
+ */
+export const CertificatePemSchema = z
+	.string()
+	.min(100, "Certificate too short - minimum 100 characters")
+	.max(LIMITS.MAX_KEY_SIZE, `Certificate too large - maximum ${LIMITS.MAX_KEY_SIZE} characters`)
+	.refine((val) => /^-----BEGIN CERTIFICATE-----/m.test(val) && /-----END CERTIFICATE-----/m.test(val), {
+		message: "Must be a PEM-encoded X.509 certificate with BEGIN/END CERTIFICATE markers",
+	});
+
+/**
+ * X.509 key upload request schema
+ */
+export const X509KeyUploadSchema = z
+	.object({
+		keyId: KeyIdSchema,
+		privateKeyPem: X509PrivateKeyPemSchema,
+		certificatePem: CertificatePemSchema,
+		chainPem: CertificatePemSchema.optional(),
+	})
+	.openapi("X509KeyUpload");
+
+/**
+ * X.509 key response schema
+ */
+export const X509KeyResponseSchema = z
+	.object({
+		success: z.boolean(),
+		keyId: KeyIdSchema,
+		fingerprint: FingerprintSchema,
+		algorithm: z.string(),
+		subject: z.string(),
+	})
+	.openapi("X509KeyResponse");
+
+/**
+ * Stored X.509 key schema
+ * Discriminated from PGP keys by the literal `type: "x509"`;
+ * legacy stored PGP keys have no `type` field.
+ */
+export const StoredX509KeySchema = z.object({
+	type: z.literal("x509"),
+	keyId: KeyIdSchema,
+	privateKeyPem: X509PrivateKeyPemSchema,
+	certificatePem: CertificatePemSchema,
+	chainPem: CertificatePemSchema.optional(),
+	fingerprint: FingerprintSchema,
+	createdAt: z.iso.datetime({ offset: true }),
+	algorithm: z.string().min(1),
+});
+
+/** Type inferred from StoredX509KeySchema */
+export type StoredX509Key = z.infer<typeof StoredX509KeySchema>;
+
+/**
+ * Union of every key shape the KeyStorage Durable Object can hold
+ */
+export const AnyStoredKeySchema = z.union([StoredX509KeySchema, StoredKeySchema]);
+
+/** Type inferred from AnyStoredKeySchema */
+export type AnyStoredKey = z.infer<typeof AnyStoredKeySchema>;
+
+/** Narrow an AnyStoredKey to the X.509 variant */
+export function isX509Key(key: AnyStoredKey): key is StoredX509Key {
+	return "type" in key && key.type === "x509";
+}
+
+/**
  * Public key response schema (PGP armored public key)
  */
 export const PublicKeyResponseSchema = z.string().openapi("PublicKeyResponse", {

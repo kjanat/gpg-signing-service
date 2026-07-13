@@ -264,6 +264,23 @@ type TokenSummary struct {
 	RevokedAt  *string   `json:"revokedAt"`
 }
 
+// X509KeyResponse defines model for X509KeyResponse.
+type X509KeyResponse struct {
+	Algorithm   string `json:"algorithm"`
+	Fingerprint string `json:"fingerprint"`
+	KeyId       string `json:"keyId"`
+	Subject     string `json:"subject"`
+	Success     bool   `json:"success"`
+}
+
+// X509KeyUpload defines model for X509KeyUpload.
+type X509KeyUpload struct {
+	CertificatePem string  `json:"certificatePem"`
+	ChainPem       *string `json:"chainPem,omitempty"`
+	KeyId          string  `json:"keyId"`
+	PrivateKeyPem  string  `json:"privateKeyPem"`
+}
+
 // bearerAuthContextKey is the context key for bearerAuth security scheme
 type bearerAuthContextKey string
 
@@ -296,6 +313,9 @@ type PostSignParams struct {
 
 // PostAdminKeysJSONRequestBody defines body for PostAdminKeys for application/json ContentType.
 type PostAdminKeysJSONRequestBody = KeyUpload
+
+// PostAdminKeysX509JSONRequestBody defines body for PostAdminKeysX509 for application/json ContentType.
+type PostAdminKeysX509JSONRequestBody = X509KeyUpload
 
 // PostAdminTokensJSONRequestBody defines body for PostAdminTokens for application/json ContentType.
 type PostAdminTokensJSONRequestBody = TokenCreate
@@ -387,6 +407,11 @@ type ClientInterface interface {
 
 	PostAdminKeys(ctx context.Context, body PostAdminKeysJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// PostAdminKeysX509WithBody request with any body
+	PostAdminKeysX509WithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PostAdminKeysX509(ctx context.Context, body PostAdminKeysX509JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// DeleteAdminKeysKeyId request
 	DeleteAdminKeysKeyId(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -454,6 +479,30 @@ func (c *Client) PostAdminKeysWithBody(ctx context.Context, contentType string, 
 
 func (c *Client) PostAdminKeys(ctx context.Context, body PostAdminKeysJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPostAdminKeysRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostAdminKeysX509WithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostAdminKeysX509RequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostAdminKeysX509(ctx context.Context, body PostAdminKeysX509JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostAdminKeysX509Request(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -746,6 +795,46 @@ func NewPostAdminKeysRequestWithBody(server string, contentType string, body io.
 	}
 
 	operationPath := fmt.Sprintf("/admin/keys")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewPostAdminKeysX509Request calls the generic PostAdminKeysX509 builder with application/json body
+func NewPostAdminKeysX509Request(server string, body PostAdminKeysX509JSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPostAdminKeysX509RequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewPostAdminKeysX509RequestWithBody generates requests for PostAdminKeysX509 with any type of body
+func NewPostAdminKeysX509RequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/keys/x509")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -1151,6 +1240,11 @@ type ClientWithResponsesInterface interface {
 
 	PostAdminKeysWithResponse(ctx context.Context, body PostAdminKeysJSONRequestBody, reqEditors ...RequestEditorFn) (*PostAdminKeysResponse, error)
 
+	// PostAdminKeysX509WithBodyWithResponse request with any body
+	PostAdminKeysX509WithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostAdminKeysX509Response, error)
+
+	PostAdminKeysX509WithResponse(ctx context.Context, body PostAdminKeysX509JSONRequestBody, reqEditors ...RequestEditorFn) (*PostAdminKeysX509Response, error)
+
 	// DeleteAdminKeysKeyIdWithResponse request
 	DeleteAdminKeysKeyIdWithResponse(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*DeleteAdminKeysKeyIdResponse, error)
 
@@ -1269,6 +1363,38 @@ func (r PostAdminKeysResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r PostAdminKeysResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PostAdminKeysX509Response struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *X509KeyResponse
+	JSON400      *ErrorResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r PostAdminKeysX509Response) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostAdminKeysX509Response) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PostAdminKeysX509Response) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -1565,6 +1691,23 @@ func (c *ClientWithResponses) PostAdminKeysWithResponse(ctx context.Context, bod
 	return ParsePostAdminKeysResponse(rsp)
 }
 
+// PostAdminKeysX509WithBodyWithResponse request with arbitrary body returning *PostAdminKeysX509Response
+func (c *ClientWithResponses) PostAdminKeysX509WithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostAdminKeysX509Response, error) {
+	rsp, err := c.PostAdminKeysX509WithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostAdminKeysX509Response(rsp)
+}
+
+func (c *ClientWithResponses) PostAdminKeysX509WithResponse(ctx context.Context, body PostAdminKeysX509JSONRequestBody, reqEditors ...RequestEditorFn) (*PostAdminKeysX509Response, error) {
+	rsp, err := c.PostAdminKeysX509(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostAdminKeysX509Response(rsp)
+}
+
 // DeleteAdminKeysKeyIdWithResponse request returning *DeleteAdminKeysKeyIdResponse
 func (c *ClientWithResponses) DeleteAdminKeysKeyIdWithResponse(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*DeleteAdminKeysKeyIdResponse, error) {
 	rsp, err := c.DeleteAdminKeysKeyId(ctx, keyId, reqEditors...)
@@ -1742,6 +1885,46 @@ func ParsePostAdminKeysResponse(rsp *http.Response) (*PostAdminKeysResponse, err
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
 		var dest KeyResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePostAdminKeysX509Response parses an HTTP response from a PostAdminKeysX509WithResponse call
+func ParsePostAdminKeysX509Response(rsp *http.Response) (*PostAdminKeysX509Response, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostAdminKeysX509Response{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest X509KeyResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -2084,49 +2267,52 @@ func ParsePostSignResponse(rsp *http.Response) (*PostSignResponse, error) {
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"lej1/wIAAP//",
+	"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",
+	"+Ss4y+hMZ9NUJlWsH/4bAAD//w==",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

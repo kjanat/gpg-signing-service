@@ -9,15 +9,19 @@ import {
 	KeyListResponseSchema,
 	KeyResponseSchema,
 	KeyUploadSchema,
+	X509KeyResponseSchema,
+	X509KeyUploadSchema,
 } from "#schemas";
 import type { ErrorCode } from "#schemas/errors";
 import type { StoredKey } from "#schemas/keys";
+import { AnyStoredKeySchema, isX509Key, type StoredX509Key } from "#schemas/keys";
 import { createArmoredPrivateKey, createKeyId, HEADERS, HTTP, MediaType } from "#types";
 import { getAuditLogs, logAuditEvent } from "#utils/audit";
 import { fetchKeyStorage } from "#utils/durable-objects";
 import { scheduleBackgroundTask } from "#utils/execution";
 import { logger } from "#utils/logger";
 import { extractPublicKey, invalidateKeyCache, parseAndValidateKey } from "#utils/signing";
+import { parseAndValidateX509Key } from "#utils/x509";
 
 const app = createOpenAPIApp();
 
@@ -152,6 +156,124 @@ app.openapi(uploadKeyRoute, async (c) => {
 	}
 });
 
+const uploadX509KeyRoute = createRoute({
+	method: "post",
+	path: "/keys/x509",
+	summary: "Upload a new X.509 signing key",
+	description:
+		"Upload a PKCS#8 private key and X.509 certificate for detached PKCS#7 commit signing (git gpg.format=x509)",
+	security: [{ bearerAuth: [] }],
+	request: {
+		body: {
+			content: { "application/json": { schema: X509KeyUploadSchema } },
+			required: true,
+		},
+	},
+	responses: {
+		[HTTP.Created]: {
+			content: { "application/json": { schema: X509KeyResponseSchema } },
+			description: "Key uploaded successfully",
+		},
+		[HTTP.BadRequest]: {
+			content: { "application/json": { schema: ErrorResponseSchema } },
+			description: "Invalid request",
+		},
+		[HTTP.InternalServerError]: {
+			content: { "application/json": { schema: ErrorResponseSchema } },
+			description: "Internal server error",
+		},
+	},
+});
+
+app.openapi(uploadX509KeyRoute, async (c) => {
+	const requestId = c.req.header(HEADERS.REQUEST_ID) || crypto.randomUUID();
+
+	try {
+		const body = c.req.valid("json");
+
+		// Validate key material and key/certificate match
+		const keyInfo = await parseAndValidateX509Key(body.privateKeyPem, body.certificatePem, c.env.KEY_PASSPHRASE);
+
+		const storedKey: StoredX509Key = {
+			type: "x509",
+			keyId: body.keyId,
+			privateKeyPem: body.privateKeyPem,
+			certificatePem: body.certificatePem,
+			...(body.chainPem !== undefined && { chainPem: body.chainPem }),
+			fingerprint: keyInfo.fingerprint,
+			createdAt: new Date().toISOString(),
+			algorithm: keyInfo.algorithm,
+		};
+
+		const storeResponse = await fetchKeyStorage(c.env, "/store-key", {
+			method: "POST",
+			body: JSON.stringify(storedKey),
+			headers: { "Content-Type": MediaType.ApplicationJson },
+		});
+
+		if (!storeResponse.ok) {
+			const error = (await storeResponse.json()) as { error: string };
+			throw new Error(error.error || "Failed to store key");
+		}
+
+		await scheduleBackgroundTask(
+			c,
+			requestId,
+			logAuditEvent(c.env.AUDIT_DB, {
+				requestId,
+				action: "key_upload",
+				issuer: "admin",
+				subject: "admin",
+				keyId: body.keyId,
+				success: true,
+				metadata: JSON.stringify({
+					format: "x509",
+					fingerprint: keyInfo.fingerprint,
+					algorithm: keyInfo.algorithm,
+					subject: keyInfo.subject,
+				}),
+			}),
+		);
+
+		return c.json(
+			{
+				success: true,
+				keyId: body.keyId,
+				fingerprint: keyInfo.fingerprint,
+				algorithm: keyInfo.algorithm,
+				subject: keyInfo.subject,
+			},
+			HTTP.Created,
+		);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "Key upload failed";
+
+		await scheduleBackgroundTask(
+			c,
+			requestId,
+			logAuditEvent(c.env.AUDIT_DB, {
+				requestId,
+				action: "key_upload",
+				issuer: "admin",
+				subject: "admin",
+				keyId: "unknown",
+				success: false,
+				errorCode: "KEY_UPLOAD_ERROR",
+				metadata: JSON.stringify({ format: "x509", error: message }),
+			}),
+		);
+
+		return c.json(
+			{
+				error: message,
+				code: "KEY_UPLOAD_ERROR" as const satisfies ErrorCode,
+				requestId,
+			},
+			HTTP.InternalServerError,
+		);
+	}
+});
+
 const listKeysRoute = createRoute({
 	method: "get",
 	path: "/keys",
@@ -214,8 +336,11 @@ const getPublicKeyRoute = createRoute({
 	},
 	responses: {
 		[HTTP.OK]: {
-			content: { "application/pgp-keys": { schema: z.string() } },
-			description: "Public Key",
+			content: {
+				"application/pgp-keys": { schema: z.string() },
+				"application/pem-certificate-chain": { schema: z.string() },
+			},
+			description: "Public key (PGP armored) or X.509 certificate (PEM)",
 		},
 		[HTTP.NotFound]: {
 			content: { "application/json": { schema: ErrorResponseSchema } },
@@ -244,7 +369,14 @@ app.openapi(getPublicKeyRoute, async (c) => {
 			);
 		}
 
-		const storedKey = (await keyResponse.json()) as StoredKey;
+		const storedKey = AnyStoredKeySchema.parse(await keyResponse.json());
+
+		if (isX509Key(storedKey)) {
+			return c.text(storedKey.certificatePem, HTTP.OK, {
+				"Content-Type": MediaType.ApplicationPemCertificateChain,
+			});
+		}
+
 		const publicKey = await extractPublicKey(storedKey.armoredPrivateKey);
 
 		return c.text(publicKey, HTTP.OK, {

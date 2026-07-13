@@ -176,6 +176,19 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
 			expect(result).toBeTruthy();
 		});
 
+		it("should reject a key without base64 content lines", () => {
+			const bogus = [
+				"-----BEGIN PGP PRIVATE KEY BLOCK-----",
+				"",
+				"!!!not-base64!!!",
+				"@@@also-not-base64@@@",
+				"-----END PGP PRIVATE KEY BLOCK-----",
+			].join("\n");
+
+			const result = ArmoredPrivateKeySchema.safeParse(bogus);
+			expect(result.success).toBe(false);
+		});
+
 		// Edge cases - missing headers
 		it("should reject without BEGIN marker", () => {
 			const noBegin = `

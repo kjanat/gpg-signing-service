@@ -1,7 +1,7 @@
 // These imports are provided by @cloudflare/vitest-pool-workers
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "#gpg-signing-service";
 import {
 	generateToken,
@@ -261,5 +261,89 @@ describe("admin token management", () => {
 	it("requires admin auth", async () => {
 		const response = await request("/admin/tokens", "wrong-token");
 		expect(response.status).toBe(401);
+	});
+});
+
+describe("token route failure branches", () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it("returns 500 when listing tokens fails", async () => {
+		vi.spyOn(env.AUDIT_DB, "prepare").mockImplementation(() => {
+			throw new Error("DB down");
+		});
+
+		const response = await request("/admin/tokens", env.ADMIN_TOKEN);
+
+		expect(response.status).toBe(500);
+		const body = (await response.json()) as { code: string; error: string };
+		expect(body.code).toBe("INTERNAL_ERROR");
+		expect(body.error).toBe("DB down");
+	});
+
+	it("returns 500 with the fallback message when list throws a non-Error", async () => {
+		vi.spyOn(env.AUDIT_DB, "prepare").mockImplementation(() => {
+			throw "string failure";
+		});
+
+		const response = await request("/admin/tokens", env.ADMIN_TOKEN);
+
+		expect(response.status).toBe(500);
+		const body = (await response.json()) as { error: string };
+		expect(body.error).toBe("List failed");
+	});
+
+	it("returns 404 when revoking an unknown token", async () => {
+		const response = await request("/admin/tokens/00000000-0000-4000-8000-000000000000", env.ADMIN_TOKEN, {
+			method: "DELETE",
+		});
+
+		expect(response.status).toBe(404);
+		const body = (await response.json()) as { code: string };
+		expect(body.code).toBe("INVALID_REQUEST");
+	});
+
+	it("returns 500 with the fallback message when revoke throws a non-Error", async () => {
+		vi.spyOn(env.AUDIT_DB, "prepare").mockImplementation(() => {
+			throw "string failure";
+		});
+
+		const response = await request("/admin/tokens/00000000-0000-4000-8000-000000000000", env.ADMIN_TOKEN, {
+			method: "DELETE",
+		});
+
+		expect(response.status).toBe(500);
+		const body = (await response.json()) as { code: string; error: string };
+		expect(body.code).toBe("INTERNAL_ERROR");
+		expect(body.error).toBe("Revoke failed");
+	});
+
+	it("mints a token restricted to specific key ids", async () => {
+		const response = await request("/admin/tokens", env.ADMIN_TOKEN, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ name: "x509-scoped-token", keyIds: ["A1B2C3D4E5F67890"] }),
+		});
+
+		expect(response.status).toBe(201);
+		const body = (await response.json()) as { keyIds: string[] | null };
+		expect(body.keyIds).toEqual(["A1B2C3D4E5F67890"]);
+	});
+
+	it("returns 500 for a non-unique-constraint creation failure", async () => {
+		vi.spyOn(env.AUDIT_DB, "prepare").mockImplementation(() => {
+			throw new Error("DB down");
+		});
+
+		const response = await request("/admin/tokens", env.ADMIN_TOKEN, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ name: "doomed-token" }),
+		});
+
+		expect(response.status).toBe(500);
+		const body = (await response.json()) as { code: string };
+		expect(body.code).toBe("INTERNAL_ERROR");
 	});
 });

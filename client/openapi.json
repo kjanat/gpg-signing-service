@@ -176,6 +176,70 @@
           "keyId"
         ]
       },
+      "X509KeyResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "keyId": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 16,
+            "pattern": "^[A-Fa-f0-9]{16}$"
+          },
+          "fingerprint": {
+            "type": "string",
+            "minLength": 40,
+            "maxLength": 40,
+            "pattern": "^[A-Fa-f0-9]{40}$"
+          },
+          "algorithm": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "success",
+          "keyId",
+          "fingerprint",
+          "algorithm",
+          "subject"
+        ]
+      },
+      "X509KeyUpload": {
+        "type": "object",
+        "properties": {
+          "keyId": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 16,
+            "pattern": "^[A-Fa-f0-9]{16}$"
+          },
+          "privateKeyPem": {
+            "type": "string",
+            "minLength": 100,
+            "maxLength": 10000
+          },
+          "certificatePem": {
+            "type": "string",
+            "minLength": 100,
+            "maxLength": 10000
+          },
+          "chainPem": {
+            "type": "string",
+            "minLength": 100,
+            "maxLength": 10000
+          }
+        },
+        "required": [
+          "keyId",
+          "privateKeyPem",
+          "certificatePem"
+        ]
+      },
       "KeyListResponse": {
         "type": "object",
         "properties": {
@@ -739,6 +803,59 @@
         }
       }
     },
+    "/admin/keys/x509": {
+      "post": {
+        "summary": "Upload a new X.509 signing key",
+        "description": "Upload a PKCS#8 private key and X.509 certificate for detached PKCS#7 commit signing (git gpg.format=x509)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/X509KeyUpload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Key uploaded successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/X509KeyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/keys/{keyId}/public": {
       "get": {
         "summary": "Get public key",
@@ -761,9 +878,14 @@
         ],
         "responses": {
           "200": {
-            "description": "Public Key",
+            "description": "Public key (PGP armored) or X.509 certificate (PEM)",
             "content": {
               "application/pgp-keys": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/pem-certificate-chain": {
                 "schema": {
                   "type": "string"
                 }
