@@ -5,6 +5,10 @@ inputs:
   go-version:
     description: "Go version"
     required: false
+  go-version-file:
+    description: "Go version file, e.g. go.mod"
+    required: false
+    default: client/go.mod
   check-latest:
     description: "Check for latest Go version"
     required: false
@@ -13,17 +17,17 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Setup Go (from go.mod)
+    - name: "Setup Go (from ${{ inputs.go-version-file || 'go.mod' }})"
       if: ${{ ! inputs.go-version }}
       uses: actions/setup-go@v6
       with:
-        go-version-file: client/go.mod
+        go-version-file: ${{ inputs.go-version-file }}
         check-latest: ${{ inputs.check-latest }}
         cache-dependency-path: |
           **/go.mod
           **/go.sum
 
-    - name: Setup Go (${{ inputs.go-version }})
+    - name: "Setup Go (${{ inputs.go-version }})"
       if: inputs.go-version
       uses: actions/setup-go@v6
       with:

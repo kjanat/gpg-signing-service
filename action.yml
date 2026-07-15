@@ -1,0 +1,99 @@
+name: "Install gpg-sign"
+description: "Download a released gpg-sign binary and add it to PATH"
+
+inputs:
+  version:
+    description: "Release tag to install, or 'latest'"
+    required: false
+    default: "latest"
+  repository:
+    description: "Repository publishing the release"
+    required: false
+    default: "kjanat/gpg-signing-service"
+  token:
+    description: "Token for the GitHub API (release lookup and asset download)"
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  version:
+    description: "Resolved release tag that was installed"
+    value: ${{ steps.install.outputs.version }}
+  path:
+    description: "Full path to the installed binary"
+    value: ${{ steps.install.outputs.path }}
+
+runs:
+  using: "composite"
+  steps:
+    - id: install
+      shell: pwsh
+      env:
+        GH_API_TOKEN: ${{ inputs.token }}
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_REPOSITORY: ${{ inputs.repository }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $ProgressPreference = 'SilentlyContinue'
+
+        $os = if ($IsWindows) { 'windows' } elseif ($IsMacOS) { 'darwin' } elseif ($IsLinux) { 'linux' } else { throw "Unsupported OS" }
+        $arch = switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
+          'X64'   { 'amd64' }
+          'Arm64' { 'arm64' }
+          default { throw "Unsupported architecture: $_" }
+        }
+        # release matrix publishes a windows amd64 build only
+        if ($os -eq 'windows' -and $arch -eq 'arm64') { $arch = 'amd64' }
+
+        $assetName = "gpg-sign-$os-$arch"
+        if ($os -eq 'windows') { $assetName += '.exe' }
+        $binName = if ($os -eq 'windows') { 'gpg-sign.exe' } else { 'gpg-sign' }
+
+        $headers = @{
+          'Accept'               = 'application/vnd.github+json'
+          'X-GitHub-Api-Version' = '2022-11-28'
+        }
+        if ($env:GH_API_TOKEN) { $headers['Authorization'] = "Bearer $($env:GH_API_TOKEN)" }
+
+        $repo = $env:INPUT_REPOSITORY
+        $ref = if ($env:INPUT_VERSION -and $env:INPUT_VERSION -ne 'latest') {
+          "tags/$($env:INPUT_VERSION)"
+        } else {
+          'latest'
+        }
+
+        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/$ref" -Headers $headers
+        $tag = $release.tag_name
+        Write-Host "Installing gpg-sign $tag ($assetName)"
+
+        $asset = $release.assets | Where-Object { $_.name -eq $assetName }
+        if (-not $asset) { throw "Asset '$assetName' not found in release $tag of $repo" }
+
+        $installDir = Join-Path ($env:RUNNER_TEMP ?? [System.IO.Path]::GetTempPath()) 'gpg-sign'
+        New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+        $binPath = Join-Path $installDir $binName
+
+        $dlHeaders = $headers.Clone()
+        $dlHeaders['Accept'] = 'application/octet-stream'
+        Invoke-WebRequest -Uri $asset.url -Headers $dlHeaders -OutFile $binPath
+
+        $checksums = $release.assets | Where-Object { $_.name -eq 'checksums.txt' }
+        if ($checksums) {
+          $sumHeaders = $headers.Clone()
+          $sumHeaders['Accept'] = 'application/octet-stream'
+          $sumText = (Invoke-WebRequest -Uri $checksums.url -Headers $sumHeaders).Content
+          $line = ($sumText -split "`n") | Where-Object { $_ -match [regex]::Escape($assetName) + '\s*$' } | Select-Object -First 1
+          if (-not $line) { throw "No checksum entry for $assetName in checksums.txt" }
+          $want = ($line -split '\s+')[0].ToLower()
+          $got = (Get-FileHash -Algorithm SHA256 -Path $binPath).Hash.ToLower()
+          if ($want -ne $got) { throw "Checksum mismatch for ${assetName}: expected $want, got $got" }
+          Write-Host "Checksum verified: $got"
+        } else {
+          Write-Warning "checksums.txt not found in release $tag; skipping verification"
+        }
+
+        if ($os -ne 'windows') { chmod +x $binPath }
+
+        Add-Content -Path $env:GITHUB_PATH -Value $installDir
+        "version=$tag" | Add-Content -Path $env:GITHUB_OUTPUT
+        "path=$binPath" | Add-Content -Path $env:GITHUB_OUTPUT
