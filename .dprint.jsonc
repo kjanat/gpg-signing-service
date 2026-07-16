@@ -43,10 +43,9 @@
         "stdin": true
       },
       {
-        "command": "tombi format - --stdin-filename {{file_path}}",
+        "command": "bun tombi format - --stdin-filename {{file_path}}",
         "exts": ["toml"],
-        "cacheKeyFiles": ["tombi.toml"],
-        "setupCommand": "npm i -g tombi"
+        "cacheKeyFiles": ["tombi.toml", "bun.lock"]
       }
     ]
   },
@@ -62,13 +61,13 @@
     "https://plugins.dprint.dev/kjanat/shfmt-1.0.0.wasm",
     "https://plugins.dprint.dev/markdown-0.22.1.wasm",
     "https://plugins.dprint.dev/dockerfile-0.4.1.wasm",
-    "https://plugins.dprint.dev/biome-0.13.0.wasm",
+    "https://plugins.dprint.dev/biome-0.13.2.wasm",
     "https://plugins.dprint.dev/ruff-0.7.21.wasm",
     "https://plugins.dprint.dev/jupyter-0.3.1.wasm",
     "https://plugins.dprint.dev/g-plane/malva-v0.16.0.wasm",
     "https://plugins.dprint.dev/g-plane/markup_fmt-v0.27.3.wasm",
     "https://plugins.dprint.dev/g-plane/pretty_yaml-v0.6.0.wasm",
-    "https://plugins.dprint.dev/exec-0.7.2.json@6c30bd00dfb176774ece412d0fbf149478269ecc92c55ab2d6f4116938ed993e",
+    "https://plugins.dprint.dev/exec-0.7.3.json@a7898d5f1897e77bff474cec3d948c3ec3a7f455e32de2cc60c8adb9a5dd24aa",
     "https://plugins.dprint.dev/prettier-0.72.0.json@6e7af2cb2182a5a11358d3adde9ae0ef3b94b7d2e5dcfdd252e3f7c3916541fe"
   ]
 }
