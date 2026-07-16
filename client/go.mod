@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/getkin/kin-openapi v0.142.0
-	github.com/oapi-codegen/runtime v1.4.2
+	github.com/oapi-codegen/runtime v1.6.0
 	github.com/spf13/cobra v1.10.2
 )
 
