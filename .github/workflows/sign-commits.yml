@@ -1,8 +1,8 @@
 name: Sign Commits
 
 on:
+  workflow_dispatch: null
   # push: { branches: [master] }
-  workflow_dispatch:
 
 permissions:
   id-token: write # Required for OIDC token
@@ -13,9 +13,8 @@ jobs:
     name: Sign Commits
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-        with: { fetch-depth: 0 }
-      - uses: go-task/setup-task@v2
+      - { uses: actions/checkout@v7, with: { fetch-depth: 0 } }
+      - { uses: ./.github/actions/setup-task }
 
       - name: Get OIDC Token
         id: oidc
@@ -29,9 +28,9 @@ jobs:
       - name: Sign Commit
         id: sign
         env:
-          SIGNING_SERVICE_URL: ${{ vars.SIGNING_SERVICE_URL }}
           OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
           REQUEST_ID: ${{ github.run_id }}-${{ github.run_number }}
+          SIGNING_SERVICE_URL: ${{ vars.SIGNING_SERVICE_URL }}
         run: |
           # Get commit data
           COMMIT_DATA="$(git cat-file commit HEAD)"
@@ -41,26 +40,28 @@ jobs:
             -H "Authorization: Bearer ${OIDC_TOKEN}" \
             -H "Content-Type: text/plain" \
             -H "X-Request-ID: ${REQUEST_ID}" \
-            --data "$COMMIT_DATA")"
+            --data "${COMMIT_DATA}")"
 
           if [[ "$SIGNATURE" == *"-----BEGIN PGP SIGNATURE-----"* ]]; then
-            echo "$SIGNATURE" > /tmp/signature.asc
-            echo "signature_file=/tmp/signature.asc" >> "$GITHUB_OUTPUT"
+            echo "${SIGNATURE}" > /tmp/signature.asc
+            echo "signature_file=/tmp/signature.asc" >> "${GITHUB_OUTPUT}"
           else
-            echo "Error: Invalid signature response"
-            echo "$SIGNATURE"
+            echo "::error:Error: Invalid signature response"
+            echo "${SIGNATURE}"
             exit 1
           fi
 
       - name: Apply Signature
-        env: { SIGNATURE_FILE: "${{ steps.sign.outputs.signature_file }}" }
+        env:
+          SIGNATURE_FILE: ${{ steps.sign.outputs.signature_file }}
+          SIGNING_SERVICE_URL: ${{ vars.SIGNING_SERVICE_URL }}
         run: |
           # Get the tree
-          TREE="$(git cat-file -p HEAD | grep ^tree | cut -d' ' -f2)"
+          TREE="$(git cat-file -p HEAD | grep '^tree' | cut -d' ' -f2)"
 
           # Get author and committer info
-          AUTHOR="$(git cat-file -p HEAD | grep ^author)"
-          COMMITTER="$(git cat-file -p HEAD | grep ^committer)"
+          AUTHOR="$(git cat-file -p HEAD | grep '^author')"
+          COMMITTER="$(git cat-file -p HEAD | grep '^committer')"
 
           # Get commit message
           MESSAGE="$(git log -1 --format=%B)"
@@ -70,29 +71,28 @@ jobs:
 
           # Create new commit object with signature
           {
-            echo "tree $TREE"
+            echo "tree ${TREE}"
             # Properly handle multiple parents for merge commits
-            git cat-file -p HEAD | grep ^parent | while read -r line; do
-              echo "$line"
+            git cat-file -p HEAD | grep '^parent' | while read -r line; do
+              echo "${line}"
             done
-            echo "$AUTHOR"
-            echo "$COMMITTER"
-            echo "gpgsig $(cat "$SIGNATURE_FILE" | sed '2,$s/^/ /')"
+            echo "${AUTHOR}"
+            echo "${COMMITTER}"
+            echo "gpgsig $(cat "${SIGNATURE_FILE}" | sed '2,$s/^/ /')"
             echo ""
-            echo "$MESSAGE"
+            echo "${MESSAGE}"
           } | git hash-object -t commit --stdin -w > "${_NEW_COMMIT}"
 
           # Update branch to point to signed commit
           git update-ref HEAD "$(cat "${_NEW_COMMIT}")"
 
       - name: Verify Signature
-        env: { SIGNING_SERVICE_URL: "${{ vars.SIGNING_SERVICE_URL }}" }
         run: |
           # Import public key
           curl -s "${SIGNING_SERVICE_URL}/public-key" | gpg --import
 
           # Verify the signature
-          git verify-commit HEAD || echo "Note: Signature verification may fail until key is trusted"
+          git verify-commit HEAD || echo "::notice::Note: Signature verification may fail until key is trusted"
 
       - name: Push Signed Commit
         run: git push origin HEAD --force-with-lease

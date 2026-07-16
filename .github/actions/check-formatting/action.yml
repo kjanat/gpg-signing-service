@@ -1,15 +1,40 @@
-name: "Check Formatting"
-description: "Check code formatting"
-
+# This script checks if the code is formatted correctly
+# If not, it prints the diff and exits with the number of unformatted files.
+# If yes, it prints "All files are correctly formatted" and exits with 0
+---
+name: Check Formatting
+description: Check code formatting
 runs:
-  using: "composite"
+  using: composite
   steps:
+    - uses: ./.github/actions/setup-go
+    - uses: ./.github/actions/setup-golangci-lint
     - uses: ./.github/actions/setup-task
-
-    - name: Install shfmt
-      shell: bash
-      run: go install mvdan.cc/sh/v3/cmd/shfmt@latest
-
+    - uses: ./.github/actions/setup-bun
     - name: Check Formatting
       shell: bash
-      run: ${{ github.action_path }}/script.sh
+      run: |
+        set -o pipefail
+
+        function print_markdown() { # Print markdown formatted output to the summary
+        	local codefence='```' lang="${1:-}" code="${2:-}"
+        	printf "${codefence}%s\n%s\n${codefence}\n" "${lang}" "${code}"
+        }
+
+        function print_report() { # Print the formatting report
+        	printf '## %s\n\n' 'Different files'
+        	print_markdown 'diff' "${files}"
+        	printf '\n## %s\n\n' 'Diff'
+        	print_markdown 'diff' "${diff}"
+        }
+
+        root=$(git rev-parse --show-toplevel) || exit 1
+        cd "${GITHUB_WORKSPACE:-${root}}" || exit 1
+
+        if ! diff="$(task format:check 2>&1)"; then
+        	files="$(task format:check -- --list-different 2>/dev/null)" || true
+        	print_report | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
+        	exit 1
+        else
+        	printf '%s\n' "All files are correctly formatted" | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
+        fi

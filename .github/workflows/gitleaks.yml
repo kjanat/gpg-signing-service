@@ -1,16 +1,11 @@
 name: gitleaks
 on: [pull_request, push, workflow_dispatch]
-permissions:
-  contents: read
-  pull-requests: write
+permissions: { contents: read, pull-requests: write }
 jobs:
   scan:
     name: gitleaks
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with: { fetch-depth: 0 }
-      - uses: gitleaks/gitleaks-action@v3
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          GITLEAKS_CONFIG: .gitleaks.toml
+    steps: [
+      { uses: actions/checkout@v7, with: { fetch-depth: 0 } },
+      { uses: gitleaks/gitleaks-action@v3, env: { GITHUB_TOKEN: "${{ github.token }}", GITLEAKS_CONFIG: .gitleaks.toml } },
+    ]

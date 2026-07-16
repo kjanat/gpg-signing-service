@@ -1,12 +1,12 @@
-name: "Setup Task"
-description: "Setup Task"
+name: Setup Task
+description: Setup Task
 
 runs:
-  using: "composite"
+  using: composite
   steps:
-    - run: ${{ github.action_path }}/task_available.sh
-      shell: bash
+    - shell: bash
+      run: if command -v task &>/dev/null; then echo "TASK_AVAILABLE=true" >>"${GITHUB_ENV}"; fi
 
     - name: Setup Task
-      if: ${{ env.TASK_AVAILABLE == 'false' }}
+      if: ${{ env.TASK_AVAILABLE !== 'true' }}
       uses: go-task/setup-task@v2

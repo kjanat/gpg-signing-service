@@ -1,21 +1,11 @@
-name: "Setup Go"
-description: "Setup Go with caching and install dependencies"
-
+name: Setup Go
+description: Setup Go with caching and install dependencies
 inputs:
-  go-version:
-    description: "Go version"
-    required: false
-  go-version-file:
-    description: "Go version file, e.g. go.mod"
-    required: false
-    default: client/go.mod
-  check-latest:
-    description: "Check for latest Go version"
-    required: false
-    default: "true"
-
+  go-version: { description: Go version, required: false }
+  go-version-file: { description: "Go version file, e.g. go.mod", required: false, default: client/go.mod }
+  check-latest: { description: Check for latest Go version, required: false, default: true }
 runs:
-  using: "composite"
+  using: composite
   steps:
     - name: "Setup Go (from ${{ inputs.go-version-file || 'go.mod' }})"
       if: ${{ ! inputs.go-version }}

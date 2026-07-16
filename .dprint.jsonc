@@ -31,7 +31,8 @@
   },
   "yaml": {
     "indentBlockSequenceInMap": true,
-    "flowMap.preferSingleLine": true
+    "flowMap.preferSingleLine": true,
+    "printWidth": 300
   },
   "exec": {
     "cwd": "${configDir}",

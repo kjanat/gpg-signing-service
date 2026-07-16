@@ -1,45 +1,23 @@
-name: "Setup Bun"
-description: "Setup Bun with caching and install dependencies"
+name: Setup Bun
+description: Setup Bun with caching and install dependencies
 
 inputs:
-  setup-node:
-    description: "Setup Node.js"
-    required: false
-    default: "true"
-  node-version:
-    description: "Node.js version"
-    required: false
-    default: "latest"
-  skip-install:
-    description: "Skip bun install"
-    required: false
-    default: "false"
+  setup-node: { description: Setup Node.js, required: false, default: true }
+  node-version: { description: Node.js version, required: false, default: latest }
+  skip-install: { description: Skip bun install, required: false, default: false }
+
+outputs:
+  bun-version: { description: The version of Bun that was installed., value: "${{ steps.setup-bun.outputs.bun-version }}" }
+  bun-revision: { description: The revision of Bun that was installed., value: "${{ steps.setup-bun.outputs.bun-revision }}" }
+  bun-path: { description: The path to the Bun executable., value: "${{ steps.setup-bun.outputs.bun-path }}" }
+  bun-download-url: { description: The URL from which Bun was downloaded., value: "${{ steps.setup-bun.outputs.bun-download-url }}" }
+  bun-cache-hit: { description: If the version of Bun was cached., value: "${{ steps.setup-bun.outputs.cache-hit }}" }
 
 runs:
   using: "composite"
-  steps:
-    - name: Install Node.js (just in case)
-      id: setup-node
-      if: ${{ inputs.setup-node == 'true' }}
-      uses: actions/setup-node@v7
-      with: { node-version: "${{ inputs.node-version }}" }
-
-    - name: Setup Bun
-      id: setup-bun
-      uses: oven-sh/setup-bun@v2
-      with: { bun-version-file: package.json }
-
-    - name: Cache ~/.bun
-      id: cache-bun
-      uses: actions/cache@v6
-      with:
-        path: ~/.bun
-        key: ${{ runner.os }}-bun-${{ hashFiles('package.json') }}-${{ hashFiles('bun.lockb', 'bun.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-bun-${{ hashFiles('package.json') }}-
-
-    - name: Install dependencies
-      id: bun-install
-      if: ${{ inputs.skip-install != 'true' }}
-      run: bun install
-      shell: bash
+  steps: [
+    { name: Install Node.js, id: setup-node, if: "${{ inputs.setup-node == 'true' }}", uses: actions/setup-node@v7, with: { node-version: "${{ inputs.node-version }}" } },
+    { name: Setup Bun, id: setup-bun, uses: oven-sh/setup-bun@v2 },
+    { name: Cache ~/.bun, id: cache-bun, uses: actions/cache@v6, with: { path: ~/.bun, key: "${{ runner.os }}-bun-${{ hashFiles('package.json') }}-${{ hashFiles('bun.lockb', 'bun.lock') }}", restore-keys: "${{ runner.os }}-bun-${{ hashFiles('package.json') }}-" } },
+    { name: Install dependencies, id: bun-install, if: "${{ !inputs.skip-install == 'true' }}", run: bun install, shell: bash },
+  ]
