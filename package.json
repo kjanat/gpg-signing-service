@@ -75,7 +75,7 @@
     "eslint": "10.7.0",
     "jiti": "2.7.0",
     "jose": "6.2.3",
-    "runner-run": "0.19.1",
+    "runner-run": "0.20.0",
     "tombi": "1.2.0",
     "typescript": ">=6, <7",
     "typescript-eslint": "8.64.0",
