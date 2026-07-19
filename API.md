@@ -1,5 +1,10 @@
 # GPG Signing Service API Documentation
 
+> [!WARNING]
+> This historical guide contains stale endpoints and examples. Use the current
+> [API guide](docs/api.md), [authentication guide](docs/authentication.md), and
+> generated [`client/openapi.json`](client/openapi.json).
+
 ## Overview
 
 The GPG Signing Service is an edge-deployed Git commit signing API running on

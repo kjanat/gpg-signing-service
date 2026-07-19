@@ -35,7 +35,7 @@ get_oidc_token() {
 
 		log_info "Fetching OIDC token from GitHub Actions..."
 		OIDC_TOKEN=$(curl -s -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-			"${ACTIONS_ID_TOKEN_REQUEST_URL:-}" | jq -r '.token')
+			"${ACTIONS_ID_TOKEN_REQUEST_URL:-}&audience=gpg-signing-service" | jq -r '.value')
 	fi
 
 	if [[ -z ${OIDC_TOKEN} || ${OIDC_TOKEN} == "null" ]]; then

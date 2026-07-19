@@ -1,6 +1,13 @@
 # GPG Signing Service Examples
 
-Complete, working examples for integrating with the GPG Signing Service API.
+> [!WARNING]
+> Some examples below are historical and are not maintained as drop-in
+> workflows. Start with the current [CI integrations](../docs/integrations.md),
+> [authentication](../docs/authentication.md), and
+> [security model](../docs/security-model.md).
+
+Historical examples for integrating with the GPG Signing Service API. Compare
+them with the generated contract and canonical guides before adapting them.
 
 ## Directory Structure
 

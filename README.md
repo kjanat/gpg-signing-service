@@ -1,284 +1,141 @@
 # GPG Signing Service
 
-Edge-deployed Git commit signing API using Hono on Cloudflare Workers with
-openpgp.js and micro509.
+An HTTP signing service for CI workloads, deployed as a Cloudflare Worker. It
+can produce detached OpenPGP signatures or detached PKCS#7/CMS signatures for
+Git's X.509 mode.
 
-## Features
+The repository contains three separate pieces:
 
-- GPG-compatible commit signing via REST API
-- X.509 commit signing via detached PKCS#7 (`git -c gpg.format=x509`)
-- OIDC authentication for GitHub Actions and GitLab CI
-- Service tokens (`gst_`) for one-secret CI auth, with a per-token key allowlist
-- Durable Objects for secure key storage
-- D1 database for audit logging
-- Rate limiting per CI identity
-- Multi-key support with rotation
+- `action.yml` installs the released `gpg-sign` CLI in GitHub Actions.
+- The CLI requests detached OpenPGP signatures from a deployed service.
+- The Worker authenticates callers, stores keys, signs supplied bytes, and
+  records selected audit events.
 
-## Architecture
+Installing the CLI does not grant signing access, and requesting a detached
+signature does not attach it to a Git commit.
 
-Deployed topology and bindings:
+## Documentation
 
-```mermaid
-architecture-beta
-    group callers(cloud)[Callers]
-    service gha(server)[GitHub Actions] in callers
-    service gitlab(server)[GitLab CI] in callers
-    service admin(server)[Admin and CLI] in callers
-    junction jin in callers
+| Goal                                        | Guide                                               |
+| ------------------------------------------- | --------------------------------------------------- |
+| Understand the components and request flow  | [How it works](docs/how-it-works.md)                |
+| Install the CLI in GitHub Actions           | [GitHub Action](docs/github-action.md)              |
+| Learn who can access each operation         | [Authentication and access](docs/authentication.md) |
+| Use the `gpg-sign` CLI                      | [CLI](docs/cli.md)                                  |
+| Request signatures from GitHub or GitLab CI | [CI integrations](docs/integrations.md)             |
+| Deploy an instance                          | [Self-hosting](docs/self-hosting.md)                |
+| Review the trust boundary and known gaps    | [Security model](docs/security-model.md)            |
+| Look up an endpoint                         | [API guide](docs/api.md)                            |
+| Diagnose common failures                    | [Troubleshooting](docs/troubleshooting.md)          |
 
-    group cf(cloud)[Cloudflare]
-    service worker(server)[Signing Worker] in cf
-    service kv(disk)[KV JWKS cache] in cf
-    service d1(database)[D1 audit and tokens] in cf
-    junction jdo in cf
-    service keys(database)[KeyStorage DO] in cf
-    service rl(database)[RateLimiter DO] in cf
+See the [documentation index](docs/README.md) for generated references and
+design records.
 
-    service issuers(internet)[OIDC Issuers]
+## What it provides
 
-    gha:B --> T:jin
-    gitlab:R --> L:jin
-    admin:T --> B:jin
-    jin:R --> L:worker
+- OpenPGP detached signatures
+- X.509 detached PKCS#7/CMS signatures through the HTTP API
+- GitHub Actions and GitLab CI OIDC authentication
+- Revocable `gst_` service tokens with optional key allowlists
+- Admin endpoints for key and token management
+- Durable Object key storage and rate limiting
+- D1 audit records and service-token hashes
+- KV-backed OIDC JWKS caching
+- Generated OpenAPI 3.0 contract and Go client
 
-    worker:T --> B:kv
-    kv:T --> B:issuers
-    worker:B --> T:d1
+## Access summary
 
-    worker:R --> L:jdo
-    jdo:T --> B:keys
-    jdo:B --> T:rl
+| Operation                                       | Credential                                |
+| ----------------------------------------------- | ----------------------------------------- |
+| Install a release with the GitHub Action        | GitHub API token for release access       |
+| Read `/health`, `/public-key`, `/doc`, or `/ui` | None                                      |
+| Call `/sign`                                    | Accepted OIDC JWT or `gst_` service token |
+| Call `/admin/*`                                 | Deployment's static `ADMIN_TOKEN`         |
+
+The current OIDC implementation validates issuer, audience, time, algorithm,
+and signature, but does **not** authorize repository, organization, workflow,
+ref, environment, namespace, or project claims. An accepted signing credential
+can request signatures over arbitrary non-empty text with any accessible key.
+Read the [authentication](docs/authentication.md) and
+[security](docs/security-model.md) guides before exposing a deployment.
+
+## Quick start: install the CLI
+
+Select the action implementation and downloaded binary independently. This
+example fixes the action implementation to the commit tagged `v1.1.1`:
+
+```yaml
+permissions:
+  contents: read
+
+steps:
+  - uses: kjanat/gpg-signing-service@43a5c6b9aa5e796e2967d054167ffe3ab9e4b3b1
+    with:
+      version: v1.1.1
+
+  - env:
+      GPG_SIGN_URL: ${{ vars.SIGNING_SERVICE_URL }}
+    run: gpg-sign health
 ```
 
-How a signing request flows, and which credential opens which door:
+This only installs the CLI. Continue with
+[Authentication](docs/authentication.md) and
+[CI integrations](docs/integrations.md) to request a signature.
 
-```mermaid
-flowchart LR
-    subgraph callers["Callers"]
-        gha["GitHub Actions"]
-        gitlab["GitLab CI"]
-        admin["Admin / gpg-sign CLI"]
-    end
+The binary release tag and its colocated checksum remain publisher-controlled.
+See the [installer trust limits](docs/github-action.md#pinning-and-trust-limits)
+when an independently fixed digest is required.
 
-    issuers[["OIDC Issuers<br/>token.actions.githubusercontent.com<br/>gitlab.com"]]
+## API
 
-    subgraph cf["Cloudflare"]
-        worker{{"Signing Worker (Hono)<br/>POST /sign · /admin/*"}}
+The deployed service exposes:
 
-        subgraph state["Bound state"]
-            kv[("KV<br/>JWKS_CACHE")]
-            rl[("RateLimiter DO<br/>per-identity quota")]
-            ks[("KeyStorage DO<br/>private keys")]
-            d1[("D1<br/>audit_logs · service_tokens")]
-        end
-    end
+| Path          | Purpose                              |
+| ------------- | ------------------------------------ |
+| `/doc`        | Generated OpenAPI 3.0 JSON           |
+| `/ui`         | Swagger UI                           |
+| `/health`     | Public dependency health             |
+| `/public-key` | Public OpenPGP key retrieval         |
+| `/sign`       | Authenticated detached signing       |
+| `/admin/*`    | Key, token, and audit administration |
 
-    gha -- "OIDC JWT" --> worker
-    gitlab -- "OIDC JWT" --> worker
-    admin -- "gst_ token / ADMIN_TOKEN" --> worker
-
-    worker -- "verify JWT" --> kv
-    kv -. "fetch JWKS on miss" .-> issuers
-    worker -- "check quota" --> rl
-    worker -- "look up gst_ token hash" --> d1
-    worker -- "load signing key" --> ks
-    worker -- "log every attempt" --> d1
-
-    worker == "PGP armor or detached PKCS#7" ==> gha
-```
-
-## Setup
-
-### 1. Prerequisites
-
-- [Cloudflare account][cloudflare:dashboard]
-- [Wrangler CLI][wrangler:install]
-- GPG installed locally
-
-### 2. Create Cloudflare Resources
-
-```bash
-# Create D1 database
-bun run db:create
-# Copy the database_id to wrangler.toml
-
-# Create KV namespace
-bun run kv:create
-# Copy the id to wrangler.toml
-
-# Set secrets
-wrangler secret put KEY_PASSPHRASE
-wrangler secret put ADMIN_TOKEN
-```
-
-### 3. Generate Signing Key
-
-```bash
-# Generate key in .keys/ directory (NOT ~/.gnupg)
-bun run generate-key \
-  "Your Name" \
-  "your@email.com" \
-  "Signing Key" \
-  "your-passphrase"
-```
-
-### 4. Deploy
-
-```bash
-# Run database migration
-bun run db:migrate
-
-# Deploy to Cloudflare
-bun run deploy
-```
-
-### 5. Upload Key to Service
-
-```bash
-curl -X POST https://gpg.kajkowalski.nl/admin/keys \
-  -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "armoredPrivateKey": "-----BEGIN PGP PRIVATE KEY BLOCK-----
-    <<<...INSERT YOUR GPG KEY HERE...>>>
-    -----END PGP PRIVATE KEY BLOCK-----",
-    "keyId": "signing-key-v1"
-  }'
-```
-
-## API Endpoints
-
-### Public
-
-| Method | Path          | Description                               |
-| :----- | :------------ | :---------------------------------------- |
-| `GET`  | `/health`     | Health check                              |
-| `GET`  | `/public-key` | Get public key for signature verification |
-
-### Protected (OIDC Auth)
-
-| Method | Path    | Description      |
-| :----- | :------ | :--------------- |
-| `POST` | `/sign` | Sign commit data |
-
-### Admin (Admin Token)
-
-| Method   | Path                        | Description        |
-| :------- | :-------------------------- | :----------------- |
-| `GET`    | `/admin/keys/:keyId/public` | Get public key     |
-| `GET`    | `/admin/keys`               | List keys          |
-| `POST`   | `/admin/keys`               | Upload signing key |
-| `DELETE` | `/admin/keys/:keyId`        | Delete key         |
-| `GET`    | `/admin/audit`              | Get audit logs     |
-
-## CI Integration
-
-### GitHub Actions
-
-1. Set repository variable `SIGNING_SERVICE_URL`
-2. Add workflow from [`sign-commits.yml`][actions:sign-commits]
-3. Configure OIDC audience in your worker's `ALLOWED_ISSUERS`
-
-### GitLab CI
-
-1. Set CI variable `SIGNING_SERVICE_URL`
-2. Add pipeline from [`.gitlab-ci.yml`][gitlab:sign-commits]
-3. Configure OIDC audience
+The checked-in schema is
+[`client/openapi.json`](client/openapi.json). See the [API guide](docs/api.md)
+for the complete endpoint table.
 
 ## Development
 
+Project commands run through [Task](https://taskfile.dev/):
+
 ```bash
-# Install dependencies
-bun install
-
-# Run locally
-bun run dev
-
-# Type check
-bun run typecheck
-
-# Generate API schema and Go client
-bun run generate:api
+task install
+task dev
+task typecheck
+task test
+task generate:api
+task format
 ```
 
-### API Documentation
+Read [CLAUDE.md](CLAUDE.md) for repository command and verification rules.
 
-The service exposes API documentation at both:
+## Architecture
 
-| Path   | Description                                |
-| :----- | :----------------------------------------- |
-| `/doc` | OpenAPI 3.0 JSON spec                      |
-| `/ui`  | Swagger UI for interactive API exploration |
-
-### API Generation
-
-The API uses [`@hono/zod-openapi`][npm:@hono/zod-openapi] to auto-generate an
-OpenAPI schema from the Hono route definitions.\
-The Go client is then auto-generated from this schema using
-[`oapi-codegen`][github:oapi-codegen].
-
-**Workflow:**
-
-1. Edit route files in `src/routes/` with Zod schemas
-2. Run `bun run generate:api` (or commit changes - pre-commit hook runs it
-   automatically)
-3. OpenAPI spec is generated at `client/openapi.json`
-4. Go client code is generated at `client/pkg/api/api.gen.go`
-
-This ensures the client is always in sync with the server API.
-
-## Security
-
-- Private keys stored encrypted in Durable Objects
-- Passphrase stored in CF Secrets
-- Keys decrypted per-request in memory only
-- OIDC token validation with JWKS
-- All operations audit logged
-- Rate limiting per CI identity
-
-## Environment Variables
-
-| Variable          | Description                      |
-| :---------------- | :------------------------------- |
-| `ADMIN_TOKEN`     | Secret: Admin API token          |
-| `ALLOWED_ISSUERS` | Comma-separated OIDC issuer URLs |
-| `KEY_ID`          | Default signing key ID           |
-| `KEY_PASSPHRASE`  | Secret: Key passphrase           |
+```text
+GitHub Actions / GitLab CI / other automation
+                    │
+                    │ OIDC JWT or gst_ token
+                    ▼
+          Cloudflare Worker (Hono)
+             ├─ KV: OIDC JWKS cache
+             ├─ D1: audit records and token hashes
+             ├─ RateLimiter Durable Object
+             └─ KeyStorage Durable Object
+                    │
+                    ▼
+        detached OpenPGP or PKCS#7 signature
+```
 
 ## License
 
-**Dual licensed**: MIT OR AGPL-3.0 ([LICENSE-MIT](LICENSE-MIT) · [LICENSE-AGPL-3.0](LICENSE-AGPL-3.0))
-
-<details>
-<summary><b>Which license applies?</b></summary>
-
-**Use MIT** for:
-
-- Personal/private use
-- Internal company projects (not exposed externally)
-- Self-hosting for private use
-
-**Use AGPL-3.0** for:
-
-- Commercial/business use
-- Providing as a service to external users
-- Running on publicly accessible servers
-
-**AGPL-3.0 requires**: Making complete source code (including modifications) available to network users.
-
-**SPDX**: `AGPL-3.0-only OR MIT`
-
-</details>
-
-<!-- link definitions -->
-
-<!--prettier-ignore-start-->
-
-[actions:sign-commits]: .github/workflows/sign-commits.yml "Example GitHub Actions workflow"
-[cloudflare:dashboard]: https://dash.cloudflare.com/ "Cloudflare Dashboard"
-[github:oapi-codegen]: https://github.com/oapi-codegen/oapi-codegen "oapi-codegen GitHub repository"
-[gitlab:sign-commits]: .gitlab-ci.yml "Example GitLab CI pipeline"
-[npm:@hono/zod-openapi]: https://www.npmjs.com/package/@hono/zod-openapi "npm package: @hono/zod-openapi"
-[wrangler:install]: https://developers.cloudflare.com/workers/wrangler/install-and-update/ "Install Wrangler CLI"
-
-<!--prettier-ignore-end-->
+The repository declares `AGPL-3.0-only OR MIT`. See
+[LICENSE-MIT](LICENSE-MIT) and [LICENSE-AGPL-3.0](LICENSE-AGPL-3.0).

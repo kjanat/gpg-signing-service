@@ -146,7 +146,7 @@ ESCAPED_KEY=$(sed ':a;N;$!ba;s/\n/\\n/g' <"${PRIVATE_KEY_FILE}")
 	echo '       -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \'
 	# shellcheck disable=SC1003
 	echo '       -H "Content-Type: application/json" \'
-	echo "       -d '{\"armoredPrivateKey\": \"${ESCAPED_KEY}\", \"keyId\": \"signing-key-v1\"}'"
+	echo "       -d '{\"armoredPrivateKey\": \"${ESCAPED_KEY}\", \"keyId\": \"${KEY_ID}\"}'"
 	echo ""
 	echo "IMPORTANT: Keep ${PRIVATE_KEY_FILE} secure and add .keys/ to .gitignore!"
 }

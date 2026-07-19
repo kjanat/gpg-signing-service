@@ -1,5 +1,10 @@
 # API Documentation Index
 
+> [!WARNING]
+> This historical index refers to generated files that are no longer present.
+> Use the current [documentation index](docs/README.md) and generated
+> [`client/openapi.json`](client/openapi.json).
+
 Complete, production-ready API documentation for the GPG Signing Service.
 
 ## Files Overview

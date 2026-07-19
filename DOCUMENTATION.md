@@ -1,5 +1,10 @@
 # API Documentation Summary
 
+> [!WARNING]
+> This generated summary refers to removed root-level OpenAPI files. Start with
+> the current [documentation index](docs/README.md) and generated
+> [`client/openapi.json`](client/openapi.json).
+
 ## What's Included
 
 This directory contains comprehensive API documentation for the GPG Signing

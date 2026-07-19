@@ -1,14 +1,15 @@
 # GPG Signing Service Go Client
 
-A production-ready, cross-platform Go client and CLI for the GPG Signing Service API.
+A cross-platform Go client and CLI for the service's OpenPGP operations.
 
 ## Quick Start
 
 ### Installation
 
 ```bash
-# Install the CLI
-go install github.com/kjanat/gpg-signing-service/client/cmd/gpg-sign@latest
+# From a checkout of the repository
+cd client
+go install ./cmd/gpg-sign
 ```
 
 ### CLI Usage
@@ -50,28 +51,29 @@ func main() {
     }
 
     // Sign data
-    signature, _, err := c.Sign(context.Background(), "commit data", "")
+    result, err := c.Sign(context.Background(), "commit data", "")
     if err != nil {
         log.Fatal(err)
     }
 
-    fmt.Println(signature)
+    fmt.Println(result.Signature)
 }
 ```
 
 ## Features
 
-- **Complete API Support**: Health, Public Keys, Signing, Admin operations.
-- **Resilient**: Automatic retries with exponential backoff and jitter.
-- **Type-Safe**: Comprehensive error handling with typed errors.
-- **Secure**: OIDC and Admin token support.
+- Health checks, OpenPGP public keys, signing, and PGP key administration
+- OIDC JWT, `gst_` service-token, and admin-token authentication
+- Typed errors and generated API models
+
+The high-level wrapper and CLI are currently OpenPGP-only. Use the generated
+raw client for X.509 and service-token administration endpoints.
 
 ## Documentation
 
-For full documentation, see [DOCUMENTATION].
-For API details, see [API].
+For CLI commands, see [CLI]. For the current API surface, see [API].
 
-[API]: ../API.md
-[DOCUMENTATION]: ../DOCUMENTATION.md
+[API]: ../docs/api.md
+[CLI]: ../docs/cli.md
 
 <!-- rumdl-disable-file MD013 -->

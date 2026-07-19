@@ -1,5 +1,10 @@
 # Developer Guide - API Documentation
 
+> [!WARNING]
+> This historical guide lists files and examples that no longer exist. Use the
+> current [documentation index](docs/README.md) and repository instructions in
+> [`CLAUDE.md`](CLAUDE.md).
+
 This directory contains comprehensive, production-ready API documentation for
 the GPG Signing Service.
 

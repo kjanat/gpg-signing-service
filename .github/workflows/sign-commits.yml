@@ -29,7 +29,6 @@ jobs:
         id: sign
         env:
           OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
-          REQUEST_ID: ${{ github.run_id }}-${{ github.run_number }}
           SIGNING_SERVICE_URL: ${{ vars.SIGNING_SERVICE_URL }}
         run: |
           # Get commit data
@@ -39,7 +38,6 @@ jobs:
           SIGNATURE="$(curl -sf -X POST "${SIGNING_SERVICE_URL}/sign" \
             -H "Authorization: Bearer ${OIDC_TOKEN}" \
             -H "Content-Type: text/plain" \
-            -H "X-Request-ID: ${REQUEST_ID}" \
             --data "${COMMIT_DATA}")"
 
           if [[ "$SIGNATURE" == *"-----BEGIN PGP SIGNATURE-----"* ]]; then
