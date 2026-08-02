@@ -12,7 +12,7 @@ jobs:
                     github.event_name == 'issues', format('{0} {1}', github.event.issue.title, github.event.issue.body),
                     github.event.comment.body), '@claude')
     runs-on: ubuntu-latest
-    permissions: { contents: read, pull-requests: read, issues: read, id-token: write, actions: read }
+    permissions: { contents: write, pull-requests: write, issues: write, id-token: write, actions: read }
     steps:
       - { uses: actions/checkout@v7, with: { fetch-depth: 0 } }
       - { uses: ./.github/actions/setup-bun, id: bun }
@@ -25,11 +25,12 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           path_to_bun_executable: ${{ steps.bun.outputs.bun-path }}
           settings: ${{ vars.CLAUDE_SETTINGS }}
+          claude_args: |
+            --permission-mode bypassPermissions
+            --allowedTools Edit,MultiEdit,Write,NotebookEdit,Bash,WebFetch,WebSearch,Task,TodoWrite
 
 # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
 # prompt: 'Update the pull request description to include a summary of changes.'
 
-# Optional: Add claude_args to customize behavior and configuration
 # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
 # or https://docs.claude.com/en/docs/claude-code/cli-reference for available options
-# claude_args: '--allowed-tools Bash(gh pr:*)'
