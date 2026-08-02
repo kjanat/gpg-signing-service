@@ -1,8 +1,22 @@
 name: Sign Commits
 
 on:
-  workflow_dispatch: null
-  # push: { branches: [master] }
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Sign every commit after this ref (exclusive). Defaults to the merge base with the default branch.
+        required: false
+        default: ""
+      allow_resign:
+        description: Permit rewriting commits that already carry a signature
+        type: boolean
+        required: false
+        default: false
+      sign_others:
+        description: Attach the signing key to commits committed by other identities
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   id-token: write # Required for OIDC token
@@ -25,72 +39,47 @@ jobs:
             core.setSecret(token);
             core.setOutput('token', token);
 
-      - name: Sign Commit
-        id: sign
+      - name: Resolve Base
+        id: base
+        env:
+          BASE_REF: ${{ inputs.base }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git fetch --no-tags origin "${DEFAULT_BRANCH}"
+          BASE="${BASE_REF:-$(git merge-base HEAD "origin/${DEFAULT_BRANCH}")}"
+          echo "ref=${BASE}" >>"${GITHUB_OUTPUT}"
+          echo "Signing range: ${BASE}..HEAD"
+
+      - name: Sign Commits
         env:
           OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
           SIGNING_SERVICE_URL: ${{ vars.SIGNING_SERVICE_URL }}
-        run: |
-          # Get commit data
-          COMMIT_DATA="$(git cat-file commit HEAD)"
+          BASE_REF: ${{ steps.base.outputs.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          ALLOW_RESIGN: ${{ inputs.allow_resign }}
+          SIGN_OTHERS: ${{ inputs.sign_others }}
+        run: python3 .github/scripts/sign-commits.py
 
-          # Request signature from signing service (-f fails fast on HTTP errors)
-          SIGNATURE="$(curl -sf -X POST "${SIGNING_SERVICE_URL}/sign" \
-            -H "Authorization: Bearer ${OIDC_TOKEN}" \
-            -H "Content-Type: text/plain" \
-            --data "${COMMIT_DATA}")"
-
-          if [[ "$SIGNATURE" == *"-----BEGIN PGP SIGNATURE-----"* ]]; then
-            echo "${SIGNATURE}" > /tmp/signature.asc
-            echo "signature_file=/tmp/signature.asc" >> "${GITHUB_OUTPUT}"
-          else
-            echo "::error:Error: Invalid signature response"
-            echo "${SIGNATURE}"
-            exit 1
-          fi
-
-      - name: Apply Signature
+      - name: Verify Signatures
         env:
-          SIGNATURE_FILE: ${{ steps.sign.outputs.signature_file }}
           SIGNING_SERVICE_URL: ${{ vars.SIGNING_SERVICE_URL }}
+          BASE_REF: ${{ steps.base.outputs.ref }}
         run: |
-          # Get the tree
-          TREE="$(git cat-file -p HEAD | grep '^tree' | cut -d' ' -f2)"
+          curl -fsS "${SIGNING_SERVICE_URL}/public-key" | gpg --import
 
-          # Get author and committer info
-          AUTHOR="$(git cat-file -p HEAD | grep '^author')"
-          COMMITTER="$(git cat-file -p HEAD | grep '^committer')"
+          FAILED=0
+          for commit in $(git rev-list "${BASE_REF}..HEAD"); do
+            if ! git cat-file commit "${commit}" | grep -q '^gpgsig '; then
+              echo "  unsigned ${commit} ($(git log -1 --format=%ce "${commit}"))"
+            elif git verify-commit --raw "${commit}" 2>&1 | grep -q '^\[GNUPG:\] GOODSIG'; then
+              echo "  ok       ${commit}"
+            else
+              echo "::error::Signature did not verify: ${commit}"
+              git verify-commit "${commit}" || true
+              FAILED=1
+            fi
+          done
+          exit "${FAILED}"
 
-          # Get commit message
-          MESSAGE="$(git log -1 --format=%B)"
-
-          # Temp vars
-          _NEW_COMMIT="/tmp/new_commit"
-
-          # Create new commit object with signature
-          {
-            echo "tree ${TREE}"
-            # Properly handle multiple parents for merge commits
-            git cat-file -p HEAD | grep '^parent' | while read -r line; do
-              echo "${line}"
-            done
-            echo "${AUTHOR}"
-            echo "${COMMITTER}"
-            echo "gpgsig $(cat "${SIGNATURE_FILE}" | sed '2,$s/^/ /')"
-            echo ""
-            echo "${MESSAGE}"
-          } | git hash-object -t commit --stdin -w > "${_NEW_COMMIT}"
-
-          # Update branch to point to signed commit
-          git update-ref HEAD "$(cat "${_NEW_COMMIT}")"
-
-      - name: Verify Signature
-        run: |
-          # Import public key
-          curl -s "${SIGNING_SERVICE_URL}/public-key" | gpg --import
-
-          # Verify the signature
-          git verify-commit HEAD || echo "::notice::Note: Signature verification may fail until key is trusted"
-
-      - name: Push Signed Commit
+      - name: Push Signed Commits
         run: git push origin HEAD --force-with-lease
