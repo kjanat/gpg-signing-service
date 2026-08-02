@@ -11,6 +11,7 @@ runs:
     - uses: ./.github/actions/setup-golangci-lint
     - uses: ./.github/actions/setup-task
     - uses: ./.github/actions/setup-bun
+    - uses: kjanat/install-dprint@v2
     - name: Check Formatting
       shell: bash
       run: |
