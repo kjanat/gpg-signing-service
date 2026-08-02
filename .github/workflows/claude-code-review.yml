@@ -24,6 +24,11 @@ jobs:
         uses: anthropics/claude-code-action@v1
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # env beats the action's hardcoded bot git config — see claude.yml
+          GIT_AUTHOR_NAME: Kaj Kowalski
+          GIT_AUTHOR_EMAIL: info@kajkowalski.nl
+          GIT_COMMITTER_NAME: Kaj Kowalski
+          GIT_COMMITTER_EMAIL: info@kajkowalski.nl
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           path_to_bun_executable: ${{ steps.bun.outputs.bun-path }}

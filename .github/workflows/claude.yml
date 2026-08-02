@@ -30,6 +30,14 @@ jobs:
           # API token as Bearer auth for CI (no OAuth dance needed). Unset
           # secret = that one MCP server fails to connect, nothing else breaks.
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # git env vars outrank `git config user.*`, which the action hardcodes
+          # to <botId>+<botName>@users.noreply.github.com in
+          # src/github/operations/git-config.ts — this makes CI commits use the
+          # repo owner's real identity instead of a bot one.
+          GIT_AUTHOR_NAME: Kaj Kowalski
+          GIT_AUTHOR_EMAIL: info@kajkowalski.nl
+          GIT_COMMITTER_NAME: Kaj Kowalski
+          GIT_COMMITTER_EMAIL: info@kajkowalski.nl
         with:
           additional_permissions: "actions: read"
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
