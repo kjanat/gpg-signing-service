@@ -19,7 +19,7 @@ on:
         default: false
       scan_limit:
         description: Stop looking for the last signed commit after this many commits. Blank searches the whole history.
-        type: number
+        type: string
         required: false
         default: ""
 

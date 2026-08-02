@@ -75,14 +75,19 @@ def key_identities(armored: bytes) -> set[str]:
 
 
 def verify(commit: bytes, home: str) -> None:
+    ok, detail = verify_status(commit, home)
+    if not ok:
+        sys.exit(f"::error::{commit.decode()} did not verify: {detail}")
+
+
+def verify_status(commit: bytes, home: str) -> tuple[bool, str]:
     result = subprocess.run(
         ["git", "verify-commit", "--raw", commit.decode()],
         capture_output=True,
         env={**os.environ, "GNUPGHOME": home},
     )
-    if b"[GNUPG:] GOODSIG" not in result.stderr:
-        detail = result.stderr.decode(errors="replace").strip()
-        sys.exit(f"::error::{commit.decode()} did not verify: {detail}")
+    detail = result.stderr.decode(errors="replace").strip()
+    return b"[GNUPG:] GOODSIG" in result.stderr, detail
 
 
 def header_of(raw: bytes) -> bytes:
@@ -147,11 +152,18 @@ def with_signature(payload: bytes, signature: bytes) -> bytes:
     return b"\n".join(header.split(b"\n") + gpgsig) + b"\n\n" + message
 
 
-def last_signed() -> str:
-    bound = [f"--max-count={SCAN_LIMIT}"] if SCAN_LIMIT else []
+def scan_bound() -> list[str]:
+    if not SCAN_LIMIT:
+        return []
+    if not (SCAN_LIMIT.isascii() and SCAN_LIMIT.isdecimal() and int(SCAN_LIMIT) > 0):
+        sys.exit(f"::error::scan_limit must be a positive integer, got {SCAN_LIMIT!r}")
+    return [f"--max-count={SCAN_LIMIT}"]
+
+
+def last_signed(home: str) -> str:
     objects = subprocess.run(
         ["git", "cat-file", "--batch"],
-        input=git("rev-list", *bound, "HEAD"),
+        input=git("rev-list", *scan_bound(), "HEAD"),
         capture_output=True,
     )
     if objects.returncode != 0:
@@ -164,20 +176,20 @@ def last_signed() -> str:
         end = data.index(b"\n", offset)
         sha, _, size = data[offset:end].split(b" ")
         offset = end + 1
-        if is_signed(data[offset : offset + int(size)]):
+        if is_signed(data[offset : offset + int(size)]) and verify_status(sha, home)[0]:
             return sha.decode()
         offset += int(size) + 1
 
     scope = f"the last {SCAN_LIMIT} commit(s) on HEAD" if SCAN_LIMIT else "HEAD"
-    sys.exit(f"::error::no signed commit in {scope}; pass base explicitly")
+    sys.exit(f"::error::no verified commit in {scope}; pass base explicitly")
 
 
-def resolve_base(branch: str) -> str:
+def resolve_base(branch: str, home: str) -> str:
     base = os.environ.get("BASE_REF", "").strip()
     if base:
         return git("rev-parse", "--verify", f"{base}^{{commit}}").strip().decode()
     if branch == DEFAULT_BRANCH:
-        return last_signed()
+        return last_signed(home)
     return git("merge-base", "HEAD", f"origin/{DEFAULT_BRANCH}").strip().decode()
 
 
@@ -186,15 +198,15 @@ def main() -> None:
     if branch == "HEAD":
         sys.exit("::error::HEAD is detached; check out the branch you want signed")
 
-    base = resolve_base(branch)
+    armored = gpg_sign("public-key")
+    identities = key_identities(armored)
+    home = keyring(armored)
+
+    base = resolve_base(branch, home)
     commits = git("rev-list", "--reverse", "--topo-order", f"{base}..HEAD").split()
     if not commits:
         print(f"No commits in {base}..HEAD; nothing to sign.")
         return
-
-    armored = gpg_sign("public-key")
-    identities = key_identities(armored)
-    home = keyring(armored)
 
     raw = {commit: git("cat-file", "commit", commit.decode()) for commit in commits}
     ours = {
