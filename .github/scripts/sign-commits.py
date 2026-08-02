@@ -87,7 +87,8 @@ def verify_status(commit: bytes, home: str) -> tuple[bool, str]:
         env={**os.environ, "GNUPGHOME": home},
     )
     detail = result.stderr.decode(errors="replace").strip()
-    return b"[GNUPG:] GOODSIG" in result.stderr, detail
+    good = result.returncode == 0 and b"[GNUPG:] GOODSIG" in result.stderr
+    return good, detail
 
 
 def header_of(raw: bytes) -> bytes:
