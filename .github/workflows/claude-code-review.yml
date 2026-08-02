@@ -8,6 +8,7 @@ jobs:
       - { uses: actions/checkout@v7, with: { fetch-depth: 0 } }
       - { uses: ./.github/actions/setup-bun, id: bun }
       - { uses: ./.github/actions/setup-task }
+      - { uses: kjanat/install-dprint@v2 }
       - { uses: kjanat/runner@master }
       - { run: runner install }
       - name: Run Claude Code Review
