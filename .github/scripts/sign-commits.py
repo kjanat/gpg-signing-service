@@ -9,6 +9,7 @@ TOKEN = os.environ["OIDC_TOKEN"]
 DEFAULT_BRANCH = os.environ.get("DEFAULT_BRANCH") or "master"
 ALLOW_RESIGN = os.environ.get("ALLOW_RESIGN") == "true"
 SIGN_OTHERS = os.environ.get("SIGN_OTHERS") == "true"
+SCAN_LIMIT = os.environ.get("SCAN_LIMIT", "").strip()
 
 ARMOR_MARKER = b"BEGIN PGP SIGNATURE"
 
@@ -178,10 +179,37 @@ def with_signature(payload: bytes, signature: bytes) -> bytes:
     return b"\n".join(header.split(b"\n") + gpgsig) + b"\n\n" + message
 
 
-def resolve_base() -> str:
+def last_signed() -> str:
+    bound = [f"--max-count={SCAN_LIMIT}"] if SCAN_LIMIT else []
+    objects = subprocess.run(
+        ["git", "cat-file", "--batch"],
+        input=git("rev-list", *bound, "HEAD"),
+        capture_output=True,
+    )
+    if objects.returncode != 0:
+        detail = objects.stderr.decode(errors="replace").strip()
+        sys.exit(f"::error::git cat-file --batch failed: {detail}")
+
+    data = objects.stdout
+    offset = 0
+    while offset < len(data):
+        end = data.index(b"\n", offset)
+        sha, _, size = data[offset:end].split(b" ")
+        offset = end + 1
+        if is_signed(data[offset : offset + int(size)]):
+            return sha.decode()
+        offset += int(size) + 1
+
+    scope = f"the last {SCAN_LIMIT} commit(s) on HEAD" if SCAN_LIMIT else "HEAD"
+    sys.exit(f"::error::no signed commit in {scope}; pass base explicitly")
+
+
+def resolve_base(branch: str) -> str:
     base = os.environ.get("BASE_REF", "").strip()
     if base:
         return git("rev-parse", "--verify", f"{base}^{{commit}}").strip().decode()
+    if branch == DEFAULT_BRANCH:
+        return last_signed()
     return git("merge-base", "HEAD", f"origin/{DEFAULT_BRANCH}").strip().decode()
 
 
@@ -189,10 +217,8 @@ def main() -> None:
     branch = git("rev-parse", "--abbrev-ref", "HEAD").strip().decode()
     if branch == "HEAD":
         sys.exit("::error::HEAD is detached; check out the branch you want signed")
-    if branch == DEFAULT_BRANCH:
-        sys.exit(f"::error::refusing to rewrite history on {DEFAULT_BRANCH}")
 
-    base = resolve_base()
+    base = resolve_base(branch)
     commits = git("rev-list", "--reverse", "--topo-order", f"{base}..HEAD").split()
     if not commits:
         print(f"No commits in {base}..HEAD; nothing to sign.")
