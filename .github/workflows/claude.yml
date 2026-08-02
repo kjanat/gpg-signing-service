@@ -34,10 +34,10 @@ jobs:
           # to <botId>+<botName>@users.noreply.github.com in
           # src/github/operations/git-config.ts — this makes CI commits use the
           # repo owner's real identity instead of a bot one.
-          GIT_AUTHOR_NAME: Kaj Kowalski
-          GIT_AUTHOR_EMAIL: info@kajkowalski.nl
-          GIT_COMMITTER_NAME: Kaj Kowalski
-          GIT_COMMITTER_EMAIL: info@kajkowalski.nl
+          GIT_AUTHOR_NAME: ${{ vars.GIT_AUTHOR_NAME }}
+          GIT_AUTHOR_EMAIL: ${{ vars.GIT_AUTHOR_EMAIL }}
+          GIT_COMMITTER_NAME: ${{ vars.GIT_COMMITTER_NAME }}
+          GIT_COMMITTER_EMAIL: ${{ vars.GIT_COMMITTER_EMAIL }}
         with:
           additional_permissions: "actions: read"
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
