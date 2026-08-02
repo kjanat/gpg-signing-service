@@ -155,7 +155,7 @@ def with_signature(payload: bytes, signature: bytes) -> bytes:
 def scan_bound() -> list[str]:
     if not SCAN_LIMIT:
         return []
-    if not (SCAN_LIMIT.isascii() and SCAN_LIMIT.isdecimal() and int(SCAN_LIMIT) > 0):
+    if not (SCAN_LIMIT.isascii() and SCAN_LIMIT.isdecimal() and SCAN_LIMIT.strip("0")):
         sys.exit(f"::error::scan_limit must be a positive integer, got {SCAN_LIMIT!r}")
     return [f"--max-count={SCAN_LIMIT}"]
 
