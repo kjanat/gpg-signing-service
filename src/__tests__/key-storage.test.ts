@@ -1,9 +1,14 @@
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 const parseJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
 
 describe("KeyStorage Durable Object", () => {
+	beforeAll(async () => {
+		const id = env.KEY_STORAGE.idFromName("warmup");
+		await env.KEY_STORAGE.get(id).fetch(new Request("http://internal/unknown"));
+	});
+
 	it("should return 404 for unknown path", async () => {
 		const id = env.KEY_STORAGE.idFromName("test-unknown-path");
 		const stub = env.KEY_STORAGE.get(id);

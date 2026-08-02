@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import type { RateLimitResult } from "#types";
 
 describe("RateLimiter Durable Object", () => {
@@ -8,6 +8,10 @@ describe("RateLimiter Durable Object", () => {
 		const id = env.RATE_LIMITER.idFromName(name);
 		return env.RATE_LIMITER.get(id);
 	}
+
+	beforeAll(async () => {
+		await getRateLimiter("warmup").fetch("http://localhost/check?identity=warmup");
+	});
 
 	describe("/check endpoint", () => {
 		it("should return allowed for new identity", async () => {
