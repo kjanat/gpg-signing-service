@@ -24,7 +24,26 @@ jobs:
           additional_permissions: "actions: read"
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           path_to_bun_executable: ${{ steps.bun.outputs.bun-path }}
+          # `settings` is honored for model/attribution/MCP, but NOT for permissions here:
+          # tag mode (the @claude flow) hardcodes its own CLI flags in
+          # src/modes/tag/index.ts (v1):
+          #   claudeArgs += ` --permission-mode acceptEdits --allowedTools "${tagModeTools}"`
+          # and a CLI --permission-mode flag always outranks a settings-file
+          # `permissions.defaultMode`. That's why CLAUDE_SETTINGS' bypassPermissions
+          # alone had no effect (see run 30770718579: 7 permission denials).
           settings: ${{ vars.CLAUDE_SETTINGS }}
+          # User claude_args are appended AFTER the action's hardcoded flags
+          # (src/modes/tag/index.ts: `claudeArgs += \` ${userClaudeArgs}\``), and the
+          # parser (base-action/src/parse-sdk-options.ts) treats:
+          #   --permission-mode  as last-wins  -> our bypassPermissions overrides acceptEdits
+          #   --allowedTools     as accumulating -> merges with tag mode's list (git +
+          #                                         comment/CI MCP tools survive)
+          # Without bypass, the headless SDK has no prompt handler, so any tool that
+          # falls through to "ask" (Bash(task:*), WebFetch, ...) is auto-denied.
+          # WebSearch/WebFetch look "disallowed" in logs, but that DISALLOWED_TOOLS env
+          # export is dead code (src/create-prompt/index.ts: "nothing reads
+          # ALLOWED_TOOLS / DISALLOWED_TOOLS") — they were only blocked by absence from
+          # the allowlist, so naming them here is sufficient.
           claude_args: |
             --permission-mode bypassPermissions
             --allowedTools Edit,MultiEdit,Write,NotebookEdit,Bash,WebFetch,WebSearch,Task,TodoWrite
