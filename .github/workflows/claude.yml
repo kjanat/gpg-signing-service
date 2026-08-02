@@ -19,7 +19,17 @@ jobs:
       - { uses: ./.github/actions/setup-task }
       - { uses: kjanat/runner@master }
       - { run: runner install }
+      # Dogfood: git is configured so commits Claude makes are GPG-signed by
+      # this very service (OIDC-authenticated /sign call per commit). Every
+      # @claude run doubles as a live integration test.
+      - uses: ./.github/actions/setup-claude-signing
+        with: { service-url: "${{ vars.SIGNING_SERVICE_URL }}" }
       - uses: anthropics/claude-code-action@v1
+        env:
+          # Consumed by .mcp.json — Cloudflare's MCP endpoint accepts a plain
+          # API token as Bearer auth for CI (no OAuth dance needed). Unset
+          # secret = that one MCP server fails to connect, nothing else breaks.
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         with:
           additional_permissions: "actions: read"
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}

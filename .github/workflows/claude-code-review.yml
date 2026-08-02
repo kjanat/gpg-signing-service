@@ -15,10 +15,15 @@ jobs:
       - { uses: kjanat/install-dprint@v2 }
       - { uses: kjanat/runner@master }
       - { run: runner install }
+      # Dogfood: fixes Claude pushes to PR branches get signed by our own service
+      - uses: ./.github/actions/setup-claude-signing
+        with: { service-url: "${{ vars.SIGNING_SERVICE_URL }}" }
       - name: Run Claude Code Review
         id: claude-review
         if: env.HAS_CLAUDE_TOKEN == 'true'
         uses: anthropics/claude-code-action@v1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           path_to_bun_executable: ${{ steps.bun.outputs.bun-path }}
@@ -41,6 +46,13 @@ jobs:
 
             Do not post duplicate comments, check what changed recently etc.
             If shit's really simple to solve, then fucking solve it.
+
+            If this PR was opened by dependabot: don't just review it. Check
+            whether the bump breaks anything (task typecheck, task t, and
+            task c:t if the Go client is affected). If it breaks and the fix
+            is mechanical (renamed API, changed types, lockfile drift), fix
+            it, verify tests pass, and push to the PR branch so the update
+            can actually merge instead of rotting.
 
             Always append your review as markdown to the file at $GITHUB_STEP_SUMMARY.
             It is a plain writable file and it renders on the job page, so your work

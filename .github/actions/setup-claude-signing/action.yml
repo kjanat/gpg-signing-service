@@ -1,0 +1,38 @@
+name: Setup service-signed commits
+description: >-
+  Configure git so every commit made in this job (including commits made by
+  Claude Code) is GPG-signed by our own gpg-signing-service. Dogfooding: the
+  service authenticates the workflow via GitHub OIDC, signs the raw commit
+  object, and git attaches the signature — every @claude run doubles as a live
+  integration test of the /sign endpoint.
+
+  Requires `id-token: write` on the calling job (the shim mints a fresh OIDC
+  token per signature — see .github/scripts/gpg-sign-git-program.sh).
+
+inputs:
+  service-url:
+    description: Base URL of the signing service (e.g. vars.SIGNING_SERVICE_URL)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # Repo-root action: downloads a released gpg-sign binary onto PATH
+    - uses: ./
+
+    - shell: bash
+      env:
+        SERVICE_URL: ${{ inputs.service-url }}
+      run: |
+        shim="${GITHUB_WORKSPACE}/.github/scripts/gpg-sign-git-program.sh"
+        chmod +x "$shim"
+        git config --local gpg.program "$shim"
+        git config --local commit.gpgsign true
+        # Exported so the shim (invoked by git, possibly deep inside a Claude
+        # session) knows where the service lives.
+        echo "GPG_SIGN_URL=${SERVICE_URL}" >> "$GITHUB_ENV"
+        # NOTE: commits will show as "Unverified" on github.com unless the
+        # service's public key (/public-key) is uploaded to a GitHub account
+        # whose email matches the committer identity. The signature itself is
+        # still real and verifiable: git log --show-signature after importing
+        # the key from ${SERVICE_URL}/public-key.

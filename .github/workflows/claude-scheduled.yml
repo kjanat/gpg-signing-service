@@ -1,0 +1,56 @@
+name: Claude Scheduled Audit
+# Weekly autonomous run. Passing `prompt` puts claude-code-action into "agent
+# mode" (src/modes/agent/index.ts), which — unlike tag mode — injects NO
+# hardcoded --permission-mode/--allowedTools, so claude_args below is the
+# entire permission story.
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+
+concurrency: claude-scheduled
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    permissions: { contents: write, pull-requests: write, issues: write, id-token: write, actions: read }
+    steps:
+      - { uses: actions/checkout@v7, with: { fetch-depth: 0 } }
+      - { uses: ./.github/actions/setup-bun, id: bun }
+      - { uses: ./.github/actions/setup-task }
+      - { uses: kjanat/runner@master }
+      - { run: runner install }
+      # Dogfood: any commit this run makes is signed by the service itself
+      - uses: ./.github/actions/setup-claude-signing
+        with: { service-url: "${{ vars.SIGNING_SERVICE_URL }}" }
+      - uses: anthropics/claude-code-action@v1
+        env:
+          # gh CLI is preinstalled on ubuntu-latest; used for issue triage
+          GH_TOKEN: ${{ github.token }}
+          # Consumed by .mcp.json (Cloudflare MCP accepts a plain API token as
+          # Bearer auth for CI — see the "Servers for Cloudflare" docs). If the
+          # secret is unset the server just fails to connect; everything else
+          # still works.
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          path_to_bun_executable: ${{ steps.bun.outputs.bun-path }}
+          settings: ${{ vars.CLAUDE_SETTINGS }}
+          prompt: |
+            Run the /verify-live audit for this repository (see
+            .claude/commands/verify-live.md) against
+            ${{ vars.SIGNING_SERVICE_URL }}.
+
+            Afterwards:
+            - Use `gh issue list` / `gh issue view` to triage open issues:
+              close ones the live probe proves fixed (with evidence), comment
+              fresh evidence on ones that still reproduce.
+            - If the Cloudflare MCP server is connected, pull recent Worker
+              logs/analytics for the service and mention anomalies (error
+              spikes, unusual latency) in your report.
+            - Write the full report to $GITHUB_STEP_SUMMARY.
+            - Do not open duplicate issues. Only push commits if a fix is
+              trivial and test-verified; otherwise file/update an issue.
+          claude_args: |
+            --permission-mode bypassPermissions
+            --allowedTools Edit,MultiEdit,Write,Bash,WebFetch,WebSearch,Task,TodoWrite
