@@ -24,15 +24,12 @@ commits     = [
   "0deeb13eee38f309dbf5137192a616ef52b9993d",      # API.md documentation example
 ]
 
-# Additional stopword patterns for test fixtures
-[[rules]]
-id          = "test-fixture-pgp"
-description = "Allow PGP test fixtures in scripts"
-regex       = '''-----BEGIN PGP'''
-path        = '''scripts/.*'''
+[[allowlists]]
+description = "PGP armor headers in scripts are markers, not key material"
+regexes     = ['''-----BEGIN PGP''']
+paths       = ['''scripts/.*''']
 
-[[rules]]
-id          = "example-auth-header"
-description = "Allow placeholder auth tokens in example scripts"
-regex       = '''Authorization: Bearer \*+'''
-path        = '''scripts/generate-key\.sh'''
+[[allowlists]]
+description = "Placeholder auth tokens in example scripts"
+regexes     = ['''Authorization: Bearer \*+''']
+paths       = ['''scripts/generate-key\.sh''']
