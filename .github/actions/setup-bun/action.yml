@@ -19,5 +19,5 @@ runs:
     { name: Install Node.js, id: setup-node, if: "${{ inputs.setup-node == 'true' }}", uses: actions/setup-node@v7, with: { node-version: "${{ inputs.node-version }}" } },
     { name: Setup Bun, id: setup-bun, uses: oven-sh/setup-bun@v2 },
     { name: Cache ~/.bun, id: cache-bun, uses: actions/cache@v6, with: { path: ~/.bun, key: "${{ runner.os }}-bun-${{ hashFiles('package.json') }}-${{ hashFiles('bun.lockb', 'bun.lock') }}", restore-keys: "${{ runner.os }}-bun-${{ hashFiles('package.json') }}-" } },
-    { name: Install dependencies, id: bun-install, if: "${{ !inputs.skip-install == 'true' }}", run: bun install, shell: bash },
+    { name: Install dependencies, id: bun-install, if: "${{ inputs.skip-install != 'true' }}", run: bun install, shell: bash },
   ]
