@@ -109,7 +109,7 @@ tasks:
     sources:
       - "**/*.ts"
     cmds:
-      - bunx tsgo --noEmit
+      - bun run typecheck
 
   typegen:
     desc: Generate Worker types

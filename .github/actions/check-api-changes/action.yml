@@ -7,7 +7,8 @@ runs:
     - uses: ./.github/actions/setup-task
     - uses: ./.github/actions/setup-bun
     - uses: ./.github/actions/setup-go
-    - run: task generate:api
+    - shell: bash
+      run: task generate:api
     - name: Check for changes
       shell: bash
       run: |
