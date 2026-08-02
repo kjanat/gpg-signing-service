@@ -40,8 +40,6 @@ runs:
           'Arm64' { 'arm64' }
           default { throw "Unsupported architecture: $_" }
         }
-        # release matrix publishes a windows amd64 build only
-        if ($os -eq 'windows' -and $arch -eq 'arm64') { $arch = 'amd64' }
 
         $assetName = "gpg-sign-$os-$arch"
         if ($os -eq 'windows') { $assetName += '.exe' }
@@ -62,10 +60,20 @@ runs:
 
         $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/$ref" -Headers $headers
         $tag = $release.tag_name
-        Write-Host "Installing gpg-sign $tag ($assetName)"
 
         $asset = $release.assets | Where-Object { $_.name -eq $assetName }
+        if (-not $asset -and $os -eq 'windows' -and $arch -eq 'arm64') {
+          $fallbackName = 'gpg-sign-windows-amd64.exe'
+          $fallback = $release.assets | Where-Object { $_.name -eq $fallbackName }
+          if ($fallback) {
+            Write-Host "$assetName absent from $tag; falling back to $fallbackName"
+            $assetName = $fallbackName
+            $asset = $fallback
+          }
+        }
         if (-not $asset) { throw "Asset '$assetName' not found in release $tag of $repo" }
+
+        Write-Host "Installing gpg-sign $tag ($assetName)"
 
         $installDir = Join-Path ($env:RUNNER_TEMP ?? [System.IO.Path]::GetTempPath()) 'gpg-sign'
         New-Item -ItemType Directory -Force -Path $installDir | Out-Null
