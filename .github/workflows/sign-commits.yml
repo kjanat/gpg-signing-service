@@ -5,8 +5,8 @@ on:
     inputs:
       base:
         description: Sign every commit after this ref (exclusive). Defaults to the merge base with the default branch.
+        type: string
         required: false
-        default: ""
       allow_resign:
         description: Permit rewriting commits that already carry a signature
         type: boolean
@@ -19,9 +19,8 @@ on:
         default: false
       scan_limit:
         description: Stop looking for the last signed commit after this many commits. Blank searches the whole history.
-        type: string
+        type: number
         required: false
-        default: ""
 
 permissions:
   id-token: write # Required for OIDC token
