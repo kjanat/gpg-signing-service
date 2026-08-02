@@ -79,10 +79,14 @@ runs:
         if ($checksums) {
           $sumHeaders = $headers.Clone()
           $sumHeaders['Accept'] = 'application/octet-stream'
-          $sumText = (Invoke-WebRequest -Uri $checksums.url -Headers $sumHeaders).Content
-          $line = ($sumText -split "`n") | Where-Object { $_ -match [regex]::Escape($assetName) + '\s*$' } | Select-Object -First 1
+          $sumRaw = (Invoke-WebRequest -Uri $checksums.url -Headers $sumHeaders).Content
+          $sumText = if ($sumRaw -is [byte[]]) { [Text.Encoding]::UTF8.GetString($sumRaw) } else { [string]$sumRaw }
+          $line = ($sumText -split "`r?`n") | Where-Object {
+            $fields = $_ -split '\s+' | Where-Object { $_ }
+            $fields.Count -ge 2 -and (Split-Path -Leaf ($fields[-1] -replace '^\*', '')) -eq $assetName
+          } | Select-Object -First 1
           if (-not $line) { throw "No checksum entry for $assetName in checksums.txt" }
-          $want = ($line -split '\s+')[0].ToLower()
+          $want = (($line -split '\s+' | Where-Object { $_ })[0]).ToLower()
           $got = (Get-FileHash -Algorithm SHA256 -Path $binPath).Hash.ToLower()
           if ($want -ne $got) { throw "Checksum mismatch for ${assetName}: expected $want, got $got" }
           Write-Host "Checksum verified: $got"

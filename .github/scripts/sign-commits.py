@@ -4,11 +4,10 @@ import subprocess
 import sys
 import tempfile
 
-SERVICE = os.environ["SIGNING_SERVICE_URL"].rstrip("/")
-TOKEN = os.environ["OIDC_TOKEN"]
 DEFAULT_BRANCH = os.environ.get("DEFAULT_BRANCH") or "master"
 ALLOW_RESIGN = os.environ.get("ALLOW_RESIGN") == "true"
 SIGN_OTHERS = os.environ.get("SIGN_OTHERS") == "true"
+SCAN_LIMIT = os.environ.get("SCAN_LIMIT", "").strip()
 
 ARMOR_MARKER = b"BEGIN PGP SIGNATURE"
 
@@ -21,30 +20,11 @@ def git(*args: str, stdin: bytes | None = None) -> bytes:
     return result.stdout
 
 
-def curl(*args: str, stdin: bytes | None = None) -> bytes:
-    result = subprocess.run(
-        [
-            "curl",
-            "-sf",
-            "--retry",
-            "3",
-            "--retry-all-errors",
-            "--retry-delay",
-            "2",
-            "--connect-timeout",
-            "10",
-            "--max-time",
-            "60",
-            *args,
-        ],
-        input=stdin,
-        capture_output=True,
-    )
+def gpg_sign(*args: str, stdin: bytes | None = None) -> bytes:
+    result = subprocess.run(["gpg-sign", *args], input=stdin, capture_output=True)
     if result.returncode != 0:
         detail = result.stderr.decode(errors="replace").strip()
-        sys.exit(
-            f"::error::{SERVICE} refused the request (curl {result.returncode}): {detail}"
-        )
+        sys.exit(f"::error::gpg-sign {' '.join(args)} failed: {detail}")
     return result.stdout
 
 
@@ -57,18 +37,7 @@ def gpg(*args: str, stdin: bytes | None = None) -> bytes:
 
 
 def request_signature(payload: bytes) -> bytes:
-    signature = curl(
-        "-X",
-        "POST",
-        f"{SERVICE}/sign",
-        "-H",
-        f"Authorization: Bearer {TOKEN}",
-        "-H",
-        "Content-Type: text/plain",
-        "--data-binary",
-        "@-",
-        stdin=payload,
-    )
+    signature = gpg_sign("sign", stdin=payload)
     if ARMOR_MARKER not in signature:
         sys.exit(f"::error::signing service returned no signature: {signature!r}")
     return signature.strip(b"\n")
@@ -106,14 +75,20 @@ def key_identities(armored: bytes) -> set[str]:
 
 
 def verify(commit: bytes, home: str) -> None:
+    ok, detail = verify_status(commit, home)
+    if not ok:
+        sys.exit(f"::error::{commit.decode()} did not verify: {detail}")
+
+
+def verify_status(commit: bytes, home: str) -> tuple[bool, str]:
     result = subprocess.run(
         ["git", "verify-commit", "--raw", commit.decode()],
         capture_output=True,
         env={**os.environ, "GNUPGHOME": home},
     )
-    if b"[GNUPG:] GOODSIG" not in result.stderr:
-        detail = result.stderr.decode(errors="replace").strip()
-        sys.exit(f"::error::{commit.decode()} did not verify: {detail}")
+    detail = result.stderr.decode(errors="replace").strip()
+    good = result.returncode == 0 and b"[GNUPG:] GOODSIG" in result.stderr
+    return good, detail
 
 
 def header_of(raw: bytes) -> bytes:
@@ -178,10 +153,44 @@ def with_signature(payload: bytes, signature: bytes) -> bytes:
     return b"\n".join(header.split(b"\n") + gpgsig) + b"\n\n" + message
 
 
-def resolve_base() -> str:
+def scan_bound() -> list[str]:
+    if not SCAN_LIMIT:
+        return []
+    if not (SCAN_LIMIT.isascii() and SCAN_LIMIT.isdecimal() and SCAN_LIMIT.strip("0")):
+        sys.exit(f"::error::scan_limit must be a positive integer, got {SCAN_LIMIT!r}")
+    return [f"--max-count={SCAN_LIMIT}"]
+
+
+def last_signed(home: str) -> str:
+    objects = subprocess.run(
+        ["git", "cat-file", "--batch"],
+        input=git("rev-list", *scan_bound(), "HEAD"),
+        capture_output=True,
+    )
+    if objects.returncode != 0:
+        detail = objects.stderr.decode(errors="replace").strip()
+        sys.exit(f"::error::git cat-file --batch failed: {detail}")
+
+    data = objects.stdout
+    offset = 0
+    while offset < len(data):
+        end = data.index(b"\n", offset)
+        sha, _, size = data[offset:end].split(b" ")
+        offset = end + 1
+        if is_signed(data[offset : offset + int(size)]) and verify_status(sha, home)[0]:
+            return sha.decode()
+        offset += int(size) + 1
+
+    scope = f"the last {SCAN_LIMIT} commit(s) on HEAD" if SCAN_LIMIT else "HEAD"
+    sys.exit(f"::error::no verified commit in {scope}; pass base explicitly")
+
+
+def resolve_base(branch: str, home: str) -> str:
     base = os.environ.get("BASE_REF", "").strip()
     if base:
         return git("rev-parse", "--verify", f"{base}^{{commit}}").strip().decode()
+    if branch == DEFAULT_BRANCH:
+        return last_signed(home)
     return git("merge-base", "HEAD", f"origin/{DEFAULT_BRANCH}").strip().decode()
 
 
@@ -189,18 +198,16 @@ def main() -> None:
     branch = git("rev-parse", "--abbrev-ref", "HEAD").strip().decode()
     if branch == "HEAD":
         sys.exit("::error::HEAD is detached; check out the branch you want signed")
-    if branch == DEFAULT_BRANCH:
-        sys.exit(f"::error::refusing to rewrite history on {DEFAULT_BRANCH}")
 
-    base = resolve_base()
+    armored = gpg_sign("public-key")
+    identities = key_identities(armored)
+    home = keyring(armored)
+
+    base = resolve_base(branch, home)
     commits = git("rev-list", "--reverse", "--topo-order", f"{base}..HEAD").split()
     if not commits:
         print(f"No commits in {base}..HEAD; nothing to sign.")
         return
-
-    armored = curl(f"{SERVICE}/public-key")
-    identities = key_identities(armored)
-    home = keyring(armored)
 
     raw = {commit: git("cat-file", "commit", commit.decode()) for commit in commits}
     ours = {
