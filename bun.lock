@@ -7,8 +7,8 @@
       "dependencies": {
         "@hono/swagger-ui": "0.6.1",
         "@hono/zod-openapi": "1.5.1",
-        "hono": "4.12.30",
-        "micro509": "0.11.0",
+        "hono": "4.12.32",
+        "micro509": "0.14.0",
         "openpgp": "6.3.1",
         "zod": "4.4.3",
       },
@@ -660,7 +660,7 @@
 
     "has-flag": ["has-flag@4.0.0", "", {}, "sha512-EykJT/Q1KjTWctppgIAgfSO0tKVuZUjhgMr17kqTumMl6Afv3EISleU7qZUzoXDFTAHTDC4NOoG/ZxU3EvlMPQ=="],
 
-    "hono": ["hono@4.12.30", "", {}, "sha512-emn+JoJjrN9YTpRDS5it/UI2SO9BAE37T6I3d963RxcZ81G9A4pr2SZTEiiaiKbzx+NKRg5BZ89fCL7gCJCUog=="],
+    "hono": ["hono@4.12.32", "", {}, "sha512-XcuyW9qE2kJn07PkecMOBd5Vq/hMy7mmGw+idz1yblbg9N17ijJODrvPkn7/dwL3Kulj8LcRJ69DLOWf91dRUg=="],
 
     "html-escaper": ["html-escaper@2.0.2", "", {}, "sha512-H2iMtd0I4Mt5eYiapRdIDjp+XzelXQ0tFE4JS7YFwFevXXMmOp9myNrUvCg0D6ws8iqkRPBfKHgbwig1SmlLfg=="],
 
@@ -750,7 +750,7 @@
 
     "make-dir": ["make-dir@4.0.0", "", { "dependencies": { "semver": "^7.5.3" } }, "sha512-hXdUTZYIVOt1Ex//jAQi+wTZZpUpwBj/0QsOzqegb3rGMMeJiSEu5xLHnYfBrRV4RH2+OCSOO95Is/7x1WJ4bw=="],
 
-    "micro509": ["micro509@0.11.0", "", {}, "sha512-pkl9TvOHeQuXQdXceve+XYnYBe9FjlVC1W14m/TuZHd1Dqqs2OE7RZTlurLQEI17w0fFFWZc0Nxla5EsWeiSnw=="],
+    "micro509": ["micro509@0.14.0", "", {}, "sha512-VX/qxaWovddPMfqhiytOBTFRaGDchUj5bmo71O5d0gsvwtGCmljmiBI4NknBx+BWkONxYdQKOlfkrXB3zp89uA=="],
 
     "miniflare": ["miniflare@4.20260722.1", "", { "dependencies": { "@cspotcode/source-map-support": "0.8.1", "sharp": "0.35.2", "undici": "7.28.0", "workerd": "1.20260722.1", "ws": "8.21.0", "youch": "4.1.0-beta.10" }, "bin": { "miniflare": "bootstrap.js" } }, "sha512-FJIg4omaCb2wwSyOeRosEdmVRi3JzGAOOH3pa3twmmtvWECl6BVZMIDwJbjByLKRyU+mrfk0M/n3oSiojFZvSA=="],
 

@@ -53,8 +53,8 @@
   "dependencies": {
     "@hono/swagger-ui": "0.6.1",
     "@hono/zod-openapi": "1.5.1",
-    "micro509": "0.11.0",
-    "hono": "4.12.30",
+    "micro509": "0.14.0",
+    "hono": "4.12.32",
     "openpgp": "6.3.1",
     "zod": "4.4.3"
   },
