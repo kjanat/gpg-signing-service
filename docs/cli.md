@@ -11,9 +11,9 @@ It does not attach a signature to a Git commit.
 ### GitHub Actions
 
 ```yaml
-- uses: kjanat/gpg-signing-service@43a5c6b9aa5e796e2967d054167ffe3ab9e4b3b1
+- uses: kjanat/gpg-signing-service@cbcb8600547bd6799cdca0b339e8dad044481435
   with:
-    version: v1.1.1
+    version: v1.1.2
 ```
 
 See [GitHub Action](github-action.md) for pinning, inputs, and platform support.
@@ -21,10 +21,13 @@ See [GitHub Action](github-action.md) for pinning, inputs, and platform support.
 ### Release asset
 
 ```bash
+GPG_SIGN_VERSION=v1.1.2
+GPG_SIGN_SHA256='<digest recorded for that release>'
+
 curl --fail --location --remote-name \
-  https://github.com/kjanat/gpg-signing-service/releases/download/v1.1.1/gpg-sign-linux-amd64
+  "https://github.com/kjanat/gpg-signing-service/releases/download/$GPG_SIGN_VERSION/gpg-sign-linux-amd64"
 printf '%s  %s\n' \
-  '2cbb0460363b7f30db68fa2b1486e75ae349d70fad585b79a9ac923cf9d95bf2' \
+  "$GPG_SIGN_SHA256" \
   'gpg-sign-linux-amd64' |
   sha256sum --check
 mkdir -p "$HOME/.local/bin"
@@ -33,8 +36,9 @@ install -m 0755 gpg-sign-linux-amd64 "$HOME/.local/bin/gpg-sign"
 
 Choose the asset matching
 `gpg-sign-{linux|darwin|windows}-{amd64|arm64}[.exe]`. The example above is for
-Linux x64 and fixes the expected digest independently of the downloaded
-release.
+Linux x64. Set `GPG_SIGN_SHA256` from the digest your own release policy
+recorded for that tag. Reading it from the release's own `checksums.txt` checks
+the download against the same publisher that produced it.
 
 ### Build from source
 
@@ -45,7 +49,7 @@ Build it from an explicitly selected checkout:
 ```bash
 git clone https://github.com/kjanat/gpg-signing-service.git
 cd gpg-signing-service
-git checkout 43a5c6b9aa5e796e2967d054167ffe3ab9e4b3b1
+git checkout cbcb8600547bd6799cdca0b339e8dad044481435
 cd client
 go install ./cmd/gpg-sign
 ```

@@ -62,16 +62,16 @@ Read the [authentication](docs/authentication.md) and
 ## Quick start: install the CLI
 
 Select the action implementation and downloaded binary independently. This
-example fixes the action implementation to the commit tagged `v1.1.1`:
+example fixes the action implementation to the commit that carries it:
 
 ```yaml
 permissions:
   contents: read
 
 steps:
-  - uses: kjanat/gpg-signing-service@43a5c6b9aa5e796e2967d054167ffe3ab9e4b3b1
+  - uses: kjanat/gpg-signing-service@cbcb8600547bd6799cdca0b339e8dad044481435
     with:
-      version: v1.1.1
+      version: v1.1.2
 
   - env:
       GPG_SIGN_URL: ${{ vars.SIGNING_SERVICE_URL }}

@@ -30,9 +30,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: kjanat/gpg-signing-service@43a5c6b9aa5e796e2967d054167ffe3ab9e4b3b1
+      - uses: kjanat/gpg-signing-service@cbcb8600547bd6799cdca0b339e8dad044481435
         with:
-          version: v1.1.1
+          version: v1.1.2
 
       - id: oidc
         uses: actions/github-script@v9
@@ -72,9 +72,9 @@ steps:
     with:
       fetch-depth: 0
 
-  - uses: kjanat/gpg-signing-service@43a5c6b9aa5e796e2967d054167ffe3ab9e4b3b1
+  - uses: kjanat/gpg-signing-service@cbcb8600547bd6799cdca0b339e8dad044481435
     with:
-      version: v1.1.1
+      version: v1.1.2
 
   - name: Request detached signature
     env:
@@ -100,15 +100,15 @@ request-signature:
     GPG_SIGN_TOKEN:
       aud: gpg-signing-service
   variables:
-    GPG_SIGN_VERSION: v1.1.1
+    GPG_SIGN_VERSION: v1.1.2
+    GPG_SIGN_SHA256: <digest recorded for that release>
     GPG_SIGN_URL: $SIGNING_SERVICE_URL
   before_script:
     - apk add --no-cache curl git
     - cd /tmp
     - curl --fail --location --remote-name
       "https://github.com/kjanat/gpg-signing-service/releases/download/${GPG_SIGN_VERSION}/gpg-sign-linux-amd64"
-    - printf '%s  %s\n'
-      '2cbb0460363b7f30db68fa2b1486e75ae349d70fad585b79a9ac923cf9d95bf2'
+    - printf '%s  %s\n' "$GPG_SIGN_SHA256"
       'gpg-sign-linux-amd64' | sha256sum --check
     - install -m 0755 gpg-sign-linux-amd64 /usr/local/bin/gpg-sign
     - cd "$CI_PROJECT_DIR"

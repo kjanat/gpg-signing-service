@@ -20,9 +20,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - id: install
-        uses: kjanat/gpg-signing-service@43a5c6b9aa5e796e2967d054167ffe3ab9e4b3b1
+        uses: kjanat/gpg-signing-service@cbcb8600547bd6799cdca0b339e8dad044481435
         with:
-          version: v1.1.1
+          version: v1.1.2
 
       - name: Check service
         env:
@@ -59,10 +59,10 @@ For a private release repository, provide a token that can read that
 repository's release assets:
 
 ```yaml
-- uses: your-org/gpg-signing-service@v1.1.1
+- uses: your-org/gpg-signing-service@v1.1.2
   with:
     repository: your-org/gpg-signing-service
-    version: v1.1.1
+    version: v1.1.2
     token: ${{ secrets.RELEASE_READ_TOKEN }}
 ```
 
@@ -75,9 +75,9 @@ repository's release assets:
 
 ```yaml
 - id: install
-  uses: kjanat/gpg-signing-service@43a5c6b9aa5e796e2967d054167ffe3ab9e4b3b1
+  uses: kjanat/gpg-signing-service@cbcb8600547bd6799cdca0b339e8dad044481435
   with:
-    version: v1.1.1
+    version: v1.1.2
 
 - shell: bash
   env:
@@ -91,7 +91,7 @@ repository's release assets:
 These values control different code:
 
 - `uses: ...@<commit-sha>` selects the action implementation.
-- `with.version: v1.1.1` selects the downloaded binary release.
+- `with.version: v1.1.2` selects the downloaded binary release.
 
 If `version` is omitted, an immutable action ref still downloads the moving
 latest release. There is currently no floating `v1` tag.
@@ -110,18 +110,18 @@ warning-only checksum fallback.
 
 The action expects exact asset names:
 
-| Runner        | Asset                                         |
-| ------------- | --------------------------------------------- |
-| Linux x64     | `gpg-sign-linux-amd64`                        |
-| Linux ARM64   | `gpg-sign-linux-arm64`                        |
-| macOS x64     | `gpg-sign-darwin-amd64`                       |
-| macOS ARM64   | `gpg-sign-darwin-arm64`                       |
-| Windows x64   | `gpg-sign-windows-amd64.exe`                  |
-| Windows ARM64 | Currently falls back to the Windows x64 asset |
+| Runner        | Asset                        |
+| ------------- | ---------------------------- |
+| Linux x64     | `gpg-sign-linux-amd64`       |
+| Linux ARM64   | `gpg-sign-linux-arm64`       |
+| macOS x64     | `gpg-sign-darwin-amd64`      |
+| macOS ARM64   | `gpg-sign-darwin-arm64`      |
+| Windows x64   | `gpg-sign-windows-amd64.exe` |
+| Windows ARM64 | `gpg-sign-windows-arm64.exe` |
 
-Release `v1.1.1` predates the native Windows ARM64 asset. The current release
-workflow can publish one, but the installer still selects the compatibility
-fallback.
+Releases up to `v1.1.1` carry no Windows ARM64 asset. On that runner the
+installer falls back to `gpg-sign-windows-amd64.exe` when the pinned release
+has no native build, and verifies the checksum of the asset it downloaded.
 
 ## Download mechanics
 
@@ -129,7 +129,8 @@ The PowerShell step:
 
 1. detects the operating system and architecture;
 2. requests `/releases/latest` or `/releases/tags/<version>`;
-3. finds the exact platform asset;
+3. finds the platform asset, or the Windows x64 asset on a Windows ARM64 runner
+   whose pinned release has no native build;
 4. downloads it through the GitHub asset API;
 5. downloads `checksums.txt`, when present;
 6. compares the asset's SHA-256 with its checksum entry;
