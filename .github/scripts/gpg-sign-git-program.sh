@@ -20,15 +20,15 @@ set -euo pipefail
 
 signing=false
 for arg in "$@"; do
-  case "$arg" in
-    -bsau|-bsa|--detach-sign) signing=true ;;
-  esac
+	case "$arg" in
+		-bsau | -bsa | --detach-sign) signing=true ;;
+	esac
 done
 if ! "$signing"; then
-  # git also calls gpg.program with --verify when showing signatures; we only
-  # sign. Fail loudly rather than pretending to verify.
-  echo "gpg-sign-git-program: unsupported invocation (sign-only shim): $*" >&2
-  exit 1
+	# git also calls gpg.program with --verify when showing signatures; we only
+	# sign. Fail loudly rather than pretending to verify.
+	echo "gpg-sign-git-program: unsupported invocation (sign-only shim): $*" >&2
+	exit 1
 fi
 
 : "${GPG_SIGN_URL:?GPG_SIGN_URL must point at the signing service}"
@@ -36,10 +36,10 @@ fi
 : "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?job needs 'id-token: write' permission}"
 
 GPG_SIGN_TOKEN="$(
-  curl -sSf \
-    -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-    "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=gpg-signing-service" |
-    jq -r '.value'
+	curl -sSf \
+		-H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+		"${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=gpg-signing-service" \
+		| jq -r '.value'
 )"
 export GPG_SIGN_TOKEN
 
