@@ -4,8 +4,6 @@ import subprocess
 import sys
 import tempfile
 
-SERVICE = os.environ["SIGNING_SERVICE_URL"].rstrip("/")
-TOKEN = os.environ["OIDC_TOKEN"]
 DEFAULT_BRANCH = os.environ.get("DEFAULT_BRANCH") or "master"
 ALLOW_RESIGN = os.environ.get("ALLOW_RESIGN") == "true"
 SIGN_OTHERS = os.environ.get("SIGN_OTHERS") == "true"
@@ -22,30 +20,11 @@ def git(*args: str, stdin: bytes | None = None) -> bytes:
     return result.stdout
 
 
-def curl(*args: str, stdin: bytes | None = None) -> bytes:
-    result = subprocess.run(
-        [
-            "curl",
-            "-sf",
-            "--retry",
-            "3",
-            "--retry-all-errors",
-            "--retry-delay",
-            "2",
-            "--connect-timeout",
-            "10",
-            "--max-time",
-            "60",
-            *args,
-        ],
-        input=stdin,
-        capture_output=True,
-    )
+def gpg_sign(*args: str, stdin: bytes | None = None) -> bytes:
+    result = subprocess.run(["gpg-sign", *args], input=stdin, capture_output=True)
     if result.returncode != 0:
         detail = result.stderr.decode(errors="replace").strip()
-        sys.exit(
-            f"::error::{SERVICE} refused the request (curl {result.returncode}): {detail}"
-        )
+        sys.exit(f"::error::gpg-sign {' '.join(args)} failed: {detail}")
     return result.stdout
 
 
@@ -58,18 +37,7 @@ def gpg(*args: str, stdin: bytes | None = None) -> bytes:
 
 
 def request_signature(payload: bytes) -> bytes:
-    signature = curl(
-        "-X",
-        "POST",
-        f"{SERVICE}/sign",
-        "-H",
-        f"Authorization: Bearer {TOKEN}",
-        "-H",
-        "Content-Type: text/plain",
-        "--data-binary",
-        "@-",
-        stdin=payload,
-    )
+    signature = gpg_sign("sign", stdin=payload)
     if ARMOR_MARKER not in signature:
         sys.exit(f"::error::signing service returned no signature: {signature!r}")
     return signature.strip(b"\n")
@@ -224,7 +192,7 @@ def main() -> None:
         print(f"No commits in {base}..HEAD; nothing to sign.")
         return
 
-    armored = curl(f"{SERVICE}/public-key")
+    armored = gpg_sign("public-key")
     identities = key_identities(armored)
     home = keyring(armored)
 

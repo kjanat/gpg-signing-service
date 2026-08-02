@@ -33,6 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - { uses: actions/checkout@v7, with: { fetch-depth: 0 } }
+      - { uses: ./ }
 
       - name: Get OIDC Token
         id: oidc
@@ -45,8 +46,8 @@ jobs:
 
       - name: Sign Commits
         env:
-          OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
-          SIGNING_SERVICE_URL: ${{ vars.SIGNING_SERVICE_URL }}
+          GPG_SIGN_TOKEN: ${{ steps.oidc.outputs.token }}
+          GPG_SIGN_URL: ${{ vars.SIGNING_SERVICE_URL }}
           BASE_REF: ${{ inputs.base }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           ALLOW_RESIGN: ${{ inputs.allow_resign }}
