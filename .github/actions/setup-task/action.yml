@@ -4,8 +4,12 @@ description: Setup Task
 runs:
   using: composite
   steps:
-    - shell: bash
-      run: if command -v task &>/dev/null; then echo "TASK_AVAILABLE=true" >>"${GITHUB_ENV}"; fi
+    - name: Detect Task
+      shell: bash
+      run: |
+        if command -v task &>/dev/null; then
+          echo "TASK_AVAILABLE=true" >>"${GITHUB_ENV}"
+        fi
 
     - name: Setup Task
       if: ${{ env.TASK_AVAILABLE != 'true' }}
