@@ -2,6 +2,7 @@
 import os
 import subprocess
 import sys
+import tempfile
 
 SERVICE = os.environ["SIGNING_SERVICE_URL"].rstrip("/")
 TOKEN = os.environ["OIDC_TOKEN"]
@@ -13,39 +14,106 @@ ARMOR_MARKER = b"BEGIN PGP SIGNATURE"
 
 
 def git(*args: str, stdin: bytes | None = None) -> bytes:
-    return subprocess.run(
-        ["git", *args], input=stdin, capture_output=True, check=True
-    ).stdout
+    result = subprocess.run(["git", *args], input=stdin, capture_output=True)
+    if result.returncode != 0:
+        detail = result.stderr.decode(errors="replace").strip()
+        sys.exit(f"::error::git {' '.join(args)} failed: {detail}")
+    return result.stdout
 
 
-def request_signature(payload: bytes) -> bytes:
+def curl(*args: str, stdin: bytes | None = None) -> bytes:
     result = subprocess.run(
         [
             "curl",
             "-sf",
-            "-X",
-            "POST",
-            f"{SERVICE}/sign",
-            "-H",
-            f"Authorization: Bearer {TOKEN}",
-            "-H",
-            "Content-Type: text/plain",
-            "--data-binary",
-            "@-",
+            "--retry",
+            "3",
+            "--retry-all-errors",
+            "--retry-delay",
+            "2",
+            "--connect-timeout",
+            "10",
+            "--max-time",
+            "60",
+            *args,
         ],
-        input=payload,
+        input=stdin,
         capture_output=True,
     )
     if result.returncode != 0:
         detail = result.stderr.decode(errors="replace").strip()
         sys.exit(
-            f"::error::signing request failed (curl {result.returncode}): {detail}"
+            f"::error::{SERVICE} refused the request (curl {result.returncode}): {detail}"
         )
+    return result.stdout
 
-    signature = result.stdout
+
+def gpg(*args: str, stdin: bytes | None = None) -> bytes:
+    result = subprocess.run(["gpg", *args], input=stdin, capture_output=True)
+    if result.returncode != 0:
+        detail = result.stderr.decode(errors="replace").strip()
+        sys.exit(f"::error::gpg {' '.join(args)} failed: {detail}")
+    return result.stdout
+
+
+def request_signature(payload: bytes) -> bytes:
+    signature = curl(
+        "-X",
+        "POST",
+        f"{SERVICE}/sign",
+        "-H",
+        f"Authorization: Bearer {TOKEN}",
+        "-H",
+        "Content-Type: text/plain",
+        "--data-binary",
+        "@-",
+        stdin=payload,
+    )
     if ARMOR_MARKER not in signature:
         sys.exit(f"::error::signing service returned no signature: {signature!r}")
     return signature.strip(b"\n")
+
+
+def keyring(armored: bytes) -> str:
+    home = tempfile.mkdtemp(prefix="sign-commits-")
+    imported = subprocess.run(
+        ["gpg", "--homedir", home, "--batch", "--quiet", "--import"],
+        input=armored,
+        capture_output=True,
+    )
+    listing = subprocess.run(
+        ["gpg", "--homedir", home, "--batch", "--list-keys", "--with-colons"],
+        capture_output=True,
+    )
+    if not listing.stdout.startswith(b"pub:") and b"\npub:" not in listing.stdout:
+        detail = imported.stderr.decode(errors="replace").strip()
+        sys.exit(f"::error::could not import the public key: {detail}")
+    return home
+
+
+def key_identities(armored: bytes) -> set[str]:
+    listing = gpg("--show-keys", "--with-colons", stdin=armored)
+
+    emails: set[str] = set()
+    for line in listing.decode(errors="replace").splitlines():
+        fields = line.split(":")
+        if fields[0] == "uid" and len(fields) > 9 and "<" in fields[9]:
+            emails.add(fields[9].rsplit("<", 1)[1].rstrip(">").lower())
+
+    if not emails:
+        sys.exit("::error::the signing key carries no user ID with an email address")
+    return emails
+
+
+def verify(commit: bytes, home: str) -> None:
+    result = subprocess.run(
+        ["git", "verify-commit", "--raw", commit.decode()],
+        capture_output=True,
+        env={**os.environ, "GNUPGHOME": home},
+    )
+    if b"[GNUPG:] GOODSIG" not in result.stderr:
+        detail = result.stderr.decode(errors="replace").strip()
+        sys.exit(f"::error::{commit.decode()} did not verify: {detail}")
 
 
 def header_of(raw: bytes) -> bytes:
@@ -72,32 +140,6 @@ def committer_email(raw: bytes) -> str:
         if line.startswith(b"committer ") and b"<" in line:
             return line.rsplit(b">", 1)[0].rsplit(b"<", 1)[1].decode().lower()
     return ""
-
-
-def key_identities() -> set[str]:
-    fetch = subprocess.run(
-        ["curl", "-sf", f"{SERVICE}/public-key"], capture_output=True
-    )
-    if fetch.returncode != 0:
-        detail = fetch.stderr.decode(errors="replace").strip()
-        sys.exit(f"::error::could not fetch the public key: {detail}")
-
-    listing = subprocess.run(
-        ["gpg", "--show-keys", "--with-colons"], input=fetch.stdout, capture_output=True
-    )
-    if listing.returncode != 0:
-        detail = listing.stderr.decode(errors="replace").strip()
-        sys.exit(f"::error::could not read the public key: {detail}")
-
-    emails: set[str] = set()
-    for line in listing.stdout.decode(errors="replace").splitlines():
-        fields = line.split(":")
-        if fields[0] == "uid" and len(fields) > 9 and "<" in fields[9]:
-            emails.add(fields[9].rsplit("<", 1)[1].rstrip(">").lower())
-
-    if not emails:
-        sys.exit("::error::the signing key carries no user ID with an email address")
-    return emails
 
 
 def unsigned_object(raw: bytes, parents: list[bytes]) -> bytes:
@@ -139,12 +181,14 @@ def with_signature(payload: bytes, signature: bytes) -> bytes:
 def resolve_base() -> str:
     base = os.environ.get("BASE_REF", "").strip()
     if base:
-        return base
+        return git("rev-parse", "--verify", f"{base}^{{commit}}").strip().decode()
     return git("merge-base", "HEAD", f"origin/{DEFAULT_BRANCH}").strip().decode()
 
 
 def main() -> None:
     branch = git("rev-parse", "--abbrev-ref", "HEAD").strip().decode()
+    if branch == "HEAD":
+        sys.exit("::error::HEAD is detached; check out the branch you want signed")
     if branch == DEFAULT_BRANCH:
         sys.exit(f"::error::refusing to rewrite history on {DEFAULT_BRANCH}")
 
@@ -154,8 +198,11 @@ def main() -> None:
         print(f"No commits in {base}..HEAD; nothing to sign.")
         return
 
+    armored = curl(f"{SERVICE}/public-key")
+    identities = key_identities(armored)
+    home = keyring(armored)
+
     raw = {commit: git("cat-file", "commit", commit.decode()) for commit in commits}
-    identities: set[str] = set() if SIGN_OTHERS else key_identities()
     ours = {
         commit: SIGN_OTHERS or committer_email(raw[commit]) in identities
         for commit in commits
@@ -168,8 +215,8 @@ def main() -> None:
             stale.add(commit)
 
     if not stale:
-        skipped = sum(1 for commit in commits if not ours[commit])
-        print(f"Nothing to sign in {base}..HEAD ({skipped} commit(s) by others).")
+        others = sum(1 for commit in commits if not ours[commit])
+        print(f"Nothing to sign in {base}..HEAD ({others} commit(s) by others).")
         return
 
     resign = [commit for commit in stale if is_signed(raw[commit])]
@@ -201,6 +248,8 @@ def main() -> None:
             "--stdin",
             stdin=body,
         ).strip()
+        if ours[commit]:
+            verify(new, home)
         rewritten[commit] = new
         print(f"  {mark} {commit.decode()[:8]} -> {new.decode()[:8]}")
 
