@@ -70,6 +70,11 @@ export const oidcAuth: MiddlewareHandler<{
 	c.set("identity", createIdentity(payload.iss, payload.sub));
 	// Key scoping now applies to OIDC callers too, not just service tokens.
 	c.set("allowedKeyIds", policy.allowedKeyIds);
+	// Which trust authorized this call. Without it the audit trail records only
+	// the JWT subject, so "what did the row I just revoked sign?" means re-running
+	// prefix matching over the whole history. The service-token path gets this
+	// for free by putting the policy name in its synthetic `sub`.
+	c.set("subjectPolicyName", policy.name);
 
 	// The last-used stamp is bookkeeping; do not make every signature wait on a
 	// D1 write for it.

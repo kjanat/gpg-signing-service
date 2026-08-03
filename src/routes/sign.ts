@@ -178,6 +178,7 @@ app.openapi(signRoute, async (c) => {
 				metadata: JSON.stringify({
 					repository: claims.repository || claims.project_path,
 					dataLength: commitData.length,
+					subjectPolicy: c.get("subjectPolicyName"),
 				}),
 			}),
 		);
@@ -221,7 +222,7 @@ app.openapi(signRoute, async (c) => {
 				keyId: keyIdParam,
 				success: false,
 				errorCode: isKeyNotFound ? "KEY_NOT_FOUND" : "SIGN_ERROR",
-				metadata: JSON.stringify({ error: message }),
+				metadata: JSON.stringify({ error: message, subjectPolicy: c.get("subjectPolicyName") }),
 			}),
 		);
 
