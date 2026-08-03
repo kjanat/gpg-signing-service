@@ -333,9 +333,11 @@ describe("OIDC subject policy store", () => {
 		expect(revoked?.stillTrustedWithin).toHaveLength(25);
 	});
 
-	it("orders surviving nested rows broadest first", async () => {
-		// These do not compete for one resolution: each is a separate hole in the
-		// scope just revoked, so the widest one belongs at the top.
+	it("orders surviving nested rows outermost first", async () => {
+		// Ascending prefix length is a containment order: where one of these rows
+		// contains another its prefix is a strict prefix, hence shorter, so the
+		// container sorts above what it contains. It says nothing about disjoint
+		// scopes, which fall wherever their names happen to sort.
 		const wideId = await insertOIDCSubject(env.AUDIT_DB, {
 			name: "org-wide",
 			issuer: GITHUB,
@@ -360,6 +362,49 @@ describe("OIDC subject policy store", () => {
 
 		const revoked = await revokeOIDCSubject(env.AUDIT_DB, wideId);
 		expect(revoked?.stillTrustedWithin.map((row) => row.name)).toEqual(["team-wide", "one-repo"]);
+	});
+
+	it("does not promise stillCoveredBy[0] wins where a nested row claims the subject", async () => {
+		// Both lists are defined against the revoked *prefix*, but resolution runs
+		// against a concrete `sub`. Descendants are strictly longer than the
+		// revoked prefix and ancestors strictly shorter, so for any subject a
+		// descendant claims, the descendant beats everything in stillCoveredBy.
+		// Reading only the head of that list understates the surviving grant.
+		await insertOIDCSubject(env.AUDIT_DB, {
+			name: "ancestor-pinned",
+			issuer: GITHUB,
+			subjectPrefix: "repo:both",
+			keyIds: ["D8BC04E534E7706F"],
+			expiresAt: null,
+		});
+		const targetId = await insertOIDCSubject(env.AUDIT_DB, {
+			name: "target",
+			issuer: GITHUB,
+			subjectPrefix: "repo:both/",
+			keyIds: ["D8BC04E534E7706F"],
+			expiresAt: null,
+		});
+		await insertOIDCSubject(env.AUDIT_DB, {
+			name: "descendant-unpinned",
+			issuer: GITHUB,
+			subjectPrefix: "repo:both/api",
+			keyIds: [],
+			expiresAt: null,
+		});
+
+		const revoked = await revokeOIDCSubject(env.AUDIT_DB, targetId);
+		expect(revoked?.stillCoveredBy.map((row) => row.name)).toEqual(["ancestor-pinned"]);
+		expect(revoked?.stillTrustedWithin.map((row) => row.name)).toEqual(["descendant-unpinned"]);
+
+		// The head of stillCoveredBy pins one key; what actually authorizes
+		// repo:both/api is the descendant, with no key restriction at all.
+		const policy = trustedPolicy(await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:both/api:ref:refs/heads/main"));
+		expect(policy.name).toBe("descendant-unpinned");
+		expect(policy.allowedKeyIds).toBeNull();
+
+		// And the ancestor does win for the rest of the revoked scope.
+		const elsewhere = trustedPolicy(await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:both/other:ref:x"));
+		expect(elsewhere.name).toBe("ancestor-pinned");
 	});
 
 	it("orders covering rows most specific first", async () => {

@@ -694,7 +694,7 @@
             "items": {
               "$ref": "#/components/schemas/CoveringSubject"
             },
-            "description": "Live rows whose prefix covers the revoked one, most specific first — the first entry is the row resolution will actually pick. The whole revoked scope keeps signing under its key grant, which may be wider than the revoked row's (keyIds: null means every key)."
+            "description": "Live rows whose prefix covers the revoked one, most specific first. The whole revoked scope keeps signing, under key grants that may be wider than the revoked row's (keyIds: null means every key). The first entry is what resolution picks only for the part of the scope no stillTrustedWithin row claims — those are nested, hence longer than every row here, and longest live wins."
           },
           "stillTrustedWithin": {
             "type": "array",
