@@ -162,7 +162,11 @@ describe("OIDC subject policy store", () => {
 
 		// The name comes back so the revoke can be audited under the same key the
 		// row's signatures were recorded under.
-		expect(await revokeOIDCSubject(env.AUDIT_DB, id)).toMatchObject({ name: "revoked", stillCoveredBy: [] });
+		expect(await revokeOIDCSubject(env.AUDIT_DB, id)).toMatchObject({
+			name: "revoked",
+			stillCoveredBy: [],
+			stillTrustedWithin: [],
+		});
 		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x")).resolves.toMatchObject({
 			status: "revoked",
 		});
@@ -261,7 +265,93 @@ describe("OIDC subject policy store", () => {
 		});
 
 		const revoked = await revokeOIDCSubject(env.AUDIT_DB, narrowId);
-		expect(revoked).toMatchObject({ name: "target", stillCoveredBy: [] });
+		expect(revoked).toMatchObject({ name: "target", stillCoveredBy: [], stillTrustedWithin: [] });
+	});
+
+	it("reports the nested rows a broad revoke leaves signing", async () => {
+		// The mirror image, and the worse one: the operator revokes the parent to
+		// cut a whole owner off, and the children are untouched. Reporting only
+		// ancestors answers with an empty list, which reads as "final".
+		const wideId = await insertOIDCSubject(env.AUDIT_DB, {
+			name: "owner-wide",
+			issuer: GITHUB,
+			subjectPrefix: "repo:me/",
+			keyIds: [],
+			expiresAt: null,
+		});
+		await insertOIDCSubject(env.AUDIT_DB, {
+			name: "one-repo",
+			issuer: GITHUB,
+			subjectPrefix: "repo:me/svc",
+			keyIds: ["BBBBBBBBBBBBBBBB"],
+			expiresAt: null,
+		});
+
+		const revoked = await revokeOIDCSubject(env.AUDIT_DB, wideId);
+		expect(revoked?.stillCoveredBy).toEqual([]);
+		expect(revoked?.stillTrustedWithin).toEqual([
+			{ id: expect.any(String), name: "one-repo", subjectPrefix: "repo:me/svc", keyIds: ["BBBBBBBBBBBBBBBB"] },
+		]);
+
+		// The rest of the owner really did stop; the nested repository did not.
+		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/api:ref:x")).resolves.toMatchObject({
+			status: "revoked",
+		});
+		expect(trustedPolicy(await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x")).name).toBe("one-repo");
+	});
+
+	it("truncates the audit summary when a revoke leaves many rows trusted", async () => {
+		// `audit_logs.metadata` has no length cap and nothing stops one row per
+		// repository under a shared parent.
+		const wideId = await insertOIDCSubject(env.AUDIT_DB, {
+			name: "many-parent",
+			issuer: GITHUB,
+			subjectPrefix: "repo:many/",
+			keyIds: [],
+			expiresAt: null,
+		});
+		for (let i = 0; i < 25; i++) {
+			await insertOIDCSubject(env.AUDIT_DB, {
+				name: `child-${i}`,
+				issuer: GITHUB,
+				subjectPrefix: `repo:many/svc${i}`,
+				keyIds: [],
+				expiresAt: null,
+			});
+		}
+
+		const revoked = await revokeOIDCSubject(env.AUDIT_DB, wideId);
+		// The util returns everything; truncation is the route's summary concern.
+		expect(revoked?.stillTrustedWithin).toHaveLength(25);
+	});
+
+	it("orders covering rows most specific first", async () => {
+		// The response is read top-down mid-incident, so the nearest surviving
+		// grant has to be the first line.
+		await insertOIDCSubject(env.AUDIT_DB, {
+			name: "host-wide",
+			issuer: GITHUB,
+			subjectPrefix: "repo:me",
+			keyIds: [],
+			expiresAt: null,
+		});
+		await insertOIDCSubject(env.AUDIT_DB, {
+			name: "owner-wide",
+			issuer: GITHUB,
+			subjectPrefix: "repo:me/",
+			keyIds: [],
+			expiresAt: null,
+		});
+		const leafId = await insertOIDCSubject(env.AUDIT_DB, {
+			name: "leaf",
+			issuer: GITHUB,
+			subjectPrefix: "repo:me/svc",
+			keyIds: [],
+			expiresAt: null,
+		});
+
+		const revoked = await revokeOIDCSubject(env.AUDIT_DB, leafId);
+		expect(revoked?.stillCoveredBy.map((row) => row.name)).toEqual(["owner-wide", "host-wide"]);
 	});
 
 	it("warns that expiry promotes a narrow grant to a wider one", async () => {
@@ -533,11 +623,36 @@ describe("admin subject management", () => {
 			success: true,
 			name: "narrow",
 			stillCoveredBy: [{ name: "wide", subjectPrefix: "repo:cover/", keyIds: null }],
+			stillTrustedWithin: [],
 		});
 		expect(warnSpy).toHaveBeenCalledWith(
-			"Revoked subject is still covered by a broader trust",
-			expect.objectContaining({ coveredBy: ["wide"] }),
+			"Revoked subject is still trusted through another row",
+			expect.objectContaining({ coveredBy: ["wide"], trustedWithin: [] }),
 		);
+		warnSpy.mockRestore();
+	});
+
+	it("caps the surviving-trust names written to the audit row", async () => {
+		const create = (name: string, subjectPrefix: string) =>
+			adminRequest("/admin/subjects", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ name, issuer: GITHUB, subjectPrefix }),
+			});
+
+		const parent = await create("cap-parent", "repo:cap/");
+		expect(parent.status).toBe(201);
+		const { id } = (await parent.json()) as { id: string };
+		for (let i = 0; i < 22; i++) {
+			expect((await create(`cap-child-${i}`, `repo:cap/svc${i}`)).status).toBe(201);
+		}
+
+		const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+		const revoked = await adminRequest(`/admin/subjects/${id}`, { method: "DELETE" });
+		expect(revoked.status).toBe(200);
+		// The response is complete; only the durable summary is capped.
+		const body = (await revoked.json()) as { stillTrustedWithin: unknown[] };
+		expect(body.stillTrustedWithin).toHaveLength(22);
 		warnSpy.mockRestore();
 	});
 

@@ -105,11 +105,17 @@ export const SubjectRevokeResponseSchema = z
 		/** The revoked row's name — the key `sign` audit events are recorded under. */
 		name: SubjectNameSchema,
 		/**
-		 * Live rows that still authorize the revoked subject, most specific first.
+		 * Live rows whose prefix *covers* the revoked one, most specific first.
 		 * Non-empty means the identity keeps signing — under the surviving row's
 		 * key grant, which may be wider than the one just revoked (`keyIds: null`
-		 * is every key). Empty is the usual case and means the revoke was final.
+		 * is every key).
 		 */
 		stillCoveredBy: z.array(CoveringSubjectSchema),
+		/**
+		 * Live rows *nested under* the revoked prefix, most specific first.
+		 * Revoking a parent does not touch its children, so these keep signing.
+		 * Only when both lists are empty was the revoke final.
+		 */
+		stillTrustedWithin: z.array(CoveringSubjectSchema),
 	})
 	.openapi("SubjectRevokeResponse");

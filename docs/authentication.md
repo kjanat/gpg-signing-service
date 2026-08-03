@@ -90,8 +90,11 @@ Revoke `repo:kjanat/svc` and that repository keeps signing, now under the
 owner-wide row — which pins no keys, so it just gained access to _every_ key.
 The revoke widened the grant.
 
-`DELETE /admin/subjects/{id}` answers with `stillCoveredBy`, listing every live
-row that still covers the revoked prefix, most specific first:
+Revoking the **broad** row is the mirror image: rows nested underneath it are
+not touched, so the part of the scope you meant to cut keeps signing. Revoke
+`repo:kjanat/` and `repo:kjanat/svc` carries on.
+
+`DELETE /admin/subjects/{id}` answers with both, most specific first:
 
 ```json
 {
@@ -105,14 +108,20 @@ row that still covers the revoked prefix, most specific first:
       "subjectPrefix": "repo:kjanat/",
       "keyIds": null
     }
-  ]
+  ],
+  "stillTrustedWithin": []
 }
 ```
 
-**A non-empty `stillCoveredBy` means the identity is still signing.** During an
-incident, revoke those rows too, or replace them with narrower ones that exclude
-the compromised subject. The service also logs
-`Revoked subject is still covered by a broader trust` and records the surviving
+- `stillCoveredBy` — rows that **cover** the revoked prefix. The whole revoked
+  scope keeps signing, under their grants.
+- `stillTrustedWithin` — rows **nested under** it. Part of the revoked scope
+  keeps signing.
+
+**Only when both are empty was the revoke final.** During an incident, revoke
+those rows too, or replace them with narrower ones that exclude the compromised
+subject. The service also logs
+`Revoked subject is still trusted through another row` and records both lists of
 names in the `subject_revoke` audit event.
 
 Expiry does the same thing with nobody watching: `expiresInDays` on a narrow,

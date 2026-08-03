@@ -280,10 +280,16 @@ export interface CoveringSubject {
 export interface RevokedSubject {
 	name: string;
 	/**
-	 * Live rows whose prefix still covers the revoked one's, most specific first.
-	 * Non-empty means the revoke did not stop the identity signing.
+	 * Live rows whose prefix *covers* the revoked one, most specific first. The
+	 * whole revoked scope keeps signing, under these rows' grants.
 	 */
 	stillCoveredBy: CoveringSubject[];
+	/**
+	 * Live rows *nested under* the revoked prefix, most specific first. Revoking
+	 * a parent does not touch its children, so part of the revoked scope keeps
+	 * signing. Only when both lists are empty was the revoke final.
+	 */
+	stillTrustedWithin: CoveringSubject[];
 }
 
 /**
@@ -296,17 +302,20 @@ export interface RevokedSubject {
  * audit event carries both identifiers and "what did the trust I just revoked
  * sign?" needs a join against `oidc_subjects` mid-incident.
  *
- * `stillCoveredBy` comes back because revoke is not subtraction. Resolution
- * takes the longest *live* prefix, so killing a narrow row promotes the next
- * one up — **with that row's key grant**, which may be wider than the one just
- * removed, and is unrestricted when the surviving row pins no keys. Revoking
- * `repo:me/svc` (keys: BBBB) under a live `repo:me/` (keys: none) leaves that
- * repository signing with *every* key. Answering a bare success is how
- * "revoked, still signing" gets missed during an incident.
+ * The two coverage lists come back because revoke is not subtraction, in either
+ * direction. Resolution takes the longest *live* prefix, so killing a narrow row
+ * promotes the next one up — **with that row's key grant**, which may be wider
+ * than the one just removed, and is unrestricted when the surviving row pins no
+ * keys. Revoking `repo:me/svc` (keys: BBBB) under a live `repo:me/` (keys: none)
+ * leaves that repository signing with *every* key. Killing the *broad* row is
+ * the mirror image: rows nested underneath it are untouched, so part of the
+ * scope the operator meant to cut keeps signing. Answering a bare success — or
+ * worse, an empty list that reads as "final" — is how "revoked, still signing"
+ * gets missed during an incident.
  *
  * @param db - Audit/policy database
  * @param id - Row id to revoke
- * @returns The revoked row's name and any rows still covering it, or null
+ * @returns The revoked row's name and anything still trusted, or null
  */
 export async function revokeOIDCSubject(db: D1Database, id: string): Promise<RevokedSubject | null> {
 	const row = await db
@@ -330,19 +339,35 @@ export async function revokeOIDCSubject(db: D1Database, id: string): Promise<Rev
 		.all<{ id: string; name: string; subject_prefix: string; key_ids: string; expires_at: string | null }>();
 
 	const now = Date.now();
-	// The revoked row's own prefix is the probe: `subjectMatchesPrefix` run in
-	// this direction finds ancestors (`repo:me/` covers `repo:me/svc`) and not
-	// siblings (`repo:me/other` does not).
-	const stillCoveredBy = results
-		.filter((candidate) => !candidate.expires_at || Date.parse(candidate.expires_at) >= now)
-		.filter((candidate) => subjectMatchesPrefix(row.subject_prefix, candidate.subject_prefix))
-		.sort((a, b) => b.subject_prefix.length - a.subject_prefix.length)
-		.map((candidate) => ({
-			id: candidate.id,
-			name: candidate.name,
-			subjectPrefix: candidate.subject_prefix,
-			keyIds: parseKeyIds(candidate.key_ids),
-		}));
+	const live = results.filter((candidate) => !candidate.expires_at || Date.parse(candidate.expires_at) >= now);
+	const bySpecificity = (a: { subject_prefix: string }, b: { subject_prefix: string }) =>
+		b.subject_prefix.length - a.subject_prefix.length;
+	const toCovering = (candidate: (typeof live)[number]): CoveringSubject => ({
+		id: candidate.id,
+		name: candidate.name,
+		subjectPrefix: candidate.subject_prefix,
+		keyIds: parseKeyIds(candidate.key_ids),
+	});
 
-	return { name: row.name, stillCoveredBy };
+	// Ancestors: rows whose prefix covers the revoked one, so the identity keeps
+	// signing outright under their grant. `subjectMatchesPrefix` in this direction
+	// finds `repo:me/` for `repo:me/svc`, and excludes siblings like
+	// `repo:me/other`.
+	const stillCoveredBy = live
+		.filter((candidate) => subjectMatchesPrefix(row.subject_prefix, candidate.subject_prefix))
+		.sort(bySpecificity)
+		.map(toCovering);
+
+	// Descendants: rows nested *under* the revoked prefix, which revoking the
+	// parent does not touch. Same "revoked, still signing" state, reached by
+	// killing the broad row instead of the narrow one — and reporting only
+	// ancestors would answer with an empty list, which reads as "final". The two
+	// lists are disjoint: the live-unique index forbids two live rows sharing a
+	// prefix, so no row can be both.
+	const stillTrustedWithin = live
+		.filter((candidate) => subjectMatchesPrefix(candidate.subject_prefix, row.subject_prefix))
+		.sort(bySpecificity)
+		.map(toCovering);
+
+	return { name: row.name, stillCoveredBy, stillTrustedWithin };
 }

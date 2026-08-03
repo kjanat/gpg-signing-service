@@ -694,13 +694,20 @@
             "items": {
               "$ref": "#/components/schemas/CoveringSubject"
             }
+          },
+          "stillTrustedWithin": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CoveringSubject"
+            }
           }
         },
         "required": [
           "success",
           "id",
           "name",
-          "stillCoveredBy"
+          "stillCoveredBy",
+          "stillTrustedWithin"
         ]
       },
       "CoveringSubject": {
@@ -1535,7 +1542,7 @@
     "/admin/subjects/{id}": {
       "delete": {
         "summary": "Revoke a trusted OIDC subject",
-        "description": "Revoke a subject by id; it stops being able to sign immediately",
+        "description": "Revoke a subject by id. This does not necessarily stop the subject signing: resolution takes the longest live prefix, so a broader row that also covers it takes over — with that row's key grant, which may be wider. Rows nested under the revoked prefix are not touched at all. The response lists both in `stillCoveredBy` and `stillTrustedWithin`; only when both are empty was the revoke final.",
         "security": [
           {
             "bearerAuth": []
