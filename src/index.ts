@@ -5,6 +5,7 @@ import * as openpgp from "openpgp";
 import { createOpenAPIApp, openApiConfig } from "#lib/openapi";
 import { callerAuth } from "#middleware/caller-auth";
 import { adminAuth } from "#middleware/oidc";
+import { requestIdMiddleware } from "#middleware/request-id";
 import { adminRateLimit, productionCors, securityHeaders } from "#middleware/security";
 import adminRoutes from "#routes/admin";
 import subjectRoutes from "#routes/oidc-subjects";
@@ -23,6 +24,10 @@ export { RateLimiter } from "#durable-objects/rate-limiter";
 const app = createOpenAPIApp();
 
 // Global middleware
+// Ahead of everything else so `c.get("requestId")` is populated for the whole
+// pipeline and every response echoes X-Request-ID. The value is the caller's
+// only when it is a UUID — it reaches audit_logs.request_id, declared z.uuid().
+app.use("*", requestIdMiddleware);
 app.use("*", logger());
 app.use("*", securityHeaders);
 app.use("*", productionCors);

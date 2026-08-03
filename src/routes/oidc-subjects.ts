@@ -17,6 +17,20 @@ import { insertOIDCSubject, listOIDCSubjects, revokeOIDCSubject } from "#utils/o
 
 const app = createOpenAPIApp();
 
+/** How many surviving-trust names a single audit row will carry. */
+const AUDIT_NAME_LIMIT = 20;
+
+/**
+ * Summarize surviving trusts for `audit_logs.metadata`, which has no length cap.
+ *
+ * @param rows - Rows still trusting the revoked subject
+ * @returns Their names, truncated with a marker when there are too many
+ */
+function auditNames(rows: { name: string }[]): string[] {
+	const names = rows.slice(0, AUDIT_NAME_LIMIT).map((row) => row.name);
+	return rows.length > AUDIT_NAME_LIMIT ? [...names, `+${rows.length - AUDIT_NAME_LIMIT} more`] : names;
+}
+
 /**
  * Describe which row is holding an (issuer, prefix) slot.
  *
@@ -269,7 +283,12 @@ const revokeSubjectRoute = createRoute({
 	method: "delete",
 	path: "/subjects/{id}",
 	summary: "Revoke a trusted OIDC subject",
-	description: "Revoke a subject by id; it stops being able to sign immediately",
+	description:
+		"Revoke a subject by id. This does not necessarily stop the subject signing: resolution " +
+		"takes the longest live prefix, so a broader row that also covers it takes over — with " +
+		"that row's key grant, which may be wider. Rows nested under the revoked prefix are not " +
+		"touched at all. The response lists both in `stillCoveredBy` and `stillTrustedWithin`; " +
+		"only when both are empty was the revoke final.",
 	security: [{ bearerAuth: [] }],
 	request: {
 		params: z.object({ id: z.uuid() }),
@@ -324,21 +343,35 @@ app.openapi(revokeSubjectRoute, async (c) => {
 				// a row added later would make the trail read differently.
 				metadata: JSON.stringify({
 					subjectPolicy: revoked.name,
-					stillCoveredBy: revoked.stillCoveredBy.map((row) => row.name),
+					// Capped: `metadata` has no length limit, and nothing stops an
+					// operator scripting one row per repository under a shared parent.
+					// The response carries the full lists; this is the durable summary.
+					stillCoveredBy: auditNames(revoked.stillCoveredBy),
+					stillTrustedWithin: auditNames(revoked.stillTrustedWithin),
 				}),
 			}),
 		);
 
-		if (revoked.stillCoveredBy.length > 0) {
-			logger.warn("Revoked subject is still covered by a broader trust", {
+		if (revoked.stillCoveredBy.length > 0 || revoked.stillTrustedWithin.length > 0) {
+			logger.warn("Revoked subject is still trusted through another row", {
 				requestId,
 				subjectId: id,
 				subjectPolicy: revoked.name,
 				coveredBy: revoked.stillCoveredBy.map((row) => row.name),
+				trustedWithin: revoked.stillTrustedWithin.map((row) => row.name),
 			});
 		}
 
-		return c.json({ success: true, id, name: revoked.name, stillCoveredBy: revoked.stillCoveredBy }, HTTP.OK);
+		return c.json(
+			{
+				success: true,
+				id,
+				name: revoked.name,
+				stillCoveredBy: revoked.stillCoveredBy,
+				stillTrustedWithin: revoked.stillTrustedWithin,
+			},
+			HTTP.OK,
+		);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Revoke failed";
 		logger.error("Subject revoke failed", { requestId, error: message });
