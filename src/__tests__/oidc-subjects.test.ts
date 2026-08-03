@@ -290,7 +290,7 @@ describe("admin subject management", () => {
 		expect(second.status).toBe(409);
 		// The name is the one field that was fine; do not send the operator to change it.
 		const error = (await second.json()) as { error: string };
-		expect(error.error).toContain("already trusted");
+		expect(error.error).toContain("already claimed");
 		expect(error.error).not.toContain("pair-two");
 	});
 
@@ -316,6 +316,33 @@ describe("admin subject management", () => {
 		});
 		expect(restored.status).toBe(201);
 		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:incident/svc:ref:x")).resolves.not.toBeNull();
+	});
+
+	it("explains that a renewal is blocked by an expired row, and how to clear it", async () => {
+		// An expired row authorizes nobody but still holds the (issuer, prefix)
+		// slot, so renewal collides. Saying "already trusted" is false, and the
+		// nearest thing an operator can then type is a *broader* prefix.
+		await insertOIDCSubject(env.AUDIT_DB, {
+			name: "renew-me",
+			issuer: GITHUB,
+			subjectPrefix: "repo:renew/",
+			keyIds: [],
+			expiresAt: new Date(Date.now() - 1000).toISOString(),
+		});
+		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:renew/svc:ref:x")).resolves.toBeNull();
+
+		const blocked = await adminRequest("/admin/subjects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ name: "renew-me-2", issuer: GITHUB, subjectPrefix: "repo:renew/" }),
+		});
+		expect(blocked.status).toBe(409);
+		const error = ((await blocked.json()) as { error: string }).error;
+		expect(error).not.toContain("already trusted");
+		expect(error).toContain("expired");
+		expect(error).toMatch(/revoke it/i);
+		// It must also steer away from the one workaround that widens access.
+		expect(error).toContain("do not widen the prefix");
 	});
 
 	it("rejects duplicate names", async () => {
