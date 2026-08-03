@@ -266,15 +266,64 @@ describe("admin subject management", () => {
 		expect(again.status).toBe(404);
 	});
 
+	it("refuses a second live row for the same issuer and prefix, under any name", async () => {
+		const body = { issuer: GITHUB, subjectPrefix: "repo:pair/" };
+		const first = await adminRequest("/admin/subjects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ name: "pair-one", ...body }),
+		});
+		expect(first.status).toBe(201);
+
+		const second = await adminRequest("/admin/subjects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ name: "pair-two", ...body }),
+		});
+		expect(second.status).toBe(409);
+		// The name is the one field that was fine; do not send the operator to change it.
+		const error = (await second.json()) as { error: string };
+		expect(error.error).toContain("already trusted");
+		expect(error.error).not.toContain("pair-two");
+	});
+
+	it("allows re-trusting an identity after it has been revoked", async () => {
+		// The incident path: kill a compromised trust, remediate, trust it again.
+		// A unique index spanning revoked rows would make revoke a one-way door.
+		const body = { issuer: GITHUB, subjectPrefix: "repo:incident/" };
+		const created = await adminRequest("/admin/subjects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ name: "incident-before", ...body }),
+		});
+		expect(created.status).toBe(201);
+		const { id } = (await created.json()) as { id: string };
+
+		expect((await adminRequest(`/admin/subjects/${id}`, { method: "DELETE" })).status).toBe(200);
+		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:incident/svc:ref:x")).resolves.toBeNull();
+
+		const restored = await adminRequest("/admin/subjects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ name: "incident-after", ...body }),
+		});
+		expect(restored.status).toBe(201);
+		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:incident/svc:ref:x")).resolves.not.toBeNull();
+	});
+
 	it("rejects duplicate names", async () => {
-		const create = () =>
+		// Distinct prefixes, so this exercises the name constraint rather than
+		// the (issuer, prefix) index.
+		const create = (subjectPrefix: string) =>
 			adminRequest("/admin/subjects", {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ name: "ci/dup", issuer: GITHUB, subjectPrefix: "repo:a/" }),
+				body: JSON.stringify({ name: "ci/dup", issuer: GITHUB, subjectPrefix }),
 			});
-		expect((await create()).status).toBe(201);
-		expect((await create()).status).toBe(409);
+		expect((await create("repo:a/")).status).toBe(201);
+		const clash = await create("repo:b/");
+		expect(clash.status).toBe(409);
+		expect(((await clash.json()) as { error: string }).error).toContain("name already exists");
 	});
 
 	it("rejects a malformed name, issuer, prefix or key id", async () => {
@@ -292,6 +341,21 @@ describe("admin subject management", () => {
 			});
 			expect(response.status).toBe(400);
 		}
+	});
+
+	it("refuses an issuer that is not in ALLOWED_ISSUERS", async () => {
+		// Otherwise the row lists as trusted and can never match anything.
+		const response = await adminRequest("/admin/subjects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				name: "ci/typo",
+				issuer: "https://token.actions.githubusercontent.com/",
+				subjectPrefix: "repo:a/",
+			}),
+		});
+		expect(response.status).toBe(400);
+		expect(((await response.json()) as { error: string }).error).toContain("ALLOWED_ISSUERS");
 	});
 
 	it("requires the admin token", async () => {

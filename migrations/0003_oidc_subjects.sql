@@ -30,8 +30,12 @@ CREATE TABLE IF NOT EXISTS oidc_subjects (
 -- application code, because SQL cannot express the delimiter rule.
 CREATE INDEX IF NOT EXISTS idx_oidc_subjects_issuer ON oidc_subjects (issuer);
 
+-- Uniqueness applies to *live* rows only. Revoked rows are kept for the audit
+-- trail and never deleted, so indexing across all of them would make revoke a
+-- one-way door: after killing a compromised trust you could never re-trust the
+-- same identity through the API, which is precisely the moment you need to.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_oidc_subjects_issuer_prefix
-ON oidc_subjects (issuer, subject_prefix);
+ON oidc_subjects (issuer, subject_prefix) WHERE revoked_at IS NULL;
 
 -- Extend the audit action check with subject lifecycle actions. SQLite cannot
 -- alter a CHECK constraint, so rebuild the table in place (same approach as

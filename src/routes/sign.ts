@@ -96,7 +96,7 @@ app.openapi(signRoute, async (c) => {
 	const { keyId: keyIdQuery } = c.req.valid("query");
 	const keyIdParam = keyIdQuery || c.env.KEY_ID;
 
-	// Service tokens may carry a key allowlist; enforce it before any work.
+	// Both auth paths may carry a key allowlist; enforce it before any work.
 	const allowedKeyIds = c.get("allowedKeyIds");
 	if (allowedKeyIds && !allowedKeyIds.includes(keyIdParam)) {
 		return c.json(
