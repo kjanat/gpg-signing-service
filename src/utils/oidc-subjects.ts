@@ -282,6 +282,10 @@ export interface RevokedSubject {
 	/**
 	 * Live rows whose prefix *covers* the revoked one, most specific first. The
 	 * whole revoked scope keeps signing, under these rows' grants.
+	 *
+	 * The head of this list is what resolution picks only where no
+	 * `stillTrustedWithin` row claims the subject: those are nested under the
+	 * revoked prefix, hence longer than every row here, and longest live wins.
 	 */
 	stillCoveredBy: CoveringSubject[];
 	/**

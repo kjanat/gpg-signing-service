@@ -114,8 +114,11 @@ not touched, so the part of the scope you meant to cut keeps signing. Revoke
 ```
 
 - `stillCoveredBy` — rows that **cover** the revoked prefix, most specific
-  first. The whole revoked scope keeps signing, under their grants; the first
-  entry is the one resolution will actually pick.
+  first. The whole revoked scope keeps signing, under their grants. The first
+  entry is the one resolution picks only where no `stillTrustedWithin` row
+  claims the subject: those are nested under the revoked prefix, so they are
+  longer than everything here and win. A pinned `keyIds` at the top of this list
+  is therefore not proof the scope was narrowed — read both lists.
 - `stillTrustedWithin` — rows **nested under** it, outermost first: where one of
   these contains another, the container is listed above it. Rows in disjoint
   scopes are not ordered against each other — a one-repo row can precede a

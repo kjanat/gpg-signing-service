@@ -109,6 +109,12 @@ export const SubjectRevokeResponseSchema = z
 		 * Non-empty means the identity keeps signing — under the surviving row's
 		 * key grant, which may be wider than the one just revoked (`keyIds: null`
 		 * is every key).
+		 *
+		 * The first entry is what resolution picks only for the part of the scope
+		 * no `stillTrustedWithin` row claims: those are nested under the revoked
+		 * prefix, hence longer than every row here, and longest live wins. A
+		 * pinned `keyIds` at the head of this list is therefore not proof the
+		 * scope was narrowed.
 		 */
 		stillCoveredBy: z
 			.array(CoveringSubjectSchema)
@@ -116,9 +122,11 @@ export const SubjectRevokeResponseSchema = z
 			// guidance, and TSDoc does not reach openapi.json or the generated
 			// client, which is what somebody reads mid-incident.
 			.describe(
-				"Live rows whose prefix covers the revoked one, most specific first — the first entry is " +
-					"the row resolution will actually pick. The whole revoked scope keeps signing under its " +
-					"key grant, which may be wider than the revoked row's (keyIds: null means every key).",
+				"Live rows whose prefix covers the revoked one, most specific first. The whole revoked " +
+					"scope keeps signing, under key grants that may be wider than the revoked row's " +
+					"(keyIds: null means every key). The first entry is what resolution picks only for the " +
+					"part of the scope no stillTrustedWithin row claims — those are nested, hence longer " +
+					"than every row here, and longest live wins.",
 			),
 		/**
 		 * Live rows *nested under* the revoked prefix, outermost first: where one
