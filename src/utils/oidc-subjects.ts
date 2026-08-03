@@ -93,6 +93,13 @@ const SUBJECT_DELIMITERS = new Set([":", "@", "/"]);
  * @returns true when the subject falls under the prefix
  */
 export function subjectMatchesPrefix(sub: string, prefix: string): boolean {
+	// A token with no `sub` is a malformed credential, not a service fault. Both
+	// real issuers always set it, but ALLOWED_ISSUERS is configurable, and
+	// `sub.startsWith` on undefined throws — which the caller's catch would file
+	// as "authorization store unavailable", a 503 and an alert for what is a 401.
+	if (typeof sub !== "string" || !sub) {
+		return false;
+	}
 	if (!prefix) {
 		return false;
 	}
@@ -260,23 +267,82 @@ export async function listOIDCSubjects(db: D1Database): Promise<OIDCSubjectRecor
 	}));
 }
 
+/** A row that still authorizes a subject after a narrower one was revoked. */
+export interface CoveringSubject {
+	id: string;
+	name: string;
+	subjectPrefix: string;
+	/** Key ids the surviving row grants; null means every key. */
+	keyIds: string[] | null;
+}
+
+/** Outcome of a revoke, including what the revoked identity can still do. */
+export interface RevokedSubject {
+	name: string;
+	/**
+	 * Live rows whose prefix still covers the revoked one's, most specific first.
+	 * Non-empty means the revoke did not stop the identity signing.
+	 */
+	stillCoveredBy: CoveringSubject[];
+}
+
 /**
  * Revoke a subject by id.
  *
- * Returns the revoked row's name, or null when the id is unknown or already
- * revoked. The name rather than a bare boolean because `sign` events are keyed
- * by name (`metadata.subjectPolicy`) while the revoke is keyed by id: without
- * returning it here, no audit event carries both identifiers and "what did the
- * trust I just revoked sign?" needs a join against `oidc_subjects` mid-incident.
+ * Returns null when the id is unknown or already revoked.
+ *
+ * The name comes back because `sign` events are keyed by name
+ * (`metadata.subjectPolicy`) while the revoke is keyed by id: without it, no
+ * audit event carries both identifiers and "what did the trust I just revoked
+ * sign?" needs a join against `oidc_subjects` mid-incident.
+ *
+ * `stillCoveredBy` comes back because revoke is not subtraction. Resolution
+ * takes the longest *live* prefix, so killing a narrow row promotes the next
+ * one up — **with that row's key grant**, which may be wider than the one just
+ * removed, and is unrestricted when the surviving row pins no keys. Revoking
+ * `repo:me/svc` (keys: BBBB) under a live `repo:me/` (keys: none) leaves that
+ * repository signing with *every* key. Answering a bare success is how
+ * "revoked, still signing" gets missed during an incident.
  *
  * @param db - Audit/policy database
  * @param id - Row id to revoke
- * @returns The revoked row's name, or null
+ * @returns The revoked row's name and any rows still covering it, or null
  */
-export async function revokeOIDCSubject(db: D1Database, id: string): Promise<string | null> {
+export async function revokeOIDCSubject(db: D1Database, id: string): Promise<RevokedSubject | null> {
 	const row = await db
-		.prepare("UPDATE oidc_subjects SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL RETURNING name")
+		.prepare(
+			`UPDATE oidc_subjects SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL
+       RETURNING name, issuer, subject_prefix`,
+		)
 		.bind(new Date().toISOString(), id)
-		.first<{ name: string }>();
-	return row?.name ?? null;
+		.first<{ name: string; issuer: string; subject_prefix: string }>();
+
+	if (!row) {
+		return null;
+	}
+
+	const { results } = await db
+		.prepare(
+			`SELECT id, name, subject_prefix, key_ids, expires_at FROM oidc_subjects
+       WHERE issuer = ? AND revoked_at IS NULL AND id != ?`,
+		)
+		.bind(row.issuer, id)
+		.all<{ id: string; name: string; subject_prefix: string; key_ids: string; expires_at: string | null }>();
+
+	const now = Date.now();
+	// The revoked row's own prefix is the probe: `subjectMatchesPrefix` run in
+	// this direction finds ancestors (`repo:me/` covers `repo:me/svc`) and not
+	// siblings (`repo:me/other` does not).
+	const stillCoveredBy = results
+		.filter((candidate) => !candidate.expires_at || Date.parse(candidate.expires_at) >= now)
+		.filter((candidate) => subjectMatchesPrefix(row.subject_prefix, candidate.subject_prefix))
+		.sort((a, b) => b.subject_prefix.length - a.subject_prefix.length)
+		.map((candidate) => ({
+			id: candidate.id,
+			name: candidate.name,
+			subjectPrefix: candidate.subject_prefix,
+			keyIds: parseKeyIds(candidate.key_ids),
+		}));
+
+	return { name: row.name, stillCoveredBy };
 }

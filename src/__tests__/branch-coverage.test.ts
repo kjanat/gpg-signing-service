@@ -288,6 +288,9 @@ describe("Branch Coverage Helpers", () => {
 			const context = {
 				req: { header: () => "Basic user:pass" },
 				json,
+				// The middleware publishes the request id before looking at the
+				// Authorization header, so the stub needs somewhere to put it.
+				set: vi.fn(),
 			};
 			await import("#middleware/oidc").then(({ oidcAuth }) => oidcAuth(context as any, () => Promise.resolve()));
 			expect(json).toHaveBeenCalledWith(expect.objectContaining({ code: "AUTH_MISSING" }), 401);

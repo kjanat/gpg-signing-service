@@ -88,11 +88,28 @@ export const SubjectListResponseSchema = z
 	.object({ subjects: z.array(SubjectSummarySchema) })
 	.openapi("SubjectListResponse");
 
+/** A live row that still covers a revoked subject's prefix. */
+export const CoveringSubjectSchema = z
+	.object({
+		id: z.string(),
+		name: SubjectNameSchema,
+		subjectPrefix: SubjectPrefixSchema,
+		keyIds: z.array(z.string()).nullable(),
+	})
+	.openapi("CoveringSubject");
+
 export const SubjectRevokeResponseSchema = z
 	.object({
 		success: z.boolean(),
 		id: z.string(),
 		/** The revoked row's name — the key `sign` audit events are recorded under. */
 		name: SubjectNameSchema,
+		/**
+		 * Live rows that still authorize the revoked subject, most specific first.
+		 * Non-empty means the identity keeps signing — under the surviving row's
+		 * key grant, which may be wider than the one just revoked (`keyIds: null`
+		 * is every key). Empty is the usual case and means the revoke was final.
+		 */
+		stillCoveredBy: z.array(CoveringSubjectSchema),
 	})
 	.openapi("SubjectRevokeResponse");

@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import app from "#gpg-signing-service";
-
+import { logger } from "#utils/logger";
 import type { OIDCSubjectPolicy, OIDCSubjectResolution } from "#utils/oidc-subjects";
 import {
 	insertOIDCSubject,
@@ -12,7 +12,6 @@ import {
 	revokeOIDCSubject,
 	subjectMatchesPrefix,
 } from "#utils/oidc-subjects";
-
 import { clearTrustedSubjects } from "./helpers/oidc-subjects";
 
 const GITHUB = "https://token.actions.githubusercontent.com";
@@ -55,6 +54,13 @@ describe("subjectMatchesPrefix", () => {
 		expect(subjectMatchesPrefix("repo:me/svc-evil:ref:refs/heads/main", "repo:me/svc")).toBe(false);
 		expect(subjectMatchesPrefix("repo:meevil/svc", "repo:me")).toBe(false);
 		expect(subjectMatchesPrefix("repo:meevil/svc", "repo:me/")).toBe(false);
+	});
+
+	it("rejects a missing or non-string subject instead of throwing", () => {
+		// A token with no `sub` is a malformed credential. Throwing here would be
+		// caught by the store-unavailable handler and reported as a 503 outage.
+		expect(subjectMatchesPrefix(undefined as unknown as string, "repo:me/")).toBe(false);
+		expect(subjectMatchesPrefix("", "repo:me/")).toBe(false);
 	});
 
 	it("rejects an unrelated subject and an empty prefix", () => {
@@ -156,7 +162,7 @@ describe("OIDC subject policy store", () => {
 
 		// The name comes back so the revoke can be audited under the same key the
 		// row's signatures were recorded under.
-		expect(await revokeOIDCSubject(env.AUDIT_DB, id)).toBe("revoked");
+		expect(await revokeOIDCSubject(env.AUDIT_DB, id)).toMatchObject({ name: "revoked", stillCoveredBy: [] });
 		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x")).resolves.toMatchObject({
 			status: "revoked",
 		});
@@ -185,6 +191,101 @@ describe("OIDC subject policy store", () => {
 		const policy = trustedPolicy(await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x"));
 		expect(policy.name).toBe("one-repo");
 		expect(policy.allowedKeyIds).toEqual(["BBBBBBBBBBBBBBBB"]);
+	});
+
+	it("reports the broader row that takes over when a narrow trust is revoked", async () => {
+		// Revoke is not subtraction. Resolution takes the longest *live* prefix, so
+		// killing the narrow row promotes the owner-wide one — with *its* key grant.
+		// Here that means the repository loses BBBB and gains AAAA, which is the
+		// opposite of what "stops being able to sign immediately" implies.
+		await insertOIDCSubject(env.AUDIT_DB, {
+			name: "owner-wide",
+			issuer: GITHUB,
+			subjectPrefix: "repo:me/",
+			keyIds: ["AAAAAAAAAAAAAAAA"],
+			expiresAt: null,
+		});
+		const narrowId = await insertOIDCSubject(env.AUDIT_DB, {
+			name: "one-repo",
+			issuer: GITHUB,
+			subjectPrefix: "repo:me/svc",
+			keyIds: ["BBBBBBBBBBBBBBBB"],
+			expiresAt: null,
+		});
+
+		const revoked = await revokeOIDCSubject(env.AUDIT_DB, narrowId);
+		expect(revoked?.name).toBe("one-repo");
+		expect(revoked?.stillCoveredBy).toEqual([
+			{
+				id: expect.any(String),
+				name: "owner-wide",
+				subjectPrefix: "repo:me/",
+				keyIds: ["AAAAAAAAAAAAAAAA"],
+			},
+		]);
+
+		// And it really does still sign, under the surviving grant.
+		const after = trustedPolicy(await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x"));
+		expect(after.name).toBe("owner-wide");
+		expect(after.allowedKeyIds).toEqual(["AAAAAAAAAAAAAAAA"]);
+	});
+
+	it("does not report siblings, expired rows or other issuers as still covering", async () => {
+		await insertOIDCSubject(env.AUDIT_DB, {
+			name: "sibling",
+			issuer: GITHUB,
+			subjectPrefix: "repo:me/other",
+			keyIds: [],
+			expiresAt: null,
+		});
+		await insertOIDCSubject(env.AUDIT_DB, {
+			name: "lapsed-parent",
+			issuer: GITHUB,
+			subjectPrefix: "repo:me/",
+			keyIds: [],
+			expiresAt: new Date(Date.now() - 1000).toISOString(),
+		});
+		await insertOIDCSubject(env.AUDIT_DB, {
+			name: "other-issuer-parent",
+			issuer: GITLAB,
+			subjectPrefix: "repo:me/",
+			keyIds: [],
+			expiresAt: null,
+		});
+		const narrowId = await insertOIDCSubject(env.AUDIT_DB, {
+			name: "target",
+			issuer: GITHUB,
+			subjectPrefix: "repo:me/svc",
+			keyIds: [],
+			expiresAt: null,
+		});
+
+		const revoked = await revokeOIDCSubject(env.AUDIT_DB, narrowId);
+		expect(revoked).toMatchObject({ name: "target", stillCoveredBy: [] });
+	});
+
+	it("warns that expiry promotes a narrow grant to a wider one", async () => {
+		// The same mechanism with nobody watching. `expiresInDays` reads like a
+		// deadline; under a live unrestricted parent it is a promotion to every key.
+		await insertOIDCSubject(env.AUDIT_DB, {
+			name: "unrestricted-parent",
+			issuer: GITHUB,
+			subjectPrefix: "repo:me/",
+			keyIds: [],
+			expiresAt: null,
+		});
+		await insertOIDCSubject(env.AUDIT_DB, {
+			name: "scoped-child",
+			issuer: GITHUB,
+			subjectPrefix: "repo:me/svc",
+			keyIds: ["BBBBBBBBBBBBBBBB"],
+			expiresAt: new Date(Date.now() - 1000).toISOString(),
+		});
+
+		const policy = trustedPolicy(await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x"));
+		expect(policy.name).toBe("unrestricted-parent");
+		// null is *every* key: the expiry widened the grant rather than ending it.
+		expect(policy.allowedKeyIds).toBeNull();
 	});
 
 	it("stamps last use, and signing still works when that write fails", async () => {
@@ -408,6 +509,36 @@ describe("admin subject management", () => {
 		expect(error).toMatch(/revoke it/i);
 		// It must also steer away from the one workaround that widens access.
 		expect(error).toContain("do not widen the prefix");
+	});
+
+	it("tells the operator when a revoke left a broader trust in charge", async () => {
+		// The response is the only place this shows up in time to matter: the
+		// operator is mid-incident and about to believe {"success": true}.
+		const create = (name: string, subjectPrefix: string, keyIds?: string[]) =>
+			adminRequest("/admin/subjects", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ name, issuer: GITHUB, subjectPrefix, ...(keyIds ? { keyIds } : {}) }),
+			});
+
+		expect((await create("wide", "repo:cover/")).status).toBe(201);
+		const narrow = await create("narrow", "repo:cover/svc", ["D8BC04E534E7706F"]);
+		expect(narrow.status).toBe(201);
+		const { id } = (await narrow.json()) as { id: string };
+
+		const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+		const revoked = await adminRequest(`/admin/subjects/${id}`, { method: "DELETE" });
+		expect(revoked.status).toBe(200);
+		expect(await revoked.json()).toMatchObject({
+			success: true,
+			name: "narrow",
+			stillCoveredBy: [{ name: "wide", subjectPrefix: "repo:cover/", keyIds: null }],
+		});
+		expect(warnSpy).toHaveBeenCalledWith(
+			"Revoked subject is still covered by a broader trust",
+			expect.objectContaining({ coveredBy: ["wide"] }),
+		);
+		warnSpy.mockRestore();
 	});
 
 	it("rejects duplicate names", async () => {

@@ -3,6 +3,12 @@ import { describe, expect, it } from "vitest";
 import { requestIdMiddleware } from "#middleware/request-id";
 import type { Env, Variables } from "#types";
 
+// A UUID, because `getRequestId` only honours the caller's value when it is one:
+// it reaches `audit_logs.request_id`, declared `z.uuid()`, and the generated Go
+// client decodes it into a non-pointer UUID.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const CALLER_ID = "1b4e28ba-2fa1-11d2-883f-0016d3cca427";
+
 describe("Request ID Middleware", () => {
 	const createApp = () => {
 		const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -18,14 +24,14 @@ describe("Request ID Middleware", () => {
 			});
 
 			const response = await app.request("/test", {
-				headers: { "X-Request-ID": "custom-request-id-123" },
+				headers: { "X-Request-ID": CALLER_ID },
 			});
 
 			expect(response.status).toBe(200);
-			expect(response.headers.get("X-Request-ID")).toBe("custom-request-id-123");
+			expect(response.headers.get("X-Request-ID")).toBe(CALLER_ID);
 
 			const body = await response.json();
-			expect(body).toEqual({ requestId: "custom-request-id-123" });
+			expect(body).toEqual({ requestId: CALLER_ID });
 		});
 
 		it("should generate UUID when X-Request-ID not provided", async () => {
@@ -56,10 +62,10 @@ describe("Request ID Middleware", () => {
 			});
 
 			await app.request("/test", {
-				headers: { "X-Request-ID": "test-123" },
+				headers: { "X-Request-ID": "1b4e28ba-2fa1-11d2-883f-0016d3cca415" },
 			});
 
-			expect(capturedId).toBe("test-123");
+			expect(capturedId).toBe("1b4e28ba-2fa1-11d2-883f-0016d3cca415");
 		});
 
 		it("should add X-Request-ID to response headers", async () => {
@@ -67,10 +73,10 @@ describe("Request ID Middleware", () => {
 			app.get("/test", (c) => c.text("ok"));
 
 			const response = await app.request("/test", {
-				headers: { "X-Request-ID": "header-test" },
+				headers: { "X-Request-ID": "1b4e28ba-2fa1-11d2-883f-0016d3cca405" },
 			});
 
-			expect(response.headers.get("X-Request-ID")).toBe("header-test");
+			expect(response.headers.get("X-Request-ID")).toBe("1b4e28ba-2fa1-11d2-883f-0016d3cca405");
 		});
 	});
 
@@ -109,7 +115,9 @@ describe("Request ID Middleware", () => {
 			expect(body.requestId).toBeTruthy();
 		});
 
-		it("should handle very long X-Request-ID (>1000 chars)", async () => {
+		it("should replace a very long X-Request-ID (>1000 chars)", async () => {
+			// The id reaches `audit_logs.request_id`, so an unbounded caller-chosen
+			// value is a storage-growth lever as well as a schema violation.
 			const app = createApp();
 			app.get("/test", (c) => c.text("ok"));
 
@@ -118,10 +126,11 @@ describe("Request ID Middleware", () => {
 				headers: { "X-Request-ID": longId },
 			});
 
-			expect(response.headers.get("X-Request-ID")).toBe(longId);
+			expect(response.headers.get("X-Request-ID")).not.toBe(longId);
+			expect(response.headers.get("X-Request-ID")).toMatch(UUID_RE);
 		});
 
-		it("should handle X-Request-ID with special characters", async () => {
+		it("should replace an X-Request-ID with special characters", async () => {
 			const app = createApp();
 			app.get("/test", (c) => c.text("ok"));
 
@@ -130,10 +139,11 @@ describe("Request ID Middleware", () => {
 				headers: { "X-Request-ID": specialId },
 			});
 
-			expect(response.headers.get("X-Request-ID")).toBe(specialId);
+			expect(response.headers.get("X-Request-ID")).not.toBe(specialId);
+			expect(response.headers.get("X-Request-ID")).toMatch(UUID_RE);
 		});
 
-		it("should handle X-Request-ID with unicode", async () => {
+		it("should replace an X-Request-ID with unicode", async () => {
 			const app = createApp();
 			app.get("/test", (c) => c.text("ok"));
 
@@ -142,7 +152,8 @@ describe("Request ID Middleware", () => {
 				headers: { "X-Request-ID": unicodeId },
 			});
 
-			expect(response.headers.get("X-Request-ID")).toBe(unicodeId);
+			expect(response.headers.get("X-Request-ID")).not.toBe(unicodeId);
+			expect(response.headers.get("X-Request-ID")).toMatch(UUID_RE);
 		});
 
 		it("should handle case-insensitive header lookup", async () => {
@@ -151,11 +162,11 @@ describe("Request ID Middleware", () => {
 
 			// Hono normalizes headers, but test various casings
 			const response = await app.request("/test", {
-				headers: { "x-request-id": "lowercase-test" },
+				headers: { "x-request-id": CALLER_ID },
 			});
 
 			const body = (await response.json()) as { requestId: string };
-			expect(body.requestId).toBe("lowercase-test");
+			expect(body.requestId).toBe(CALLER_ID);
 		});
 
 		it("should not override existing response X-Request-ID", async () => {
@@ -166,11 +177,11 @@ describe("Request ID Middleware", () => {
 			});
 
 			const response = await app.request("/test", {
-				headers: { "X-Request-ID": "original-id" },
+				headers: { "X-Request-ID": "1b4e28ba-2fa1-11d2-883f-0016d3cca40c" },
 			});
 
 			// Middleware sets header AFTER next(), might override
-			expect(response.headers.get("X-Request-ID")).toBe("original-id");
+			expect(response.headers.get("X-Request-ID")).toBe("1b4e28ba-2fa1-11d2-883f-0016d3cca40c");
 		});
 
 		it("should work with POST requests", async () => {
@@ -179,11 +190,11 @@ describe("Request ID Middleware", () => {
 
 			const response = await app.request("/test", {
 				method: "POST",
-				headers: { "X-Request-ID": "post-test-123" },
+				headers: { "X-Request-ID": "1b4e28ba-2fa1-11d2-883f-0016d3cca40d" },
 				body: "test data",
 			});
 
-			expect(response.headers.get("X-Request-ID")).toBe("post-test-123");
+			expect(response.headers.get("X-Request-ID")).toBe("1b4e28ba-2fa1-11d2-883f-0016d3cca40d");
 		});
 
 		it("should work with PUT requests", async () => {
@@ -192,10 +203,10 @@ describe("Request ID Middleware", () => {
 
 			const response = await app.request("/test", {
 				method: "PUT",
-				headers: { "X-Request-ID": "put-test-456" },
+				headers: { "X-Request-ID": "1b4e28ba-2fa1-11d2-883f-0016d3cca40f" },
 			});
 
-			expect(response.headers.get("X-Request-ID")).toBe("put-test-456");
+			expect(response.headers.get("X-Request-ID")).toBe("1b4e28ba-2fa1-11d2-883f-0016d3cca40f");
 		});
 
 		it("should work with DELETE requests", async () => {
@@ -204,10 +215,10 @@ describe("Request ID Middleware", () => {
 
 			const response = await app.request("/test", {
 				method: "DELETE",
-				headers: { "X-Request-ID": "delete-test-789" },
+				headers: { "X-Request-ID": "1b4e28ba-2fa1-11d2-883f-0016d3cca401" },
 			});
 
-			expect(response.headers.get("X-Request-ID")).toBe("delete-test-789");
+			expect(response.headers.get("X-Request-ID")).toBe("1b4e28ba-2fa1-11d2-883f-0016d3cca401");
 		});
 
 		it("should persist requestId across multiple middleware", async () => {
@@ -228,11 +239,15 @@ describe("Request ID Middleware", () => {
 			});
 
 			await app.request("/test", {
-				headers: { "X-Request-ID": "middleware-chain" },
+				headers: { "X-Request-ID": "1b4e28ba-2fa1-11d2-883f-0016d3cca407" },
 			});
 
 			// All middleware should see same requestId
-			expect(ids).toEqual(["middleware-chain", "middleware-chain", "middleware-chain"]);
+			expect(ids).toEqual([
+				"1b4e28ba-2fa1-11d2-883f-0016d3cca407",
+				"1b4e28ba-2fa1-11d2-883f-0016d3cca407",
+				"1b4e28ba-2fa1-11d2-883f-0016d3cca407",
+			]);
 		});
 
 		it("should handle handler throwing error", async () => {
@@ -242,11 +257,11 @@ describe("Request ID Middleware", () => {
 			});
 
 			const response = await app.request("/test", {
-				headers: { "X-Request-ID": "error-test" },
+				headers: { "X-Request-ID": "1b4e28ba-2fa1-11d2-883f-0016d3cca403" },
 			});
 
 			// Should still set response header even when handler errors
-			expect(response.headers.get("X-Request-ID")).toBe("error-test");
+			expect(response.headers.get("X-Request-ID")).toBe("1b4e28ba-2fa1-11d2-883f-0016d3cca403");
 		});
 
 		it("should generate different UUIDs for concurrent requests", async () => {
@@ -300,13 +315,13 @@ describe("Request ID Middleware", () => {
 			});
 
 			const response = await app.request("/test", {
-				headers: { "X-Request-ID": "error-response-test" },
+				headers: { "X-Request-ID": "1b4e28ba-2fa1-11d2-883f-0016d3cca402" },
 			});
 
 			expect(response.status).toBe(400);
 			const body = (await response.json()) as { requestId: string };
-			expect(body.requestId).toBe("error-response-test");
-			expect(response.headers.get("X-Request-ID")).toBe("error-response-test");
+			expect(body.requestId).toBe("1b4e28ba-2fa1-11d2-883f-0016d3cca402");
+			expect(response.headers.get("X-Request-ID")).toBe("1b4e28ba-2fa1-11d2-883f-0016d3cca402");
 		});
 
 		it("should work with 404 responses", async () => {
@@ -314,11 +329,11 @@ describe("Request ID Middleware", () => {
 			app.get("/test", (c) => c.notFound());
 
 			const response = await app.request("/test", {
-				headers: { "X-Request-ID": "not-found-test" },
+				headers: { "X-Request-ID": "1b4e28ba-2fa1-11d2-883f-0016d3cca40a" },
 			});
 
 			expect(response.status).toBe(404);
-			expect(response.headers.get("X-Request-ID")).toBe("not-found-test");
+			expect(response.headers.get("X-Request-ID")).toBe("1b4e28ba-2fa1-11d2-883f-0016d3cca40a");
 		});
 
 		it("should work with 500 responses", async () => {
@@ -398,10 +413,10 @@ describe("Request ID Middleware", () => {
 			});
 
 			await app.request("/test", {
-				headers: { "X-Request-ID": "log-test" },
+				headers: { "X-Request-ID": "1b4e28ba-2fa1-11d2-883f-0016d3cca406" },
 			});
 
-			expect(logs).toContain("log-test");
+			expect(logs).toContain("1b4e28ba-2fa1-11d2-883f-0016d3cca406");
 		});
 	});
 
@@ -415,11 +430,11 @@ describe("Request ID Middleware", () => {
 			});
 
 			const response = await app.request("/test", {
-				headers: { "X-Request-ID": "original" },
+				headers: { "X-Request-ID": "1b4e28ba-2fa1-11d2-883f-0016d3cca40b" },
 			});
 
 			// Middleware sets it after next(), should override
-			expect(response.headers.get("X-Request-ID")).toBe("original");
+			expect(response.headers.get("X-Request-ID")).toBe("1b4e28ba-2fa1-11d2-883f-0016d3cca40b");
 		});
 
 		it("should preserve other response headers", async () => {
@@ -431,12 +446,12 @@ describe("Request ID Middleware", () => {
 			});
 
 			const response = await app.request("/test", {
-				headers: { "X-Request-ID": "preserve-test" },
+				headers: { "X-Request-ID": "1b4e28ba-2fa1-11d2-883f-0016d3cca40e" },
 			});
 
 			expect(response.headers.get("X-Custom-Header")).toBe("custom-value");
 			expect(response.headers.get("Content-Type")).toContain("application/json");
-			expect(response.headers.get("X-Request-ID")).toBe("preserve-test");
+			expect(response.headers.get("X-Request-ID")).toBe("1b4e28ba-2fa1-11d2-883f-0016d3cca40e");
 		});
 
 		it("should work with streaming responses", async () => {
@@ -446,10 +461,10 @@ describe("Request ID Middleware", () => {
 			});
 
 			const response = await app.request("/test", {
-				headers: { "X-Request-ID": "stream-test" },
+				headers: { "X-Request-ID": "1b4e28ba-2fa1-11d2-883f-0016d3cca414" },
 			});
 
-			expect(response.headers.get("X-Request-ID")).toBe("stream-test");
+			expect(response.headers.get("X-Request-ID")).toBe("1b4e28ba-2fa1-11d2-883f-0016d3cca414");
 		});
 
 		it("should work with redirect responses", async () => {
@@ -457,12 +472,12 @@ describe("Request ID Middleware", () => {
 			app.get("/test", (c) => c.redirect("/other"));
 
 			const response = await app.request("/test", {
-				headers: { "X-Request-ID": "redirect-test" },
+				headers: { "X-Request-ID": "1b4e28ba-2fa1-11d2-883f-0016d3cca410" },
 				redirect: "manual",
 			});
 
 			expect(response.status).toBe(302);
-			expect(response.headers.get("X-Request-ID")).toBe("redirect-test");
+			expect(response.headers.get("X-Request-ID")).toBe("1b4e28ba-2fa1-11d2-883f-0016d3cca410");
 		});
 
 		it("should work with 204 No Content", async () => {
@@ -471,11 +486,11 @@ describe("Request ID Middleware", () => {
 
 			const response = await app.request("/test", {
 				method: "DELETE",
-				headers: { "X-Request-ID": "no-content-test" },
+				headers: { "X-Request-ID": "1b4e28ba-2fa1-11d2-883f-0016d3cca409" },
 			});
 
 			expect(response.status).toBe(204);
-			expect(response.headers.get("X-Request-ID")).toBe("no-content-test");
+			expect(response.headers.get("X-Request-ID")).toBe("1b4e28ba-2fa1-11d2-883f-0016d3cca409");
 		});
 	});
 
@@ -491,14 +506,14 @@ describe("Request ID Middleware", () => {
 			});
 
 			await Promise.all([
-				app.request("/test/1", { headers: { "X-Request-ID": "req-1" } }),
-				app.request("/test/2", { headers: { "X-Request-ID": "req-2" } }),
-				app.request("/test/3", { headers: { "X-Request-ID": "req-3" } }),
+				app.request("/test/1", { headers: { "X-Request-ID": "1b4e28ba-2fa1-11d2-883f-0016d3cca411" } }),
+				app.request("/test/2", { headers: { "X-Request-ID": "1b4e28ba-2fa1-11d2-883f-0016d3cca412" } }),
+				app.request("/test/3", { headers: { "X-Request-ID": "1b4e28ba-2fa1-11d2-883f-0016d3cca413" } }),
 			]);
 
-			expect(captures["1"]).toBe("req-1");
-			expect(captures["2"]).toBe("req-2");
-			expect(captures["3"]).toBe("req-3");
+			expect(captures["1"]).toBe("1b4e28ba-2fa1-11d2-883f-0016d3cca411");
+			expect(captures["2"]).toBe("1b4e28ba-2fa1-11d2-883f-0016d3cca412");
+			expect(captures["3"]).toBe("1b4e28ba-2fa1-11d2-883f-0016d3cca413");
 		});
 	});
 
@@ -510,10 +525,10 @@ describe("Request ID Middleware", () => {
 			});
 
 			const response = await app.request("/test", {
-				headers: { "X-Request-ID": "error-throw-test" },
+				headers: { "X-Request-ID": "1b4e28ba-2fa1-11d2-883f-0016d3cca404" },
 			});
 
-			expect(response.headers.get("X-Request-ID")).toBe("error-throw-test");
+			expect(response.headers.get("X-Request-ID")).toBe("1b4e28ba-2fa1-11d2-883f-0016d3cca404");
 		});
 
 		it("should set header when downstream middleware throws", async () => {
@@ -526,10 +541,10 @@ describe("Request ID Middleware", () => {
 			app.get("/test", (c) => c.text("ok"));
 
 			const response = await app.request("/test", {
-				headers: { "X-Request-ID": "middleware-error" },
+				headers: { "X-Request-ID": "1b4e28ba-2fa1-11d2-883f-0016d3cca408" },
 			});
 
-			expect(response.headers.get("X-Request-ID")).toBe("middleware-error");
+			expect(response.headers.get("X-Request-ID")).toBe("1b4e28ba-2fa1-11d2-883f-0016d3cca408");
 		});
 
 		it("should generate requestId even for 404 routes", async () => {
@@ -549,19 +564,16 @@ describe("Request ID Middleware", () => {
 			const app = createApp();
 			app.get("/test", (c) => c.text("ok"));
 
-			// Send 1000 concurrent requests to verify the middleware scales
-			const results = await Promise.all(
-				Array.from({ length: 1000 }, (_, i) =>
-					app.request("/test", {
-						headers: { "X-Request-ID": `req-${i}` },
-					}),
-				),
-			);
+			// Send 1000 concurrent requests to verify the middleware scales. Ids are
+			// UUIDs so they survive validation and each response can be matched to
+			// the request that produced it.
+			const ids = Array.from({ length: 1000 }, () => crypto.randomUUID());
+			const results = await Promise.all(ids.map((id) => app.request("/test", { headers: { "X-Request-ID": id } })));
 
 			// All requests should succeed with their respective request IDs
 			for (const [i, response] of results.entries()) {
 				expect(response.status).toBe(200);
-				expect(response.headers.get("X-Request-ID")).toBe(`req-${i}`);
+				expect(response.headers.get("X-Request-ID")).toBe(ids[i]);
 			}
 		});
 	});

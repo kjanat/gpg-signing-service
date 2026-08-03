@@ -688,12 +688,46 @@
           },
           "name": {
             "$ref": "#/components/schemas/SubjectName"
+          },
+          "stillCoveredBy": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CoveringSubject"
+            }
           }
         },
         "required": [
           "success",
           "id",
-          "name"
+          "name",
+          "stillCoveredBy"
+        ]
+      },
+      "CoveringSubject": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "$ref": "#/components/schemas/SubjectName"
+          },
+          "subjectPrefix": {
+            "$ref": "#/components/schemas/SubjectPrefix"
+          },
+          "keyIds": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "subjectPrefix",
+          "keyIds"
         ]
       }
     },

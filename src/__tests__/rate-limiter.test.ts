@@ -51,19 +51,39 @@ describe("RateLimiter Durable Object", () => {
 			// count: the bucket refills at one token per 600ms, so a fixed loop that
 			// runs slowly under load hands tokens back faster than it takes them and
 			// the check below finds the bucket non-empty.
-			let denied = false;
+			let denied: Response | undefined;
 			for (let i = 0; i < 500 && !denied; i++) {
 				const consumed = await stub.fetch("http://localhost/consume?identity=exhausted-user");
-				denied = consumed.status === 429;
+				if (consumed.status === 429) {
+					denied = consumed;
+				}
 			}
-			expect(denied).toBe(true);
+			expect(denied).toBeDefined();
 
-			// Now check
-			const response = await stub.fetch("http://localhost/check?identity=exhausted-user");
-			expect(response.status).toBe(200);
-			const result = (await response.json()) as RateLimitResult;
+			// Assert on the denial itself rather than a second round-trip: the loop
+			// exits with a fraction of a token left, and the bucket refills at one
+			// per 600ms, so a separate /check can be answered *after* enough time
+			// has passed to hand that fraction back.
+			const result = (await denied?.json()) as RateLimitResult;
 			expect(result.allowed).toBe(false);
 			expect(result.remaining).toBe(0);
+
+			// /check has its own denied branch. The bucket sits just under one token
+			// and refills at one per 600ms, so a stalled scheduler can hand it back
+			// between calls — drain again rather than assuming a single round-trip
+			// wins the race.
+			let checked: RateLimitResult | undefined;
+			for (let i = 0; i < 10; i++) {
+				const response = await stub.fetch("http://localhost/check?identity=exhausted-user");
+				expect(response.status).toBe(200);
+				checked = (await response.json()) as RateLimitResult;
+				if (!checked.allowed) {
+					break;
+				}
+				await stub.fetch("http://localhost/consume?identity=exhausted-user");
+			}
+			expect(checked?.allowed).toBe(false);
+			expect(checked?.remaining).toBe(0);
 		});
 	});
 
