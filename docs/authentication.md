@@ -35,7 +35,7 @@ until at least one subject is trusted, which is the intended failure direction.
 | -------- | ---------------------- | ----------------------------------- |
 | `POST`   | `/admin/subjects`      | Trust an issuer and subject prefix  |
 | `GET`    | `/admin/subjects`      | List trusted subjects and their use |
-| `DELETE` | `/admin/subjects/{id}` | Revoke a trust immediately          |
+| `DELETE` | `/admin/subjects/{id}` | Revoke a trust (see below)          |
 
 ```bash
 curl -X POST "$GPG_SIGN_URL/admin/subjects" \
@@ -74,6 +74,50 @@ entry in `ALLOWED_ISSUERS` might.
 
 Omit `keyIds` to allow every key. Omit `expiresInDays` for a trust that does
 not expire.
+
+### Revoke is not subtraction
+
+Resolution takes the longest **live** prefix. Revoking a narrow row therefore
+does not necessarily stop the subject signing — it promotes the next row up,
+**with that row's key grant**:
+
+```
+repo:kjanat/       keyIds: []                 ← owner-wide, every key
+repo:kjanat/svc    keyIds: [D8BC04E534E7706F] ← this repo, one key
+```
+
+Revoke `repo:kjanat/svc` and that repository keeps signing, now under the
+owner-wide row — which pins no keys, so it just gained access to _every_ key.
+The revoke widened the grant.
+
+`DELETE /admin/subjects/{id}` answers with `stillCoveredBy`, listing every live
+row that still covers the revoked prefix, most specific first:
+
+```json
+{
+  "success": true,
+  "id": "…",
+  "name": "kjanat-svc",
+  "stillCoveredBy": [
+    {
+      "id": "…",
+      "name": "kjanat-repos",
+      "subjectPrefix": "repo:kjanat/",
+      "keyIds": null
+    }
+  ]
+}
+```
+
+**A non-empty `stillCoveredBy` means the identity is still signing.** During an
+incident, revoke those rows too, or replace them with narrower ones that exclude
+the compromised subject. The service also logs
+`Revoked subject is still covered by a broader trust` and records the surviving
+names in the `subject_revoke` audit event.
+
+Expiry does the same thing with nobody watching: `expiresInDays` on a narrow,
+key-scoped row is a promotion to the parent's grant on its expiry date, not an
+end to access. Prefer revoking to letting a nested row lapse.
 
 ### Renewing an expired trust
 

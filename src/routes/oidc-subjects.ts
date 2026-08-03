@@ -1,6 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
-
 import { createOpenAPIApp } from "#lib/openapi";
+import { getRequestId } from "#middleware/request-id";
 import {
 	ErrorResponseSchema,
 	SubjectCreatedResponseSchema,
@@ -125,7 +125,7 @@ const createSubjectRoute = createRoute({
 });
 
 app.openapi(createSubjectRoute, async (c) => {
-	const requestId = c.req.header(HEADERS.REQUEST_ID) || crypto.randomUUID();
+	const requestId = getRequestId(c.req.header(HEADERS.REQUEST_ID));
 	const body = c.req.valid("json");
 
 	// A row whose issuer is not accepted can never match a token, so it would
@@ -247,7 +247,7 @@ const listSubjectsRoute = createRoute({
 });
 
 app.openapi(listSubjectsRoute, async (c) => {
-	const requestId = c.req.header(HEADERS.REQUEST_ID) || crypto.randomUUID();
+	const requestId = getRequestId(c.req.header(HEADERS.REQUEST_ID));
 	try {
 		const subjects = await listOIDCSubjects(c.env.AUDIT_DB);
 		return c.json({ subjects }, HTTP.OK);
@@ -291,12 +291,12 @@ const revokeSubjectRoute = createRoute({
 });
 
 app.openapi(revokeSubjectRoute, async (c) => {
-	const requestId = c.req.header(HEADERS.REQUEST_ID) || crypto.randomUUID();
+	const requestId = getRequestId(c.req.header(HEADERS.REQUEST_ID));
 	const { id } = c.req.valid("param");
 
 	try {
-		const revokedName = await revokeOIDCSubject(c.env.AUDIT_DB, id);
-		if (!revokedName) {
+		const revoked = await revokeOIDCSubject(c.env.AUDIT_DB, id);
+		if (!revoked) {
 			return c.json(
 				{
 					error: "Subject not found or already revoked",
@@ -319,11 +319,26 @@ app.openapi(revokeSubjectRoute, async (c) => {
 				success: true,
 				// `sign` events are keyed by the row's name, this one by its id.
 				// Carry both so the trail joins to itself without a table lookup.
-				metadata: JSON.stringify({ subjectPolicy: revokedName }),
+				// The survivors go in too: "revoked, still signing" is the state an
+				// incident review needs, and it is only knowable at this instant —
+				// a row added later would make the trail read differently.
+				metadata: JSON.stringify({
+					subjectPolicy: revoked.name,
+					stillCoveredBy: revoked.stillCoveredBy.map((row) => row.name),
+				}),
 			}),
 		);
 
-		return c.json({ success: true, id, name: revokedName }, HTTP.OK);
+		if (revoked.stillCoveredBy.length > 0) {
+			logger.warn("Revoked subject is still covered by a broader trust", {
+				requestId,
+				subjectId: id,
+				subjectPolicy: revoked.name,
+				coveredBy: revoked.stillCoveredBy.map((row) => row.name),
+			});
+		}
+
+		return c.json({ success: true, id, name: revoked.name, stillCoveredBy: revoked.stillCoveredBy }, HTTP.OK);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Revoke failed";
 		logger.error("Subject revoke failed", { requestId, error: message });

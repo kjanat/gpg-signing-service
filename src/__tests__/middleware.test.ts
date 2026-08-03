@@ -327,7 +327,7 @@ describe("Security Headers Middleware", () => {
 				keyIds: [],
 				expiresAt: null,
 			});
-			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toBe("ci/killed");
+			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toMatchObject({ name: "ci/killed", stillCoveredBy: [] });
 
 			const mint = async (sub: string) =>
 				new jose.SignJWT({ iss: issuer, sub, aud: "gpg-signing-service" })
@@ -406,7 +406,7 @@ describe("Security Headers Middleware", () => {
 				keyIds: [],
 				expiresAt: null,
 			});
-			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toBe("ci/forged");
+			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toMatchObject({ name: "ci/forged", stillCoveredBy: [] });
 
 			const token = await new jose.SignJWT({
 				iss: issuer,
@@ -472,7 +472,10 @@ describe("Security Headers Middleware", () => {
 				keyIds: [],
 				expiresAt: null,
 			});
-			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toBe("ci/unmetered");
+			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toMatchObject({
+				name: "ci/unmetered",
+				stillCoveredBy: [],
+			});
 
 			const token = await new jose.SignJWT({
 				iss: issuer,

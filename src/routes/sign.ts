@@ -112,7 +112,10 @@ const signRoute = createRoute({
 
 app.openapi(signRoute, async (c) => {
 	const { [HEADERS.REQUEST_ID]: requestIdHeader } = c.req.valid("header");
-	const requestId = requestIdHeader || crypto.randomUUID();
+	// The OIDC middleware publishes the id it already validated; reuse it so the
+	// row it may have written and the rows below carry the same key. The
+	// service-token path sets nothing, hence the fallback.
+	const requestId = c.get("requestId") || requestIdHeader || crypto.randomUUID();
 	const claims = c.get("oidcClaims") as ValidatedOIDCClaims;
 	const identity = c.get("identity") as Identity;
 

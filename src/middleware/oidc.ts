@@ -1,6 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { createLocalJWKSet, jwtVerify } from "jose";
-import { RequestIdSchema } from "#schemas";
+import { getRequestId } from "#middleware/request-id";
 import type { Env, LegacyJWKSResponse, OIDCClaims, RateLimitResult, Variables } from "#types";
 import { createIdentity, HEADERS, HTTP, markClaimsAsValidated, TIME } from "#types";
 import { logAuditEvent } from "#utils/audit";
@@ -14,26 +14,6 @@ import { resolveOIDCSubject } from "#utils/oidc-subjects";
 import { validateUrl } from "#utils/url-validation";
 
 /**
- * The caller's request id, if it is one.
- *
- * This middleware answers before the route's header validator runs, so anything
- * it reads from `X-Request-ID` is unchecked — unlike every other audit write on
- * the sign path, which gets a `z.uuid()`-validated value from
- * `c.req.valid("header")`. Taking it as given would let the holder of a revoked
- * credential choose the correlation key on its own audit rows, and point them at
- * a real signature's request id, on exactly the query an operator runs after the
- * alert fires. The length is unbounded too: the ceiling is the header budget,
- * not 36 characters.
- *
- * @param c - Request context
- * @returns The caller's request id when it is a valid UUID, else a fresh one
- */
-function callerRequestId(c: Context<{ Bindings: Env; Variables: Variables }>): string {
-	const header = c.req.header(HEADERS.REQUEST_ID);
-	return header && RequestIdSchema.safeParse(header).success ? header : crypto.randomUUID();
-}
-
-/**
  * Write a durable record of a revoked trust being presented, if the caller is
  * within its rate-limit budget.
  *
@@ -43,15 +23,16 @@ function callerRequestId(c: Context<{ Bindings: Env; Variables: Variables }>): s
  * every direction — a limiter outage or a failed write must not change the 401.
  *
  * @param c - Request context
+ * @param requestId - This request's id, shared with the rest of the pipeline
  * @param payload - The verified (but unauthorized) claims
  * @param resolution - The revoked row that matched
  */
 async function recordRevokedReuse(
 	c: Context<{ Bindings: Env; Variables: Variables }>,
+	requestId: string,
 	payload: OIDCClaims,
 	resolution: Extract<OIDCSubjectResolution, { status: "revoked" }>,
 ): Promise<void> {
-	const requestId = callerRequestId(c);
 	try {
 		const limit = await fetchRateLimiter(c.env, createIdentity(payload.iss, payload.sub));
 		if (!limit.ok) {
@@ -95,6 +76,12 @@ export const oidcAuth: MiddlewareHandler<{
 	Bindings: Env;
 	Variables: Variables;
 }> = async (c, next) => {
+	// One id for the whole request, validated once. The route mints its own from
+	// the (already UUID-checked) header, so without publishing this the
+	// middleware's audit row and the route's would never join.
+	const requestId = getRequestId(c.req.header(HEADERS.REQUEST_ID));
+	c.set("requestId", requestId);
+
 	const authHeader = c.req.header("Authorization");
 
 	if (!authHeader?.startsWith("Bearer ")) {
@@ -180,7 +167,7 @@ export const oidcAuth: MiddlewareHandler<{
 		// routine maintenance, not evidence of anything, and it is the row owner's
 		// problem rather than an operator's. Recording it would mostly add volume.
 		if (resolution.status === "revoked") {
-			await recordRevokedReuse(c, payload, resolution);
+			await recordRevokedReuse(c, requestId, payload, resolution);
 		}
 
 		return c.json({ error: "Subject is not trusted for signing", code: "AUTH_INVALID" }, HTTP.Unauthorized);
@@ -201,7 +188,7 @@ export const oidcAuth: MiddlewareHandler<{
 
 	// The last-used stamp is bookkeeping; do not make every signature wait on a
 	// D1 write for it.
-	await scheduleBackgroundTask(c, callerRequestId(c), policy.stampUsage());
+	await scheduleBackgroundTask(c, requestId, policy.stampUsage());
 
 	// Outside the try on purpose: an error from the sign handler is a 500, not a
 	// 401 carrying an internal message.
