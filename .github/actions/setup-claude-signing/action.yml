@@ -71,6 +71,25 @@ runs:
         # only settings.env is guaranteed to reach Claude Code's Bash tools.
         # Use neutral names so the runner-provided ACTIONS_* credentials do not
         # cross that process boundary under reserved names.
+        #
+        # The neutral names are also what makes this work at all: the native
+        # variables never reach the session, because claude-code-action deletes
+        # them on purpose (base-action/src/parse-sdk-options.ts):
+        #
+        #   // Remove OIDC token request variables so Claude cannot mint new tokens.
+        #   delete env.ACTIONS_ID_TOKEN_REQUEST_URL;
+        #   delete env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+        #
+        # That is why signing failed with "job needs id-token: write" on a job
+        # that had it (issue #25) — the permission was never the problem.
+        #
+        # SECURITY: this deliberately re-grants the agent that capability. The
+        # request URL is a general-purpose minting endpoint, so the session can
+        # mint a repo-scoped OIDC token for ANY audience, not just
+        # gpg-signing-service. Acceptable only while this repo's identity is not
+        # trusted by any external OIDC relying party (AWS/GCP/Vault role, etc).
+        # Before adding one, switch to a pre-minted audience-scoped token or a
+        # gst_ service token instead. See docs/cloud-session-signing.md.
         printf '::add-mask::%s\n' "${oidc_request_url}"
         printf '::add-mask::%s\n' "${oidc_request_token}"
 
