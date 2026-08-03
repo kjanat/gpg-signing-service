@@ -112,7 +112,8 @@ export const SubjectRevokeResponseSchema = z
 		 */
 		stillCoveredBy: z.array(CoveringSubjectSchema),
 		/**
-		 * Live rows *nested under* the revoked prefix, most specific first.
+		 * Live rows *nested under* the revoked prefix, broadest first — each is a
+		 * separate hole in the revoked scope, so the widest one matters most.
 		 * Revoking a parent does not touch its children, so these keep signing.
 		 * Only when both lists are empty was the revoke final.
 		 */

@@ -246,6 +246,32 @@ describe("Sign Route", () => {
 			expect(await response.text()).toContain("-----BEGIN PGP SIGNATURE-----");
 		});
 
+		it("audits the same request id it echoes when the caller sends none", async () => {
+			// The default path: no X-Request-ID on the request. Every site that
+			// re-derives instead of reading the published value mints a *fresh*
+			// UUID, so the caller is handed a correlation key that joins to nothing
+			// — on the one endpoint whose output somebody may later have to account
+			// for. No test covered this because the ones that touch the header
+			// supply one, and then both sites agree.
+			await setupJWKSMock();
+			await uploadTestKey("A1B2C3D4E5F67890");
+			const token = await createToken();
+
+			const response = await makeRequest("/sign?keyId=A1B2C3D4E5F67890", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(200);
+			const echoed = response.headers.get("X-Request-ID");
+			expect(echoed).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+
+			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+			const signed = events.find((event) => event.action === "sign" && event.success);
+			expect(signed?.requestId).toBe(echoed);
+		});
+
 		it("audits a trusted subject reaching outside its key scope", async () => {
 			// The highest-signal event the service can produce: the credential is
 			// valid and the row is live, but the grant does not cover the key. If

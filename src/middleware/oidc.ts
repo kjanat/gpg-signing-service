@@ -76,10 +76,12 @@ export const oidcAuth: MiddlewareHandler<{
 	Bindings: Env;
 	Variables: Variables;
 }> = async (c, next) => {
-	// One id for the whole request, validated once. The route mints its own from
-	// the (already UUID-checked) header, so without publishing this the
-	// middleware's audit row and the route's would never join.
-	const requestId = getRequestId(c.req.header(HEADERS.REQUEST_ID));
+	// One id for the whole request. The global request-id middleware already
+	// derived it and captured that value for the `X-Request-ID` it echoes on the
+	// way out, so re-deriving here mints a *different* UUID when the caller sent
+	// no header — stranding every row this request writes under an id the caller
+	// never sees. The fallback covers direct invocation in tests.
+	const requestId = c.get("requestId") ?? getRequestId(c.req.header(HEADERS.REQUEST_ID));
 	c.set("requestId", requestId);
 
 	const authHeader = c.req.header("Authorization");

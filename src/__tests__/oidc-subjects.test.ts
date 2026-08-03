@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import app from "#gpg-signing-service";
+import { logAuditEvent } from "#utils/audit";
 import { logger } from "#utils/logger";
 import type { OIDCSubjectPolicy, OIDCSubjectResolution } from "#utils/oidc-subjects";
 import {
@@ -13,6 +14,13 @@ import {
 	subjectMatchesPrefix,
 } from "#utils/oidc-subjects";
 import { clearTrustedSubjects } from "./helpers/oidc-subjects";
+
+// Mocked so the audit row's contents can be asserted; the D1 write itself is
+// covered by audit.test.ts.
+vi.mock("#utils/audit", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("#utils/audit")>();
+	return { ...actual, logAuditEvent: vi.fn(async () => undefined) };
+});
 
 const GITHUB = "https://token.actions.githubusercontent.com";
 const GITLAB = "https://gitlab.com";
@@ -323,6 +331,35 @@ describe("OIDC subject policy store", () => {
 		const revoked = await revokeOIDCSubject(env.AUDIT_DB, wideId);
 		// The util returns everything; truncation is the route's summary concern.
 		expect(revoked?.stillTrustedWithin).toHaveLength(25);
+	});
+
+	it("orders surviving nested rows broadest first", async () => {
+		// These do not compete for one resolution: each is a separate hole in the
+		// scope just revoked, so the widest one belongs at the top.
+		const wideId = await insertOIDCSubject(env.AUDIT_DB, {
+			name: "org-wide",
+			issuer: GITHUB,
+			subjectPrefix: "repo:org/",
+			keyIds: [],
+			expiresAt: null,
+		});
+		await insertOIDCSubject(env.AUDIT_DB, {
+			name: "one-repo",
+			issuer: GITHUB,
+			subjectPrefix: "repo:org/team/svc",
+			keyIds: [],
+			expiresAt: null,
+		});
+		await insertOIDCSubject(env.AUDIT_DB, {
+			name: "team-wide",
+			issuer: GITHUB,
+			subjectPrefix: "repo:org/team",
+			keyIds: [],
+			expiresAt: null,
+		});
+
+		const revoked = await revokeOIDCSubject(env.AUDIT_DB, wideId);
+		expect(revoked?.stillTrustedWithin.map((row) => row.name)).toEqual(["team-wide", "one-repo"]);
 	});
 
 	it("orders covering rows most specific first", async () => {
@@ -648,11 +685,22 @@ describe("admin subject management", () => {
 		}
 
 		const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+		// Calls accumulate across this suite; only this revoke's row is of interest.
+		vi.mocked(logAuditEvent).mockClear();
 		const revoked = await adminRequest(`/admin/subjects/${id}`, { method: "DELETE" });
 		expect(revoked.status).toBe(200);
 		// The response is complete; only the durable summary is capped.
 		const body = (await revoked.json()) as { stillTrustedWithin: unknown[] };
 		expect(body.stillTrustedWithin).toHaveLength(22);
+
+		// `audit_logs.metadata` has no length cap, so the row carries a bounded
+		// summary. Asserting only the response would let the cap be disabled
+		// entirely without a test noticing.
+		const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+		const revokeEvent = events.find((event) => event.action === "subject_revoke");
+		const metadata = JSON.parse(revokeEvent?.metadata ?? "{}") as { stillTrustedWithin: string[] };
+		expect(metadata.stillTrustedWithin).toHaveLength(21);
+		expect(metadata.stillTrustedWithin.at(-1)).toBe("+2 more");
 		warnSpy.mockRestore();
 	});
 
