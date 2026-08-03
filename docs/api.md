@@ -25,6 +25,9 @@ OpenAPI 3.1.
 | `POST`   | `/admin/tokens`              | Admin                 | Create a service token                    |
 | `GET`    | `/admin/tokens`              | Admin                 | List service-token metadata               |
 | `DELETE` | `/admin/tokens/{id}`         | Admin                 | Revoke a service token                    |
+| `POST`   | `/admin/subjects`            | Admin                 | Trust an OIDC issuer and subject prefix   |
+| `GET`    | `/admin/subjects`            | Admin                 | List trusted OIDC subjects                |
+| `DELETE` | `/admin/subjects/{id}`       | Admin                 | Revoke a trusted OIDC subject             |
 
 `/public-key` currently handles PGP keys only. Use
 `/admin/keys/{keyId}/public` for X.509 certificate retrieval.

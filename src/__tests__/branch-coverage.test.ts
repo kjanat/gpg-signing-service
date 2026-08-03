@@ -37,7 +37,7 @@ vi.mock("#middleware/oidc", async (importOriginal) => {
 			if (c.req.header("Authorization") === "Bearer valid-token") {
 				c.set("oidcClaims", {
 					iss: "issuer",
-					sub: "subject",
+					sub: "repo:subject/svc",
 					project_path: "repo",
 				});
 				c.set("identity", "user");
@@ -262,6 +262,7 @@ describe("Branch Coverage Helpers", () => {
 				req: { header: () => "Bearer " },
 				env,
 				json,
+				get: vi.fn(),
 				set: vi.fn(),
 			};
 
@@ -288,6 +289,10 @@ describe("Branch Coverage Helpers", () => {
 			const context = {
 				req: { header: () => "Basic user:pass" },
 				json,
+				// The middleware reads the published request id and republishes it
+				// before looking at the Authorization header, so the stub needs both.
+				get: vi.fn(),
+				set: vi.fn(),
 			};
 			await import("#middleware/oidc").then(({ oidcAuth }) => oidcAuth(context as any, () => Promise.resolve()));
 			expect(json).toHaveBeenCalledWith(expect.objectContaining({ code: "AUTH_MISSING" }), 401);

@@ -23,13 +23,23 @@ export async function scheduleBackgroundTask(
 		});
 	});
 
+	// `ctx.executionCtx` is a getter that *throws* when absent (hono context.js),
+	// so it cannot be probed with `!!`. Reading it defensively is what makes the
+	// documented fallback below reachable at all.
+	let executionCtx: ExecutionContext | undefined;
+	try {
+		executionCtx = ctx.executionCtx as ExecutionContext;
+	} catch {
+		executionCtx = undefined;
+	}
+
 	logger.debug("Scheduling background task", {
 		requestId,
-		hasExecutionCtx: !!ctx.executionCtx,
+		hasExecutionCtx: !!executionCtx,
 	});
 
-	if (ctx.executionCtx) {
-		ctx.executionCtx.waitUntil(taskWithErrorHandling);
+	if (executionCtx) {
+		executionCtx.waitUntil(taskWithErrorHandling);
 	} else {
 		await taskWithErrorHandling;
 	}

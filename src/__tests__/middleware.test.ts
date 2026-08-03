@@ -3,6 +3,10 @@ import { env } from "cloudflare:workers";
 import * as jose from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "#gpg-signing-service";
+import { logAuditEvent } from "#utils/audit";
+import { logger } from "#utils/logger";
+import { insertOIDCSubject, revokeOIDCSubject } from "#utils/oidc-subjects";
+import { clearTrustedSubjects, seedTrustedSubjects } from "./helpers/oidc-subjects";
 
 const parseJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
 
@@ -28,6 +32,24 @@ vi.mock("#utils/audit", async (importOriginal) => {
 		logAuditEvent: vi.fn(async () => undefined),
 	};
 });
+
+/** A RATE_LIMITER binding that answers every call with `body`, or `status` if given. */
+function rateLimiterAnswering(body: unknown, status?: number): DurableObjectNamespace {
+	return {
+		idFromName: () => ({}) as DurableObjectId,
+		get: () => ({
+			fetch: async () => (status ? new Response("boom", { status }) : Response.json(body)),
+		}),
+	} as unknown as DurableObjectNamespace;
+}
+
+/** A RATE_LIMITER binding that is unreachable. */
+function rateLimiterThrowing(reason: unknown = new Error("Rate limiter unavailable")): DurableObjectNamespace {
+	const fail = () => {
+		throw reason;
+	};
+	return { idFromName: fail, get: fail } as unknown as DurableObjectNamespace;
+}
 
 // Helper to make requests
 async function makeRequest(path: string, options: RequestInit = {}, customEnv?: Partial<Env>): Promise<Response> {
@@ -128,6 +150,9 @@ describe("Security Headers Middleware", () => {
 
 	describe("OIDC Token Validation", () => {
 		beforeAll(async () => {
+			// The OIDC path now requires a trusted-subject row.
+			await seedTrustedSubjects(env.AUDIT_DB);
+
 			// Clean up real KV cache to prevent test pollution from other test files (e.g. sign.test.ts)
 			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
 			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com/unique-test-issuer");
@@ -170,6 +195,441 @@ describe("Security Headers Middleware", () => {
 			});
 		}
 
+		it("tolerates whitespace around a comma in ALLOWED_ISSUERS", async () => {
+			// /admin/subjects trims before deciding an issuer is acceptable. If this
+			// side did not, a padded entry would be trustable at create time and
+			// refused here — a row that lists as trusted and can never match.
+			const { privateKey } = await jose.generateKeyPair("ES256");
+			const token = await new jose.SignJWT({
+				iss: "https://gitlab.com",
+				sub: "repo:test/svc",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "ES256", kid: "test" })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const response = await makeRequest(
+				"/sign",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{
+					ALLOWED_ISSUERS: "https://token.actions.githubusercontent.com, https://gitlab.com" as Env["ALLOWED_ISSUERS"],
+				},
+			);
+
+			// Still 401 — nothing signs this token — but it must fail past the
+			// issuer gate rather than at it.
+			expect(response.status).toBe(401);
+			const body = await parseJson<{ error: string }>(response);
+			expect(body.error).not.toContain("Issuer not allowed");
+		});
+
+		it("reports an unreadable policy store as 503 without leaking the schema", async () => {
+			// Merge-day failure mode: the Worker deploys before task db:migrate
+			// runs. A database we cannot read is not a bad credential, and the
+			// caller must not be handed our table names to work that out.
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "store-down-key";
+			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const token = await new jose.SignJWT({
+				iss: issuer,
+				sub: "repo:test/svc",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "ES256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const realPrepare = env.AUDIT_DB.prepare.bind(env.AUDIT_DB);
+			const spy = vi.spyOn(env.AUDIT_DB, "prepare").mockImplementation((query: string) => {
+				if (query.includes("FROM oidc_subjects")) {
+					throw new Error("D1_ERROR: no such table: oidc_subjects: SQLITE_ERROR");
+				}
+				return realPrepare(query);
+			});
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+			spy.mockRestore();
+
+			expect(response.status).toBe(503);
+			const body = await parseJson<{ error: string; code: string }>(response);
+			expect(body.code).toBe("INTERNAL_ERROR");
+			expect(body.error).not.toContain("oidc_subjects");
+			expect(body.error).not.toContain("SQLITE");
+		});
+
+		it("rejects a cryptographically valid token whose subject is not trusted", async () => {
+			// The whole point of the subject allowlist: the token here is
+			// perfectly valid — right issuer, right audience, good signature —
+			// it is simply from a repository nobody trusted. Every repo on
+			// GitHub Actions can produce exactly this.
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await clearTrustedSubjects(env.AUDIT_DB);
+
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "untrusted-key";
+			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const token = await new jose.SignJWT({
+				iss: issuer,
+				sub: "repo:attacker/evil:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "ES256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(401);
+			const body = await parseJson<{ error: string; code: string }>(response);
+			expect(body.error).toContain("not trusted");
+			expect(body.code).toBe("AUTH_INVALID");
+
+			// Restore the fixture for the rest of the suite.
+			await seedTrustedSubjects(env.AUDIT_DB);
+		});
+
+		it("distinguishes a revoked trust still in use from an unknown subject", async () => {
+			// Both are 401 to the caller — telling a stranger their subject matches
+			// a revoked row would confirm the row exists. But for the operator these
+			// are different events: a killed credential still being presented is an
+			// incident, an unknown subject on a shared issuer is background traffic.
+			// Collapsing them files the incident under the noise.
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await clearTrustedSubjects(env.AUDIT_DB);
+
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "revoked-key";
+			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const subjectId = await insertOIDCSubject(env.AUDIT_DB, {
+				name: "ci/killed",
+				issuer,
+				subjectPrefix: "repo:victim/svc",
+				keyIds: [],
+				expiresAt: null,
+			});
+			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toMatchObject({ name: "ci/killed", stillCoveredBy: [] });
+
+			const mint = async (sub: string) =>
+				new jose.SignJWT({ iss: issuer, sub, aud: "gpg-signing-service" })
+					.setProtectedHeader({ alg: "ES256", kid })
+					.setIssuedAt()
+					.setExpirationTime("1h")
+					.sign(privateKey);
+
+			const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+			const reused = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${await mint("repo:victim/svc:ref:refs/heads/main")}` },
+				body: "commit data",
+			});
+			expect(reused.status).toBe(401);
+			// The response must not differ from the stranger's.
+			expect(await parseJson<{ error: string }>(reused)).toMatchObject({
+				error: "Subject is not trusted for signing",
+				code: "AUTH_INVALID",
+			});
+			expect(warnSpy).toHaveBeenCalledWith(
+				"Revoked OIDC trust presented",
+				expect.objectContaining({ subjectId, subjectPolicy: "ci/killed" }),
+			);
+			// A killed credential still in use outlives the log store's retention,
+			// so it gets a durable row too — unlike the unknown-subject arm, which
+			// anyone can trigger and which stays log-only.
+			const reuseEvents = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+			const recorded = reuseEvents.find((event) => event.errorCode === "AUTH_INVALID");
+			expect(recorded).toBeDefined();
+			expect(JSON.parse(recorded?.metadata ?? "{}")).toMatchObject({
+				reason: "revoked_trust_presented",
+				subjectId,
+				subjectPolicy: "ci/killed",
+			});
+			vi.mocked(logAuditEvent).mockClear();
+
+			warnSpy.mockClear();
+			const stranger = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${await mint("repo:some-rando/thing:ref:refs/heads/main")}` },
+				body: "commit data",
+			});
+			expect(stranger.status).toBe(401);
+			expect(warnSpy).toHaveBeenCalledWith("Rejected untrusted OIDC subject", expect.any(Object));
+			expect(warnSpy).not.toHaveBeenCalledWith("Revoked OIDC trust presented", expect.any(Object));
+			// No durable row for the unknown arm: anyone holding any token the
+			// issuer will mint can reach it.
+			expect(vi.mocked(logAuditEvent).mock.calls).toHaveLength(0);
+			warnSpy.mockRestore();
+
+			await seedTrustedSubjects(env.AUDIT_DB);
+		});
+
+		it("does not let the caller choose the revoked-reuse row's request id", async () => {
+			// This row is written from the middleware, which answers before the
+			// route's header validator runs, so X-Request-ID arrives unchecked here
+			// and nowhere else on the sign path. Taking it as given would let the
+			// holder of a revoked credential point its own audit rows at a real
+			// signature's request id — the exact query an operator runs after the
+			// AUTH_INVALID alert — and the length ceiling is the header budget, not
+			// 36 characters.
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await clearTrustedSubjects(env.AUDIT_DB);
+
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "forged-id-key";
+			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const subjectId = await insertOIDCSubject(env.AUDIT_DB, {
+				name: "ci/forged",
+				issuer,
+				subjectPrefix: "repo:forged/svc",
+				keyIds: [],
+				expiresAt: null,
+			});
+			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toMatchObject({ name: "ci/forged", stillCoveredBy: [] });
+
+			const token = await new jose.SignJWT({
+				iss: issuer,
+				sub: "repo:forged/svc:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "ES256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const forged = `'; DROP TABLE audit_logs; --${"A".repeat(2000)}`;
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}`, "X-Request-ID": forged },
+				body: "commit data",
+			});
+			expect(response.status).toBe(401);
+
+			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+			const recorded = events.find((event) => event.errorCode === "AUTH_INVALID");
+			expect(recorded).toBeDefined();
+			expect(recorded?.requestId).not.toBe(forged);
+			// Replaced with a real one rather than dropped, so the row still
+			// correlates with its own log lines.
+			expect(recorded?.requestId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+			vi.mocked(logAuditEvent).mockClear();
+
+			// A caller-supplied id that *is* a UUID is still honoured, so ordinary
+			// request correlation keeps working.
+			const supplied = crypto.randomUUID();
+			const withValidId = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}`, "X-Request-ID": supplied },
+				body: "commit data",
+			});
+			expect(withValidId.status).toBe(401);
+			const second = vi
+				.mocked(logAuditEvent)
+				.mock.calls.map(([, event]) => event)
+				.find((event) => event.errorCode === "AUTH_INVALID");
+			expect(second?.requestId).toBe(supplied);
+
+			await seedTrustedSubjects(env.AUDIT_DB);
+		});
+
+		it("meters the revoked-reuse row per revoked row, not per subject the caller mints", async () => {
+			// The budget has to bound the *row*, but a row is a prefix and one prefix
+			// covers unboundedly many subjects — GitHub puts the ref in `sub`, so
+			// anyone who can push a branch under the revoked scope mints a fresh
+			// subject. Keyed per subject, the cap is no cap: N branches, N budgets,
+			// all writing into the database the authorization table lives in.
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await clearTrustedSubjects(env.AUDIT_DB);
+
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "flood-key";
+			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const subjectId = await insertOIDCSubject(env.AUDIT_DB, {
+				name: "ci/flood",
+				issuer,
+				subjectPrefix: "repo:flood/",
+				keyIds: [],
+				expiresAt: null,
+			});
+			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toMatchObject({ name: "ci/flood" });
+
+			// Record what the limiter is actually asked about, rather than only that
+			// a write was dropped — which is why the per-subject key survived.
+			const metered: string[] = [];
+			const recordingLimiter = {
+				idFromName: () => ({}) as DurableObjectId,
+				get: () => ({
+					fetch: async (request: Request) => {
+						metered.push(decodeURIComponent(new URL(request.url).searchParams.get("identity") ?? ""));
+						return Response.json({ allowed: true, remaining: 99, resetAt: Date.now() + 60_000 });
+					},
+				}),
+			} as unknown as DurableObjectNamespace;
+
+			try {
+				for (const sub of ["repo:flood/one:ref:refs/heads/main", "repo:flood/two:ref:refs/heads/anything-i-like"]) {
+					const token = await new jose.SignJWT({ iss: issuer, sub, aud: "gpg-signing-service" })
+						.setProtectedHeader({ alg: "ES256", kid })
+						.setIssuedAt()
+						.setExpirationTime("1h")
+						.sign(privateKey);
+					const response = await makeRequest(
+						"/sign",
+						{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+						{ RATE_LIMITER: recordingLimiter },
+					);
+					expect(response.status).toBe(401);
+				}
+
+				// One bucket for the row, whatever subject was presented.
+				expect(metered).toEqual([`oidc-revoked-reuse:${subjectId}`, `oidc-revoked-reuse:${subjectId}`]);
+				expect(metered.join(" ")).not.toContain("refs/heads");
+			} finally {
+				// `beforeEach` resets mocks and KV but does not reseed, so a failed
+				// assertion here would leave the table cleared for the rest of the file.
+				await seedTrustedSubjects(env.AUDIT_DB);
+			}
+		});
+
+		it("does not write the revoked-reuse row when the caller is over budget or the limiter is down", async () => {
+			// The row is metered precisely so the holder of a revoked credential
+			// cannot flood the table the authorization store shares. Both failure
+			// modes must drop the write and leave the 401 unchanged.
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await clearTrustedSubjects(env.AUDIT_DB);
+
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "revoked-unmetered-key";
+			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const subjectId = await insertOIDCSubject(env.AUDIT_DB, {
+				name: "ci/unmetered",
+				issuer,
+				subjectPrefix: "repo:unmetered/svc",
+				keyIds: [],
+				expiresAt: null,
+			});
+			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toMatchObject({
+				name: "ci/unmetered",
+				stillCoveredBy: [],
+			});
+
+			const token = await new jose.SignJWT({
+				iss: issuer,
+				sub: "repo:unmetered/svc:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "ES256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const request = () => ({
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			const overBudget = await makeRequest("/sign", request(), {
+				RATE_LIMITER: rateLimiterAnswering({ allowed: false, remaining: 0, resetAt: Date.now() + 30_000 }),
+			});
+			expect(overBudget.status).toBe(401);
+			expect(vi.mocked(logAuditEvent).mock.calls).toHaveLength(0);
+
+			const limiterErrored = await makeRequest("/sign", request(), { RATE_LIMITER: rateLimiterAnswering(null, 500) });
+			expect(limiterErrored.status).toBe(401);
+			expect(vi.mocked(logAuditEvent).mock.calls).toHaveLength(0);
+
+			const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+			const limiterDown = await makeRequest("/sign", request(), { RATE_LIMITER: rateLimiterThrowing() });
+			expect(limiterDown.status).toBe(401);
+			expect(vi.mocked(logAuditEvent).mock.calls).toHaveLength(0);
+			expect(warnSpy).toHaveBeenCalledWith(
+				"Could not meter a revoked-trust reuse, so it was not recorded",
+				expect.objectContaining({ error: expect.any(String) }),
+			);
+
+			// Same again with a non-Error rejection, which takes the String(error) branch.
+			warnSpy.mockClear();
+			const nonError = await makeRequest("/sign", request(), { RATE_LIMITER: rateLimiterThrowing("down") });
+			expect(nonError.status).toBe(401);
+			expect(warnSpy).toHaveBeenCalledWith(
+				"Could not meter a revoked-trust reuse, so it was not recorded",
+				expect.objectContaining({ error: "down" }),
+			);
+			warnSpy.mockRestore();
+
+			await seedTrustedSubjects(env.AUDIT_DB);
+		});
+
+		it("names an expired trust rather than reporting it as unknown", async () => {
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await clearTrustedSubjects(env.AUDIT_DB);
+
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "expired-key";
+			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const expiresAt = new Date(Date.now() - 1000).toISOString();
+			const subjectId = await insertOIDCSubject(env.AUDIT_DB, {
+				name: "ci/lapsed",
+				issuer,
+				subjectPrefix: "repo:lapsed/svc",
+				keyIds: [],
+				expiresAt,
+			});
+
+			const token = await new jose.SignJWT({
+				iss: issuer,
+				sub: "repo:lapsed/svc:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "ES256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+			expect(response.status).toBe(401);
+			expect(warnSpy).toHaveBeenCalledWith(
+				"Expired OIDC trust presented",
+				expect.objectContaining({ subjectId, subjectPolicy: "ci/lapsed", expiresAt }),
+			);
+			warnSpy.mockRestore();
+
+			await seedTrustedSubjects(env.AUDIT_DB);
+		});
+
 		it("should reject key not intended for signatures", async () => {
 			// Clean up cache to ensure no pollution
 			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
@@ -196,7 +656,7 @@ describe("Security Headers Middleware", () => {
 			const { privateKey } = await jose.generateKeyPair("ES256");
 			const token = await new jose.SignJWT({
 				iss: issuer,
-				sub: "test",
+				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid })
@@ -221,7 +681,7 @@ describe("Security Headers Middleware", () => {
 			const { privateKey } = await jose.generateKeyPair("ES256");
 			const token = await new jose.SignJWT({
 				iss: "https://token.actions.githubusercontent.com",
-				sub: "test",
+				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid: "test" })
@@ -252,7 +712,7 @@ describe("Security Headers Middleware", () => {
 			const { privateKey } = await jose.generateKeyPair("ES256");
 			const token = await new jose.SignJWT({
 				iss: issuer,
-				sub: "test",
+				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid: "test" })
@@ -284,7 +744,7 @@ describe("Security Headers Middleware", () => {
 			try {
 				const token = await new jose.SignJWT({
 					iss: issuer,
-					sub: "test",
+					sub: "repo:test/svc",
 					aud: "gpg-signing-service",
 				})
 					.setProtectedHeader({ alg: "ES256", kid })
@@ -399,7 +859,7 @@ describe("Security Headers Middleware", () => {
 
 			const token = await new jose.SignJWT({
 				iss: issuer,
-				sub: "test",
+				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid: "unknown-key" })
@@ -433,7 +893,7 @@ describe("Security Headers Middleware", () => {
 			// Sign with WRONG private key but claim it's the correct kid
 			const token = await new jose.SignJWT({
 				iss: issuer,
-				sub: "test",
+				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid })
@@ -459,7 +919,7 @@ describe("Security Headers Middleware", () => {
 			const secret = new TextEncoder().encode("secret");
 			const token = await new jose.SignJWT({
 				iss: "https://token.actions.githubusercontent.com",
-				sub: "test",
+				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "HS256", kid: "test" })
@@ -482,7 +942,7 @@ describe("Security Headers Middleware", () => {
 			const { privateKey } = await jose.generateKeyPair("ES256");
 			const token = await new jose.SignJWT({
 				iss: "https://malicious-issuer.com",
-				sub: "test",
+				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid: "test" })
@@ -505,7 +965,7 @@ describe("Security Headers Middleware", () => {
 			const { privateKey } = await jose.generateKeyPair("ES256");
 			const token = await new jose.SignJWT({
 				iss: "https://token.actions.githubusercontent.com",
-				sub: "test",
+				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid: "test" })
@@ -528,7 +988,7 @@ describe("Security Headers Middleware", () => {
 			const { privateKey } = await jose.generateKeyPair("ES256");
 			const token = await new jose.SignJWT({
 				iss: "https://token.actions.githubusercontent.com",
-				sub: "test",
+				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid: "test" })
@@ -798,7 +1258,7 @@ describe("Security Headers Middleware", () => {
 			const { privateKey } = await jose.generateKeyPair("ES256");
 			const token = await new jose.SignJWT({
 				iss: "https://10.0.0.1",
-				sub: "test-subject",
+				sub: "repo:test-subject/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid: "test-key" })
@@ -826,7 +1286,7 @@ describe("Security Headers Middleware", () => {
 
 			const token = await new jose.SignJWT({
 				iss: "https://malicious.example.com",
-				sub: "test-subject",
+				sub: "repo:test-subject/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid: "test-key" })
@@ -867,7 +1327,7 @@ describe("Security Headers Middleware", () => {
 
 			const token = await new jose.SignJWT({
 				iss: "https://token.actions.githubusercontent.com",
-				sub: "test-subject",
+				sub: "repo:test-subject/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid: "test-key" })
@@ -895,7 +1355,7 @@ describe("Security Headers Middleware", () => {
 
 			const token = await new jose.SignJWT({
 				iss: "https://token.actions.githubusercontent.com",
-				sub: "test-subject",
+				sub: "repo:test-subject/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid: "test-key" })

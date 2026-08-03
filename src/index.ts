@@ -5,8 +5,10 @@ import * as openpgp from "openpgp";
 import { createOpenAPIApp, openApiConfig } from "#lib/openapi";
 import { callerAuth } from "#middleware/caller-auth";
 import { adminAuth } from "#middleware/oidc";
+import { requestIdMiddleware } from "#middleware/request-id";
 import { adminRateLimit, productionCors, securityHeaders } from "#middleware/security";
 import adminRoutes from "#routes/admin";
+import subjectRoutes from "#routes/oidc-subjects";
 import signRoutes from "#routes/sign";
 import tokenRoutes from "#routes/tokens";
 import { ErrorResponseSchema, HealthResponseSchema, PublicKeyQuerySchema, PublicKeyResponseSchema } from "#schemas";
@@ -22,6 +24,10 @@ export { RateLimiter } from "#durable-objects/rate-limiter";
 const app = createOpenAPIApp();
 
 // Global middleware
+// Ahead of everything else so `c.get("requestId")` is populated for the whole
+// pipeline and every response echoes X-Request-ID. The value is the caller's
+// only when it is a UUID — it reaches audit_logs.request_id, declared z.uuid().
+app.use("*", requestIdMiddleware);
 app.use("*", logger());
 app.use("*", securityHeaders);
 app.use("*", productionCors);
@@ -145,7 +151,8 @@ app.route(
 		.use("*", adminRateLimit) // Rate limit before auth to prevent brute force
 		.use("*", adminAuth)
 		.route("/", adminRoutes)
-		.route("/", tokenRoutes),
+		.route("/", tokenRoutes)
+		.route("/", subjectRoutes),
 );
 
 // OpenAPI Docs
@@ -164,7 +171,9 @@ app.notFound((c) => {
 
 // Error handler
 app.onError((err, c) => {
-	const requestId = crypto.randomUUID();
+	// The id the caller was handed, so the one in a 500 body is greppable against
+	// the logs. The fallback covers a throw from before the middleware ran.
+	const requestId = c.get("requestId") ?? crypto.randomUUID();
 	customLogger.error("Unhandled error", {
 		requestId,
 		error: err instanceof Error ? err.message : String(err),

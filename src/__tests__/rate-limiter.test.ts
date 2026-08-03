@@ -2,6 +2,13 @@ import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { RateLimitResult } from "#types";
 
+/**
+ * Cold-starting a Durable Object costs more than vitest's 10s default hook
+ * budget when the rest of the suite is competing for the same worker, which
+ * showed up as this whole file erroring with zero failed tests.
+ */
+const WARMUP_TIMEOUT_MS = 30_000;
+
 describe("RateLimiter Durable Object", () => {
 	// Get a fresh DO stub for each test
 	function getRateLimiter(name = "test") {
@@ -11,7 +18,7 @@ describe("RateLimiter Durable Object", () => {
 
 	beforeAll(async () => {
 		await getRateLimiter("warmup").fetch("http://localhost/check?identity=warmup");
-	});
+	}, WARMUP_TIMEOUT_MS);
 
 	describe("/check endpoint", () => {
 		it("should return allowed for new identity", async () => {
@@ -40,17 +47,43 @@ describe("RateLimiter Durable Object", () => {
 		it("should return denied when tokens are exhausted", async () => {
 			const stub = getRateLimiter("check-exhausted");
 
-			// Consume all tokens first
-			for (let i = 0; i < 105; i++) {
-				await stub.fetch("http://localhost/consume?identity=exhausted-user");
+			// Consume until the bucket actually reports empty rather than a fixed
+			// count: the bucket refills at one token per 600ms, so a fixed loop that
+			// runs slowly under load hands tokens back faster than it takes them and
+			// the check below finds the bucket non-empty.
+			let denied: Response | undefined;
+			for (let i = 0; i < 500 && !denied; i++) {
+				const consumed = await stub.fetch("http://localhost/consume?identity=exhausted-user");
+				if (consumed.status === 429) {
+					denied = consumed;
+				}
 			}
+			expect(denied).toBeDefined();
 
-			// Now check
-			const response = await stub.fetch("http://localhost/check?identity=exhausted-user");
-			expect(response.status).toBe(200);
-			const result = (await response.json()) as RateLimitResult;
+			// Assert on the denial itself rather than a second round-trip: the loop
+			// exits with a fraction of a token left, and the bucket refills at one
+			// per 600ms, so a separate /check can be answered *after* enough time
+			// has passed to hand that fraction back.
+			const result = (await denied?.json()) as RateLimitResult;
 			expect(result.allowed).toBe(false);
 			expect(result.remaining).toBe(0);
+
+			// /check has its own denied branch. The bucket sits just under one token
+			// and refills at one per 600ms, so a stalled scheduler can hand it back
+			// between calls — drain again rather than assuming a single round-trip
+			// wins the race.
+			let checked: RateLimitResult | undefined;
+			for (let i = 0; i < 10; i++) {
+				const response = await stub.fetch("http://localhost/check?identity=exhausted-user");
+				expect(response.status).toBe(200);
+				checked = (await response.json()) as RateLimitResult;
+				if (!checked.allowed) {
+					break;
+				}
+				await stub.fetch("http://localhost/consume?identity=exhausted-user");
+			}
+			expect(checked?.allowed).toBe(false);
+			expect(checked?.remaining).toBe(0);
 		});
 	});
 
@@ -91,8 +124,10 @@ describe("RateLimiter Durable Object", () => {
 			const stub = getRateLimiter("consume-exhausted");
 
 			let hitLimit = false;
-			// Consume all tokens (plus buffer for refill)
-			for (let i = 0; i < 200; i++) {
+			// Bounded well above the bucket size: refill runs at one token per 600ms,
+			// so a loop that iterates slowly under load needs more turns than the
+			// 100-token capacity to get ahead of it.
+			for (let i = 0; i < 500; i++) {
 				const res = await stub.fetch("http://localhost/consume?identity=test-user");
 				if (res.status === 429) {
 					hitLimit = true;

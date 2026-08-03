@@ -1,18 +1,135 @@
-import type { MiddlewareHandler } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import { createLocalJWKSet, jwtVerify } from "jose";
-
-import type { Env, LegacyJWKSResponse, OIDCClaims, Variables } from "#types";
-import { createIdentity, HTTP, markClaimsAsValidated, TIME } from "#types";
+import { getRequestId } from "#middleware/request-id";
+import type { Env, LegacyJWKSResponse, OIDCClaims, RateLimitResult, Variables } from "#types";
+import { createIdentity, HEADERS, HTTP, markClaimsAsValidated, TIME } from "#types";
+import { logAuditEvent } from "#utils/audit";
 import { CACHE_TTL } from "#utils/constants";
+import { fetchRateLimiter } from "#utils/durable-objects";
+import { scheduleBackgroundTask } from "#utils/execution";
 import { fetchWithTimeout } from "#utils/fetch";
 import { logger } from "#utils/logger";
+import type { OIDCSubjectResolution } from "#utils/oidc-subjects";
+import { resolveOIDCSubject } from "#utils/oidc-subjects";
 import { validateUrl } from "#utils/url-validation";
 
-// OIDC validation middleware
+/**
+ * Rate-limiter namespace for revoked-trust reuse, kept disjoint from the
+ * `<iss>:<sub>` buckets the signing path consumes.
+ *
+ * Not because `ALLOWED_ISSUERS` is validated — it is a bare string, split on
+ * commas and checked nowhere; `SubjectCreateSchema.issuer` constrains stored
+ * *rows*, and the bucket name is built from `payload.iss`. The real guarantee is
+ * that a non-URL issuer cannot authenticate at all: `getJWKS` fetches
+ * `${issuer}/.well-known/openid-configuration` through `validateUrl`, which
+ * requires an absolute `https:` URL. So this string can never appear as an `iss`
+ * that reached the point of naming a bucket.
+ */
+const REVOKED_REUSE_METER = "oidc-revoked-reuse";
+
+/**
+ * Write a durable record of a revoked trust being presented, if the caller is
+ * within its rate-limit budget.
+ *
+ * Metered because it is a D1 write on a refusal path: without the check, the
+ * holder of a revoked credential could flood `audit_logs`, which shares a
+ * database with the authorization table every request reads. Best-effort in
+ * every direction — a limiter outage or a failed write must not change the 401.
+ *
+ * Metered on the *revoked row's id*, not on `<iss>:<sub>` like the signing path.
+ * A row is a prefix, and one prefix covers unboundedly many subjects: GitHub
+ * puts the ref in `sub`, so anyone who can push a branch under the revoked scope
+ * mints a fresh subject — and a per-subject bucket hands them a fresh budget
+ * with it, which makes the cap no cap at all. Keying on the id bounds the whole
+ * revoked trust to one bucket however many subjects it presents, the same shape
+ * as the service-token path, which meters on `policy.name` rather than on
+ * anything the caller picks.
+ *
+ * The argument above applies just as well to the *signing* path, which still
+ * meters on `<iss>:<sub>` — see the note on `oidcAuth` below. That is a capacity
+ * decision rather than a correctness one, so it is deliberately not changed
+ * here; do not read this comment as describing the whole service.
+ *
+ * @param c - Request context
+ * @param requestId - This request's id, shared with the rest of the pipeline
+ * @param payload - The verified (but unauthorized) claims
+ * @param resolution - The revoked row that matched
+ */
+async function recordRevokedReuse(
+	c: Context<{ Bindings: Env; Variables: Variables }>,
+	requestId: string,
+	payload: OIDCClaims,
+	resolution: Extract<OIDCSubjectResolution, { status: "revoked" }>,
+): Promise<void> {
+	try {
+		const limit = await fetchRateLimiter(c.env, createIdentity(REVOKED_REUSE_METER, resolution.id));
+		if (!limit.ok) {
+			return;
+		}
+		const { allowed } = (await limit.json()) as RateLimitResult;
+		if (!allowed) {
+			return;
+		}
+	} catch (error) {
+		logger.warn("Could not meter a revoked-trust reuse, so it was not recorded", {
+			requestId,
+			error: error instanceof Error ? error.message : String(error),
+		});
+		return;
+	}
+
+	await scheduleBackgroundTask(
+		c,
+		requestId,
+		logAuditEvent(c.env.AUDIT_DB, {
+			requestId,
+			action: "sign",
+			issuer: payload.iss,
+			subject: payload.sub,
+			keyId: "*",
+			success: false,
+			errorCode: "AUTH_INVALID",
+			metadata: JSON.stringify({
+				reason: "revoked_trust_presented",
+				subjectId: resolution.id,
+				subjectPolicy: resolution.name,
+				revokedAt: resolution.revokedAt,
+			}),
+		}),
+	);
+}
+
+/**
+ * OIDC validation middleware.
+ *
+ * KNOWN GAP — the identity published here becomes the *signing* rate-limit
+ * bucket (`fetchRateLimiter(env, identity)` in the sign route), and it is
+ * `<iss>:<sub>`. GitHub puts the ref in `sub`, so an OIDC caller who can push a
+ * branch gets a fresh 100/min bucket per branch: the signing cap does not bound
+ * a trusted row, and every distinct `sub` leaves a permanent key in the limiter
+ * Durable Object, which nothing reaps. Service tokens do not have this — they
+ * meter on `policy.name`.
+ *
+ * Not fixed here because it is a capacity decision, not a correctness one.
+ * Metering on `policy.id` matches the service-token shape but collapses an
+ * owner-wide row to one shared bucket, which would throttle a busy org
+ * immediately; a per-row ceiling *above* the per-subject bucket keeps
+ * per-branch fairness at the cost of a second limiter round trip per signature.
+ * Either needs a number chosen against real traffic. `policy.id` is available
+ * for whichever is picked — it is what `recordRevokedReuse` already meters on.
+ */
 export const oidcAuth: MiddlewareHandler<{
 	Bindings: Env;
 	Variables: Variables;
 }> = async (c, next) => {
+	// One id for the whole request. The global request-id middleware already
+	// derived it and captured that value for the `X-Request-ID` it echoes on the
+	// way out, so re-deriving here mints a *different* UUID when the caller sent
+	// no header — stranding every row this request writes under an id the caller
+	// never sees. The fallback covers direct invocation in tests.
+	const requestId = c.get("requestId") ?? getRequestId(c.req.header(HEADERS.REQUEST_ID));
+	c.set("requestId", requestId);
+
 	const authHeader = c.req.header("Authorization");
 
 	if (!authHeader?.startsWith("Bearer ")) {
@@ -24,19 +141,106 @@ export const oidcAuth: MiddlewareHandler<{
 		return c.json({ error: "Missing token" }, HTTP.Unauthorized);
 	}
 
+	// Deliberately narrow: this catch echoes the thrown message to the caller,
+	// which is only safe for validateOIDCToken's curated auth strings. A database
+	// read or anything downstream must not be in here — see below.
+	let payload: OIDCClaims;
 	try {
-		const payload = await validateOIDCToken(token, c.env);
-		const validatedClaims = markClaimsAsValidated(payload);
-
-		// Store validated claims in context for downstream use
-		c.set("oidcClaims", validatedClaims);
-		c.set("identity", createIdentity(payload.iss, payload.sub));
-
-		return next();
+		payload = await validateOIDCToken(token, c.env);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Invalid token";
 		return c.json({ error: message, code: "AUTH_INVALID" }, HTTP.Unauthorized);
 	}
+
+	// Authentication is not authorization. A verified token only proves that some
+	// workflow on an accepted issuer asked for our audience — and both issuers are
+	// shared by every repository on GitHub Actions and every project on
+	// gitlab.com. The subject must be one we trust.
+	//
+	// A policy we cannot read is not a bad credential. Reporting it as 401 would
+	// point the operator at credentials on the day the real cause is a migration
+	// that has not run yet, and would hand our schema to every caller.
+	let resolution: OIDCSubjectResolution;
+	try {
+		resolution = await resolveOIDCSubject(c.env.AUDIT_DB, payload.iss, payload.sub);
+	} catch (error) {
+		logger.error("OIDC subject lookup failed", {
+			issuer: payload.iss,
+			error: error instanceof Error ? error.message : String(error),
+		});
+		return c.json({ error: "Authorization store unavailable", code: "INTERNAL_ERROR" }, HTTP.ServiceUnavailable);
+	}
+
+	if (resolution.status !== "trusted") {
+		// Three different events, one response. The caller learns nothing extra —
+		// telling a stranger that their subject matches a revoked row would confirm
+		// the row exists — but the operator gets to tell them apart. Reuse of a
+		// revoked credential is an incident; an unknown subject on a shared issuer
+		// is background traffic.
+		if (resolution.status === "revoked") {
+			logger.warn("Revoked OIDC trust presented", {
+				issuer: payload.iss,
+				subject: payload.sub,
+				subjectId: resolution.id,
+				subjectPolicy: resolution.name,
+				revokedAt: resolution.revokedAt,
+			});
+		} else if (resolution.status === "expired") {
+			logger.warn("Expired OIDC trust presented", {
+				issuer: payload.iss,
+				subject: payload.sub,
+				subjectId: resolution.id,
+				subjectPolicy: resolution.name,
+				expiresAt: resolution.expiresAt,
+			});
+		} else {
+			logger.warn("Rejected untrusted OIDC subject", {
+				issuer: payload.iss,
+				subject: payload.sub,
+			});
+		}
+		// `unknown` gets no audit_logs row: that arm is reachable by anyone holding
+		// any token the issuer will mint, so a write there would be unmetered — the
+		// same problem the key-scope denial had.
+		//
+		// `revoked` is not that. Reaching it requires the token's `sub` to match a
+		// stored prefix, and GitHub binds `sub` to the caller's actual repository,
+		// so the population that can trigger it is the org that used to hold the
+		// trust. That is the same bounded, already-vetted caller whose scope denial
+		// this service records durably — and a killed credential still in use is
+		// the stronger signal of the two. It gets a row, metered the same way, so
+		// it survives past the log store's retention window.
+		//
+		// `expired` is bounded the same way but stays log-only: a lapsed trust is
+		// routine maintenance, not evidence of anything, and it is the row owner's
+		// problem rather than an operator's. Recording it would mostly add volume.
+		if (resolution.status === "revoked") {
+			await recordRevokedReuse(c, requestId, payload, resolution);
+		}
+
+		return c.json({ error: "Subject is not trusted for signing", code: "AUTH_INVALID" }, HTTP.Unauthorized);
+	}
+
+	const policy = resolution.policy;
+
+	// Store validated claims in context for downstream use
+	c.set("oidcClaims", markClaimsAsValidated(payload));
+	c.set("identity", createIdentity(payload.iss, payload.sub));
+	// Key scoping now applies to OIDC callers too, not just service tokens.
+	c.set("allowedKeyIds", policy.allowedKeyIds);
+	// Which trust authorized this call. Without it the audit trail records only
+	// the JWT subject, so "what did the row I just revoked sign?" means re-running
+	// prefix matching over the whole history. The service-token path gets this
+	// for free by putting the policy name in its synthetic `sub`.
+	c.set("subjectPolicyName", policy.name);
+
+	// The last-used stamp is bookkeeping; do not make every signature wait on a
+	// D1 write for it.
+	await scheduleBackgroundTask(c, requestId, policy.stampUsage());
+
+	// Outside the try on purpose: an error from the sign handler is a 500, not a
+	// 401 carrying an internal message.
+	return next();
 };
 
 // Admin token auth for management endpoints
@@ -103,8 +307,11 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
 		throw new Error(`Algorithm not allowed: ${header.alg}`);
 	}
 
-	// Validate issuer
-	const allowedIssuers = env.ALLOWED_ISSUERS.split(",");
+	// Validate issuer. Trim to match how /admin/subjects reads the same variable:
+	// if only one side trimmed, whitespace after a comma would let an issuer be
+	// trusted at create time and refused here, producing exactly the silently
+	// dead row that check exists to prevent.
+	const allowedIssuers = env.ALLOWED_ISSUERS.split(",").map((issuer) => issuer.trim());
 	if (!allowedIssuers.includes(payload.iss)) {
 		throw new Error(`Issuer not allowed: ${payload.iss}`);
 	}
