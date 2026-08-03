@@ -174,6 +174,36 @@ describe("Security Headers Middleware", () => {
 			});
 		}
 
+		it("tolerates whitespace around a comma in ALLOWED_ISSUERS", async () => {
+			// /admin/subjects trims before deciding an issuer is acceptable. If this
+			// side did not, a padded entry would be trustable at create time and
+			// refused here — a row that lists as trusted and can never match.
+			const { privateKey } = await jose.generateKeyPair("ES256");
+			const token = await new jose.SignJWT({
+				iss: "https://gitlab.com",
+				sub: "test",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "ES256", kid: "test" })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const response = await makeRequest(
+				"/sign",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{
+					ALLOWED_ISSUERS: "https://token.actions.githubusercontent.com, https://gitlab.com" as Env["ALLOWED_ISSUERS"],
+				},
+			);
+
+			// Still 401 — nothing signs this token — but it must fail past the
+			// issuer gate rather than at it.
+			expect(response.status).toBe(401);
+			const body = await parseJson<{ error: string }>(response);
+			expect(body.error).not.toContain("Issuer not allowed");
+		});
+
 		it("rejects a cryptographically valid token whose subject is not trusted", async () => {
 			// The whole point of the subject allowlist: the token here is
 			// perfectly valid — right issuer, right audience, good signature —
