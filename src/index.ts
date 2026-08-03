@@ -8,6 +8,7 @@ import { adminAuth } from "#middleware/oidc";
 import { adminRateLimit, productionCors, securityHeaders } from "#middleware/security";
 import adminRoutes from "#routes/admin";
 import signRoutes from "#routes/sign";
+import subjectRoutes from "#routes/oidc-subjects";
 import tokenRoutes from "#routes/tokens";
 import { ErrorResponseSchema, HealthResponseSchema, PublicKeyQuerySchema, PublicKeyResponseSchema } from "#schemas";
 import type { HealthResponse } from "#schemas/health";
@@ -145,7 +146,8 @@ app.route(
 		.use("*", adminRateLimit) // Rate limit before auth to prevent brute force
 		.use("*", adminAuth)
 		.route("/", adminRoutes)
-		.route("/", tokenRoutes),
+		.route("/", tokenRoutes)
+		.route("/", subjectRoutes),
 );
 
 // OpenAPI Docs

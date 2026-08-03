@@ -12,7 +12,7 @@ export default defineConfig({
 		isolate: true,
 		reporters: process.env.GITHUB_ACTIONS ? ["github-actions", "dot", "junit", "json"] : ["default"], // "dot",
 		include: ["src/__tests__/**/*.{ts,js}"],
-		exclude: ["**/*.d.ts", "node_modules/**"],
+		exclude: ["**/*.d.ts", "node_modules/**", "src/__tests__/helpers/**"],
 		coverage: {
 			enabled: true,
 			provider: "istanbul",

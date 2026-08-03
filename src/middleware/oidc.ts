@@ -6,6 +6,7 @@ import { createIdentity, HTTP, markClaimsAsValidated, TIME } from "#types";
 import { CACHE_TTL } from "#utils/constants";
 import { fetchWithTimeout } from "#utils/fetch";
 import { logger } from "#utils/logger";
+import { resolveOIDCSubject } from "#utils/oidc-subjects";
 import { validateUrl } from "#utils/url-validation";
 
 // OIDC validation middleware
@@ -28,9 +29,24 @@ export const oidcAuth: MiddlewareHandler<{
 		const payload = await validateOIDCToken(token, c.env);
 		const validatedClaims = markClaimsAsValidated(payload);
 
+		// Authentication is not authorization. A verified token only proves that
+		// some workflow on an accepted issuer asked for our audience — and both
+		// issuers are shared by every repository on GitHub Actions and every
+		// project on gitlab.com. The subject must be one we trust.
+		const policy = await resolveOIDCSubject(c.env.AUDIT_DB, payload.iss, payload.sub);
+		if (!policy) {
+			logger.warn("Rejected untrusted OIDC subject", {
+				issuer: payload.iss,
+				subject: payload.sub,
+			});
+			return c.json({ error: "Subject is not trusted for signing", code: "AUTH_INVALID" }, HTTP.Unauthorized);
+		}
+
 		// Store validated claims in context for downstream use
 		c.set("oidcClaims", validatedClaims);
 		c.set("identity", createIdentity(payload.iss, payload.sub));
+		// Key scoping now applies to OIDC callers too, not just service tokens.
+		c.set("allowedKeyIds", policy.allowedKeyIds);
 
 		return next();
 	} catch (error) {

@@ -366,7 +366,9 @@
           "key_upload",
           "key_rotate",
           "token_create",
-          "token_revoke"
+          "token_revoke",
+          "subject_create",
+          "subject_revoke"
         ]
       },
       "TokenCreatedResponse": {
@@ -488,6 +490,179 @@
         ]
       },
       "TokenRevokeResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "success",
+          "id"
+        ]
+      },
+      "SubjectCreatedResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "$ref": "#/components/schemas/SubjectName"
+          },
+          "issuer": {
+            "type": "string"
+          },
+          "subjectPrefix": {
+            "$ref": "#/components/schemas/SubjectPrefix"
+          },
+          "keyIds": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string"
+            }
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "revokedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "lastUsedAt": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "issuer",
+          "subjectPrefix",
+          "keyIds",
+          "createdAt",
+          "expiresAt",
+          "revokedAt",
+          "lastUsedAt"
+        ]
+      },
+      "SubjectName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._/-]*$"
+      },
+      "SubjectPrefix": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 255,
+        "pattern": "^\\S+$"
+      },
+      "SubjectCreate": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/SubjectName"
+          },
+          "issuer": {
+            "type": "string",
+            "format": "uri"
+          },
+          "subjectPrefix": {
+            "$ref": "#/components/schemas/SubjectPrefix"
+          },
+          "keyIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Fa-f0-9]{16}$"
+            }
+          },
+          "expiresInDays": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3650
+          }
+        },
+        "required": [
+          "name",
+          "issuer",
+          "subjectPrefix"
+        ]
+      },
+      "SubjectListResponse": {
+        "type": "object",
+        "properties": {
+          "subjects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SubjectSummary"
+            }
+          }
+        },
+        "required": [
+          "subjects"
+        ]
+      },
+      "SubjectSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "$ref": "#/components/schemas/SubjectName"
+          },
+          "issuer": {
+            "type": "string"
+          },
+          "subjectPrefix": {
+            "$ref": "#/components/schemas/SubjectPrefix"
+          },
+          "keyIds": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string"
+            }
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "revokedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "lastUsedAt": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "issuer",
+          "subjectPrefix",
+          "keyIds",
+          "createdAt",
+          "expiresAt",
+          "revokedAt",
+          "lastUsedAt"
+        ]
+      },
+      "SubjectRevokeResponse": {
         "type": "object",
         "properties": {
           "success": {
@@ -1189,6 +1364,154 @@
           },
           "404": {
             "description": "Token not found or already revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/subjects": {
+      "post": {
+        "summary": "Trust an OIDC subject",
+        "description": "Authorize a CI identity to sign. A verified OIDC token only proves that some workflow on an accepted issuer asked for our audience, and those issuers are shared by every repository on GitHub Actions and every project on GitLab — so a subject must be trusted explicitly.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubjectCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Subject trusted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectCreatedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Subject name, or issuer and prefix pair, already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List trusted OIDC subjects",
+        "description": "List every trusted subject, including revoked and expired ones",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Subjects",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectListResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/subjects/{id}": {
+      "delete": {
+        "summary": "Revoke a trusted OIDC subject",
+        "description": "Revoke a subject by id; it stops being able to sign immediately",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Subject revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectRevokeResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Subject not found or already revoked",
             "content": {
               "application/json": {
                 "schema": {

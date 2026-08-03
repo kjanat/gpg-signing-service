@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import * as jose from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "#gpg-signing-service";
+import { clearTrustedSubjects, seedTrustedSubjects } from "./helpers/oidc-subjects";
 
 const parseJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
 
@@ -128,6 +129,9 @@ describe("Security Headers Middleware", () => {
 
 	describe("OIDC Token Validation", () => {
 		beforeAll(async () => {
+			// The OIDC path now requires a trusted-subject row.
+			await seedTrustedSubjects(env.AUDIT_DB);
+
 			// Clean up real KV cache to prevent test pollution from other test files (e.g. sign.test.ts)
 			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
 			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com/unique-test-issuer");
@@ -169,6 +173,44 @@ describe("Security Headers Middleware", () => {
 				return new Response("Not Found", { status: 404 });
 			});
 		}
+
+		it("rejects a cryptographically valid token whose subject is not trusted", async () => {
+			// The whole point of the subject allowlist: the token here is
+			// perfectly valid — right issuer, right audience, good signature —
+			// it is simply from a repository nobody trusted. Every repo on
+			// GitHub Actions can produce exactly this.
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await clearTrustedSubjects(env.AUDIT_DB);
+
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "untrusted-key";
+			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const token = await new jose.SignJWT({
+				iss: issuer,
+				sub: "repo:attacker/evil:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "ES256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(401);
+			const body = await parseJson<{ error: string; code: string }>(response);
+			expect(body.error).toContain("not trusted");
+			expect(body.code).toBe("AUTH_INVALID");
+
+			// Restore the fixture for the rest of the suite.
+			await seedTrustedSubjects(env.AUDIT_DB);
+		});
 
 		it("should reject key not intended for signatures", async () => {
 			// Clean up cache to ensure no pollution

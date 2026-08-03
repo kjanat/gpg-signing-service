@@ -12,21 +12,63 @@
 
 The install action's `token` input is unrelated to all service credentials.
 
-## Current OIDC authorization boundary
+## OIDC authorization
 
-> [!WARNING]
-> The service validates issuer, audience, time, algorithm, key ID, and JWT
-> signature. It does not authorize GitHub repository, organization, workflow,
-> ref, environment, GitLab namespace, or project claims.
+A verified token is not an authorized one. `ALLOWED_ISSUERS` is not a
+repository allowlist: `token.actions.githubusercontent.com` issues tokens to
+every repository on GitHub Actions, `gitlab.com` to every project there, and
+the audience is a public string. Issuer plus audience therefore says nothing
+about _who_ is calling.
 
-With the checked-in issuer list, any GitHub Actions or GitLab job that can
-request a valid token with the expected audience can authenticate to `/sign`
-and select any stored key. Repository and project claims are used only as audit
-metadata.
+Authorization is a separate table of trusted subjects, managed through
+[`/admin/subjects`](#trusted-oidc-subjects). A token is refused with
+`Subject is not trusted for signing` unless its issuer and `sub` match a live
+row, and each row carries its own key allowlist, expiry and revocation — the
+same lifecycle as a service token.
 
-Do not treat `ALLOWED_ISSUERS` as a repository allowlist. Before exposing a
-shared deployment, add claim-based authorization or use narrowly scoped service
-tokens instead of broad OIDC access.
+**An empty table denies everyone.** A fresh deployment cannot sign over OIDC
+until at least one subject is trusted, which is the intended failure direction.
+
+## Trusted OIDC subjects
+
+| Method   | Path                   | Purpose                             |
+| -------- | ---------------------- | ----------------------------------- |
+| `POST`   | `/admin/subjects`      | Trust an issuer and subject prefix  |
+| `GET`    | `/admin/subjects`      | List trusted subjects and their use |
+| `DELETE` | `/admin/subjects/{id}` | Revoke a trust immediately          |
+
+```bash
+curl -X POST "$GPG_SIGN_URL/admin/subjects" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "kjanat-repos",
+    "issuer": "https://token.actions.githubusercontent.com",
+    "subjectPrefix": "repo:kjanat/",
+    "keyIds": ["D8BC04E534E7706F"],
+    "expiresInDays": 365
+  }'
+```
+
+`subjectPrefix` is matched with a delimiter boundary, so `repo:owner/name`
+does not also admit `repo:owner/name-evil`. A prefix that ends at a delimiter
+is deliberately broader: `repo:owner/` trusts every repository of that owner,
+while still refusing `repo:ownerevil/`. Where several rows match, the longest
+prefix wins, so a specific repository can be granted different keys than the
+owner-wide row covering the rest.
+
+Omit `keyIds` to allow every key. Omit `expiresInDays` for a trust that does
+not expire.
+
+### Subject shapes
+
+GitHub subjects are `repo:<owner>/<repo>:<context>`, or
+`repo:<owner>@<ownerId>/<repo>@<repoId>:<context>` when the repository has
+[immutable subject claims](https://docs.github.com/en/actions/reference/security/oidc)
+enabled. The immutable form is stronger — a renamed or re-created repository of
+the same name cannot assume it — but the two are stored and matched
+identically, so trust whichever form your repositories actually issue. Check
+yours under **Settings → Actions → OIDC configuration**.
 
 ## OIDC validation
 
@@ -38,8 +80,10 @@ The Worker:
 4. checks `aud` against `EXPECTED_AUDIENCE`, which defaults to
    `gpg-signing-service`;
 5. fetches OIDC discovery and JWKS documents after SSRF validation;
-6. caches JWKS data in KV for five minutes; and
-7. verifies the JWT signature and signing-key usage.
+6. caches JWKS data in KV for five minutes;
+7. verifies the JWT signature and signing-key usage; and
+8. resolves `iss` and `sub` to a trusted subject, refusing the request when
+   none matches and applying that subject's key allowlist.
 
 ### GitHub Actions
 
