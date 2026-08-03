@@ -7,6 +7,7 @@ import { CACHE_TTL } from "#utils/constants";
 import { scheduleBackgroundTask } from "#utils/execution";
 import { fetchWithTimeout } from "#utils/fetch";
 import { logger } from "#utils/logger";
+import type { OIDCSubjectPolicy } from "#utils/oidc-subjects";
 import { resolveOIDCSubject } from "#utils/oidc-subjects";
 import { validateUrl } from "#utils/url-validation";
 
@@ -26,38 +27,57 @@ export const oidcAuth: MiddlewareHandler<{
 		return c.json({ error: "Missing token" }, HTTP.Unauthorized);
 	}
 
+	// Deliberately narrow: this catch echoes the thrown message to the caller,
+	// which is only safe for validateOIDCToken's curated auth strings. A database
+	// read or anything downstream must not be in here — see below.
+	let payload: OIDCClaims;
 	try {
-		const payload = await validateOIDCToken(token, c.env);
-		const validatedClaims = markClaimsAsValidated(payload);
-
-		// Authentication is not authorization. A verified token only proves that
-		// some workflow on an accepted issuer asked for our audience — and both
-		// issuers are shared by every repository on GitHub Actions and every
-		// project on gitlab.com. The subject must be one we trust.
-		const policy = await resolveOIDCSubject(c.env.AUDIT_DB, payload.iss, payload.sub);
-		if (!policy) {
-			logger.warn("Rejected untrusted OIDC subject", {
-				issuer: payload.iss,
-				subject: payload.sub,
-			});
-			return c.json({ error: "Subject is not trusted for signing", code: "AUTH_INVALID" }, HTTP.Unauthorized);
-		}
-
-		// Store validated claims in context for downstream use
-		c.set("oidcClaims", validatedClaims);
-		c.set("identity", createIdentity(payload.iss, payload.sub));
-		// Key scoping now applies to OIDC callers too, not just service tokens.
-		c.set("allowedKeyIds", policy.allowedKeyIds);
-
-		// The last-used stamp is bookkeeping; do not make every signature wait
-		// on a D1 write for it.
-		await scheduleBackgroundTask(c, c.req.header(HEADERS.REQUEST_ID) || "unknown", policy.stampUsage);
-
-		return next();
+		payload = await validateOIDCToken(token, c.env);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Invalid token";
 		return c.json({ error: message, code: "AUTH_INVALID" }, HTTP.Unauthorized);
 	}
+
+	// Authentication is not authorization. A verified token only proves that some
+	// workflow on an accepted issuer asked for our audience — and both issuers are
+	// shared by every repository on GitHub Actions and every project on
+	// gitlab.com. The subject must be one we trust.
+	//
+	// A policy we cannot read is not a bad credential. Reporting it as 401 would
+	// point the operator at credentials on the day the real cause is a migration
+	// that has not run yet, and would hand our schema to every caller.
+	let policy: OIDCSubjectPolicy | null;
+	try {
+		policy = await resolveOIDCSubject(c.env.AUDIT_DB, payload.iss, payload.sub);
+	} catch (error) {
+		logger.error("OIDC subject lookup failed", {
+			issuer: payload.iss,
+			error: error instanceof Error ? error.message : String(error),
+		});
+		return c.json({ error: "Authorization store unavailable", code: "INTERNAL_ERROR" }, HTTP.ServiceUnavailable);
+	}
+
+	if (!policy) {
+		logger.warn("Rejected untrusted OIDC subject", {
+			issuer: payload.iss,
+			subject: payload.sub,
+		});
+		return c.json({ error: "Subject is not trusted for signing", code: "AUTH_INVALID" }, HTTP.Unauthorized);
+	}
+
+	// Store validated claims in context for downstream use
+	c.set("oidcClaims", markClaimsAsValidated(payload));
+	c.set("identity", createIdentity(payload.iss, payload.sub));
+	// Key scoping now applies to OIDC callers too, not just service tokens.
+	c.set("allowedKeyIds", policy.allowedKeyIds);
+
+	// The last-used stamp is bookkeeping; do not make every signature wait on a
+	// D1 write for it.
+	await scheduleBackgroundTask(c, c.req.header(HEADERS.REQUEST_ID) || "unknown", policy.stampUsage());
+
+	// Outside the try on purpose: an error from the sign handler is a 500, not a
+	// 401 carrying an internal message.
+	return next();
 };
 
 // Admin token auth for management endpoints
