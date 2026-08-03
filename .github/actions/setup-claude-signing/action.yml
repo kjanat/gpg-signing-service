@@ -28,9 +28,31 @@ runs:
         chmod +x "$shim"
         git config --local gpg.program "$shim"
         git config --local commit.gpgsign true
+        # gpg.program is only consulted when gpg.format is openpgp. A runner (or
+        # an agent image) that presets gpg.format=ssh would otherwise silently
+        # sign with its own key and never call the service.
+        git config --local gpg.format openpgp
         # Exported so the shim (invoked by git, possibly deep inside a Claude
         # session) knows where the service lives.
         echo "GPG_SIGN_URL=${SERVICE_URL}" >> "$GITHUB_ENV"
+
+        # Re-export the OIDC request variables under our own names. The agent
+        # runs git several process levels below this step, and the native
+        # ACTIONS_ID_TOKEN_REQUEST_* variables do not reach that far: signing
+        # failed with "job needs id-token: write" on a job that had it (see
+        # issue #25). Copies under different names are unaffected.
+        if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+          echo "::add-mask::${ACTIONS_ID_TOKEN_REQUEST_TOKEN}"
+          {
+            echo "GPG_OIDC_REQUEST_URL=${ACTIONS_ID_TOKEN_REQUEST_URL}"
+            echo "GPG_OIDC_REQUEST_TOKEN=${ACTIONS_ID_TOKEN_REQUEST_TOKEN}"
+          } >> "$GITHUB_ENV"
+          echo "OIDC request variables propagated; commits will be service-signed."
+        else
+          # Loud, because the alternative is discovering it only when a commit
+          # fails minutes into an agent run.
+          echo "::warning title=Commit signing unavailable::ACTIONS_ID_TOKEN_REQUEST_* absent in this step. The job needs 'id-token: write'. Commits will not be signed."
+        fi
         # NOTE: commits will show as "Unverified" on github.com unless the
         # service's public key (/public-key) is uploaded to a GitHub account
         # whose email matches the committer identity. The signature itself is

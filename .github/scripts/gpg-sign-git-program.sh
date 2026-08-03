@@ -33,19 +33,36 @@ fi
 
 : "${GPG_SIGN_URL:?GPG_SIGN_URL must point at the signing service}"
 
-# Two auth modes, so the same shim works in CI and in environments with no OIDC
-# issuer (Claude Code cloud sessions, a laptop). A pre-set GPG_SIGN_TOKEN — a
-# `gst_` service token — wins; otherwise mint a short-lived OIDC token, which
-# requires running inside a job with `id-token: write`.
-# See docs/cloud-session-signing.md.
+# Credentials, in precedence order:
+#
+#   1. GPG_SIGN_TOKEN — a `gst_` service token, for environments with no OIDC
+#      issuer at all (Claude Code cloud sessions, a laptop).
+#      See docs/cloud-session-signing.md.
+#   2. GPG_OIDC_REQUEST_* — copies of the OIDC request variables re-exported by
+#      .github/actions/setup-claude-signing.
+#   3. ACTIONS_ID_TOKEN_REQUEST_* — the native variables, present in ordinary
+#      workflow steps of a job with `id-token: write`.
+#
+# (2) exists because an agent does not run this shim directly: it runs inside a
+# tool subprocess several levels below the workflow step, and the native
+# ACTIONS_ID_TOKEN_REQUEST_* variables do not survive that far — signing failed
+# with "job needs id-token: write" on a job that demonstrably had it. Copies
+# under our own names are not subject to whatever drops the originals.
 if [ -z "${GPG_SIGN_TOKEN:-}" ]; then
-	: "${ACTIONS_ID_TOKEN_REQUEST_URL:?no GPG_SIGN_TOKEN set and no OIDC issuer available}"
-	: "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?no GPG_SIGN_TOKEN set and no OIDC issuer available}"
+	oidc_url="${GPG_OIDC_REQUEST_URL:-${ACTIONS_ID_TOKEN_REQUEST_URL:-}}"
+	oidc_token="${GPG_OIDC_REQUEST_TOKEN:-${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}}"
+
+	if [ -z "$oidc_url" ] || [ -z "$oidc_token" ]; then
+		echo "gpg-sign-git-program: no credential available." >&2
+		echo "  Set GPG_SIGN_TOKEN (service token), or run in a job with" >&2
+		echo "  'id-token: write' that uses .github/actions/setup-claude-signing." >&2
+		exit 1
+	fi
 
 	GPG_SIGN_TOKEN="$(
 		curl -sSf \
-			-H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-			"${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=gpg-signing-service" \
+			-H "Authorization: bearer ${oidc_token}" \
+			"${oidc_url}&audience=gpg-signing-service" \
 			| jq -r '.value'
 	)"
 fi
