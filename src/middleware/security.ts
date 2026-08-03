@@ -27,6 +27,10 @@ export const DOCS_CSP = [
 	"font-src 'self' data: https://cdn.jsdelivr.net",
 	"connect-src 'self' https://cloudflareinsights.com",
 	"frame-ancestors 'none'",
+	// Neither of these falls back to default-src, so they must be stated to
+	// stop an injected <base>/<form> from redirecting the page's requests.
+	"base-uri 'none'",
+	"form-action 'none'",
 ].join("; ");
 
 /** Paths that render the interactive API documentation. */

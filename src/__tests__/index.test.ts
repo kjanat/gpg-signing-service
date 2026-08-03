@@ -141,4 +141,51 @@ describe("API Documentation Routes", () => {
 		expect(csp).toContain("https://cdn.jsdelivr.net");
 		expect(csp).toContain("'unsafe-inline'");
 	});
+
+	it("should allow every remote asset the Swagger UI page actually references", async () => {
+		const ctx = createExecutionContext();
+		const response = await app.fetch(new Request("http://localhost/ui"), env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		const html = await response.text();
+		const csp = response.headers.get("Content-Security-Policy") ?? "";
+		const directive = (name: string): string => csp.split("; ").find((entry) => entry.startsWith(`${name} `)) ?? "";
+
+		const originsIn = (pattern: RegExp): string[] => [
+			...new Set(
+				[...html.matchAll(pattern)]
+					.map((match) => match[1])
+					.filter((url): url is string => url !== undefined)
+					.map((url) => new URL(url).origin),
+			),
+		];
+
+		// The CDN host lives inside @hono/swagger-ui, not in our code. Asserting
+		// against the URLs the page emits — rather than a hardcoded jsDelivr
+		// string — makes a CDN change fail here instead of silently shipping a
+		// blank /ui again (#25).
+		const scriptOrigins = originsIn(/<script[^>]+src="(https?:\/\/[^"]+)"/g);
+		const styleOrigins = originsIn(/<link[^>]+href="(https?:\/\/[^"]+)"/g);
+
+		expect(scriptOrigins.length).toBeGreaterThan(0);
+		expect(styleOrigins.length).toBeGreaterThan(0);
+
+		for (const origin of scriptOrigins) {
+			expect(directive("script-src")).toContain(origin);
+		}
+		for (const origin of styleOrigins) {
+			expect(directive("style-src")).toContain(origin);
+		}
+	});
+
+	it("should disable the third-party Swagger validator badge", async () => {
+		const ctx = createExecutionContext();
+		const response = await app.fetch(new Request("http://localhost/ui"), env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		// Left at its default, Swagger UI loads an <img> from validator.swagger.io,
+		// which the docs CSP blocks into a broken "Error" image — and which would
+		// hand the spec URL to a third party if it were allowed.
+		expect(await response.text()).toContain("validatorUrl: 'none'");
+	});
 });
