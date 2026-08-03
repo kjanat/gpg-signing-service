@@ -35,8 +35,13 @@ const TEST_ISSUERS = [
 	"https://gitlab.com",
 ];
 
-/** Subjects the suites sign with. */
-const TEST_SUBJECT_PREFIXES = ["test", "test-subject", "subject", "repo:user/repo"];
+/**
+ * Subjects the suites sign with. Every entry must be something the API would
+ * accept: `SubjectPrefixSchema` refuses a prefix with no delimiter, so seeding
+ * bare names here would make the fixture looser than production — the same gap
+ * that let the revoke lockout survive a green suite.
+ */
+const TEST_SUBJECT_PREFIXES = ["repo:test/svc", "repo:test-subject/svc", "repo:subject/svc", "repo:user/repo"];
 
 /**
  * Create the table and trust every issuer/subject pair the tests use, with no

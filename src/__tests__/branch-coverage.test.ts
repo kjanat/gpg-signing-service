@@ -37,7 +37,7 @@ vi.mock("#middleware/oidc", async (importOriginal) => {
 			if (c.req.header("Authorization") === "Bearer valid-token") {
 				c.set("oidcClaims", {
 					iss: "issuer",
-					sub: "subject",
+					sub: "repo:subject/svc",
 					project_path: "repo",
 				});
 				c.set("identity", "user");
