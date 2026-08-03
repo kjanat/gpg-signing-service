@@ -107,6 +107,8 @@ export async function insertOIDCSubject(
 		subjectPrefix: string;
 		keyIds: string[];
 		expiresAt: string | null;
+		/** Stored verbatim, so the value the API echoes is the persisted one. */
+		createdAt?: string;
 	},
 ): Promise<string> {
 	const id = crypto.randomUUID();
@@ -121,7 +123,7 @@ export async function insertOIDCSubject(
 			input.issuer,
 			input.subjectPrefix,
 			input.keyIds.join(","),
-			new Date().toISOString(),
+			input.createdAt ?? new Date().toISOString(),
 			input.expiresAt,
 		)
 		.run();

@@ -81,6 +81,7 @@ app.openapi(createSubjectRoute, async (c) => {
 			subjectPrefix: body.subjectPrefix,
 			keyIds,
 			expiresAt,
+			createdAt,
 		});
 
 		await scheduleBackgroundTask(
