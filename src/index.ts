@@ -152,7 +152,10 @@ app.route(
 app.doc("/doc", openApiConfig);
 
 // Swagger UI
-app.get("/ui", swaggerUI({ url: "/doc" }));
+// `validatorUrl: "none"` disables Swagger UI's online validator badge, which
+// otherwise loads an <img> from validator.swagger.io — blocked by the docs CSP
+// (rendering a broken "Error" image) and leaking the spec URL to a third party.
+app.get("/ui", swaggerUI({ url: "/doc", validatorUrl: "none" }));
 
 // 404 handler
 app.notFound((c) => {
