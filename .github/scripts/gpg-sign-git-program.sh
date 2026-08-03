@@ -12,10 +12,14 @@
 # client/cmd/gpg-sign/main.go), so we pipe stdin straight through.
 #
 # A fresh OIDC token is fetched per invocation: GitHub's job-level OIDC tokens
-# expire after ~5 minutes, while a Claude session can run much longer. The
-# ACTIONS_ID_TOKEN_REQUEST_* vars are present in the environment of any job
-# with `id-token: write`, and are inherited by every child process, including
-# Claude's Bash tool.
+# expire after ~5 minutes, while a Claude session can run much longer, so a
+# pre-minted token would go stale mid-run.
+#
+# ACTIONS_ID_TOKEN_REQUEST_* are present in ordinary steps of a job with
+# `id-token: write`, but NOT in a Claude session: claude-code-action deletes
+# both from the child environment on purpose (base-action/src/parse-sdk-options.ts,
+# "Remove OIDC token request variables so Claude cannot mint new tokens").
+# Hence the GPG_OIDC_REQUEST_* fallback below — see the precedence comment.
 set -euo pipefail
 
 signing=false

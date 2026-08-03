@@ -36,11 +36,25 @@ runs:
         # session) knows where the service lives.
         echo "GPG_SIGN_URL=${SERVICE_URL}" >> "$GITHUB_ENV"
 
-        # Re-export the OIDC request variables under our own names. The agent
-        # runs git several process levels below this step, and the native
-        # ACTIONS_ID_TOKEN_REQUEST_* variables do not reach that far: signing
-        # failed with "job needs id-token: write" on a job that had it (see
-        # issue #25). Copies under different names are unaffected.
+        # Re-export the OIDC request variables under our own names, because
+        # claude-code-action deletes the native ones from the environment it
+        # hands to Claude:
+        #
+        #   // Remove OIDC token request variables so Claude cannot mint new tokens.
+        #   delete env.ACTIONS_ID_TOKEN_REQUEST_URL;
+        #   delete env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+        #   -- base-action/src/parse-sdk-options.ts
+        #
+        # That is why signing failed with "job needs id-token: write" on a job
+        # that had it (issue #25) — the permission was never the problem.
+        #
+        # SECURITY: this deliberately re-grants the agent that capability. The
+        # request URL is a general-purpose minting endpoint, so the session can
+        # mint a repo-scoped OIDC token for ANY audience, not just
+        # gpg-signing-service. Acceptable only while this repo's identity is not
+        # trusted by any external OIDC relying party (AWS/GCP/Vault role, etc).
+        # Before adding one, switch to a pre-minted audience-scoped token or a
+        # gst_ service token instead. See docs/cloud-session-signing.md.
         if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] && [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
           echo "::add-mask::${ACTIONS_ID_TOKEN_REQUEST_TOKEN}"
           {
@@ -50,8 +64,10 @@ runs:
           echo "OIDC request variables propagated; commits will be service-signed."
         else
           # Loud, because the alternative is discovering it only when a commit
-          # fails minutes into an agent run.
-          echo "::warning title=Commit signing unavailable::ACTIONS_ID_TOKEN_REQUEST_* absent in this step. The job needs 'id-token: write'. Commits will not be signed."
+          # fails minutes into an agent run. Note commits FAIL rather than fall
+          # back to unsigned: commit.gpgsign is on and the shim exits 1 with no
+          # credential, so git refuses to write the commit object.
+          echo "::warning title=Commit signing unavailable::ACTIONS_ID_TOKEN_REQUEST_* absent in this step, so the job likely lacks 'id-token: write'. Every commit in this job will FAIL (not silently go unsigned) unless GPG_SIGN_TOKEN is set."
         fi
         # NOTE: commits will show as "Unverified" on github.com unless the
         # service's public key (/public-key) is uploaded to a GitHub account

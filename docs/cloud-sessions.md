@@ -70,11 +70,17 @@ The git identity variables mirror the repository variables the CI workflows
 use, so commits an agent makes look the same whether they come from a cloud
 session or from Actions.
 
-**No secrets here.** The dialog warns about this and it is not a formality:
-values are readable by anyone who uses the environment, and cloud environments
-have no secrets store. That means no `CLOUDFLARE_API_TOKEN`, no `ADMIN_TOKEN`,
-and no `gst_` service token, which in turn means a cloud session cannot call
-`/sign` — see [Signing commits](#signing-commits-from-a-cloud-session).
+**Treat everything here as public.** The dialog warns about this and it is not
+a formality: values are readable by anyone who uses the environment, and cloud
+environments have no secrets store. Never put `CLOUDFLARE_API_TOKEN` or
+`ADMIN_TOKEN` here — both are broad, long-lived and unattributable once leaked.
+
+A `gst_` service token in `GPG_SIGN_TOKEN` is the one deliberate exception, and
+only in a **personal** environment: it is scoped to one key, expiring, and
+independently revocable, which makes the trade defensible where the other two
+are not. In a shared environment it is not — every member's sessions would sign
+as you. The full trade-off is in
+[Signing commits](#signing-commits-from-a-cloud-session).
 
 Leave `GH_TOKEN` and `GITHUB_TOKEN` unset. The GitHub proxy authenticates for
 you and keeps the real credential outside the VM; both variables then read as
