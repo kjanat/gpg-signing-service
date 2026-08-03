@@ -30,11 +30,13 @@ const (
 
 // Defines values for AuditAction.
 const (
-	AuditActionKeyRotate   AuditAction = "key_rotate"
-	AuditActionKeyUpload   AuditAction = "key_upload"
-	AuditActionSign        AuditAction = "sign"
-	AuditActionTokenCreate AuditAction = "token_create"
-	AuditActionTokenRevoke AuditAction = "token_revoke"
+	AuditActionKeyRotate     AuditAction = "key_rotate"
+	AuditActionKeyUpload     AuditAction = "key_upload"
+	AuditActionSign          AuditAction = "sign"
+	AuditActionSubjectCreate AuditAction = "subject_create"
+	AuditActionSubjectRevoke AuditAction = "subject_revoke"
+	AuditActionTokenCreate   AuditAction = "token_create"
+	AuditActionTokenRevoke   AuditAction = "token_revoke"
 )
 
 // Valid indicates whether the value is a known member of the AuditAction enum.
@@ -45,6 +47,10 @@ func (e AuditAction) Valid() bool {
 	case AuditActionKeyUpload:
 		return true
 	case AuditActionSign:
+		return true
+	case AuditActionSubjectCreate:
+		return true
+	case AuditActionSubjectRevoke:
 		return true
 	case AuditActionTokenCreate:
 		return true
@@ -221,6 +227,58 @@ type SignRequest = string
 // SignResponse defines model for SignResponse.
 type SignResponse = string
 
+// SubjectCreate defines model for SubjectCreate.
+type SubjectCreate struct {
+	ExpiresInDays *int          `json:"expiresInDays,omitempty"`
+	Issuer        string        `json:"issuer"`
+	KeyIds        *[]string     `json:"keyIds,omitempty"`
+	Name          SubjectName   `json:"name"`
+	SubjectPrefix SubjectPrefix `json:"subjectPrefix"`
+}
+
+// SubjectCreatedResponse defines model for SubjectCreatedResponse.
+type SubjectCreatedResponse struct {
+	CreatedAt     string        `json:"createdAt"`
+	ExpiresAt     *string       `json:"expiresAt"`
+	Id            string        `json:"id"`
+	Issuer        string        `json:"issuer"`
+	KeyIds        *[]string     `json:"keyIds"`
+	LastUsedAt    *string       `json:"lastUsedAt"`
+	Name          SubjectName   `json:"name"`
+	RevokedAt     *string       `json:"revokedAt"`
+	SubjectPrefix SubjectPrefix `json:"subjectPrefix"`
+}
+
+// SubjectListResponse defines model for SubjectListResponse.
+type SubjectListResponse struct {
+	Subjects []SubjectSummary `json:"subjects"`
+}
+
+// SubjectName defines model for SubjectName.
+type SubjectName = string
+
+// SubjectPrefix defines model for SubjectPrefix.
+type SubjectPrefix = string
+
+// SubjectRevokeResponse defines model for SubjectRevokeResponse.
+type SubjectRevokeResponse struct {
+	Id      string `json:"id"`
+	Success bool   `json:"success"`
+}
+
+// SubjectSummary defines model for SubjectSummary.
+type SubjectSummary struct {
+	CreatedAt     string        `json:"createdAt"`
+	ExpiresAt     *string       `json:"expiresAt"`
+	Id            string        `json:"id"`
+	Issuer        string        `json:"issuer"`
+	KeyIds        *[]string     `json:"keyIds"`
+	LastUsedAt    *string       `json:"lastUsedAt"`
+	Name          SubjectName   `json:"name"`
+	RevokedAt     *string       `json:"revokedAt"`
+	SubjectPrefix SubjectPrefix `json:"subjectPrefix"`
+}
+
 // TokenCreate defines model for TokenCreate.
 type TokenCreate struct {
 	ExpiresInDays *int      `json:"expiresInDays,omitempty"`
@@ -316,6 +374,9 @@ type PostAdminKeysJSONRequestBody = KeyUpload
 
 // PostAdminKeysX509JSONRequestBody defines body for PostAdminKeysX509 for application/json ContentType.
 type PostAdminKeysX509JSONRequestBody = X509KeyUpload
+
+// PostAdminSubjectsJSONRequestBody defines body for PostAdminSubjects for application/json ContentType.
+type PostAdminSubjectsJSONRequestBody = SubjectCreate
 
 // PostAdminTokensJSONRequestBody defines body for PostAdminTokens for application/json ContentType.
 type PostAdminTokensJSONRequestBody = TokenCreate
@@ -417,6 +478,17 @@ type ClientInterface interface {
 
 	// GetAdminKeysKeyIdPublic request
 	GetAdminKeysKeyIdPublic(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetAdminSubjects request
+	GetAdminSubjects(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PostAdminSubjectsWithBody request with any body
+	PostAdminSubjectsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PostAdminSubjects(ctx context.Context, body PostAdminSubjectsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteAdminSubjectsId request
+	DeleteAdminSubjectsId(ctx context.Context, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetAdminTokens request
 	GetAdminTokens(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -527,6 +599,54 @@ func (c *Client) DeleteAdminKeysKeyId(ctx context.Context, keyId string, reqEdit
 
 func (c *Client) GetAdminKeysKeyIdPublic(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAdminKeysKeyIdPublicRequest(c.Server, keyId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetAdminSubjects(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAdminSubjectsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostAdminSubjectsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostAdminSubjectsRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PostAdminSubjects(ctx context.Context, body PostAdminSubjectsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPostAdminSubjectsRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteAdminSubjectsId(ctx context.Context, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteAdminSubjectsIdRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -922,6 +1042,107 @@ func NewGetAdminKeysKeyIdPublicRequest(server string, keyId string) (*http.Reque
 	return req, nil
 }
 
+// NewGetAdminSubjectsRequest generates requests for GetAdminSubjects
+func NewGetAdminSubjectsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/subjects")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPostAdminSubjectsRequest calls the generic PostAdminSubjects builder with application/json body
+func NewPostAdminSubjectsRequest(server string, body PostAdminSubjectsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPostAdminSubjectsRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewPostAdminSubjectsRequestWithBody generates requests for PostAdminSubjects with any type of body
+func NewPostAdminSubjectsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/subjects")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteAdminSubjectsIdRequest generates requests for DeleteAdminSubjectsId
+func NewDeleteAdminSubjectsIdRequest(server string, id openapi_types.UUID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: "uuid"})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/admin/subjects/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetAdminTokensRequest generates requests for GetAdminTokens
 func NewGetAdminTokensRequest(server string) (*http.Request, error) {
 	var err error
@@ -1251,6 +1472,17 @@ type ClientWithResponsesInterface interface {
 	// GetAdminKeysKeyIdPublicWithResponse request
 	GetAdminKeysKeyIdPublicWithResponse(ctx context.Context, keyId string, reqEditors ...RequestEditorFn) (*GetAdminKeysKeyIdPublicResponse, error)
 
+	// GetAdminSubjectsWithResponse request
+	GetAdminSubjectsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAdminSubjectsResponse, error)
+
+	// PostAdminSubjectsWithBodyWithResponse request with any body
+	PostAdminSubjectsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostAdminSubjectsResponse, error)
+
+	PostAdminSubjectsWithResponse(ctx context.Context, body PostAdminSubjectsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostAdminSubjectsResponse, error)
+
+	// DeleteAdminSubjectsIdWithResponse request
+	DeleteAdminSubjectsIdWithResponse(ctx context.Context, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*DeleteAdminSubjectsIdResponse, error)
+
 	// GetAdminTokensWithResponse request
 	GetAdminTokensWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAdminTokensResponse, error)
 
@@ -1457,6 +1689,102 @@ func (r GetAdminKeysKeyIdPublicResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetAdminKeysKeyIdPublicResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetAdminSubjectsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *SubjectListResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAdminSubjectsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAdminSubjectsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAdminSubjectsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type PostAdminSubjectsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON201      *SubjectCreatedResponse
+	JSON400      *ErrorResponse
+	JSON409      *ErrorResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r PostAdminSubjectsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PostAdminSubjectsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PostAdminSubjectsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteAdminSubjectsIdResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *SubjectRevokeResponse
+	JSON404      *ErrorResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteAdminSubjectsIdResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteAdminSubjectsIdResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteAdminSubjectsIdResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -1724,6 +2052,41 @@ func (c *ClientWithResponses) GetAdminKeysKeyIdPublicWithResponse(ctx context.Co
 		return nil, err
 	}
 	return ParseGetAdminKeysKeyIdPublicResponse(rsp)
+}
+
+// GetAdminSubjectsWithResponse request returning *GetAdminSubjectsResponse
+func (c *ClientWithResponses) GetAdminSubjectsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAdminSubjectsResponse, error) {
+	rsp, err := c.GetAdminSubjects(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAdminSubjectsResponse(rsp)
+}
+
+// PostAdminSubjectsWithBodyWithResponse request with arbitrary body returning *PostAdminSubjectsResponse
+func (c *ClientWithResponses) PostAdminSubjectsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostAdminSubjectsResponse, error) {
+	rsp, err := c.PostAdminSubjectsWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostAdminSubjectsResponse(rsp)
+}
+
+func (c *ClientWithResponses) PostAdminSubjectsWithResponse(ctx context.Context, body PostAdminSubjectsJSONRequestBody, reqEditors ...RequestEditorFn) (*PostAdminSubjectsResponse, error) {
+	rsp, err := c.PostAdminSubjects(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePostAdminSubjectsResponse(rsp)
+}
+
+// DeleteAdminSubjectsIdWithResponse request returning *DeleteAdminSubjectsIdResponse
+func (c *ClientWithResponses) DeleteAdminSubjectsIdWithResponse(ctx context.Context, id openapi_types.UUID, reqEditors ...RequestEditorFn) (*DeleteAdminSubjectsIdResponse, error) {
+	rsp, err := c.DeleteAdminSubjectsId(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteAdminSubjectsIdResponse(rsp)
 }
 
 // GetAdminTokensWithResponse request returning *GetAdminTokensResponse
@@ -2015,6 +2378,126 @@ func ParseGetAdminKeysKeyIdPublicResponse(rsp *http.Response) (*GetAdminKeysKeyI
 	return response, nil
 }
 
+// ParseGetAdminSubjectsResponse parses an HTTP response from a GetAdminSubjectsWithResponse call
+func ParseGetAdminSubjectsResponse(rsp *http.Response) (*GetAdminSubjectsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAdminSubjectsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SubjectListResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePostAdminSubjectsResponse parses an HTTP response from a PostAdminSubjectsWithResponse call
+func ParsePostAdminSubjectsResponse(rsp *http.Response) (*PostAdminSubjectsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PostAdminSubjectsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest SubjectCreatedResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteAdminSubjectsIdResponse parses an HTTP response from a DeleteAdminSubjectsIdWithResponse call
+func ParseDeleteAdminSubjectsIdResponse(rsp *http.Response) (*DeleteAdminSubjectsIdResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteAdminSubjectsIdResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SubjectRevokeResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetAdminTokensResponse parses an HTTP response from a GetAdminTokensWithResponse call
 func ParseGetAdminTokensResponse(rsp *http.Response) (*GetAdminTokensResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -2267,52 +2750,60 @@ func ParsePostSignResponse(rsp *http.Response) (*PostSignResponse, error) {
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"7FttU9s69v8qGt++aO8/gYSnFjr/FwHSNEsK2STs9m5hGcU+cXSxJV9JTskyfPcdSbZjxw8JDKRltn3T",
-	"2JbOOTqPvyOJe8tmfsAoUCmso3tL2FPwsf7ZCh0iW7YkjKpHoKFvHX2zBHGpVbNuYX4TBh7DTvTAmcQS",
-	"rJol2S3QG5tD+pHDjN2CdV2z5DwA68gSkhPqWg81w6fHXDEAETAqQHELOAuASwJaFJuFVKofPqHEV3I0",
-	"EkKESnCBK0oec/VwIsEXeSo4WcsbDhPryPpte7H47Wjl2+llP9Qs4JzxE+bAqnntZOBDzSKOGj5h3MfS",
-	"OrLCkCg15ZZOhAiBRwvrAXXl1DpqFgy8hXnXWWOcDxI7WGI1NPeRw18hCNldTzYRjv8EW67BVIS2DUKk",
-	"eI4Z8wBr/Unig5DYDzJMHSyhrj7lOUeCEg6OcjcjXEIkvYpabNFEkQupY5UtpFu4HjNDHpIXmHM8z3HW",
-	"3lSLfK9odjvtGnF4tC5Hn2++dIfD7nnHqpnH7vk/Wr3uqVWzztp/3JxfjG4+XVyex8/9wcVJW4+/aQ8G",
-	"F4Poda87HGVeXPZ7F63TzKvTdq89aievht3OefIwaI3aN73ul+6o4FVbMY/Euhm0/37ZHo60tKep4WlB",
-	"u+ej9uC81Ys+FsWxVkdVDD8yhnTkreF+j3HrJRMbFjUjW5GJPwP25LRiUVOwbwtSjYrBMTYz8jFxC/Oh",
-	"ZBy7hd+XZEwNri3oFgkrJJahWKVjs6ShGfuUAK1ZM+AiyqQBlhI4tY6sf19dOf93dbWV+u/NSgNEImcj",
-	"PCZfi9VbbplhsuQ4/qb6/VzpClyOHXAKnfUM5qfggUof5dZ11Ahwio1YkfWWFxmNrCUEixZ0BvMeEbIr",
-	"wS8oXZ7LOJFTvzCxm1rrtGTh1wmhLvCAE1r8Pakt1aaK82maXJp1LSVkxfrKtX0L82z1rvLitLZWJXJN",
-	"uESkcnGqVb6kVB/fxSlqr1FLZyz1mAqSb636J1yfNOqH1/d7jYc3VmWxX1BtHmSoqscSqs2DYqqVVToU",
-	"wJ/uBAtVJZRK1H1pEGNe2dxnHJw+JzMs4Qzmy8tvNBpZvTYbjQ2pbkkFeVFjtkVr7odjj9hLjgZ32A88",
-	"NbCu/h23O91z1O/0Uf/yuNc9QWftP9Bx7+LkTH++oltbW0UWHWAJPeIT2Y4r5cYqruTz1kQa6Ap3thcK",
-	"MoMvMTiXPIRaJVavqsMZ+kU6HRKXDkzRz2pTcgC0cziZNA/sQ7u5BzsH+zvjnZ3Jh/H7D+Nx4wPex433",
-	"h7sNu7n3/ooGmAOVyGh3xZINzzVMqDBYa3Q5aFfbbqS6ohPTI+UMB3cB4SC69BSblOjjO6PK3YP9Rkqz",
-	"zaIuSDvjUh/0uFSRzaY1i2J/pSPpBZ2rgcvG1bOL7JjSgVOehyNlmOJGQ8/DY6V342P5jsopr3FZneTG",
-	"lNB+qhaiztfgCGFzEpju0+p7WFnrTiI94CMSU/adIrjDtvTmiFF7za5ICxSzSdZYS2msVOvVlVhTXL8W",
-	"a4rD0Pcxn68sxhHtUsnOIy2nEvjB3nJ4pv0Z1//Tqv9L+fPi59bNdv369zelgTfQuxHlCijxoqdAPuKU",
-	"rzXWWT5zVwK6nyYiPCzkpYjlXCnJowPIbBqtR74iQJLASIPVhRLTfDJrKrLb1/3G4f8YbEy2gZ4lHlYj",
-	"yJhjhfrLYKStfk6IjSX0TRv1BAxpTzGhT5/+MmYIErj5VMlKkHyWcG1ZhXkjKLuDHXIi50MVtEbzY8Ac",
-	"eCtU3OOnT/Fmwt/+OdLNb7oKthyfUFMB0YRxtI3Vi+3fEVAnYIRK5Sw6K2i/0gQXiplKGSi1MOLYj2B6",
-	"0T09iXly5qMOkZ/DMTK7vQIxrt708BiddNfhLoDPiA06Z5VI4Qp5YyBgVpKhmRoJ4ytA4KAZwah/MRzF",
-	"yohq5UpJlE0InTAdiERqWNrpd5ACrYS6KGbW6ndT2ytHVnOrsdXQagyA4oBYR9aufqXdc6oNG4mCQ4fo",
-	"JOCCzEOaAUhOYAZID0MecwX6TuQUTYgnQfufZsKxmqDCw+qA1C6gt9s1Q459kMCFdfTt3iKK7F8h8Hmc",
-	"x48sT/U6sTawkWKCQ09GDp9gcv2UYOZmHB2lmPmhVsyQTSYCSjim+TWyzU5JpVrJLtnNXrDLxXDxzMWu",
-	"9+OnSszlqTmqWUxeb6O+mCJQ52n0rlWGMnVVu95Oo2HaWCrB1EscBJ5KTYTR7T+F2YFcMFl5qpM5ZNJR",
-	"s5STEu9VQbH3jOyze+MFrLt0hj3ioGgzW/Hf3yx/VY2wh1ROA45MR55O9jos02n+27WymIgxrIroVPzr",
-	"uVHyiHf2CnOHakVQfG6lSwH2PCQk4+AgPbMsdZyZjy/mM8s7lgVq08KziZHzFdpMy6/0HS8gYKLARgZv",
-	"IYxUVYkQg5qizSVMlcmZqc/Ekp20ax8zZ/6cJoqw4EMW4KjM+5DzjeZzMq4yzRnMkTkdBwdF4HcSet78",
-	"V2J5vJMm3kfhe+xtyvuWU8z23X7jUDcF1U7cPzsZ/vYh48eYOujr1n7jEKXwr/ZuByS2p+CYWe+RzXyf",
-	"yESMty6RyA3cLVPh/l+J8K46FFQP80LhkG2PNhwSy63xr7DYYFgY560Kjnvd8T0szjXzEaJPRAHhVPXN",
-	"ubIZkzjzWdxGFsB31UMsYGHccGYdMg0SF3vqrebxzsnu6V57/9NB5/3nDxsGi0WHwyXeHJ/ovkL/Saxd",
-	"4S3bgT6/KgVvCvPJKSAzLIEEGIkAbJVG9St99aUcw2kfMgdlP78nBeDXUzWirneLsobNb7xkCLhBPQbE",
-	"5XNyBu8vNPy23+mj6BjyHWK8oHK97be/vDNJdW9zTqkCgjKJJiykzmttYRaunA6KxZFIeROj+5b0vo74",
-	"iATYHCTysQROsIcoKNE8wDMQOnJOj0tjYxRv/7xYosufBRXoNRLjtXY3WYuU9zjmIBJh5DHq1j0yAwcZ",
-	"4qldypMuEnMhwTf7WyyUCFOktxXNFcQtNFLpMHvEh4hAHGTIKTiZc76tcqSYMv7z48T06fOGUWLhoW+Z",
-	"10Uboz8DOtwzrcVm+JvFq3KHsMcBO3MEd0TIVxmFXwiVChGk4zCfWrfvSTU4NWe2CEchNZ4j4nxEHGbM",
-	"rFwFGfF9cIgOY+qgALiP1XqrQKyJszUxLKmGHasun16/dCpfOtcu9azowHPjACHy6xgiIL3ZZ/w7JdJr",
-	"c/DEMwtc3FxHLcUNJ1OwbzUOMAMRm+iniFIRNDAXX18SFSxdei5QWnygRASK79tqu+3+GBmSm77abIld",
-	"DA2kLxEbaxhsp+D3Yzsa1VljGXJAM+AGZZuzmpx9kht/6x1qJX+msJHmpbD3qLJD/v5ieW+i1vyr5eBL",
-	"XljUU+i/oSrdqBwSlyKXyHivUR+MhIJQ1+QGsznT6XcKN2gUghyav9F6efeLjwCngB19Lh2R/VqPLmjW",
-	"de//yBJZBngVot7W2Hp9G6Yvi64FdRvPxrQiYDp9fTivM8rG0e0xdtAgjWx3fwQCwJ7HvoODJEOhACSn",
-	"RJgA+dEZZG/n+ZD+0hXtAvZqBNI3GxDc2QDOj8RAQ5PGImGft6KvlCIu6JcUzzAxNyhyOGxx4efbtco+",
-	"+Ss4y+hMZ9NUJlWsH/4bAAD//w==",
+	"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",
+	"/wkAAP//",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

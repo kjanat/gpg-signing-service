@@ -9,6 +9,7 @@ import {
 } from "micro509";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "#gpg-signing-service";
+import { seedTrustedSubjects } from "./helpers/oidc-subjects";
 import type { StoredX509Key } from "#schemas/keys";
 import { StoredX509KeySchema } from "#schemas/keys";
 import { parseAndValidateX509Key, signCommitDataX509 } from "#utils/x509";
@@ -361,6 +362,8 @@ describe("X.509 sign route", () => {
 	const kid = "x509-test-key";
 
 	beforeAll(async () => {
+		// The OIDC path now requires a trusted-subject row.
+		await seedTrustedSubjects(env.AUDIT_DB);
 		fixture = await generateX509Fixture("x509-sign-test");
 		const keys = await jose.generateKeyPair("ES256");
 		oidcPrivateKey = keys.privateKey;

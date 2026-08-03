@@ -4,6 +4,7 @@ import * as jose from "jose";
 import * as openpgp from "openpgp";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "#gpg-signing-service";
+import { seedTrustedSubjects } from "./helpers/oidc-subjects";
 import { logger } from "#utils/logger";
 
 const parseJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
@@ -61,6 +62,10 @@ describe("Sign Route", () => {
 	const kid = "test-key";
 
 	beforeAll(async () => {
+		// The OIDC path now requires a trusted-subject row; without one every
+		// signed request is a 401 regardless of the token being valid.
+		await seedTrustedSubjects(env.AUDIT_DB);
+
 		// Generate OIDC keys
 		const keys = await jose.generateKeyPair("ES256");
 		oidcPrivateKey = keys.privateKey;
