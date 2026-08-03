@@ -56,6 +56,20 @@ app.openapi(createSubjectRoute, async (c) => {
 	const requestId = c.req.header(HEADERS.REQUEST_ID) || crypto.randomUUID();
 	const body = c.req.valid("json");
 
+	// A row whose issuer is not accepted can never match a token, so it would
+	// list as trusted and be silently dead. Fail at the point of the typo.
+	const allowedIssuers = c.env.ALLOWED_ISSUERS.split(",").map((issuer) => issuer.trim());
+	if (!allowedIssuers.includes(body.issuer)) {
+		return c.json(
+			{
+				error: `Issuer is not in ALLOWED_ISSUERS: ${body.issuer}`,
+				code: "INVALID_REQUEST" as const satisfies ErrorCode,
+				requestId,
+			},
+			HTTP.BadRequest,
+		);
+	}
+
 	const keyIds = body.keyIds ?? [];
 	const expiresAt = body.expiresInDays ? new Date(Date.now() + body.expiresInDays * 86_400_000).toISOString() : null;
 	const createdAt = new Date().toISOString();
@@ -106,9 +120,14 @@ app.openapi(createSubjectRoute, async (c) => {
 		logger.error("Subject creation failed", { requestId, error: message });
 
 		if (message.includes("UNIQUE constraint failed")) {
+			// Two different collisions land here; blaming the name for a prefix
+			// clash sends the operator to change the one field that was fine.
+			const conflict = message.includes("subject_prefix")
+				? `Issuer and subject prefix are already trusted: ${body.issuer} ${body.subjectPrefix}`
+				: `Subject name already exists: ${body.name}`;
 			return c.json(
 				{
-					error: `Subject already exists: ${body.name}`,
+					error: conflict,
 					code: "INVALID_REQUEST" as const satisfies ErrorCode,
 					requestId,
 				},

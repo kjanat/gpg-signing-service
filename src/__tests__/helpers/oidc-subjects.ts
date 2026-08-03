@@ -19,6 +19,15 @@ const CREATE_TABLE = `CREATE TABLE IF NOT EXISTS oidc_subjects (
 	last_used_at TEXT
 );`;
 
+/**
+ * The partial unique index from migration 0003. Without it the test schema is
+ * weaker than production, so a duplicate (issuer, prefix) inserts cleanly here
+ * and fails in the real database — which is how the revoke lockout went
+ * unnoticed.
+ */
+const CREATE_INDEX = `CREATE UNIQUE INDEX IF NOT EXISTS idx_oidc_subjects_issuer_prefix
+	ON oidc_subjects (issuer, subject_prefix) WHERE revoked_at IS NULL;`;
+
 /** Issuers the suites mint tokens for. */
 const TEST_ISSUERS = [
 	"https://token.actions.githubusercontent.com",
@@ -37,6 +46,7 @@ const TEST_SUBJECT_PREFIXES = ["test", "test-subject", "subject", "repo:user/rep
  */
 export async function seedTrustedSubjects(db: D1Database): Promise<void> {
 	await db.prepare(CREATE_TABLE).run();
+	await db.prepare(CREATE_INDEX).run();
 
 	const createdAt = new Date().toISOString();
 	for (const issuer of TEST_ISSUERS) {
@@ -55,5 +65,6 @@ export async function seedTrustedSubjects(db: D1Database): Promise<void> {
 /** Drop every trusted subject, for tests that assert the deny path. */
 export async function clearTrustedSubjects(db: D1Database): Promise<void> {
 	await db.prepare(CREATE_TABLE).run();
+	await db.prepare(CREATE_INDEX).run();
 	await db.prepare("DELETE FROM oidc_subjects").run();
 }

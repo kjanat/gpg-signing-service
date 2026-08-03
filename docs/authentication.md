@@ -44,7 +44,7 @@ curl -X POST "$GPG_SIGN_URL/admin/subjects" \
   -d '{
     "name": "kjanat-repos",
     "issuer": "https://token.actions.githubusercontent.com",
-    "subjectPrefix": "repo:kjanat/",
+    "subjectPrefix": "repo:kjanat",
     "keyIds": ["D8BC04E534E7706F"],
     "expiresInDays": 365
   }'
@@ -56,6 +56,13 @@ is deliberately broader: `repo:owner/` trusts every repository of that owner,
 while still refusing `repo:ownerevil/`. Where several rows match, the longest
 prefix wins, so a specific repository can be granted different keys than the
 owner-wide row covering the rest.
+
+> [!TIP]
+> For an owner-wide trust prefer `repo:owner` over `repo:owner/`. The boundary
+> then falls on either `/` or `@`, so the row keeps matching if the repository
+> later enables immutable subject claims and its `sub` changes shape. It still
+> refuses `repo:ownerevil`. The failure is closed either way — signing breaks,
+> nothing opens — but it breaks at an awkward moment.
 
 Omit `keyIds` to allow every key. Omit `expiresInDays` for a trust that does
 not expire.
