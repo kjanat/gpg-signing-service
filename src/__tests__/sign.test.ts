@@ -227,6 +227,25 @@ describe("Sign Route", () => {
 			expect(events).toHaveLength(0);
 		});
 
+		it("treats an empty keyId as absent, the way the fallback below it does", async () => {
+			// `?keyId=` is what a shell template emits for an unset variable, and
+			// `keyIdQuery || c.env.KEY_ID` already reads "" as not supplied. Refusing
+			// it would make the guard disagree with the line under it, and would make
+			// /sign answer differently from /public-key on the same query string.
+			await setupJWKSMock();
+			await uploadTestKey(env.KEY_ID);
+			const token = await createToken();
+
+			const response = await makeRequest("/sign?keyId=", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(200);
+			expect(await response.text()).toContain("-----BEGIN PGP SIGNATURE-----");
+		});
+
 		it("audits a trusted subject reaching outside its key scope", async () => {
 			// The highest-signal event the service can produce: the credential is
 			// valid and the row is live, but the grant does not cover the key. If

@@ -1,6 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { createLocalJWKSet, jwtVerify } from "jose";
-
+import { RequestIdSchema } from "#schemas";
 import type { Env, LegacyJWKSResponse, OIDCClaims, RateLimitResult, Variables } from "#types";
 import { createIdentity, HEADERS, HTTP, markClaimsAsValidated, TIME } from "#types";
 import { logAuditEvent } from "#utils/audit";
@@ -12,6 +12,26 @@ import { logger } from "#utils/logger";
 import type { OIDCSubjectResolution } from "#utils/oidc-subjects";
 import { resolveOIDCSubject } from "#utils/oidc-subjects";
 import { validateUrl } from "#utils/url-validation";
+
+/**
+ * The caller's request id, if it is one.
+ *
+ * This middleware answers before the route's header validator runs, so anything
+ * it reads from `X-Request-ID` is unchecked — unlike every other audit write on
+ * the sign path, which gets a `z.uuid()`-validated value from
+ * `c.req.valid("header")`. Taking it as given would let the holder of a revoked
+ * credential choose the correlation key on its own audit rows, and point them at
+ * a real signature's request id, on exactly the query an operator runs after the
+ * alert fires. The length is unbounded too: the ceiling is the header budget,
+ * not 36 characters.
+ *
+ * @param c - Request context
+ * @returns The caller's request id when it is a valid UUID, else a fresh one
+ */
+function callerRequestId(c: Context<{ Bindings: Env; Variables: Variables }>): string {
+	const header = c.req.header(HEADERS.REQUEST_ID);
+	return header && RequestIdSchema.safeParse(header).success ? header : crypto.randomUUID();
+}
 
 /**
  * Write a durable record of a revoked trust being presented, if the caller is
@@ -31,7 +51,7 @@ async function recordRevokedReuse(
 	payload: OIDCClaims,
 	resolution: Extract<OIDCSubjectResolution, { status: "revoked" }>,
 ): Promise<void> {
-	const requestId = c.req.header(HEADERS.REQUEST_ID) || crypto.randomUUID();
+	const requestId = callerRequestId(c);
 	try {
 		const limit = await fetchRateLimiter(c.env, createIdentity(payload.iss, payload.sub));
 		if (!limit.ok) {
@@ -155,6 +175,10 @@ export const oidcAuth: MiddlewareHandler<{
 		// this service records durably — and a killed credential still in use is
 		// the stronger signal of the two. It gets a row, metered the same way, so
 		// it survives past the log store's retention window.
+		//
+		// `expired` is bounded the same way but stays log-only: a lapsed trust is
+		// routine maintenance, not evidence of anything, and it is the row owner's
+		// problem rather than an operator's. Recording it would mostly add volume.
 		if (resolution.status === "revoked") {
 			await recordRevokedReuse(c, payload, resolution);
 		}
@@ -177,7 +201,7 @@ export const oidcAuth: MiddlewareHandler<{
 
 	// The last-used stamp is bookkeeping; do not make every signature wait on a
 	// D1 write for it.
-	await scheduleBackgroundTask(c, c.req.header(HEADERS.REQUEST_ID) || "unknown", policy.stampUsage());
+	await scheduleBackgroundTask(c, callerRequestId(c), policy.stampUsage());
 
 	// Outside the try on purpose: an error from the sign handler is a 500, not a
 	// 401 carrying an internal message.

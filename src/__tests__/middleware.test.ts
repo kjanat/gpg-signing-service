@@ -383,6 +383,76 @@ describe("Security Headers Middleware", () => {
 			await seedTrustedSubjects(env.AUDIT_DB);
 		});
 
+		it("does not let the caller choose the revoked-reuse row's request id", async () => {
+			// This row is written from the middleware, which answers before the
+			// route's header validator runs, so X-Request-ID arrives unchecked here
+			// and nowhere else on the sign path. Taking it as given would let the
+			// holder of a revoked credential point its own audit rows at a real
+			// signature's request id — the exact query an operator runs after the
+			// AUTH_INVALID alert — and the length ceiling is the header budget, not
+			// 36 characters.
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await clearTrustedSubjects(env.AUDIT_DB);
+
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "forged-id-key";
+			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const subjectId = await insertOIDCSubject(env.AUDIT_DB, {
+				name: "ci/forged",
+				issuer,
+				subjectPrefix: "repo:forged/svc",
+				keyIds: [],
+				expiresAt: null,
+			});
+			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toBe("ci/forged");
+
+			const token = await new jose.SignJWT({
+				iss: issuer,
+				sub: "repo:forged/svc:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "ES256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const forged = `'; DROP TABLE audit_logs; --${"A".repeat(2000)}`;
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}`, "X-Request-ID": forged },
+				body: "commit data",
+			});
+			expect(response.status).toBe(401);
+
+			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+			const recorded = events.find((event) => event.errorCode === "AUTH_INVALID");
+			expect(recorded).toBeDefined();
+			expect(recorded?.requestId).not.toBe(forged);
+			// Replaced with a real one rather than dropped, so the row still
+			// correlates with its own log lines.
+			expect(recorded?.requestId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+			vi.mocked(logAuditEvent).mockClear();
+
+			// A caller-supplied id that *is* a UUID is still honoured, so ordinary
+			// request correlation keeps working.
+			const supplied = crypto.randomUUID();
+			const withValidId = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}`, "X-Request-ID": supplied },
+				body: "commit data",
+			});
+			expect(withValidId.status).toBe(401);
+			const second = vi
+				.mocked(logAuditEvent)
+				.mock.calls.map(([, event]) => event)
+				.find((event) => event.errorCode === "AUTH_INVALID");
+			expect(second?.requestId).toBe(supplied);
+
+			await seedTrustedSubjects(env.AUDIT_DB);
+		});
+
 		it("does not write the revoked-reuse row when the caller is over budget or the limiter is down", async () => {
 			// The row is metered precisely so the holder of a revoked credential
 			// cannot flood the table the authorization store shares. Both failure

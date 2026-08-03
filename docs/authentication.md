@@ -135,9 +135,17 @@ structured logs:
 > alert on from these two lines has to be shipped off-platform first. The
 > durable events are the `audit_logs` rows above.
 
-Every refusal returns the same `401 Subject is not trusted for signing`
+Every refusal returns the same `401 Subject is not trusted for signing` body
 regardless of which of the three it was: telling a caller that its subject
-matches a revoked row would confirm the row exists.
+matches a revoked row would confirm the row exists. The `revoked` arm does cost
+a rate-limiter round-trip and a token of the caller's budget where the other two
+cost neither, so the three are not indistinguishable by timing — only by
+content. The audience for that difference is bounded to whoever can match a
+stored prefix, which on GitHub means the org that held the trust.
+
+The `key_id` on a `revoked_trust_presented` row is the sentinel `*`, not a key:
+the request never reached the point of choosing one. Filters and joins on
+`key_id` need to allow for it.
 
 ### Subject shapes
 
