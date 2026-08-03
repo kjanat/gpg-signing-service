@@ -94,8 +94,11 @@ widens access instead of renewing it.
 
 Names are also unique across all rows, revoked ones included, so a replacement
 needs a new `name`. Treat the name as a permanent label for one generation of a
-trust rather than a slot to reuse; the audit trail records it as the caller's
-identity.
+trust rather than a slot to reuse: every `sign` audit event carries the
+authorizing row's name in `metadata.subjectPolicy`, next to the JWT subject in
+`subject`. The subject alone cannot answer "what did the trust I just revoked
+sign?" — prefixes overlap, and a revoked row leaves no mark on the tokens it
+admitted.
 
 ### Subject shapes
 

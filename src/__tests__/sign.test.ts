@@ -4,6 +4,7 @@ import * as jose from "jose";
 import * as openpgp from "openpgp";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "#gpg-signing-service";
+import { logAuditEvent } from "#utils/audit";
 import { logger } from "#utils/logger";
 import { seedTrustedSubjects } from "./helpers/oidc-subjects";
 
@@ -130,6 +131,50 @@ describe("Sign Route", () => {
 			expect(response.status).toBe(200);
 			const signature = await response.text();
 			expect(signature).toContain("-----BEGIN PGP SIGNATURE-----");
+		});
+
+		it("records which trusted subject authorized the signature", async () => {
+			await setupJWKSMock();
+			await uploadTestKey("A1B2C3D4E5F67890");
+			const token = await createToken();
+
+			const response = await makeRequest("/sign?keyId=A1B2C3D4E5F67890", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(200);
+
+			// The `sub` alone does not say which row admitted it: prefixes overlap,
+			// and a revoked row leaves no trace in the subject. Without the policy
+			// name, "what did the trust I just revoked sign?" is unanswerable.
+			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+			const signed = events.find((event) => event.action === "sign" && event.success);
+			expect(signed).toBeDefined();
+			expect(JSON.parse(signed?.metadata ?? "{}")).toMatchObject({
+				subjectPolicy: `${issuer}|repo:user/repo`,
+			});
+		});
+
+		it("records the authorizing subject on a failed signature too", async () => {
+			await setupJWKSMock();
+			const token = await createToken();
+
+			const response = await makeRequest("/sign?keyId=FFFFFFFFFFFFFFFF", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(404);
+
+			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+			const failed = events.find((event) => event.action === "sign" && !event.success);
+			expect(failed).toBeDefined();
+			expect(JSON.parse(failed?.metadata ?? "{}")).toMatchObject({
+				subjectPolicy: `${issuer}|repo:user/repo`,
+			});
 		});
 
 		it("should return 400 if commit data is missing", async () => {
