@@ -17,6 +17,14 @@ jobs:
       - { uses: actions/checkout@v7, with: { fetch-depth: 0 } }
       - { uses: ./.github/actions/setup-bun, id: bun }
       - { uses: ./.github/actions/setup-task }
+      # Same Go/lint/format toolchain as the CI lint job. Without these,
+      # `task c:l` dies with "golangci-lint: executable file not found" and
+      # `task format` silently skips every .go file, because the root
+      # lint:fix task runs format via `defer:` — whose failure does not
+      # change the exit status, so a pre-commit hook still reports success.
+      - { uses: ./.github/actions/setup-go }
+      - { uses: ./.github/actions/setup-golangci-lint }
+      - { uses: kjanat/install-dprint@v2 }
       - { uses: kjanat/runner@master }
       - { run: runner install }
       # Dogfood: git is configured so commits Claude makes are GPG-signed by
