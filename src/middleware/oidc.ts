@@ -1,15 +1,74 @@
-import type { MiddlewareHandler } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import { createLocalJWKSet, jwtVerify } from "jose";
 
-import type { Env, LegacyJWKSResponse, OIDCClaims, Variables } from "#types";
+import type { Env, LegacyJWKSResponse, OIDCClaims, RateLimitResult, Variables } from "#types";
 import { createIdentity, HEADERS, HTTP, markClaimsAsValidated, TIME } from "#types";
+import { logAuditEvent } from "#utils/audit";
 import { CACHE_TTL } from "#utils/constants";
+import { fetchRateLimiter } from "#utils/durable-objects";
 import { scheduleBackgroundTask } from "#utils/execution";
 import { fetchWithTimeout } from "#utils/fetch";
 import { logger } from "#utils/logger";
 import type { OIDCSubjectResolution } from "#utils/oidc-subjects";
 import { resolveOIDCSubject } from "#utils/oidc-subjects";
 import { validateUrl } from "#utils/url-validation";
+
+/**
+ * Write a durable record of a revoked trust being presented, if the caller is
+ * within its rate-limit budget.
+ *
+ * Metered because it is a D1 write on a refusal path: without the check, the
+ * holder of a revoked credential could flood `audit_logs`, which shares a
+ * database with the authorization table every request reads. Best-effort in
+ * every direction — a limiter outage or a failed write must not change the 401.
+ *
+ * @param c - Request context
+ * @param payload - The verified (but unauthorized) claims
+ * @param resolution - The revoked row that matched
+ */
+async function recordRevokedReuse(
+	c: Context<{ Bindings: Env; Variables: Variables }>,
+	payload: OIDCClaims,
+	resolution: Extract<OIDCSubjectResolution, { status: "revoked" }>,
+): Promise<void> {
+	const requestId = c.req.header(HEADERS.REQUEST_ID) || crypto.randomUUID();
+	try {
+		const limit = await fetchRateLimiter(c.env, createIdentity(payload.iss, payload.sub));
+		if (!limit.ok) {
+			return;
+		}
+		const { allowed } = (await limit.json()) as RateLimitResult;
+		if (!allowed) {
+			return;
+		}
+	} catch (error) {
+		logger.warn("Could not meter a revoked-trust reuse, so it was not recorded", {
+			requestId,
+			error: error instanceof Error ? error.message : String(error),
+		});
+		return;
+	}
+
+	await scheduleBackgroundTask(
+		c,
+		requestId,
+		logAuditEvent(c.env.AUDIT_DB, {
+			requestId,
+			action: "sign",
+			issuer: payload.iss,
+			subject: payload.sub,
+			keyId: "*",
+			success: false,
+			errorCode: "AUTH_INVALID",
+			metadata: JSON.stringify({
+				reason: "revoked_trust_presented",
+				subjectId: resolution.id,
+				subjectPolicy: resolution.name,
+				revokedAt: resolution.revokedAt,
+			}),
+		}),
+	);
+}
 
 // OIDC validation middleware
 export const oidcAuth: MiddlewareHandler<{
@@ -85,10 +144,21 @@ export const oidcAuth: MiddlewareHandler<{
 				subject: payload.sub,
 			});
 		}
-		// Deliberately no audit_logs write: this path is reachable by anyone
-		// holding any token the issuer will mint, so a D1 write here would be
-		// unmetered — the same problem the key-scope denial had. The structured
-		// log carries the distinction.
+		// `unknown` gets no audit_logs row: that arm is reachable by anyone holding
+		// any token the issuer will mint, so a write there would be unmetered — the
+		// same problem the key-scope denial had.
+		//
+		// `revoked` is not that. Reaching it requires the token's `sub` to match a
+		// stored prefix, and GitHub binds `sub` to the caller's actual repository,
+		// so the population that can trigger it is the org that used to hold the
+		// trust. That is the same bounded, already-vetted caller whose scope denial
+		// this service records durably — and a killed credential still in use is
+		// the stronger signal of the two. It gets a row, metered the same way, so
+		// it survives past the log store's retention window.
+		if (resolution.status === "revoked") {
+			await recordRevokedReuse(c, payload, resolution);
+		}
+
 		return c.json({ error: "Subject is not trusted for signing", code: "AUTH_INVALID" }, HTTP.Unauthorized);
 	}
 

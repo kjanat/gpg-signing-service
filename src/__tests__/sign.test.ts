@@ -50,15 +50,11 @@ function erroringRateLimiter(status = 500): DurableObjectNamespace {
 }
 
 /** A RATE_LIMITER binding that fails the way an unreachable one does. */
-function brokenRateLimiter(): DurableObjectNamespace {
-	return {
-		idFromName: () => {
-			throw new Error("Rate limiter unavailable");
-		},
-		get: () => {
-			throw new Error("Rate limiter unavailable");
-		},
-	} as unknown as DurableObjectNamespace;
+function brokenRateLimiter(reason: unknown = new Error("Rate limiter unavailable")): DurableObjectNamespace {
+	const fail = () => {
+		throw reason;
+	};
+	return { idFromName: fail, get: fail } as unknown as DurableObjectNamespace;
 }
 
 // Helper to upload a test key
@@ -209,6 +205,28 @@ describe("Sign Route", () => {
 			});
 		});
 
+		it("rejects a malformed keyId as a 400, spending no budget and writing no audit row", async () => {
+			// `createKeyId` throws, and it throws *after* the limiter call has been
+			// started but *before* the Promise.all that reads its verdict — so left
+			// to the route's catch this was a 500 plus an audit write that ignored
+			// the limiter entirely. It needs no key grant to reach, which made it
+			// cheaper than the scope denial the metering rule was written for.
+			await setupJWKSMock();
+			const token = await createToken();
+
+			const response = await makeRequest(
+				"/sign?keyId=NOT-A-HEX-KEYID",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{ RATE_LIMITER: stubRateLimiter({ allowed: false, remaining: 0, resetAt: Date.now() + 30_000 }) },
+			);
+
+			expect(response.status).toBe(400);
+			expect(await response.json()).toMatchObject({ code: "INVALID_REQUEST" });
+
+			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+			expect(events).toHaveLength(0);
+		});
+
 		it("audits a trusted subject reaching outside its key scope", async () => {
 			// The highest-signal event the service can produce: the credential is
 			// valid and the row is live, but the grant does not cover the key. If
@@ -273,6 +291,31 @@ describe("Sign Route", () => {
 
 			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
 			expect(events.some((event) => event.errorCode === "KEY_NOT_ALLOWED")).toBe(false);
+		});
+
+		it("survives a non-Error rejection from the limiter", async () => {
+			await insertOIDCSubject(env.AUDIT_DB, {
+				name: "ci/limiter-nonerror",
+				issuer,
+				subjectPrefix: "repo:limiternonerror/svc",
+				keyIds: ["AAAAAAAAAAAAAAAA"],
+				expiresAt: null,
+			});
+			await setupJWKSMock();
+			const token = await createToken({ sub: "repo:limiternonerror/svc:ref:refs/heads/main" });
+
+			const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+			const response = await makeRequest(
+				"/sign?keyId=BBBBBBBBBBBBBBBB",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{ RATE_LIMITER: brokenRateLimiter("limiter exploded") },
+			);
+			expect(response.status).toBe(403);
+			expect(errorSpy).toHaveBeenCalledWith(
+				"Rate limiter unreachable",
+				expect.objectContaining({ error: "limiter exploded" }),
+			);
+			errorSpy.mockRestore();
 		});
 
 		it("treats a rate limiter error status the same as an outage", async () => {
@@ -499,7 +542,7 @@ describe("Sign Route", () => {
 				}) as unknown as DurableObjectStub;
 
 			try {
-				const response = await makeRequest("/sign?keyId=generic-error-key", {
+				const response = await makeRequest("/sign?keyId=EEEEEEEEEEEEEEEE", {
 					method: "POST",
 					headers: { Authorization: `Bearer ${token}` },
 					body: "commit data",
@@ -576,7 +619,7 @@ describe("Sign Route", () => {
 			const { logAuditEvent } = await import("#utils/audit");
 
 			// Upload a key first
-			const keyId = "SIGNCATCH1234567";
+			const keyId = "51617CA7C4123456";
 			await uploadTestKey(keyId);
 
 			// Mock to reject once to trigger catch
@@ -619,7 +662,7 @@ describe("Sign Route", () => {
 
 			const ctx = createExecutionContext();
 			await app.fetch(
-				new Request("http://localhost/sign?keyId=NONEXISTENT123", {
+				new Request("http://localhost/sign?keyId=DDDDDDDDDDDDDDDD", {
 					method: "POST",
 					headers: { Authorization: `Bearer ${token}` },
 					body: "commit data",
