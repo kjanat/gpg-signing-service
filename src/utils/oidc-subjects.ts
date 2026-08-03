@@ -20,10 +20,13 @@ export interface OIDCSubjectPolicy {
 	/** Key ids this subject may sign with; null means every key. */
 	allowedKeyIds: string[] | null;
 	/**
-	 * Resolves when the last-used stamp has been written. Already error-handled;
-	 * pass it to `scheduleBackgroundTask` to keep the write off the request path.
+	 * Writes the last-used stamp when called. A function rather than a started
+	 * promise so a caller that ignores it performs no I/O at all — a dangling
+	 * promise would instead be cancelled when the response returns, losing the
+	 * write with nothing logged. Already error-handled; hand it to
+	 * `scheduleBackgroundTask` to keep it off the request path.
 	 */
-	stampUsage: Promise<void>;
+	stampUsage: () => Promise<void>;
 }
 
 /** A stored subject as returned to admins. */
@@ -167,11 +170,11 @@ export async function resolveOIDCSubject(
 		return null;
 	}
 
-	// Best-effort usage stamp, returned rather than awaited: this sits on the
+	// Best-effort usage stamp, deferred rather than awaited: this sits on the
 	// critical path of every signed commit, and the caller can hand it to
 	// waitUntil so the write costs nothing. Failures are swallowed here so a
 	// caller that does await it still cannot be blocked by one.
-	const stampUsage = (async () => {
+	const stampUsage = async () => {
 		try {
 			await db
 				.prepare("UPDATE oidc_subjects SET last_used_at = ? WHERE id = ?")
@@ -183,7 +186,7 @@ export async function resolveOIDCSubject(
 				error: error instanceof Error ? error.message : String(error),
 			});
 		}
-	})();
+	};
 
 	return {
 		id: row.id,

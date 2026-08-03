@@ -204,6 +204,49 @@ describe("Security Headers Middleware", () => {
 			expect(body.error).not.toContain("Issuer not allowed");
 		});
 
+		it("reports an unreadable policy store as 503 without leaking the schema", async () => {
+			// Merge-day failure mode: the Worker deploys before task db:migrate
+			// runs. A database we cannot read is not a bad credential, and the
+			// caller must not be handed our table names to work that out.
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "store-down-key";
+			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const token = await new jose.SignJWT({
+				iss: issuer,
+				sub: "repo:test/svc",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "ES256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const realPrepare = env.AUDIT_DB.prepare.bind(env.AUDIT_DB);
+			const spy = vi.spyOn(env.AUDIT_DB, "prepare").mockImplementation((query: string) => {
+				if (query.includes("FROM oidc_subjects")) {
+					throw new Error("D1_ERROR: no such table: oidc_subjects: SQLITE_ERROR");
+				}
+				return realPrepare(query);
+			});
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+			spy.mockRestore();
+
+			expect(response.status).toBe(503);
+			const body = await parseJson<{ error: string; code: string }>(response);
+			expect(body.code).toBe("INTERNAL_ERROR");
+			expect(body.error).not.toContain("oidc_subjects");
+			expect(body.error).not.toContain("SQLITE");
+		});
+
 		it("rejects a cryptographically valid token whose subject is not trusted", async () => {
 			// The whole point of the subject allowlist: the token here is
 			// perfectly valid — right issuer, right audience, good signature —

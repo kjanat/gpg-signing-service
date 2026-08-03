@@ -167,7 +167,11 @@ describe("OIDC subject policy store", () => {
 			expiresAt: null,
 		});
 
-		await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x");
+		// Await the stamp explicitly: it is deferred now, so asserting on it
+		// without this would depend on D1 statement ordering rather than on the
+		// write actually having happened.
+		const stamped = await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x");
+		await stamped?.stampUsage();
 		const [listed] = await listOIDCSubjects(env.AUDIT_DB);
 		expect(listed?.lastUsedAt).not.toBeNull();
 
@@ -179,7 +183,9 @@ describe("OIDC subject policy store", () => {
 			}
 			return realPrepare(query);
 		});
-		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x")).resolves.not.toBeNull();
+		const onFailure = await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x");
+		expect(onFailure).not.toBeNull();
+		await expect(onFailure?.stampUsage()).resolves.toBeUndefined();
 		spy.mockRestore();
 
 		// Same again with a non-Error rejection, which takes the String(error) branch.
@@ -189,7 +195,9 @@ describe("OIDC subject policy store", () => {
 			}
 			return realPrepare(query);
 		});
-		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x")).resolves.not.toBeNull();
+		const onNonError = await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x");
+		expect(onNonError).not.toBeNull();
+		await expect(onNonError?.stampUsage()).resolves.toBeUndefined();
 		spyNonError.mockRestore();
 	});
 
