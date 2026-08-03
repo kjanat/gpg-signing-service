@@ -93,9 +93,9 @@ async function describeNameConflict(db: D1Database, name: string): Promise<strin
 	const base = `Subject name already exists: ${name}`;
 	try {
 		const row = await db
-			.prepare("SELECT id, revoked_at FROM oidc_subjects WHERE name = ?")
+			.prepare("SELECT id, revoked_at, expires_at FROM oidc_subjects WHERE name = ?")
 			.bind(name)
-			.first<{ id: string; revoked_at: string | null }>();
+			.first<{ id: string; revoked_at: string | null; expires_at: string | null }>();
 
 		if (!row) {
 			return base;
@@ -104,6 +104,17 @@ async function describeNameConflict(db: D1Database, name: string): Promise<strin
 			return (
 				`${base} — held by row ${row.id}, which was revoked at ${row.revoked_at} and trusts nobody. ` +
 				`Names are permanent labels for one generation of a trust and are never freed; choose a new name.`
+			);
+		}
+		// An expired row is unrevoked, so without this it reports as "still live"
+		// — the same "expired reads as trusted" error the prefix describer exists
+		// to avoid, and reachable on the ordinary renewal path when only the name
+		// constraint fires. Both describers can name the same row for one POST.
+		if (row.expires_at && Date.parse(row.expires_at) < Date.now()) {
+			return (
+				`${base} — held by row ${row.id}, which expired at ${row.expires_at} and so trusts nobody. ` +
+				`Names are never freed, so renewing this trust needs a new name; the expired row is not what ` +
+				`is still granting access.`
 			);
 		}
 		return `${base} — held by row ${row.id}, which is still live. Revoke it first if you meant to replace it.`;

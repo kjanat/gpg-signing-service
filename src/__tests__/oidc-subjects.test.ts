@@ -789,7 +789,7 @@ describe("admin subject management", () => {
 
 		const realPrepare = env.AUDIT_DB.prepare.bind(env.AUDIT_DB);
 		const spy = vi.spyOn(env.AUDIT_DB, "prepare").mockImplementation((query: string) => {
-			if (query.startsWith("SELECT id, revoked_at FROM oidc_subjects")) {
+			if (query.startsWith("SELECT id, revoked_at, expires_at FROM oidc_subjects")) {
 				throw new Error("describe failed");
 			}
 			if (query.startsWith("SELECT id, expires_at FROM oidc_subjects")) {
@@ -828,8 +828,8 @@ describe("admin subject management", () => {
 		const realPrepare = env.AUDIT_DB.prepare.bind(env.AUDIT_DB);
 		const spy = vi.spyOn(env.AUDIT_DB, "prepare").mockImplementation((query: string) => {
 			// Rewrite the describe lookups so they match nothing.
-			if (query.startsWith("SELECT id, revoked_at FROM oidc_subjects")) {
-				return realPrepare("SELECT id, revoked_at FROM oidc_subjects WHERE name = ? AND 0");
+			if (query.startsWith("SELECT id, revoked_at, expires_at FROM oidc_subjects")) {
+				return realPrepare("SELECT id, revoked_at, expires_at FROM oidc_subjects WHERE name = ? AND 0");
 			}
 			if (query.startsWith("SELECT id, expires_at FROM oidc_subjects")) {
 				return realPrepare(
@@ -852,6 +852,40 @@ describe("admin subject management", () => {
 		} finally {
 			spy.mockRestore();
 		}
+	});
+
+	it("says so when the name is held by a row that has merely expired", async () => {
+		// An expired row is unrevoked, so a liveness test that only reads
+		// `revoked_at` calls it "still live" — the same "expired reads as trusted"
+		// error the prefix describer exists to avoid, and reachable on the ordinary
+		// renewal path when only the name constraint fires.
+		const created = await adminRequest("/admin/subjects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				name: "ci/lapsed-name",
+				issuer: GITHUB,
+				subjectPrefix: "repo:lapsedname/",
+				expiresInDays: 1,
+			}),
+		});
+		expect(created.status).toBe(201);
+		const { id } = (await created.json()) as { id: string };
+		// Backdate it rather than waiting a day; `expiresInDays` has a floor of 1.
+		await env.AUDIT_DB.prepare("UPDATE oidc_subjects SET expires_at = ? WHERE id = ?")
+			.bind(new Date(Date.now() - 1000).toISOString(), id)
+			.run();
+
+		const clash = await adminRequest("/admin/subjects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ name: "ci/lapsed-name", issuer: GITHUB, subjectPrefix: "repo:elsewhere/" }),
+		});
+		expect(clash.status).toBe(409);
+		const error = ((await clash.json()) as { error: string }).error;
+		expect(error).toContain("expired at");
+		expect(error).toContain(id);
+		expect(error).not.toContain("still live");
 	});
 
 	it("says so when the name is held by a row that was already revoked", async () => {
