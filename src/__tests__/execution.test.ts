@@ -53,4 +53,22 @@ describe("scheduleBackgroundTask", () => {
 		);
 		loggerSpy.mockRestore();
 	});
+
+	it("falls back to await when reading executionCtx throws", async () => {
+		// A real hono Context *throws* from this getter when there is no
+		// ExecutionContext; a plain `{ executionCtx: undefined }` does not, so it
+		// exercises the `if` and never the `catch` that makes the fallback work.
+		let resolved = false;
+		const promise = Promise.resolve().then(() => {
+			resolved = true;
+		});
+		const ctx = {
+			get executionCtx(): ExecutionContext {
+				throw new Error("This context has no ExecutionContext");
+			},
+		} as unknown as Context;
+
+		await scheduleBackgroundTask(ctx, "probe", promise);
+		expect(resolved).toBe(true);
+	});
 });
