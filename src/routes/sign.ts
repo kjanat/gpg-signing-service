@@ -23,6 +23,48 @@ import { signCommitDataX509 } from "#utils/x509";
 
 const app = createOpenAPIApp();
 
+/** Outcome of consulting the rate limiter, with the failure modes separated. */
+type RateLimitDecision =
+	| { kind: "ok"; rateLimit: RateLimitResult }
+	| { kind: "limited"; retryAfter: number }
+	| { kind: "unavailable" };
+
+/**
+ * Resolve an in-flight rate limiter call into a decision.
+ *
+ * `unavailable` rather than a throw, because the two callers want different
+ * things from a limiter outage: the signing path refuses with 503, while a
+ * request that is being denied anyway just needs to know it must not perform
+ * unmetered work.
+ *
+ * @param pending - An already-started `fetchRateLimiter` call
+ * @param requestId - For correlating the outage in logs
+ * @returns The limiter's verdict, or `unavailable`
+ */
+async function resolveRateLimit(pending: Promise<Response>, requestId: string): Promise<RateLimitDecision> {
+	let response: Response;
+	try {
+		response = await pending;
+	} catch (error) {
+		logger.error("Rate limiter unreachable", {
+			requestId,
+			error: error instanceof Error ? error.message : String(error),
+		});
+		return { kind: "unavailable" };
+	}
+
+	if (!response.ok) {
+		logger.error("Rate limiter failed", { status: response.status, requestId });
+		return { kind: "unavailable" };
+	}
+
+	const rateLimit = (await response.json()) as RateLimitResult;
+	if (!rateLimit.allowed) {
+		return { kind: "limited", retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / 1000) };
+	}
+	return { kind: "ok", rateLimit };
+}
+
 const signRoute = createRoute({
 	method: "post",
 	path: "/",
@@ -96,7 +138,19 @@ app.openapi(signRoute, async (c) => {
 	const { keyId: keyIdQuery } = c.req.valid("query");
 	const keyIdParam = keyIdQuery || c.env.KEY_ID;
 
-	// Both auth paths may carry a key allowlist; enforce it before any work.
+	// Started here, before the key-scope check below, because that branch now
+	// writes to D1: an unmetered write is a way for one trusted token to bury the
+	// very event operators are told to alert on, and `audit_logs` shares a
+	// database with `oidc_subjects`, which every authorization decision reads.
+	// Starting rather than awaiting keeps the signing path's overlap with the key
+	// fetch intact — the promise is already in flight when Promise.all takes it.
+	const rateLimitPromise = fetchRateLimiter(c.env, identity);
+	// `createKeyId` below can throw before the Promise.all that normally awaits
+	// this, which would leave the rejection unobserved. Attaching a handler does
+	// not consume it for the real consumers.
+	rateLimitPromise.catch(() => {});
+
+	// Both auth paths may carry a key allowlist; enforce it before any signing.
 	const allowedKeyIds = c.get("allowedKeyIds");
 	if (allowedKeyIds && !allowedKeyIds.includes(keyIdParam)) {
 		// A trusted caller reaching past its own grant is the highest-signal event
@@ -104,20 +158,47 @@ app.openapi(signRoute, async (c) => {
 		// being used by something that should not hold it. Returning bare would
 		// leave no way to tell which — an *untrusted* subject, a far weaker
 		// signal, already gets a log line in the OIDC middleware.
-		await scheduleBackgroundTask(
-			c,
-			requestId,
-			logAuditEvent(c.env.AUDIT_DB, {
+		//
+		// Metered like any other request, and the audit row is written only if the
+		// caller is within its budget, so the denial cannot be used to flood the
+		// table it is recorded in.
+		const decision = await resolveRateLimit(rateLimitPromise, requestId);
+		if (decision.kind === "limited") {
+			return c.json(
+				{
+					error: "Rate limit exceeded",
+					code: "RATE_LIMITED" as const satisfies ErrorCode,
+					retryAfter: decision.retryAfter,
+				},
+				HTTP.TooManyRequests,
+			);
+		}
+
+		if (decision.kind === "ok") {
+			await scheduleBackgroundTask(
+				c,
 				requestId,
-				action: "sign",
+				logAuditEvent(c.env.AUDIT_DB, {
+					requestId,
+					action: "sign",
+					issuer: claims.iss,
+					subject: claims.sub,
+					keyId: keyIdParam,
+					success: false,
+					errorCode: "KEY_NOT_ALLOWED",
+					metadata: JSON.stringify({ subjectPolicy: c.get("subjectPolicyName") }),
+				}),
+			);
+		} else {
+			// Limiter unreachable: refuse anyway, but do not write unmetered. The
+			// log line keeps the denial from vanishing entirely.
+			logger.warn("Key scope denied while the rate limiter was unavailable", {
+				requestId,
 				issuer: claims.iss,
 				subject: claims.sub,
 				keyId: keyIdParam,
-				success: false,
-				errorCode: "KEY_NOT_ALLOWED",
-				metadata: JSON.stringify({ subjectPolicy: c.get("subjectPolicyName") }),
-			}),
-		);
+			});
+		}
 
 		return c.json(
 			{
@@ -140,7 +221,7 @@ app.openapi(signRoute, async (c) => {
 	try {
 		createKeyId(keyIdParam); // Validate key ID format (inside try so errors are caught)
 		const [rateLimitResponse, keyResponse] = await Promise.all([
-			fetchRateLimiter(c.env, identity),
+			rateLimitPromise,
 			fetchKeyStorage(c.env, `/get-key?keyId=${encodeURIComponent(keyIdParam)}`),
 		]);
 

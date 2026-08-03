@@ -7,7 +7,7 @@ import { CACHE_TTL } from "#utils/constants";
 import { scheduleBackgroundTask } from "#utils/execution";
 import { fetchWithTimeout } from "#utils/fetch";
 import { logger } from "#utils/logger";
-import type { OIDCSubjectPolicy } from "#utils/oidc-subjects";
+import type { OIDCSubjectResolution } from "#utils/oidc-subjects";
 import { resolveOIDCSubject } from "#utils/oidc-subjects";
 import { validateUrl } from "#utils/url-validation";
 
@@ -46,9 +46,9 @@ export const oidcAuth: MiddlewareHandler<{
 	// A policy we cannot read is not a bad credential. Reporting it as 401 would
 	// point the operator at credentials on the day the real cause is a migration
 	// that has not run yet, and would hand our schema to every caller.
-	let policy: OIDCSubjectPolicy | null;
+	let resolution: OIDCSubjectResolution;
 	try {
-		policy = await resolveOIDCSubject(c.env.AUDIT_DB, payload.iss, payload.sub);
+		resolution = await resolveOIDCSubject(c.env.AUDIT_DB, payload.iss, payload.sub);
 	} catch (error) {
 		logger.error("OIDC subject lookup failed", {
 			issuer: payload.iss,
@@ -57,13 +57,42 @@ export const oidcAuth: MiddlewareHandler<{
 		return c.json({ error: "Authorization store unavailable", code: "INTERNAL_ERROR" }, HTTP.ServiceUnavailable);
 	}
 
-	if (!policy) {
-		logger.warn("Rejected untrusted OIDC subject", {
-			issuer: payload.iss,
-			subject: payload.sub,
-		});
+	if (resolution.status !== "trusted") {
+		// Three different events, one response. The caller learns nothing extra —
+		// telling a stranger that their subject matches a revoked row would confirm
+		// the row exists — but the operator gets to tell them apart. Reuse of a
+		// revoked credential is an incident; an unknown subject on a shared issuer
+		// is background traffic.
+		if (resolution.status === "revoked") {
+			logger.warn("Revoked OIDC trust presented", {
+				issuer: payload.iss,
+				subject: payload.sub,
+				subjectId: resolution.id,
+				subjectPolicy: resolution.name,
+				revokedAt: resolution.revokedAt,
+			});
+		} else if (resolution.status === "expired") {
+			logger.warn("Expired OIDC trust presented", {
+				issuer: payload.iss,
+				subject: payload.sub,
+				subjectId: resolution.id,
+				subjectPolicy: resolution.name,
+				expiresAt: resolution.expiresAt,
+			});
+		} else {
+			logger.warn("Rejected untrusted OIDC subject", {
+				issuer: payload.iss,
+				subject: payload.sub,
+			});
+		}
+		// Deliberately no audit_logs write: this path is reachable by anyone
+		// holding any token the issuer will mint, so a D1 write here would be
+		// unmetered — the same problem the key-scope denial had. The structured
+		// log carries the distinction.
 		return c.json({ error: "Subject is not trusted for signing", code: "AUTH_INVALID" }, HTTP.Unauthorized);
 	}
+
+	const policy = resolution.policy;
 
 	// Store validated claims in context for downstream use
 	c.set("oidcClaims", markClaimsAsValidated(payload));

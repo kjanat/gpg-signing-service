@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -415,5 +416,45 @@ func BenchmarkSign(b *testing.B) {
 
 	for b.Loop() {
 		_, _ = client.Sign(context.Background(), "commit data", "")
+	}
+}
+
+// TestSignKeyNotAllowed checks that a 403 scope denial keeps the server's error
+// code instead of collapsing to "unexpected status code". The code exists so a
+// caller can tell a scope denial from any other refusal; discarding it here
+// would make that pointless.
+func TestSignKeyNotAllowed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = fmt.Fprint(w, `{"error":"Token is not allowed to sign with key BBBBBBBBBBBBBBBB",`+
+			`"code":"KEY_NOT_ALLOWED","requestId":"1b4e28ba-2fa1-11d2-883f-0016d3cca427"}`)
+	}))
+	defer server.Close()
+
+	c, _ := New(server.URL)
+	_, err := c.Sign(context.Background(), "commit data", "BBBBBBBBBBBBBBBB")
+	if err == nil {
+		t.Fatal("expected an error for a 403 response")
+	}
+	if !IsKeyNotAllowed(err) {
+		t.Errorf("expected IsKeyNotAllowed, got %v", err)
+	}
+	// A scope denial is not an auth failure: the credential was accepted.
+	if IsAuthError(err) {
+		t.Error("a key scope denial must not report as an auth error")
+	}
+	var se *ServiceError
+	if !errors.As(err, &se) {
+		t.Fatalf("expected a *ServiceError, got %T", err)
+	}
+	if se.StatusCode != http.StatusForbidden {
+		t.Errorf("expected status 403, got %d", se.StatusCode)
+	}
+	if !strings.Contains(se.Message, "not allowed to sign") {
+		t.Errorf("server message was discarded: %q", se.Message)
+	}
+	if se.RequestID != "1b4e28ba-2fa1-11d2-883f-0016d3cca427" {
+		t.Errorf("request id was discarded: %q", se.RequestID)
 	}
 }

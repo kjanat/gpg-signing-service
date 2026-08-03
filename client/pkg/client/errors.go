@@ -10,6 +10,7 @@ import (
 const (
 	ErrCodeDegraded       = "SERVICE_DEGRADED"
 	ErrCodeKeyNotFound    = "KEY_NOT_FOUND"
+	ErrCodeKeyNotAllowed  = "KEY_NOT_ALLOWED"
 	ErrCodeInvalidRequest = "INVALID_REQUEST"
 	ErrCodeInternalError  = "INTERNAL_ERROR"
 )
@@ -71,6 +72,14 @@ func (e *ValidationError) Error() string {
 func IsKeyNotFound(err error) bool {
 	var se *ServiceError
 	return errors.As(err, &se) && se.Code == ErrCodeKeyNotFound
+}
+
+// IsKeyNotAllowed returns true if the error indicates the caller's credential is
+// valid but its grant does not cover the requested key. Distinct from
+// IsAuthError: the credential was accepted, the key was not.
+func IsKeyNotAllowed(err error) bool {
+	var se *ServiceError
+	return errors.As(err, &se) && se.Code == ErrCodeKeyNotAllowed
 }
 
 // IsAuthError returns true if the error is authentication-related.

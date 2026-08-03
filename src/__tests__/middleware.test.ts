@@ -3,6 +3,8 @@ import { env } from "cloudflare:workers";
 import * as jose from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "#gpg-signing-service";
+import { logger } from "#utils/logger";
+import { insertOIDCSubject, revokeOIDCSubject } from "#utils/oidc-subjects";
 import { clearTrustedSubjects, seedTrustedSubjects } from "./helpers/oidc-subjects";
 
 const parseJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
@@ -282,6 +284,112 @@ describe("Security Headers Middleware", () => {
 			expect(body.code).toBe("AUTH_INVALID");
 
 			// Restore the fixture for the rest of the suite.
+			await seedTrustedSubjects(env.AUDIT_DB);
+		});
+
+		it("distinguishes a revoked trust still in use from an unknown subject", async () => {
+			// Both are 401 to the caller — telling a stranger their subject matches
+			// a revoked row would confirm the row exists. But for the operator these
+			// are different events: a killed credential still being presented is an
+			// incident, an unknown subject on a shared issuer is background traffic.
+			// Collapsing them files the incident under the noise.
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await clearTrustedSubjects(env.AUDIT_DB);
+
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "revoked-key";
+			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const subjectId = await insertOIDCSubject(env.AUDIT_DB, {
+				name: "ci/killed",
+				issuer,
+				subjectPrefix: "repo:victim/svc",
+				keyIds: [],
+				expiresAt: null,
+			});
+			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toBe("ci/killed");
+
+			const mint = async (sub: string) =>
+				new jose.SignJWT({ iss: issuer, sub, aud: "gpg-signing-service" })
+					.setProtectedHeader({ alg: "ES256", kid })
+					.setIssuedAt()
+					.setExpirationTime("1h")
+					.sign(privateKey);
+
+			const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+			const reused = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${await mint("repo:victim/svc:ref:refs/heads/main")}` },
+				body: "commit data",
+			});
+			expect(reused.status).toBe(401);
+			// The response must not differ from the stranger's.
+			expect(await parseJson<{ error: string }>(reused)).toMatchObject({
+				error: "Subject is not trusted for signing",
+				code: "AUTH_INVALID",
+			});
+			expect(warnSpy).toHaveBeenCalledWith(
+				"Revoked OIDC trust presented",
+				expect.objectContaining({ subjectId, subjectPolicy: "ci/killed" }),
+			);
+
+			warnSpy.mockClear();
+			const stranger = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${await mint("repo:some-rando/thing:ref:refs/heads/main")}` },
+				body: "commit data",
+			});
+			expect(stranger.status).toBe(401);
+			expect(warnSpy).toHaveBeenCalledWith("Rejected untrusted OIDC subject", expect.any(Object));
+			expect(warnSpy).not.toHaveBeenCalledWith("Revoked OIDC trust presented", expect.any(Object));
+			warnSpy.mockRestore();
+
+			await seedTrustedSubjects(env.AUDIT_DB);
+		});
+
+		it("names an expired trust rather than reporting it as unknown", async () => {
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await clearTrustedSubjects(env.AUDIT_DB);
+
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "expired-key";
+			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const expiresAt = new Date(Date.now() - 1000).toISOString();
+			const subjectId = await insertOIDCSubject(env.AUDIT_DB, {
+				name: "ci/lapsed",
+				issuer,
+				subjectPrefix: "repo:lapsed/svc",
+				keyIds: [],
+				expiresAt,
+			});
+
+			const token = await new jose.SignJWT({
+				iss: issuer,
+				sub: "repo:lapsed/svc:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "ES256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+			expect(response.status).toBe(401);
+			expect(warnSpy).toHaveBeenCalledWith(
+				"Expired OIDC trust presented",
+				expect.objectContaining({ subjectId, subjectPolicy: "ci/lapsed", expiresAt }),
+			);
+			warnSpy.mockRestore();
+
 			await seedTrustedSubjects(env.AUDIT_DB);
 		});
 

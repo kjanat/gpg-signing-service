@@ -3,11 +3,18 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 const parseJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
 
+/**
+ * Cold-starting a Durable Object costs more than vitest's 10s default hook
+ * budget when the rest of the suite is competing for the same worker, which
+ * showed up as this whole file erroring with zero failed tests.
+ */
+const WARMUP_TIMEOUT_MS = 30_000;
+
 describe("KeyStorage Durable Object", () => {
 	beforeAll(async () => {
 		const id = env.KEY_STORAGE.idFromName("warmup");
 		await env.KEY_STORAGE.get(id).fetch(new Request("http://internal/unknown"));
-	});
+	}, WARMUP_TIMEOUT_MS);
 
 	it("should return 404 for unknown path", async () => {
 		const id = env.KEY_STORAGE.idFromName("test-unknown-path");

@@ -2,6 +2,13 @@ import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { RateLimitResult } from "#types";
 
+/**
+ * Cold-starting a Durable Object costs more than vitest's 10s default hook
+ * budget when the rest of the suite is competing for the same worker, which
+ * showed up as this whole file erroring with zero failed tests.
+ */
+const WARMUP_TIMEOUT_MS = 30_000;
+
 describe("RateLimiter Durable Object", () => {
 	// Get a fresh DO stub for each test
 	function getRateLimiter(name = "test") {
@@ -11,7 +18,7 @@ describe("RateLimiter Durable Object", () => {
 
 	beforeAll(async () => {
 		await getRateLimiter("warmup").fetch("http://localhost/check?identity=warmup");
-	});
+	}, WARMUP_TIMEOUT_MS);
 
 	describe("/check endpoint", () => {
 		it("should return allowed for new identity", async () => {

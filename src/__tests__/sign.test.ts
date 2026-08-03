@@ -23,11 +23,42 @@ vi.mock("#utils/audit", async (importOriginal) => {
 });
 
 // Helper to make requests
-async function makeRequest(path: string, options: RequestInit = {}): Promise<Response> {
+async function makeRequest(path: string, options: RequestInit = {}, envOverrides?: Partial<Env>): Promise<Response> {
 	const ctx = createExecutionContext();
-	const response = await app.fetch(new Request(`http://localhost${path}`, options), env, ctx);
+	// Overrides are layered onto a copy: mutating the shared `env` bindings leaks
+	// into the Durable Object suites, which run in the same worker.
+	const requestEnv = envOverrides ? { ...env, ...envOverrides } : env;
+	const response = await app.fetch(new Request(`http://localhost${path}`, options), requestEnv, ctx);
 	await waitOnExecutionContext(ctx);
 	return response;
+}
+
+/** A RATE_LIMITER binding whose every call answers with `body`. */
+function stubRateLimiter(body: unknown): DurableObjectNamespace {
+	return {
+		idFromName: () => ({}) as DurableObjectId,
+		get: () => ({ fetch: async () => Response.json(body) }),
+	} as unknown as DurableObjectNamespace;
+}
+
+/** A RATE_LIMITER binding that answers with an error status instead of a verdict. */
+function erroringRateLimiter(status = 500): DurableObjectNamespace {
+	return {
+		idFromName: () => ({}) as DurableObjectId,
+		get: () => ({ fetch: async () => new Response("boom", { status }) }),
+	} as unknown as DurableObjectNamespace;
+}
+
+/** A RATE_LIMITER binding that fails the way an unreachable one does. */
+function brokenRateLimiter(): DurableObjectNamespace {
+	return {
+		idFromName: () => {
+			throw new Error("Rate limiter unavailable");
+		},
+		get: () => {
+			throw new Error("Rate limiter unavailable");
+		},
+	} as unknown as DurableObjectNamespace;
 }
 
 // Helper to upload a test key
@@ -213,6 +244,89 @@ describe("Sign Route", () => {
 				keyId: "BBBBBBBBBBBBBBBB",
 			});
 			expect(JSON.parse(denied?.metadata ?? "{}")).toMatchObject({ subjectPolicy: "ci/key-scoped" });
+		});
+
+		it("meters the scope denial, and writes nothing once the caller is over budget", async () => {
+			// The denial writes to D1, and audit_logs shares a database with the
+			// authorization table every request reads. Unmetered, one trusted token
+			// could bury the very event operators are told to alert on.
+			await insertOIDCSubject(env.AUDIT_DB, {
+				name: "ci/metered",
+				issuer,
+				subjectPrefix: "repo:metered/svc",
+				keyIds: ["AAAAAAAAAAAAAAAA"],
+				expiresAt: null,
+			});
+			await setupJWKSMock();
+			const token = await createToken({ sub: "repo:metered/svc:ref:refs/heads/main" });
+
+			const resetAt = Date.now() + 30_000;
+			const response = await makeRequest(
+				"/sign?keyId=BBBBBBBBBBBBBBBB",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{ RATE_LIMITER: stubRateLimiter({ allowed: false, remaining: 0, resetAt }) },
+			);
+
+			// The limiter's verdict wins over the denial: 429, not 403.
+			expect(response.status).toBe(429);
+			expect(await response.json()).toMatchObject({ code: "RATE_LIMITED" });
+
+			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+			expect(events.some((event) => event.errorCode === "KEY_NOT_ALLOWED")).toBe(false);
+		});
+
+		it("treats a rate limiter error status the same as an outage", async () => {
+			await insertOIDCSubject(env.AUDIT_DB, {
+				name: "ci/limiter-error",
+				issuer,
+				subjectPrefix: "repo:limitererror/svc",
+				keyIds: ["AAAAAAAAAAAAAAAA"],
+				expiresAt: null,
+			});
+			await setupJWKSMock();
+			const token = await createToken({ sub: "repo:limitererror/svc:ref:refs/heads/main" });
+
+			const response = await makeRequest(
+				"/sign?keyId=BBBBBBBBBBBBBBBB",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{ RATE_LIMITER: erroringRateLimiter() },
+			);
+			expect(response.status).toBe(403);
+			expect(await response.json()).toMatchObject({ code: "KEY_NOT_ALLOWED" });
+
+			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+			expect(events.some((event) => event.errorCode === "KEY_NOT_ALLOWED")).toBe(false);
+		});
+
+		it("refuses without writing when the rate limiter is unavailable", async () => {
+			// Cannot meter, so must not write — but the denial still has to leave a
+			// trace and must still be a denial.
+			await insertOIDCSubject(env.AUDIT_DB, {
+				name: "ci/limiter-down",
+				issuer,
+				subjectPrefix: "repo:limiterdown/svc",
+				keyIds: ["AAAAAAAAAAAAAAAA"],
+				expiresAt: null,
+			});
+			await setupJWKSMock();
+			const token = await createToken({ sub: "repo:limiterdown/svc:ref:refs/heads/main" });
+
+			const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+			const response = await makeRequest(
+				"/sign?keyId=BBBBBBBBBBBBBBBB",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{ RATE_LIMITER: brokenRateLimiter() },
+			);
+			expect(response.status).toBe(403);
+			expect(await response.json()).toMatchObject({ code: "KEY_NOT_ALLOWED" });
+
+			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+			expect(events.some((event) => event.errorCode === "KEY_NOT_ALLOWED")).toBe(false);
+			expect(warnSpy).toHaveBeenCalledWith(
+				"Key scope denied while the rate limiter was unavailable",
+				expect.objectContaining({ keyId: "BBBBBBBBBBBBBBBB" }),
+			);
+			warnSpy.mockRestore();
 		});
 
 		it("should return 400 if commit data is missing", async () => {
