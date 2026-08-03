@@ -43,6 +43,12 @@ fi
 #      .github/actions/setup-claude-signing.
 #   3. ACTIONS_ID_TOKEN_REQUEST_* — the native variables, present in ordinary
 #      workflow steps of a job with `id-token: write`.
+#
+# (2) exists because an agent does not run this shim directly. It is not process
+# depth: claude-code-action deletes both native variables from the child
+# environment on purpose (base-action/src/parse-sdk-options.ts, "Remove OIDC
+# token request variables so Claude cannot mint new tokens"). Copies under our
+# own names are not caught by that name-based removal.
 if [[ -z "${GPG_SIGN_TOKEN:-}" ]]; then
 	oidc_url="${GPG_OIDC_REQUEST_URL:-${ACTIONS_ID_TOKEN_REQUEST_URL:-}}"
 	oidc_token="${GPG_OIDC_REQUEST_TOKEN:-${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}}"
