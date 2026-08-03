@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import * as jose from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "#gpg-signing-service";
+import { isSubjectAllowed } from "#middleware/oidc";
 
 const parseJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
 
@@ -912,5 +913,56 @@ describe("Security Headers Middleware", () => {
 			const body = await parseJson<{ error: string }>(response);
 			expect(body.error).toContain("SSRF protection: Invalid URL");
 		});
+	});
+});
+
+describe("OIDC Subject Allowlist", () => {
+	// token.actions.githubusercontent.com is shared by every repository on
+	// GitHub Actions, so issuer + audience alone authenticate nothing useful.
+	it("accepts an exact subject and a delimiter-terminated prefix", () => {
+		const allowed = "repo:kjanat/gpg-signing-service";
+		expect(isSubjectAllowed("repo:kjanat/gpg-signing-service", allowed)).toBe(true);
+		expect(isSubjectAllowed("repo:kjanat/gpg-signing-service:ref:refs/heads/master", allowed)).toBe(true);
+	});
+
+	it("accepts the immutable subject form", () => {
+		const allowed = "repo:kjanat@6353477/gpg-signing-service@1099803640";
+		expect(isSubjectAllowed("repo:kjanat@6353477/gpg-signing-service@1099803640:ref:refs/heads/master", allowed)).toBe(
+			true,
+		);
+	});
+
+	it("rejects another repository on the same shared issuer", () => {
+		const allowed = "repo:kjanat/gpg-signing-service";
+		expect(isSubjectAllowed("repo:attacker/evil:ref:refs/heads/main", allowed)).toBe(false);
+	});
+
+	it("does not treat a prefix as a partial name match", () => {
+		// The bug a naive startsWith would introduce.
+		const allowed = "repo:kjanat/gpg-signing-service";
+		expect(isSubjectAllowed("repo:kjanat/gpg-signing-service-evil:ref:refs/heads/main", allowed)).toBe(false);
+		expect(isSubjectAllowed("repo:kjanatevil/gpg-signing-service", "repo:kjanat")).toBe(false);
+	});
+
+	it("treats a trailing-delimiter prefix as owner-wide", () => {
+		// The form used in production: any repo of the owner, no others.
+		const allowed = "repo:kjanat/,repo:kjanat@6353477/";
+		expect(isSubjectAllowed("repo:kjanat/gpg-signing-service:ref:refs/heads/master", allowed)).toBe(true);
+		expect(isSubjectAllowed("repo:kjanat/some-other-repo:ref:refs/heads/main", allowed)).toBe(true);
+		expect(isSubjectAllowed("repo:kjanat@6353477/anything@42:ref:refs/heads/main", allowed)).toBe(true);
+		expect(isSubjectAllowed("repo:kjanatevil/repo:ref:refs/heads/main", allowed)).toBe(false);
+		expect(isSubjectAllowed("repo:someoneelse/repo:ref:refs/heads/main", allowed)).toBe(false);
+	});
+
+	it("fails closed when the allowlist is unset or empty", () => {
+		expect(isSubjectAllowed("repo:kjanat/gpg-signing-service", undefined)).toBe(false);
+		expect(isSubjectAllowed("repo:kjanat/gpg-signing-service", "")).toBe(false);
+		expect(isSubjectAllowed("repo:kjanat/gpg-signing-service", " , ")).toBe(false);
+	});
+
+	it("honours any entry in a comma-separated list and trims spacing", () => {
+		const allowed = " repo:other/thing , repo:kjanat/gpg-signing-service ";
+		expect(isSubjectAllowed("repo:kjanat/gpg-signing-service:ref:x", allowed)).toBe(true);
+		expect(isSubjectAllowed("repo:third/party:ref:x", allowed)).toBe(false);
 	});
 });

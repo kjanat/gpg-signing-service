@@ -81,6 +81,50 @@ async function timingSafeEqual(a: string, b: string): Promise<boolean> {
 // Allowed JWT signing algorithms
 const ALLOWED_ALGORITHMS = ["RS256", "RS384", "RS512", "ES256", "ES384"];
 
+/** Characters that terminate a subject prefix in GitHub and GitLab subjects. */
+const SUBJECT_DELIMITERS = new Set([":", "@", "/"]);
+
+/**
+ * Match `sub` against a comma-separated allowlist of prefixes.
+ *
+ * Prefixes must end at a delimiter or at the end of the subject, so
+ * `repo:me/svc` does not also admit `repo:me/svc-evil:ref:...`.
+ *
+ * GitHub subjects are `repo:<owner>/<repo>:<context>`, or
+ * `repo:<owner>@<ownerId>/<repo>@<repoId>:<context>` when the repository has
+ * immutable subject claims enabled — list whichever forms you accept.
+ *
+ * @param sub - The `sub` claim from a verified token
+ * @param allowed - Comma-separated prefixes; empty or unset denies everything
+ * @returns true when the subject matches an allowlist entry
+ */
+export function isSubjectAllowed(sub: string, allowed: string | undefined): boolean {
+	const prefixes = (allowed ?? "")
+		.split(",")
+		.map((entry) => entry.trim())
+		.filter(Boolean);
+
+	if (prefixes.length === 0) {
+		return false;
+	}
+
+	return prefixes.some((prefix) => {
+		if (sub === prefix) {
+			return true;
+		}
+		if (!sub.startsWith(prefix)) {
+			return false;
+		}
+		// A prefix that already ends at a delimiter carries its own boundary, so
+		// `repo:owner/` admits every repo of that owner while still rejecting
+		// `repo:ownerevil/...`. Otherwise the next character must be one.
+		if (SUBJECT_DELIMITERS.has(prefix.charAt(prefix.length - 1))) {
+			return true;
+		}
+		return SUBJECT_DELIMITERS.has(sub.charAt(prefix.length));
+	});
+}
+
 async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
 	// Decode JWT header and payload (without verification first)
 	const parts = token.split(".");
@@ -128,6 +172,17 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
 	const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
 	if (!audiences.includes(expectedAudience)) {
 		throw new Error("Invalid token audience");
+	}
+
+	// Validate subject. Issuer + audience alone authenticate nothing useful:
+	// token.actions.githubusercontent.com is shared by every repository on
+	// GitHub Actions (and gitlab.com by every project there), and our audience
+	// is public, so without this check any of them could mint a token and sign.
+	//
+	// Fails closed when unset — an unconfigured allowlist on a signing service
+	// is a misconfiguration, not a reason to accept everyone.
+	if (!isSubjectAllowed(payload.sub, env.ALLOWED_SUBJECTS)) {
+		throw new Error("Subject not allowed");
 	}
 
 	// Fetch JWKS and verify signature. If the cached JWKS doesn't have the

@@ -34,6 +34,16 @@ export interface Env {
 	/** Environment variables */
 	/** Comma-separated list of allowed issuers */
 	ALLOWED_ISSUERS: string;
+	/**
+	 * Comma-separated list of allowed OIDC subject prefixes.
+	 *
+	 * Required. The issuers above are shared by every repository on GitHub
+	 * Actions and every project on gitlab.com, so without this any of them
+	 * could mint a token for our audience and sign. Entries are matched as
+	 * delimiter-terminated prefixes of `sub`, e.g.
+	 * `repo:kjanat/gpg-signing-service`.
+	 */
+	ALLOWED_SUBJECTS: string;
 	/** GPG Key identifier */
 	KEY_ID: string;
 	/** Optional: comma-separated list of allowed CORS origins */

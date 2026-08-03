@@ -38,7 +38,10 @@ custom_domain = true
 
 # Environment variables for testing
 [vars]
-ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com,https://token.actions.githubusercontent.com/unique-test-issuer"
-KEY_ID          = "D8BC04E534E7706F"
-ADMIN_TOKEN     = "test-admin-token"
-KEY_PASSPHRASE  = "test-passphrase"
+ALLOWED_ISSUERS  = "https://token.actions.githubusercontent.com,https://gitlab.com,https://token.actions.githubusercontent.com/unique-test-issuer"
+# Subjects the tests sign with, plus the real prefixes. Production values live
+# in wrangler.toml; see isSubjectAllowed in src/middleware/oidc.ts.
+ALLOWED_SUBJECTS = "repo:kjanat/gpg-signing-service,repo:kjanat@6353477/gpg-signing-service@1099803640,repo:user/repo,test-subject,test,subject"
+KEY_ID           = "D8BC04E534E7706F"
+ADMIN_TOKEN      = "test-admin-token"
+KEY_PASSPHRASE   = "test-passphrase"

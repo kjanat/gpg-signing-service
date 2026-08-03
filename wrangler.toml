@@ -40,8 +40,18 @@ custom_domain = true
 # Environment variables (non-sensitive) (docs: https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables)
 ## Note: Use secrets to store sensitive data. (https://developers.cloudflare.com/workers/configuration/secrets/)
 [vars]
-ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com"
-KEY_ID          = "D8BC04E534E7706F"
+ALLOWED_ISSUERS  = "https://token.actions.githubusercontent.com,https://gitlab.com"
+# Which OIDC subjects may sign. REQUIRED: the issuers above are shared by every
+# repo on GitHub Actions and every project on gitlab.com, so issuer+audience
+# alone would let any of them sign.
+#
+# Owner-wide, so any kjanat/* repo can use the service; narrow to individual
+# repos, or add other owners/GitLab subjects, as needed. Both forms are listed
+# because the subject changes shape when "immutable subject claims" is toggled
+# on the repo. A trailing "/" is what makes these owner-wide rather than an
+# exact match -- see isSubjectAllowed in src/middleware/oidc.ts.
+ALLOWED_SUBJECTS = "repo:kjanat/,repo:kjanat@6353477/"
+KEY_ID           = "D8BC04E534E7706F"
 
 # Secrets (set via `wrangler secret put`)
 # - KEY_PASSPHRASE: Passphrase for encrypted private key
@@ -79,6 +89,16 @@ binding = "JWKS_CACHE"
 id      = "1a1c95b63a59458a9347be82f1b961df"
 
 [env.staging.vars]  # Staging environment variables
-ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com"
-KEY_ID          = "D8BC04E534E7706F"
-ENVIRONMENT     = "staging"
+ALLOWED_ISSUERS  = "https://token.actions.githubusercontent.com,https://gitlab.com"
+# Which OIDC subjects may sign. REQUIRED: the issuers above are shared by every
+# repo on GitHub Actions and every project on gitlab.com, so issuer+audience
+# alone would let any of them sign.
+#
+# Owner-wide, so any kjanat/* repo can use the service; narrow to individual
+# repos, or add other owners/GitLab subjects, as needed. Both forms are listed
+# because the subject changes shape when "immutable subject claims" is toggled
+# on the repo. A trailing "/" is what makes these owner-wide rather than an
+# exact match -- see isSubjectAllowed in src/middleware/oidc.ts.
+ALLOWED_SUBJECTS = "repo:kjanat/,repo:kjanat@6353477/"
+KEY_ID           = "D8BC04E534E7706F"
+ENVIRONMENT      = "staging"

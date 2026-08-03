@@ -14,6 +14,9 @@ declare namespace Cloudflare {
 		/** Comma-separated list of allowed issuers */
 		ALLOWED_ISSUERS: string;
 
+		/** Comma-separated list of allowed OIDC subject prefixes */
+		ALLOWED_SUBJECTS: string;
+
 		/** Allowed origins for CORS */
 		ALLOWED_ORIGINS?: string;
 
