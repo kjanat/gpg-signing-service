@@ -14,6 +14,14 @@ import { resolveOIDCSubject } from "#utils/oidc-subjects";
 import { validateUrl } from "#utils/url-validation";
 
 /**
+ * Rate-limiter namespace for revoked-trust reuse. Not an issuer, so it cannot
+ * collide with the `<iss>:<sub>` buckets the signing path consumes —
+ * `ALLOWED_ISSUERS` entries are URLs and `iss` is matched against that list
+ * exactly.
+ */
+const REVOKED_REUSE_METER = "oidc-revoked-reuse";
+
+/**
  * Write a durable record of a revoked trust being presented, if the caller is
  * within its rate-limit budget.
  *
@@ -21,6 +29,15 @@ import { validateUrl } from "#utils/url-validation";
  * holder of a revoked credential could flood `audit_logs`, which shares a
  * database with the authorization table every request reads. Best-effort in
  * every direction — a limiter outage or a failed write must not change the 401.
+ *
+ * Metered on the *revoked row's id*, not on `<iss>:<sub>` like the signing path.
+ * A row is a prefix, and one prefix covers unboundedly many subjects: GitHub
+ * puts the ref in `sub`, so anyone who can push a branch under the revoked scope
+ * mints a fresh subject — and a per-subject bucket hands them a fresh budget
+ * with it, which makes the cap no cap at all. Keying on the id bounds the whole
+ * revoked trust to one bucket however many subjects it presents, the same shape
+ * as the service-token path, which meters on `policy.name` rather than on
+ * anything the caller picks.
  *
  * @param c - Request context
  * @param requestId - This request's id, shared with the rest of the pipeline
@@ -34,7 +51,7 @@ async function recordRevokedReuse(
 	resolution: Extract<OIDCSubjectResolution, { status: "revoked" }>,
 ): Promise<void> {
 	try {
-		const limit = await fetchRateLimiter(c.env, createIdentity(payload.iss, payload.sub));
+		const limit = await fetchRateLimiter(c.env, createIdentity(REVOKED_REUSE_METER, resolution.id));
 		if (!limit.ok) {
 			return;
 		}

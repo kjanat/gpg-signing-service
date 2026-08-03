@@ -453,6 +453,63 @@ describe("Security Headers Middleware", () => {
 			await seedTrustedSubjects(env.AUDIT_DB);
 		});
 
+		it("meters the revoked-reuse row per revoked row, not per subject the caller mints", async () => {
+			// The budget has to bound the *row*, but a row is a prefix and one prefix
+			// covers unboundedly many subjects — GitHub puts the ref in `sub`, so
+			// anyone who can push a branch under the revoked scope mints a fresh
+			// subject. Keyed per subject, the cap is no cap: N branches, N budgets,
+			// all writing into the database the authorization table lives in.
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await clearTrustedSubjects(env.AUDIT_DB);
+
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "flood-key";
+			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const subjectId = await insertOIDCSubject(env.AUDIT_DB, {
+				name: "ci/flood",
+				issuer,
+				subjectPrefix: "repo:flood/",
+				keyIds: [],
+				expiresAt: null,
+			});
+			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toMatchObject({ name: "ci/flood" });
+
+			// Record what the limiter is actually asked about, rather than only that
+			// a write was dropped — which is why the per-subject key survived.
+			const metered: string[] = [];
+			const recordingLimiter = {
+				idFromName: () => ({}) as DurableObjectId,
+				get: () => ({
+					fetch: async (request: Request) => {
+						metered.push(decodeURIComponent(new URL(request.url).searchParams.get("identity") ?? ""));
+						return Response.json({ allowed: true, remaining: 99, resetAt: Date.now() + 60_000 });
+					},
+				}),
+			} as unknown as DurableObjectNamespace;
+
+			for (const sub of ["repo:flood/one:ref:refs/heads/main", "repo:flood/two:ref:refs/heads/anything-i-like"]) {
+				const token = await new jose.SignJWT({ iss: issuer, sub, aud: "gpg-signing-service" })
+					.setProtectedHeader({ alg: "ES256", kid })
+					.setIssuedAt()
+					.setExpirationTime("1h")
+					.sign(privateKey);
+				const response = await makeRequest(
+					"/sign",
+					{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+					{ RATE_LIMITER: recordingLimiter },
+				);
+				expect(response.status).toBe(401);
+			}
+
+			// One bucket for the row, whatever subject was presented.
+			expect(metered).toEqual([`oidc-revoked-reuse:${subjectId}`, `oidc-revoked-reuse:${subjectId}`]);
+			expect(metered.join(" ")).not.toContain("refs/heads");
+
+			await seedTrustedSubjects(env.AUDIT_DB);
+		});
+
 		it("does not write the revoked-reuse row when the caller is over budget or the limiter is down", async () => {
 			// The row is metered precisely so the holder of a revoked credential
 			// cannot flood the table the authorization store shares. Both failure
