@@ -185,7 +185,6 @@ describe("OIDC subject policy store", () => {
 		// Same again with a non-Error rejection, which takes the String(error) branch.
 		const spyNonError = vi.spyOn(env.AUDIT_DB, "prepare").mockImplementation((query: string) => {
 			if (query.startsWith("UPDATE oidc_subjects SET last_used_at")) {
-				// eslint-disable-next-line no-throw-literal
 				throw "stamp failed";
 			}
 			return realPrepare(query);
@@ -332,6 +331,14 @@ describe("admin subject management", () => {
 			{ name: "ci/badissuer", issuer: "not-a-url", subjectPrefix: "repo:a/" },
 			{ name: "ci/badprefix", issuer: GITHUB, subjectPrefix: "has spaces" },
 			{ name: "ci/badkey", issuer: GITHUB, subjectPrefix: "repo:a/", keyIds: ["nope"] },
+			// Empty array means "every key" once stored, so it must not be a way
+			// to ask for a restriction. Omitting the field is how you say that.
+			{ name: "ci/emptykeys", issuer: GITHUB, subjectPrefix: "repo:a/", keyIds: [] },
+			// A bare scheme names nobody and would trust the whole host.
+			{ name: "ci/bareprefix", issuer: GITHUB, subjectPrefix: "repo:" },
+			{ name: "ci/schemeonly", issuer: GITHUB, subjectPrefix: "repo" },
+			{ name: "ci/gitlabbare", issuer: GITHUB, subjectPrefix: "project_path:" },
+			{ name: "ci/delimsonly", issuer: GITHUB, subjectPrefix: "repo:/" },
 		];
 		for (const body of cases) {
 			const response = await adminRequest("/admin/subjects", {

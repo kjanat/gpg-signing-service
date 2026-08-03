@@ -19,6 +19,16 @@ export const SubjectPrefixSchema = z
 	.min(1)
 	.max(255)
 	.regex(/^\S+$/, "Subject prefix must not contain whitespace")
+	// A prefix must identify somebody. Because a prefix ending at a delimiter is
+	// deliberately owner-wide, a bare scheme segment is *host*-wide: `repo:` —
+	// and `repo` too, since the boundary check then lands on the `:` — matches
+	// every repository on GitHub Actions, reinstating exactly what this table
+	// exists to prevent. One truncated paste of a rollout command would do it,
+	// and unlike every other degenerate input here it fails open.
+	.refine((prefix) => {
+		const firstDelimiter = prefix.search(/[:@/]/);
+		return firstDelimiter !== -1 && /[^:@/]/.test(prefix.slice(firstDelimiter + 1));
+	}, "Subject prefix must name an identity after its scheme, e.g. repo:owner — not repo: or repo")
 	.openapi("SubjectPrefix");
 
 /** Request body for trusting an OIDC subject. */
@@ -33,8 +43,12 @@ export const SubjectCreateSchema = z
 		 * schema as key upload, which normalizes to uppercase — a lowercase id
 		 * would otherwise store as written, list as allowed, and never match the
 		 * case-sensitive check in the sign route.
+		 *
+		 * An empty array is refused rather than accepted: it stores as the empty
+		 * key_ids string, which means *every* key, so a caller that meant to
+		 * restrict would silently widen. Omit the field to mean every key.
 		 */
-		keyIds: z.array(KeyIdSchema).optional(),
+		keyIds: z.array(KeyIdSchema).min(1, "keyIds must list at least one key; omit it to allow every key").optional(),
 		/** Days until expiry; omit for a non-expiring trust. */
 		expiresInDays: z.number().int().min(1).max(3650).optional(),
 	})

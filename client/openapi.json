@@ -423,7 +423,8 @@
               "minLength": 16,
               "maxLength": 16,
               "pattern": "^[A-Fa-f0-9]{16}$"
-            }
+            },
+            "minItems": 1
           },
           "expiresInDays": {
             "type": "integer",
@@ -588,7 +589,8 @@
               "minLength": 16,
               "maxLength": 16,
               "pattern": "^[A-Fa-f0-9]{16}$"
-            }
+            },
+            "minItems": 1
           },
           "expiresInDays": {
             "type": "integer",
