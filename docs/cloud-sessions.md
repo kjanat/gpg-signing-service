@@ -140,16 +140,14 @@ than the session network.
 
 ## Signing commits from a cloud session
 
-CI signs its commits through this service using a per-signature GitHub OIDC
-token (see [`gpg-sign-git-program.sh`](../.github/scripts/gpg-sign-git-program.sh)).
-A cloud session has no OIDC issuer, so that path is unavailable, and the only
-alternatives — a `gst_` service token or the admin token — are credentials that
-must not go in the environment dialog.
+By default a cloud session signs commits as `Claude <noreply@anthropic.com>`
+with an agent-runtime SSH key, not as you and not through this service.
 
-So commits from cloud sessions are unsigned by default. If you want them
-signed, pass a narrowly scoped `gst_` token into the session by other means,
-accepting that a static token is weaker than CI's short-lived ones, then point
-git at a shim that reads `GPG_SIGN_TOKEN` instead of minting an OIDC token.
+Redirecting that to your own identity is environment configuration and is
+covered in full by **[cloud-session-signing.md](cloud-session-signing.md)** —
+including the trap that `gpg.program` is ignored unless you also set
+`gpg.format=openpgp`, which otherwise leaves you silently signing with the
+agent's key.
 
 ## Verifying it works
 

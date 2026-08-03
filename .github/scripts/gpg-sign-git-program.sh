@@ -32,15 +32,23 @@ if ! "$signing"; then
 fi
 
 : "${GPG_SIGN_URL:?GPG_SIGN_URL must point at the signing service}"
-: "${ACTIONS_ID_TOKEN_REQUEST_URL:?job needs 'id-token: write' permission}"
-: "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?job needs 'id-token: write' permission}"
 
-GPG_SIGN_TOKEN="$(
-	curl -sSf \
-		-H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-		"${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=gpg-signing-service" \
-		| jq -r '.value'
-)"
+# Two auth modes, so the same shim works in CI and in environments with no OIDC
+# issuer (Claude Code cloud sessions, a laptop). A pre-set GPG_SIGN_TOKEN — a
+# `gst_` service token — wins; otherwise mint a short-lived OIDC token, which
+# requires running inside a job with `id-token: write`.
+# See docs/cloud-session-signing.md.
+if [ -z "${GPG_SIGN_TOKEN:-}" ]; then
+	: "${ACTIONS_ID_TOKEN_REQUEST_URL:?no GPG_SIGN_TOKEN set and no OIDC issuer available}"
+	: "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:?no GPG_SIGN_TOKEN set and no OIDC issuer available}"
+
+	GPG_SIGN_TOKEN="$(
+		curl -sSf \
+			-H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+			"${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=gpg-signing-service" \
+			| jq -r '.value'
+	)"
+fi
 export GPG_SIGN_TOKEN
 
 gpg-sign sign
