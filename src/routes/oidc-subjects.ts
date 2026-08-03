@@ -1,6 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { createOpenAPIApp } from "#lib/openapi";
-import { getRequestId } from "#middleware/request-id";
 import {
 	ErrorResponseSchema,
 	SubjectCreatedResponseSchema,
@@ -9,7 +8,7 @@ import {
 	SubjectRevokeResponseSchema,
 } from "#schemas";
 import type { ErrorCode } from "#schemas/errors";
-import { HEADERS, HTTP } from "#types";
+import { HTTP } from "#types";
 import { logAuditEvent } from "#utils/audit";
 import { scheduleBackgroundTask } from "#utils/execution";
 import { logger } from "#utils/logger";
@@ -139,7 +138,7 @@ const createSubjectRoute = createRoute({
 });
 
 app.openapi(createSubjectRoute, async (c) => {
-	const requestId = getRequestId(c.req.header(HEADERS.REQUEST_ID));
+	const requestId = c.get("requestId");
 	const body = c.req.valid("json");
 
 	// A row whose issuer is not accepted can never match a token, so it would
@@ -261,7 +260,7 @@ const listSubjectsRoute = createRoute({
 });
 
 app.openapi(listSubjectsRoute, async (c) => {
-	const requestId = getRequestId(c.req.header(HEADERS.REQUEST_ID));
+	const requestId = c.get("requestId");
 	try {
 		const subjects = await listOIDCSubjects(c.env.AUDIT_DB);
 		return c.json({ subjects }, HTTP.OK);
@@ -310,7 +309,7 @@ const revokeSubjectRoute = createRoute({
 });
 
 app.openapi(revokeSubjectRoute, async (c) => {
-	const requestId = getRequestId(c.req.header(HEADERS.REQUEST_ID));
+	const requestId = c.get("requestId");
 	const { id } = c.req.valid("param");
 
 	try {

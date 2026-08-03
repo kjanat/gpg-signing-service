@@ -171,7 +171,9 @@ app.notFound((c) => {
 
 // Error handler
 app.onError((err, c) => {
-	const requestId = crypto.randomUUID();
+	// The id the caller was handed, so the one in a 500 body is greppable against
+	// the logs. The fallback covers a throw from before the middleware ran.
+	const requestId = c.get("requestId") ?? crypto.randomUUID();
 	customLogger.error("Unhandled error", {
 		requestId,
 		error: err instanceof Error ? err.message : String(err),

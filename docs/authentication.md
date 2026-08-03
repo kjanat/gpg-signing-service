@@ -94,7 +94,7 @@ Revoking the **broad** row is the mirror image: rows nested underneath it are
 not touched, so the part of the scope you meant to cut keeps signing. Revoke
 `repo:kjanat/` and `repo:kjanat/svc` carries on.
 
-`DELETE /admin/subjects/{id}` answers with both, most specific first:
+`DELETE /admin/subjects/{id}` answers with both:
 
 ```json
 {
@@ -113,10 +113,12 @@ not touched, so the part of the scope you meant to cut keeps signing. Revoke
 }
 ```
 
-- `stillCoveredBy` — rows that **cover** the revoked prefix. The whole revoked
-  scope keeps signing, under their grants.
-- `stillTrustedWithin` — rows **nested under** it. Part of the revoked scope
-  keeps signing.
+- `stillCoveredBy` — rows that **cover** the revoked prefix, most specific
+  first. The whole revoked scope keeps signing, under their grants; the first
+  entry is the one resolution will actually pick.
+- `stillTrustedWithin` — rows **nested under** it, broadest first. Each is a
+  separate piece of the revoked scope that keeps signing, so the first entry is
+  the biggest remaining hole.
 
 **Only when both are empty was the revoke final.** During an incident, revoke
 those rows too, or replace them with narrower ones that exclude the compromised

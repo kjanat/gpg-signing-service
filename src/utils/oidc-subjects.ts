@@ -285,9 +285,10 @@ export interface RevokedSubject {
 	 */
 	stillCoveredBy: CoveringSubject[];
 	/**
-	 * Live rows *nested under* the revoked prefix, most specific first. Revoking
-	 * a parent does not touch its children, so part of the revoked scope keeps
-	 * signing. Only when both lists are empty was the revoke final.
+	 * Live rows *nested under* the revoked prefix, broadest first — each is a
+	 * separate hole in the scope just revoked, so the widest one matters most.
+	 * Revoking a parent does not touch its children, so part of the revoked scope
+	 * keeps signing. Only when both lists are empty was the revoke final.
 	 */
 	stillTrustedWithin: CoveringSubject[];
 }
@@ -364,9 +365,15 @@ export async function revokeOIDCSubject(db: D1Database, id: string): Promise<Rev
 	// ancestors would answer with an empty list, which reads as "final". The two
 	// lists are disjoint: the live-unique index forbids two live rows sharing a
 	// prefix, so no row can be both.
+	//
+	// Sorted *broadest* first, the opposite of the ancestor list. These rows do
+	// not compete for one resolution; each carves a piece out of the scope the
+	// operator just tried to cut, so the top line should be the biggest remaining
+	// hole. Longest-first would lead with a single repository and bury a
+	// team-wide row under it.
 	const stillTrustedWithin = live
 		.filter((candidate) => subjectMatchesPrefix(candidate.subject_prefix, row.subject_prefix))
-		.sort(bySpecificity)
+		.sort((a, b) => a.subject_prefix.length - b.subject_prefix.length)
 		.map(toCovering);
 
 	return { name: row.name, stillCoveredBy, stillTrustedWithin };

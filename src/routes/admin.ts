@@ -1,6 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { createOpenAPIApp } from "#lib/openapi";
-import { getRequestId } from "#middleware/request-id";
 import {
 	AuditLogsResponseSchema,
 	AuditQuerySchema,
@@ -15,7 +14,7 @@ import {
 import type { ErrorCode } from "#schemas/errors";
 import type { StoredKey } from "#schemas/keys";
 import { AnyStoredKeySchema, isX509Key, type StoredX509Key } from "#schemas/keys";
-import { createArmoredPrivateKey, createKeyId, HEADERS, HTTP, MediaType } from "#types";
+import { createArmoredPrivateKey, createKeyId, HTTP, MediaType } from "#types";
 import { getAuditLogs, logAuditEvent } from "#utils/audit";
 import { fetchKeyStorage } from "#utils/durable-objects";
 import { scheduleBackgroundTask } from "#utils/execution";
@@ -56,7 +55,7 @@ const uploadKeyRoute = createRoute({
 });
 
 app.openapi(uploadKeyRoute, async (c) => {
-	const requestId = getRequestId(c.req.header(HEADERS.REQUEST_ID));
+	const requestId = c.get("requestId");
 
 	try {
 		const body = c.req.valid("json");
@@ -186,7 +185,7 @@ const uploadX509KeyRoute = createRoute({
 });
 
 app.openapi(uploadX509KeyRoute, async (c) => {
-	const requestId = getRequestId(c.req.header(HEADERS.REQUEST_ID));
+	const requestId = c.get("requestId");
 
 	try {
 		const body = c.req.valid("json");
@@ -422,7 +421,7 @@ const deleteKeyRoute = createRoute({
 
 app.openapi(deleteKeyRoute, async (c) => {
 	const { keyId } = c.req.valid("param");
-	const requestId = getRequestId(c.req.header(HEADERS.REQUEST_ID));
+	const requestId = c.get("requestId");
 
 	try {
 		const response = await fetchKeyStorage(c.env, `/delete-key?keyId=${encodeURIComponent(keyId)}`, {
