@@ -19,6 +19,11 @@ export interface OIDCSubjectPolicy {
 	name: string;
 	/** Key ids this subject may sign with; null means every key. */
 	allowedKeyIds: string[] | null;
+	/**
+	 * Resolves when the last-used stamp has been written. Already error-handled;
+	 * pass it to `scheduleBackgroundTask` to keep the write off the request path.
+	 */
+	stampUsage: Promise<void>;
 }
 
 /** A stored subject as returned to admins. */
@@ -162,23 +167,29 @@ export async function resolveOIDCSubject(
 		return null;
 	}
 
-	// Best-effort usage stamp; a failed write must not block signing.
-	try {
-		await db
-			.prepare("UPDATE oidc_subjects SET last_used_at = ? WHERE id = ?")
-			.bind(new Date().toISOString(), row.id)
-			.run();
-	} catch (error) {
-		logger.warn("Failed to stamp OIDC subject usage", {
-			subjectId: row.id,
-			error: error instanceof Error ? error.message : String(error),
-		});
-	}
+	// Best-effort usage stamp, returned rather than awaited: this sits on the
+	// critical path of every signed commit, and the caller can hand it to
+	// waitUntil so the write costs nothing. Failures are swallowed here so a
+	// caller that does await it still cannot be blocked by one.
+	const stampUsage = (async () => {
+		try {
+			await db
+				.prepare("UPDATE oidc_subjects SET last_used_at = ? WHERE id = ?")
+				.bind(new Date().toISOString(), row.id)
+				.run();
+		} catch (error) {
+			logger.warn("Failed to stamp OIDC subject usage", {
+				subjectId: row.id,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	})();
 
 	return {
 		id: row.id,
 		name: row.name,
 		allowedKeyIds: parseKeyIds(row.key_ids),
+		stampUsage,
 	};
 }
 

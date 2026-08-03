@@ -2,8 +2,9 @@ import type { MiddlewareHandler } from "hono";
 import { createLocalJWKSet, jwtVerify } from "jose";
 
 import type { Env, LegacyJWKSResponse, OIDCClaims, Variables } from "#types";
-import { createIdentity, HTTP, markClaimsAsValidated, TIME } from "#types";
+import { createIdentity, HEADERS, HTTP, markClaimsAsValidated, TIME } from "#types";
 import { CACHE_TTL } from "#utils/constants";
+import { scheduleBackgroundTask } from "#utils/execution";
 import { fetchWithTimeout } from "#utils/fetch";
 import { logger } from "#utils/logger";
 import { resolveOIDCSubject } from "#utils/oidc-subjects";
@@ -47,6 +48,10 @@ export const oidcAuth: MiddlewareHandler<{
 		c.set("identity", createIdentity(payload.iss, payload.sub));
 		// Key scoping now applies to OIDC callers too, not just service tokens.
 		c.set("allowedKeyIds", policy.allowedKeyIds);
+
+		// The last-used stamp is bookkeeping; do not make every signature wait
+		// on a D1 write for it.
+		await scheduleBackgroundTask(c, c.req.header(HEADERS.REQUEST_ID) || "unknown", policy.stampUsage);
 
 		return next();
 	} catch (error) {

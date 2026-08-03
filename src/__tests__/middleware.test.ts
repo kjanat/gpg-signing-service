@@ -181,7 +181,7 @@ describe("Security Headers Middleware", () => {
 			const { privateKey } = await jose.generateKeyPair("ES256");
 			const token = await new jose.SignJWT({
 				iss: "https://gitlab.com",
-				sub: "test",
+				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid: "test" })
@@ -268,7 +268,7 @@ describe("Security Headers Middleware", () => {
 			const { privateKey } = await jose.generateKeyPair("ES256");
 			const token = await new jose.SignJWT({
 				iss: issuer,
-				sub: "test",
+				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid })
@@ -293,7 +293,7 @@ describe("Security Headers Middleware", () => {
 			const { privateKey } = await jose.generateKeyPair("ES256");
 			const token = await new jose.SignJWT({
 				iss: "https://token.actions.githubusercontent.com",
-				sub: "test",
+				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid: "test" })
@@ -324,7 +324,7 @@ describe("Security Headers Middleware", () => {
 			const { privateKey } = await jose.generateKeyPair("ES256");
 			const token = await new jose.SignJWT({
 				iss: issuer,
-				sub: "test",
+				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid: "test" })
@@ -356,7 +356,7 @@ describe("Security Headers Middleware", () => {
 			try {
 				const token = await new jose.SignJWT({
 					iss: issuer,
-					sub: "test",
+					sub: "repo:test/svc",
 					aud: "gpg-signing-service",
 				})
 					.setProtectedHeader({ alg: "ES256", kid })
@@ -471,7 +471,7 @@ describe("Security Headers Middleware", () => {
 
 			const token = await new jose.SignJWT({
 				iss: issuer,
-				sub: "test",
+				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid: "unknown-key" })
@@ -505,7 +505,7 @@ describe("Security Headers Middleware", () => {
 			// Sign with WRONG private key but claim it's the correct kid
 			const token = await new jose.SignJWT({
 				iss: issuer,
-				sub: "test",
+				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid })
@@ -531,7 +531,7 @@ describe("Security Headers Middleware", () => {
 			const secret = new TextEncoder().encode("secret");
 			const token = await new jose.SignJWT({
 				iss: "https://token.actions.githubusercontent.com",
-				sub: "test",
+				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "HS256", kid: "test" })
@@ -554,7 +554,7 @@ describe("Security Headers Middleware", () => {
 			const { privateKey } = await jose.generateKeyPair("ES256");
 			const token = await new jose.SignJWT({
 				iss: "https://malicious-issuer.com",
-				sub: "test",
+				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid: "test" })
@@ -577,7 +577,7 @@ describe("Security Headers Middleware", () => {
 			const { privateKey } = await jose.generateKeyPair("ES256");
 			const token = await new jose.SignJWT({
 				iss: "https://token.actions.githubusercontent.com",
-				sub: "test",
+				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid: "test" })
@@ -600,7 +600,7 @@ describe("Security Headers Middleware", () => {
 			const { privateKey } = await jose.generateKeyPair("ES256");
 			const token = await new jose.SignJWT({
 				iss: "https://token.actions.githubusercontent.com",
-				sub: "test",
+				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid: "test" })
@@ -870,7 +870,7 @@ describe("Security Headers Middleware", () => {
 			const { privateKey } = await jose.generateKeyPair("ES256");
 			const token = await new jose.SignJWT({
 				iss: "https://10.0.0.1",
-				sub: "test-subject",
+				sub: "repo:test-subject/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid: "test-key" })
@@ -898,7 +898,7 @@ describe("Security Headers Middleware", () => {
 
 			const token = await new jose.SignJWT({
 				iss: "https://malicious.example.com",
-				sub: "test-subject",
+				sub: "repo:test-subject/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid: "test-key" })
@@ -939,7 +939,7 @@ describe("Security Headers Middleware", () => {
 
 			const token = await new jose.SignJWT({
 				iss: "https://token.actions.githubusercontent.com",
-				sub: "test-subject",
+				sub: "repo:test-subject/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid: "test-key" })
@@ -967,7 +967,7 @@ describe("Security Headers Middleware", () => {
 
 			const token = await new jose.SignJWT({
 				iss: "https://token.actions.githubusercontent.com",
-				sub: "test-subject",
+				sub: "repo:test-subject/svc",
 				aud: "gpg-signing-service",
 			})
 				.setProtectedHeader({ alg: "ES256", kid: "test-key" })

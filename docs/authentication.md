@@ -64,6 +64,14 @@ owner-wide row covering the rest.
 > refuses `repo:ownerevil`. The failure is closed either way — signing breaks,
 > nothing opens — but it breaks at an awkward moment.
 
+A prefix must also contain a delimiter with something after it. `repo:` and
+`repo` are refused, because a prefix ending at a delimiter is owner-wide and a
+bare scheme would therefore be _host_-wide — every repository on the issuer.
+The practical consequence: an identity provider whose subjects are opaque, with
+no `:`, `@` or `/` in them, cannot be trusted through this table even by naming
+one in full. Neither GitHub nor GitLab produces such subjects, but a custom
+entry in `ALLOWED_ISSUERS` might.
+
 Omit `keyIds` to allow every key. Omit `expiresInDays` for a trust that does
 not expire.
 
