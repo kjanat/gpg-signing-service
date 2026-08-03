@@ -47,10 +47,16 @@ describe("RateLimiter Durable Object", () => {
 		it("should return denied when tokens are exhausted", async () => {
 			const stub = getRateLimiter("check-exhausted");
 
-			// Consume all tokens first
-			for (let i = 0; i < 105; i++) {
-				await stub.fetch("http://localhost/consume?identity=exhausted-user");
+			// Consume until the bucket actually reports empty rather than a fixed
+			// count: the bucket refills at one token per 600ms, so a fixed loop that
+			// runs slowly under load hands tokens back faster than it takes them and
+			// the check below finds the bucket non-empty.
+			let denied = false;
+			for (let i = 0; i < 500 && !denied; i++) {
+				const consumed = await stub.fetch("http://localhost/consume?identity=exhausted-user");
+				denied = consumed.status === 429;
 			}
+			expect(denied).toBe(true);
 
 			// Now check
 			const response = await stub.fetch("http://localhost/check?identity=exhausted-user");
@@ -98,8 +104,10 @@ describe("RateLimiter Durable Object", () => {
 			const stub = getRateLimiter("consume-exhausted");
 
 			let hitLimit = false;
-			// Consume all tokens (plus buffer for refill)
-			for (let i = 0; i < 200; i++) {
+			// Bounded well above the bucket size: refill runs at one token per 600ms,
+			// so a loop that iterates slowly under load needs more turns than the
+			// 100-token capacity to get ahead of it.
+			for (let i = 0; i < 500; i++) {
 				const res = await stub.fetch("http://localhost/consume?identity=test-user");
 				if (res.status === 429) {
 					hitLimit = true;

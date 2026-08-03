@@ -147,7 +147,12 @@ app.openapi(signRoute, async (c) => {
 	// Only the caller's value is checked here. A malformed deploy-time `KEY_ID`
 	// still reaches `createKeyId` and surfaces as a 500, which is the correct
 	// volume for a broken deployment and is not something a caller can trigger.
-	if (keyIdQuery !== undefined && !isKeyIdShaped(keyIdQuery)) {
+	//
+	// `keyIdQuery &&`, not `!== undefined`: three lines down `keyIdQuery ||
+	// c.env.KEY_ID` already reads the empty string as "not supplied", and
+	// `?keyId=` is what a shell template emits for an unset variable. `/public-key`
+	// shares this schema and still falls back, so the two routes must agree.
+	if (keyIdQuery && !isKeyIdShaped(keyIdQuery)) {
 		return c.json(
 			{
 				error: `Invalid key ID format: ${keyIdQuery}`,
