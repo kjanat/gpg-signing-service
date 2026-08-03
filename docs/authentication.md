@@ -104,18 +104,31 @@ against `oidc_subjects`.
 
 ### What gets audited
 
-Two `sign` outcomes are worth alerting on, and both land in `audit_logs`:
+Every `sign` failure lands in `audit_logs` with `success: false` and one of:
 
-| Event                                     | Meaning                                                                                                                                                       |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `errorCode: KEY_NOT_ALLOWED`              | A live, trusted row asked for a key its `keyIds` grant does not cover — a misconfigured workflow, or a trust being used by something that should not hold it. |
-| `success: false`, `errorCode: SIGN_ERROR` | The caller was authorized and signing itself failed.                                                                                                          |
+| `errorCode`       | Meaning                                                                                                                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `KEY_NOT_ALLOWED` | A live, trusted row asked for a key its `keyIds` grant does not cover — a misconfigured workflow, or a trust being used by something that should not hold it. |
+| `KEY_NOT_FOUND`   | The caller was authorized and the requested key is not stored.                                                                                                |
+| `SIGN_ERROR`      | The caller was authorized and signing itself failed.                                                                                                          |
 
-A subject that is not trusted at all never reaches the route; it is refused in
-the OIDC middleware and logged as `Rejected untrusted OIDC subject`. That one is
-mostly noise — both issuers are shared with every repository on their platform,
-so unknown subjects arrive unprompted. `KEY_NOT_ALLOWED` is not noise: reaching
-it requires a token this service already decided to trust.
+`KEY_NOT_ALLOWED` is the one to alert on: reaching it requires a token this
+service already decided to trust.
+
+A caller that is refused _before_ the route — no matching trust — produces no
+`audit_logs` row, deliberately. That path is reachable by anyone holding any
+token the issuer will mint, so a write there would be unmetered. The three cases
+are distinguished in the structured logs instead, and they are not equally
+interesting:
+
+| Log message                       | Meaning                                                                                                                                          |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Revoked OIDC trust presented`    | A trust someone deliberately killed is still being used. Includes `subjectId`, `subjectPolicy` and `revokedAt`. Alert on this.                   |
+| `Expired OIDC trust presented`    | A trust lapsed and its workflow has not noticed. Routine, but actionable by the row's owner.                                                     |
+| `Rejected untrusted OIDC subject` | An unknown subject. Mostly background traffic — both issuers are shared with every repository on their platform, so strangers arrive unprompted. |
+
+All three return the same `401 Subject is not trusted for signing`: telling a
+caller that its subject matches a revoked row would confirm the row exists.
 
 ### Subject shapes
 

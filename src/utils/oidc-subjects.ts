@@ -29,6 +29,22 @@ export interface OIDCSubjectPolicy {
 	stampUsage: () => Promise<void>;
 }
 
+/**
+ * Why a subject was refused, or the policy that admitted it.
+ *
+ * The three refusal reasons are deliberately distinct. An unknown subject is
+ * noise — both issuers are shared with every repository on their platform, so
+ * strangers arrive unprompted. A *revoked* row still being presented is the
+ * opposite: it means a credential someone deliberately killed is still in use,
+ * which is the incident the revoke button exists for. Collapsing them into one
+ * null files the incident under the noise.
+ */
+export type OIDCSubjectResolution =
+	| { status: "trusted"; policy: OIDCSubjectPolicy }
+	| { status: "unknown" }
+	| { status: "revoked"; id: string; name: string; revokedAt: string }
+	| { status: "expired"; id: string; name: string; expiresAt: string };
+
 /** A stored subject as returned to admins. */
 export interface OIDCSubjectRecord {
 	id: string;
@@ -135,43 +151,58 @@ export async function insertOIDCSubject(
 /**
  * Resolve a verified token's issuer and subject to a signing policy.
  *
- * Returns null when nothing matches, which callers must treat as a refusal:
- * an empty table denies everyone rather than admitting everyone.
+ * Anything but `trusted` is a refusal: an empty table denies everyone rather
+ * than admitting everyone. The refusal carries *why*, because a revoked
+ * credential still being presented and a stranger arriving on a shared issuer
+ * warrant very different reactions.
  *
  * Where several prefixes match, the longest (most specific) wins, so a
  * narrow `repo:owner/repo` row can grant different keys than a broad
- * `repo:owner/` row covering the rest.
+ * `repo:owner/` row covering the rest. A live row always beats a dead one, so a
+ * revoked narrow row cannot shadow a live broad one that still covers the
+ * subject.
  *
  * @param db - Audit/policy database
  * @param issuer - Verified `iss` claim
  * @param sub - Verified `sub` claim
- * @returns The matching subject's policy, or null
+ * @returns The matching subject's policy, or the reason it was refused
  */
-export async function resolveOIDCSubject(
-	db: D1Database,
-	issuer: string,
-	sub: string,
-): Promise<OIDCSubjectPolicy | null> {
+export async function resolveOIDCSubject(db: D1Database, issuer: string, sub: string): Promise<OIDCSubjectResolution> {
 	// Filter by issuer in SQL; the delimiter rule cannot be expressed there, so
-	// candidate prefixes are matched in application code.
+	// candidate prefixes are matched in application code. Revoked and expired
+	// rows are selected too — not to honour them, but so a refusal can say which
+	// of the three it is.
 	const { results } = await db
 		.prepare(
 			`SELECT id, name, issuer, subject_prefix, key_ids, created_at, expires_at, revoked_at, last_used_at
        FROM oidc_subjects
-       WHERE issuer = ? AND revoked_at IS NULL`,
+       WHERE issuer = ?`,
 		)
 		.bind(issuer)
 		.all<OIDCSubjectRow>();
 
 	const now = Date.now();
 	const matches = results
-		.filter((row) => !row.expires_at || Date.parse(row.expires_at) >= now)
-		.filter((row) => subjectMatchesPrefix(sub, row.subject_prefix))
+		.filter((candidate) => subjectMatchesPrefix(sub, candidate.subject_prefix))
 		.sort((a, b) => b.subject_prefix.length - a.subject_prefix.length);
 
-	const row = matches[0];
+	const isLive = (candidate: OIDCSubjectRow) =>
+		!candidate.revoked_at && (!candidate.expires_at || Date.parse(candidate.expires_at) >= now);
+
+	const row = matches.find(isLive);
 	if (!row) {
-		return null;
+		// No live row. Report the most specific dead match so the log names the
+		// credential actually being presented, preferring a revoked row over an
+		// expired one: expiry is routine, revocation was a decision.
+		const revoked = matches.find((candidate) => candidate.revoked_at);
+		if (revoked?.revoked_at) {
+			return { status: "revoked", id: revoked.id, name: revoked.name, revokedAt: revoked.revoked_at };
+		}
+		const expired = matches[0];
+		if (expired?.expires_at) {
+			return { status: "expired", id: expired.id, name: expired.name, expiresAt: expired.expires_at };
+		}
+		return { status: "unknown" };
 	}
 
 	// Best-effort usage stamp, deferred rather than awaited: this sits on the
@@ -193,10 +224,13 @@ export async function resolveOIDCSubject(
 	};
 
 	return {
-		id: row.id,
-		name: row.name,
-		allowedKeyIds: parseKeyIds(row.key_ids),
-		stampUsage,
+		status: "trusted",
+		policy: {
+			id: row.id,
+			name: row.name,
+			allowedKeyIds: parseKeyIds(row.key_ids),
+			stampUsage,
+		},
 	};
 }
 

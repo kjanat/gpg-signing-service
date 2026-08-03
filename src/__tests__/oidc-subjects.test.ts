@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import app from "#gpg-signing-service";
 
+import type { OIDCSubjectPolicy, OIDCSubjectResolution } from "#utils/oidc-subjects";
 import {
 	insertOIDCSubject,
 	listOIDCSubjects,
@@ -16,6 +17,20 @@ import { clearTrustedSubjects } from "./helpers/oidc-subjects";
 
 const GITHUB = "https://token.actions.githubusercontent.com";
 const GITLAB = "https://gitlab.com";
+
+/**
+ * Assert that a resolution admitted the caller, and narrow to its policy.
+ *
+ * A refusal now carries a reason rather than being null, so a test that wants
+ * the policy has to say which arm it expects; this keeps that to one line.
+ */
+function trustedPolicy(resolution: OIDCSubjectResolution): OIDCSubjectPolicy {
+	expect(resolution.status).toBe("trusted");
+	if (resolution.status !== "trusted") {
+		throw new Error(`expected a trusted resolution, got ${resolution.status}`);
+	}
+	return resolution.policy;
+}
 
 describe("subjectMatchesPrefix", () => {
 	it("matches an exact subject", () => {
@@ -56,7 +71,9 @@ describe("OIDC subject policy store", () => {
 	it("denies everything when no subject is trusted", async () => {
 		// The property that matters most: an empty table is a closed door, not
 		// an open one. Both our issuers are shared by every repo on their host.
-		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:anyone/anything:ref:x")).resolves.toBeNull();
+		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:anyone/anything:ref:x")).resolves.toMatchObject({
+			status: "unknown",
+		});
 	});
 
 	it("resolves a trusted subject and returns its key scope", async () => {
@@ -68,9 +85,9 @@ describe("OIDC subject policy store", () => {
 			expiresAt: null,
 		});
 
-		const policy = await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:refs/heads/main");
-		expect(policy?.name).toBe("mine");
-		expect(policy?.allowedKeyIds).toEqual(["D8BC04E534E7706F"]);
+		const policy = trustedPolicy(await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:refs/heads/main"));
+		expect(policy.name).toBe("mine");
+		expect(policy.allowedKeyIds).toEqual(["D8BC04E534E7706F"]);
 	});
 
 	it("returns a null key scope when no keys are pinned", async () => {
@@ -82,8 +99,8 @@ describe("OIDC subject policy store", () => {
 			expiresAt: null,
 		});
 
-		const policy = await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x");
-		expect(policy?.allowedKeyIds).toBeNull();
+		const policy = trustedPolicy(await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x"));
+		expect(policy.allowedKeyIds).toBeNull();
 	});
 
 	it("pins the issuer, so the same subject string on another issuer is refused", async () => {
@@ -95,7 +112,9 @@ describe("OIDC subject policy store", () => {
 			expiresAt: null,
 		});
 
-		await expect(resolveOIDCSubject(env.AUDIT_DB, GITLAB, "repo:me/svc:ref:x")).resolves.toBeNull();
+		await expect(resolveOIDCSubject(env.AUDIT_DB, GITLAB, "repo:me/svc:ref:x")).resolves.toMatchObject({
+			status: "unknown",
+		});
 	});
 
 	it("refuses another repository on the same shared issuer", async () => {
@@ -107,7 +126,9 @@ describe("OIDC subject policy store", () => {
 			expiresAt: null,
 		});
 
-		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:attacker/evil:ref:x")).resolves.toBeNull();
+		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:attacker/evil:ref:x")).resolves.toMatchObject({
+			status: "unknown",
+		});
 	});
 
 	it("refuses an expired trust", async () => {
@@ -119,7 +140,9 @@ describe("OIDC subject policy store", () => {
 			expiresAt: new Date(Date.now() - 1000).toISOString(),
 		});
 
-		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x")).resolves.toBeNull();
+		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x")).resolves.toMatchObject({
+			status: "expired",
+		});
 	});
 
 	it("refuses a revoked trust", async () => {
@@ -134,7 +157,9 @@ describe("OIDC subject policy store", () => {
 		// The name comes back so the revoke can be audited under the same key the
 		// row's signatures were recorded under.
 		expect(await revokeOIDCSubject(env.AUDIT_DB, id)).toBe("revoked");
-		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x")).resolves.toBeNull();
+		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x")).resolves.toMatchObject({
+			status: "revoked",
+		});
 		// Revoking twice is not an error, it is a no-op.
 		expect(await revokeOIDCSubject(env.AUDIT_DB, id)).toBeNull();
 		// An unknown id is likewise a no-op, not a throw.
@@ -157,9 +182,9 @@ describe("OIDC subject policy store", () => {
 			expiresAt: null,
 		});
 
-		const policy = await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x");
-		expect(policy?.name).toBe("one-repo");
-		expect(policy?.allowedKeyIds).toEqual(["BBBBBBBBBBBBBBBB"]);
+		const policy = trustedPolicy(await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x"));
+		expect(policy.name).toBe("one-repo");
+		expect(policy.allowedKeyIds).toEqual(["BBBBBBBBBBBBBBBB"]);
 	});
 
 	it("stamps last use, and signing still works when that write fails", async () => {
@@ -174,8 +199,8 @@ describe("OIDC subject policy store", () => {
 		// Await the stamp explicitly: it is deferred now, so asserting on it
 		// without this would depend on D1 statement ordering rather than on the
 		// write actually having happened.
-		const stamped = await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x");
-		await stamped?.stampUsage();
+		const stamped = trustedPolicy(await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x"));
+		await stamped.stampUsage();
 		const [listed] = await listOIDCSubjects(env.AUDIT_DB);
 		expect(listed?.lastUsedAt).not.toBeNull();
 
@@ -187,9 +212,8 @@ describe("OIDC subject policy store", () => {
 			}
 			return realPrepare(query);
 		});
-		const onFailure = await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x");
-		expect(onFailure).not.toBeNull();
-		await expect(onFailure?.stampUsage()).resolves.toBeUndefined();
+		const onFailure = trustedPolicy(await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x"));
+		await expect(onFailure.stampUsage()).resolves.toBeUndefined();
 		spy.mockRestore();
 
 		// Same again with a non-Error rejection, which takes the String(error) branch.
@@ -199,9 +223,8 @@ describe("OIDC subject policy store", () => {
 			}
 			return realPrepare(query);
 		});
-		const onNonError = await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x");
-		expect(onNonError).not.toBeNull();
-		await expect(onNonError?.stampUsage()).resolves.toBeUndefined();
+		const onNonError = trustedPolicy(await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x"));
+		await expect(onNonError.stampUsage()).resolves.toBeUndefined();
 		spyNonError.mockRestore();
 	});
 
@@ -291,14 +314,18 @@ describe("admin subject management", () => {
 		expect(subjects.map((entry) => entry.name)).toContain("ci/e2e");
 
 		// Trusted until revoked.
-		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x")).resolves.not.toBeNull();
+		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x")).resolves.toMatchObject({
+			status: "trusted",
+		});
 
 		const revoked = await adminRequest(`/admin/subjects/${subject.id}`, { method: "DELETE" });
 		expect(revoked.status).toBe(200);
 		// The response echoes the name, which is the key `sign` events are logged
 		// under; without it the operator holds an id that joins to nothing.
 		expect(await revoked.json()).toMatchObject({ success: true, id: subject.id, name: "ci/e2e" });
-		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x")).resolves.toBeNull();
+		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x")).resolves.toMatchObject({
+			status: "revoked",
+		});
 
 		// Revoking again reports not-found rather than pretending to succeed.
 		const again = await adminRequest(`/admin/subjects/${subject.id}`, { method: "DELETE" });
@@ -339,7 +366,9 @@ describe("admin subject management", () => {
 		const { id } = (await created.json()) as { id: string };
 
 		expect((await adminRequest(`/admin/subjects/${id}`, { method: "DELETE" })).status).toBe(200);
-		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:incident/svc:ref:x")).resolves.toBeNull();
+		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:incident/svc:ref:x")).resolves.toMatchObject({
+			status: "revoked",
+		});
 
 		const restored = await adminRequest("/admin/subjects", {
 			method: "POST",
@@ -347,7 +376,9 @@ describe("admin subject management", () => {
 			body: JSON.stringify({ name: "incident-after", ...body }),
 		});
 		expect(restored.status).toBe(201);
-		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:incident/svc:ref:x")).resolves.not.toBeNull();
+		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:incident/svc:ref:x")).resolves.toMatchObject({
+			status: "trusted",
+		});
 	});
 
 	it("explains that a renewal is blocked by an expired row, and how to clear it", async () => {
@@ -361,7 +392,9 @@ describe("admin subject management", () => {
 			keyIds: [],
 			expiresAt: new Date(Date.now() - 1000).toISOString(),
 		});
-		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:renew/svc:ref:x")).resolves.toBeNull();
+		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:renew/svc:ref:x")).resolves.toMatchObject({
+			status: "expired",
+		});
 
 		const blocked = await adminRequest("/admin/subjects", {
 			method: "POST",
@@ -394,6 +427,84 @@ describe("admin subject management", () => {
 		// Naming the blocking row is what makes it actionable; "already exists"
 		// alone leaves the operator guessing which row they are fighting.
 		expect(error).toContain("still live");
+	});
+
+	it("still reports a 409 when the conflict cannot be described", async () => {
+		// Both describers are best-effort by design: naming the blocking row is a
+		// nicety, and a failure looking it up must not turn a 409 into a 500.
+		const create = (name: string, subjectPrefix: string) =>
+			adminRequest("/admin/subjects", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ name, issuer: GITHUB, subjectPrefix }),
+			});
+		expect((await create("ci/describe-fail", "repo:describe/")).status).toBe(201);
+
+		const realPrepare = env.AUDIT_DB.prepare.bind(env.AUDIT_DB);
+		const spy = vi.spyOn(env.AUDIT_DB, "prepare").mockImplementation((query: string) => {
+			if (query.startsWith("SELECT id, revoked_at FROM oidc_subjects")) {
+				throw new Error("describe failed");
+			}
+			if (query.startsWith("SELECT id, expires_at FROM oidc_subjects")) {
+				throw new Error("describe failed");
+			}
+			return realPrepare(query);
+		});
+		try {
+			const nameClash = await create("ci/describe-fail", "repo:other/");
+			expect(nameClash.status).toBe(409);
+			expect(((await nameClash.json()) as { error: string }).error).toBe(
+				"Subject name already exists: ci/describe-fail",
+			);
+
+			const prefixClash = await create("ci/describe-fail-2", "repo:describe/");
+			expect(prefixClash.status).toBe(409);
+			expect(((await prefixClash.json()) as { error: string }).error).toBe(
+				`Issuer and subject prefix are already claimed: ${GITHUB} repo:describe/`,
+			);
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it("falls back to the plain message when the blocking row cannot be found", async () => {
+		// The lookup succeeds but returns nothing — possible if the row is removed
+		// between the failed insert and the describe. Still a 409, still useful.
+		const create = (name: string, subjectPrefix: string) =>
+			adminRequest("/admin/subjects", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ name, issuer: GITHUB, subjectPrefix }),
+			});
+		expect((await create("ci/vanishing", "repo:vanish/")).status).toBe(201);
+
+		const realPrepare = env.AUDIT_DB.prepare.bind(env.AUDIT_DB);
+		const spy = vi.spyOn(env.AUDIT_DB, "prepare").mockImplementation((query: string) => {
+			// Rewrite the describe lookups so they match nothing.
+			if (query.startsWith("SELECT id, revoked_at FROM oidc_subjects")) {
+				return realPrepare("SELECT id, revoked_at FROM oidc_subjects WHERE name = ? AND 0");
+			}
+			if (query.startsWith("SELECT id, expires_at FROM oidc_subjects")) {
+				return realPrepare(
+					`SELECT id, expires_at FROM oidc_subjects
+					 WHERE issuer = ? AND subject_prefix = ? AND revoked_at IS NULL AND 0`,
+				);
+			}
+			return realPrepare(query);
+		});
+		try {
+			const nameClash = await create("ci/vanishing", "repo:elsewhere/");
+			expect(nameClash.status).toBe(409);
+			expect(((await nameClash.json()) as { error: string }).error).toBe("Subject name already exists: ci/vanishing");
+
+			const prefixClash = await create("ci/vanishing-2", "repo:vanish/");
+			expect(prefixClash.status).toBe(409);
+			expect(((await prefixClash.json()) as { error: string }).error).toBe(
+				`Issuer and subject prefix are already claimed: ${GITHUB} repo:vanish/`,
+			);
+		} finally {
+			spy.mockRestore();
+		}
 	});
 
 	it("says so when the name is held by a row that was already revoked", async () => {
@@ -475,8 +586,8 @@ describe("admin subject management", () => {
 		expect(created.status).toBe(201);
 		expect(((await created.json()) as { keyIds: string[] }).keyIds).toEqual(["D8BC04E534E7706F"]);
 
-		const policy = await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:case/svc:ref:x");
-		expect(policy?.allowedKeyIds).toEqual(["D8BC04E534E7706F"]);
+		const policy = trustedPolicy(await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:case/svc:ref:x"));
+		expect(policy.allowedKeyIds).toEqual(["D8BC04E534E7706F"]);
 	});
 
 	it("requires the admin token", async () => {

@@ -520,6 +520,19 @@ func mapSignResponseError(resp *api.PostSignResponse) error {
 			Code:    string(resp.JSON400.Code),
 			Message: resp.JSON400.Error,
 		}
+	case resp.JSON403 != nil:
+		// Without this case the 403 falls through to a bare "unexpected status
+		// code", discarding both the server's message and the KEY_NOT_ALLOWED code
+		// that exists so a scope denial is distinguishable from any other refusal.
+		e := &ServiceError{
+			Code:       string(resp.JSON403.Code),
+			Message:    resp.JSON403.Error,
+			StatusCode: 403,
+		}
+		if resp.JSON403.RequestId != nil {
+			e.RequestID = resp.JSON403.RequestId.String()
+		}
+		return e
 	case resp.JSON404 != nil:
 		return &ServiceError{
 			Code:       string(resp.JSON404.Code),
