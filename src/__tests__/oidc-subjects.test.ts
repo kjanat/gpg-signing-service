@@ -701,6 +701,14 @@ describe("admin subject management", () => {
 		const metadata = JSON.parse(revokeEvent?.metadata ?? "{}") as { stillTrustedWithin: string[] };
 		expect(metadata.stillTrustedWithin).toHaveLength(21);
 		expect(metadata.stillTrustedWithin.at(-1)).toBe("+2 more");
+
+		// The log line is the more urgent of the two sinks: Workers caps log data
+		// at 256 KB per request and Logpush at 16,384 characters per field, past
+		// which the *rest* of the request's logs are dropped — taking this warning
+		// with them.
+		const [, warnContext] = warnSpy.mock.calls.at(-1) as [string, { trustedWithin: string[] }];
+		expect(warnContext.trustedWithin).toHaveLength(21);
+		expect(warnContext.trustedWithin.at(-1)).toBe("+2 more");
 		warnSpy.mockRestore();
 	});
 

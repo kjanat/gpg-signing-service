@@ -110,13 +110,30 @@ export const SubjectRevokeResponseSchema = z
 		 * key grant, which may be wider than the one just revoked (`keyIds: null`
 		 * is every key).
 		 */
-		stillCoveredBy: z.array(CoveringSubjectSchema),
+		stillCoveredBy: z
+			.array(CoveringSubjectSchema)
+			// Described rather than only commented: the ordering is incident
+			// guidance, and TSDoc does not reach openapi.json or the generated
+			// client, which is what somebody reads mid-incident.
+			.describe(
+				"Live rows whose prefix covers the revoked one, most specific first — the first entry is " +
+					"the row resolution will actually pick. The whole revoked scope keeps signing under its " +
+					"key grant, which may be wider than the revoked row's (keyIds: null means every key).",
+			),
 		/**
-		 * Live rows *nested under* the revoked prefix, broadest first — each is a
-		 * separate hole in the revoked scope, so the widest one matters most.
-		 * Revoking a parent does not touch its children, so these keep signing.
-		 * Only when both lists are empty was the revoke final.
+		 * Live rows *nested under* the revoked prefix, outermost first: where one
+		 * of these contains another, the container is listed above it. Rows in
+		 * disjoint scopes are not ordered against each other, so read the whole
+		 * list. Revoking a parent does not touch its children, so these keep
+		 * signing. Only when both lists are empty was the revoke final.
 		 */
-		stillTrustedWithin: z.array(CoveringSubjectSchema),
+		stillTrustedWithin: z
+			.array(CoveringSubjectSchema)
+			.describe(
+				"Live rows nested under the revoked prefix, outermost first: where one contains another, " +
+					"the container is listed above it. Rows in disjoint scopes are not ordered against each " +
+					"other — a one-repo row can precede a team-wide one — so read the whole list. Only when " +
+					"both lists are empty was the revoke final.",
+			),
 	})
 	.openapi("SubjectRevokeResponse");

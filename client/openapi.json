@@ -693,13 +693,15 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/CoveringSubject"
-            }
+            },
+            "description": "Live rows whose prefix covers the revoked one, most specific first — the first entry is the row resolution will actually pick. The whole revoked scope keeps signing under its key grant, which may be wider than the revoked row's (keyIds: null means every key)."
           },
           "stillTrustedWithin": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/CoveringSubject"
-            }
+            },
+            "description": "Live rows nested under the revoked prefix, outermost first: where one contains another, the container is listed above it. Rows in disjoint scopes are not ordered against each other — a one-repo row can precede a team-wide one — so read the whole list. Only when both lists are empty was the revoke final."
           }
         },
         "required": [
