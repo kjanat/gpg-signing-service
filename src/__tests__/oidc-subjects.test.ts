@@ -358,6 +358,26 @@ describe("admin subject management", () => {
 		expect(((await response.json()) as { error: string }).error).toContain("ALLOWED_ISSUERS");
 	});
 
+	it("normalizes a lowercase key id to uppercase", async () => {
+		// Stored keys are uppercase and the sign route compares case-sensitively,
+		// so a lowercase id would list as allowed and never match anything.
+		const created = await adminRequest("/admin/subjects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				name: "ci/lowercase-key",
+				issuer: GITHUB,
+				subjectPrefix: "repo:case/",
+				keyIds: ["d8bc04e534e7706f"],
+			}),
+		});
+		expect(created.status).toBe(201);
+		expect(((await created.json()) as { keyIds: string[] }).keyIds).toEqual(["D8BC04E534E7706F"]);
+
+		const policy = await resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:case/svc:ref:x");
+		expect(policy?.allowedKeyIds).toEqual(["D8BC04E534E7706F"]);
+	});
+
 	it("requires the admin token", async () => {
 		const ctx = createExecutionContext();
 		const response = await app.fetch(

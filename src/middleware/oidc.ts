@@ -119,8 +119,11 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
 		throw new Error(`Algorithm not allowed: ${header.alg}`);
 	}
 
-	// Validate issuer
-	const allowedIssuers = env.ALLOWED_ISSUERS.split(",");
+	// Validate issuer. Trim to match how /admin/subjects reads the same variable:
+	// if only one side trimmed, whitespace after a comma would let an issuer be
+	// trusted at create time and refused here, producing exactly the silently
+	// dead row that check exists to prevent.
+	const allowedIssuers = env.ALLOWED_ISSUERS.split(",").map((issuer) => issuer.trim());
 	if (!allowedIssuers.includes(payload.iss)) {
 		throw new Error(`Issuer not allowed: ${payload.iss}`);
 	}

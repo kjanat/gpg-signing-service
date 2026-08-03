@@ -420,6 +420,8 @@
             "type": "array",
             "items": {
               "type": "string",
+              "minLength": 16,
+              "maxLength": 16,
               "pattern": "^[A-Fa-f0-9]{16}$"
             }
           },
@@ -583,6 +585,8 @@
             "type": "array",
             "items": {
               "type": "string",
+              "minLength": 16,
+              "maxLength": 16,
               "pattern": "^[A-Fa-f0-9]{16}$"
             }
           },

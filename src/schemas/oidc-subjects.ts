@@ -1,5 +1,7 @@
 import { z } from "@hono/zod-openapi";
 
+import { KeyIdSchema } from "#schemas/keys";
+
 /** Trusted subject name: human-readable label for the CI identity. */
 export const SubjectNameSchema = z
 	.string()
@@ -26,8 +28,13 @@ export const SubjectCreateSchema = z
 		/** Issuer this subject must present, pinned so issuers cannot collide. */
 		issuer: z.string().url(),
 		subjectPrefix: SubjectPrefixSchema,
-		/** Key ids this subject may sign with; omit for every key. */
-		keyIds: z.array(z.string().regex(/^[A-Fa-f0-9]{16}$/)).optional(),
+		/**
+		 * Key ids this subject may sign with; omit for every key. Uses the same
+		 * schema as key upload, which normalizes to uppercase — a lowercase id
+		 * would otherwise store as written, list as allowed, and never match the
+		 * case-sensitive check in the sign route.
+		 */
+		keyIds: z.array(KeyIdSchema).optional(),
 		/** Days until expiry; omit for a non-expiring trust. */
 		expiresInDays: z.number().int().min(1).max(3650).optional(),
 	})
