@@ -12,24 +12,62 @@ jobs:
                     github.event_name == 'issues', format('{0} {1}', github.event.issue.title, github.event.issue.body),
                     github.event.comment.body), '@claude')
     runs-on: ubuntu-latest
-    permissions: { contents: read, pull-requests: read, issues: read, id-token: write, actions: read }
+    permissions: { contents: write, pull-requests: write, issues: write, id-token: write, actions: read }
     steps:
       - { uses: actions/checkout@v7, with: { fetch-depth: 0 } }
       - { uses: ./.github/actions/setup-bun, id: bun }
       - { uses: ./.github/actions/setup-task }
       - { uses: kjanat/runner@master }
       - { run: runner install }
+      # Dogfood: git is configured so commits Claude makes are GPG-signed by
+      # this very service (OIDC-authenticated /sign call per commit). Every
+      # @claude run doubles as a live integration test.
+      - uses: ./.github/actions/setup-claude-signing
+        with: { service-url: "${{ vars.SIGNING_SERVICE_URL }}" }
       - uses: anthropics/claude-code-action@v1
+        env:
+          # Consumed by .mcp.json — Cloudflare's MCP endpoint accepts a plain
+          # API token as Bearer auth for CI (no OAuth dance needed). Unset
+          # secret = that one MCP server fails to connect, nothing else breaks.
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # git env vars outrank `git config user.*`, which the action hardcodes
+          # to <botId>+<botName>@users.noreply.github.com in
+          # src/github/operations/git-config.ts — this makes CI commits use the
+          # repo owner's real identity instead of a bot one.
+          GIT_AUTHOR_NAME: ${{ vars.GIT_AUTHOR_NAME }}
+          GIT_AUTHOR_EMAIL: ${{ vars.GIT_AUTHOR_EMAIL }}
+          GIT_COMMITTER_NAME: ${{ vars.GIT_COMMITTER_NAME }}
+          GIT_COMMITTER_EMAIL: ${{ vars.GIT_COMMITTER_EMAIL }}
         with:
           additional_permissions: "actions: read"
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           path_to_bun_executable: ${{ steps.bun.outputs.bun-path }}
+          # `settings` is honored for model/attribution/MCP, but NOT for permissions here:
+          # tag mode (the @claude flow) hardcodes its own CLI flags in
+          # src/modes/tag/index.ts (v1):
+          #   claudeArgs += ` --permission-mode acceptEdits --allowedTools "${tagModeTools}"`
+          # and a CLI --permission-mode flag always outranks a settings-file
+          # `permissions.defaultMode`. That's why CLAUDE_SETTINGS' bypassPermissions
+          # alone had no effect (see run 30770718579: 7 permission denials).
           settings: ${{ vars.CLAUDE_SETTINGS }}
+          # User claude_args are appended AFTER the action's hardcoded flags
+          # (src/modes/tag/index.ts: `claudeArgs += \` ${userClaudeArgs}\``), and the
+          # parser (base-action/src/parse-sdk-options.ts) treats:
+          #   --permission-mode  as last-wins  -> our bypassPermissions overrides acceptEdits
+          #   --allowedTools     as accumulating -> merges with tag mode's list (git +
+          #                                         comment/CI MCP tools survive)
+          # Without bypass, the headless SDK has no prompt handler, so any tool that
+          # falls through to "ask" (Bash(task:*), WebFetch, ...) is auto-denied.
+          # WebSearch/WebFetch look "disallowed" in logs, but that DISALLOWED_TOOLS env
+          # export is dead code (src/create-prompt/index.ts: "nothing reads
+          # ALLOWED_TOOLS / DISALLOWED_TOOLS") — they were only blocked by absence from
+          # the allowlist, so naming them here is sufficient.
+          claude_args: |
+            --permission-mode bypassPermissions
+            --allowedTools Edit,MultiEdit,Write,NotebookEdit,Bash,WebFetch,WebSearch,Task,TodoWrite
 
 # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
 # prompt: 'Update the pull request description to include a summary of changes.'
 
-# Optional: Add claude_args to customize behavior and configuration
 # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
 # or https://docs.claude.com/en/docs/claude-code/cli-reference for available options
-# claude_args: '--allowed-tools Bash(gh pr:*)'
