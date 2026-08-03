@@ -54,6 +54,41 @@ async function describePrefixConflict(db: D1Database, issuer: string, subjectPre
 	}
 }
 
+/**
+ * Describe which row is holding a name.
+ *
+ * Names are unique across *all* rows, revoked ones included, so the most
+ * confusing collision is with a trust the operator revoked minutes ago —
+ * "already exists" reads as "still trusted" and invites them to widen something
+ * else instead of picking a new label. Best-effort, like the prefix variant.
+ *
+ * @param db - Audit/policy database
+ * @param name - Name from the rejected request
+ * @returns A message naming the blocking row and whether it is still live
+ */
+async function describeNameConflict(db: D1Database, name: string): Promise<string> {
+	const base = `Subject name already exists: ${name}`;
+	try {
+		const row = await db
+			.prepare("SELECT id, revoked_at FROM oidc_subjects WHERE name = ?")
+			.bind(name)
+			.first<{ id: string; revoked_at: string | null }>();
+
+		if (!row) {
+			return base;
+		}
+		if (row.revoked_at) {
+			return (
+				`${base} — held by row ${row.id}, which was revoked at ${row.revoked_at} and trusts nobody. ` +
+				`Names are permanent labels for one generation of a trust and are never freed; choose a new name.`
+			);
+		}
+		return `${base} — held by row ${row.id}, which is still live. Revoke it first if you meant to replace it.`;
+	} catch {
+		return base;
+	}
+}
+
 const createSubjectRoute = createRoute({
 	method: "post",
 	path: "/subjects",
@@ -150,6 +185,8 @@ app.openapi(createSubjectRoute, async (c) => {
 				expiresAt,
 				revokedAt: null,
 				lastUsedAt: null,
+				// Freshly inserted, so neither revoked nor (yet) expired.
+				active: true,
 			},
 			HTTP.Created,
 		);
@@ -169,7 +206,7 @@ app.openapi(createSubjectRoute, async (c) => {
 			// the offending row instead.
 			const conflict = message.includes("subject_prefix")
 				? await describePrefixConflict(c.env.AUDIT_DB, body.issuer, body.subjectPrefix)
-				: `Subject name already exists: ${body.name}`;
+				: await describeNameConflict(c.env.AUDIT_DB, body.name);
 			return c.json(
 				{
 					error: conflict,
@@ -258,8 +295,8 @@ app.openapi(revokeSubjectRoute, async (c) => {
 	const { id } = c.req.valid("param");
 
 	try {
-		const revoked = await revokeOIDCSubject(c.env.AUDIT_DB, id);
-		if (!revoked) {
+		const revokedName = await revokeOIDCSubject(c.env.AUDIT_DB, id);
+		if (!revokedName) {
 			return c.json(
 				{
 					error: "Subject not found or already revoked",
@@ -280,10 +317,13 @@ app.openapi(revokeSubjectRoute, async (c) => {
 				subject: id,
 				keyId: "*",
 				success: true,
+				// `sign` events are keyed by the row's name, this one by its id.
+				// Carry both so the trail joins to itself without a table lookup.
+				metadata: JSON.stringify({ subjectPolicy: revokedName }),
 			}),
 		);
 
-		return c.json({ success: true, id }, HTTP.OK);
+		return c.json({ success: true, id, name: revokedName }, HTTP.OK);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Revoke failed";
 		logger.error("Subject revoke failed", { requestId, error: message });

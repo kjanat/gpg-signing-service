@@ -6,6 +6,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import app from "#gpg-signing-service";
 import { logAuditEvent } from "#utils/audit";
 import { logger } from "#utils/logger";
+import { insertOIDCSubject } from "#utils/oidc-subjects";
 import { seedTrustedSubjects } from "./helpers/oidc-subjects";
 
 const parseJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
@@ -175,6 +176,43 @@ describe("Sign Route", () => {
 			expect(JSON.parse(failed?.metadata ?? "{}")).toMatchObject({
 				subjectPolicy: `${issuer}|repo:user/repo`,
 			});
+		});
+
+		it("audits a trusted subject reaching outside its key scope", async () => {
+			// The highest-signal event the service can produce: the credential is
+			// valid and the row is live, but the grant does not cover the key. If
+			// this returns bare, there is no way to tell a misconfigured workflow
+			// from a trust being used by something that should not hold it.
+			await insertOIDCSubject(env.AUDIT_DB, {
+				name: "ci/key-scoped",
+				issuer,
+				subjectPrefix: "repo:scoped/svc",
+				keyIds: ["AAAAAAAAAAAAAAAA"],
+				expiresAt: null,
+			});
+			await setupJWKSMock();
+			const token = await createToken({ sub: "repo:scoped/svc:ref:refs/heads/main" });
+
+			const response = await makeRequest("/sign?keyId=BBBBBBBBBBBBBBBB", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(403);
+			// Not INVALID_REQUEST: a scope denial has to be filterable apart from a
+			// malformed request.
+			expect(await response.json()).toMatchObject({ code: "KEY_NOT_ALLOWED" });
+
+			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+			const denied = events.find((event) => event.errorCode === "KEY_NOT_ALLOWED");
+			expect(denied).toMatchObject({
+				action: "sign",
+				success: false,
+				subject: "repo:scoped/svc:ref:refs/heads/main",
+				keyId: "BBBBBBBBBBBBBBBB",
+			});
+			expect(JSON.parse(denied?.metadata ?? "{}")).toMatchObject({ subjectPolicy: "ci/key-scoped" });
 		});
 
 		it("should return 400 if commit data is missing", async () => {

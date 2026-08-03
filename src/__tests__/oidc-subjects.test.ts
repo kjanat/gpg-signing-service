@@ -131,10 +131,14 @@ describe("OIDC subject policy store", () => {
 			expiresAt: null,
 		});
 
-		expect(await revokeOIDCSubject(env.AUDIT_DB, id)).toBe(true);
+		// The name comes back so the revoke can be audited under the same key the
+		// row's signatures were recorded under.
+		expect(await revokeOIDCSubject(env.AUDIT_DB, id)).toBe("revoked");
 		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x")).resolves.toBeNull();
 		// Revoking twice is not an error, it is a no-op.
-		expect(await revokeOIDCSubject(env.AUDIT_DB, id)).toBe(false);
+		expect(await revokeOIDCSubject(env.AUDIT_DB, id)).toBeNull();
+		// An unknown id is likewise a no-op, not a throw.
+		expect(await revokeOIDCSubject(env.AUDIT_DB, crypto.randomUUID())).toBeNull();
 	});
 
 	it("prefers the most specific prefix when several match", async () => {
@@ -218,7 +222,32 @@ describe("OIDC subject policy store", () => {
 			subjectPrefix: "project_path:group/proj",
 			keyIds: ["D8BC04E534E7706F"],
 			revokedAt: null,
+			active: true,
 		});
+	});
+
+	it("reports expired and revoked rows as inactive", async () => {
+		// An expired row is unrevoked, so `revokedAt: null` alone reads as live.
+		await insertOIDCSubject(env.AUDIT_DB, {
+			name: "expired",
+			issuer: GITHUB,
+			subjectPrefix: "repo:me/expired",
+			keyIds: [],
+			expiresAt: new Date(Date.now() - 1000).toISOString(),
+		});
+		const revokedId = await insertOIDCSubject(env.AUDIT_DB, {
+			name: "killed",
+			issuer: GITHUB,
+			subjectPrefix: "repo:me/killed",
+			keyIds: [],
+			expiresAt: null,
+		});
+		await revokeOIDCSubject(env.AUDIT_DB, revokedId);
+
+		const subjects = await listOIDCSubjects(env.AUDIT_DB);
+		const byName = new Map(subjects.map((subject) => [subject.name, subject.active]));
+		expect(byName.get("expired")).toBe(false);
+		expect(byName.get("killed")).toBe(false);
 	});
 });
 
@@ -266,6 +295,9 @@ describe("admin subject management", () => {
 
 		const revoked = await adminRequest(`/admin/subjects/${subject.id}`, { method: "DELETE" });
 		expect(revoked.status).toBe(200);
+		// The response echoes the name, which is the key `sign` events are logged
+		// under; without it the operator holds an id that joins to nothing.
+		expect(await revoked.json()).toMatchObject({ success: true, id: subject.id, name: "ci/e2e" });
 		await expect(resolveOIDCSubject(env.AUDIT_DB, GITHUB, "repo:me/svc:ref:x")).resolves.toBeNull();
 
 		// Revoking again reports not-found rather than pretending to succeed.
@@ -357,7 +389,34 @@ describe("admin subject management", () => {
 		expect((await create("repo:a/")).status).toBe(201);
 		const clash = await create("repo:b/");
 		expect(clash.status).toBe(409);
-		expect(((await clash.json()) as { error: string }).error).toContain("name already exists");
+		const error = ((await clash.json()) as { error: string }).error;
+		expect(error).toContain("name already exists");
+		// Naming the blocking row is what makes it actionable; "already exists"
+		// alone leaves the operator guessing which row they are fighting.
+		expect(error).toContain("still live");
+	});
+
+	it("says so when the name is held by a row that was already revoked", async () => {
+		// Otherwise "already exists" reads as "still trusted" for a trust the
+		// operator killed minutes ago, and names are never freed.
+		const created = await adminRequest("/admin/subjects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ name: "ci/reused", issuer: GITHUB, subjectPrefix: "repo:a/" }),
+		});
+		const { id } = (await created.json()) as { id: string };
+		expect((await adminRequest(`/admin/subjects/${id}`, { method: "DELETE" })).status).toBe(200);
+
+		const clash = await adminRequest("/admin/subjects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ name: "ci/reused", issuer: GITHUB, subjectPrefix: "repo:b/" }),
+		});
+		expect(clash.status).toBe(409);
+		const error = ((await clash.json()) as { error: string }).error;
+		expect(error).toContain("revoked at");
+		expect(error).toContain(id);
+		expect(error).toMatch(/choose a new name/i);
 	});
 
 	it("rejects a malformed name, issuer, prefix or key id", async () => {

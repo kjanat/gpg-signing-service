@@ -72,6 +72,13 @@ export const SubjectSummarySchema = z
 		expiresAt: z.string().nullable(),
 		revokedAt: z.string().nullable(),
 		lastUsedAt: z.string().nullable(),
+		/**
+		 * Whether this row would authorize a token right now — neither revoked nor
+		 * expired. Derived server-side because the alternative is every client
+		 * re-implementing the same date comparison, and an expired row looks
+		 * identical to a live one until you do it.
+		 */
+		active: z.boolean(),
 	})
 	.openapi("SubjectSummary");
 
@@ -82,5 +89,10 @@ export const SubjectListResponseSchema = z
 	.openapi("SubjectListResponse");
 
 export const SubjectRevokeResponseSchema = z
-	.object({ success: z.boolean(), id: z.string() })
+	.object({
+		success: z.boolean(),
+		id: z.string(),
+		/** The revoked row's name — the key `sign` audit events are recorded under. */
+		name: SubjectNameSchema,
+	})
 	.openapi("SubjectRevokeResponse");
