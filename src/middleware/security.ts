@@ -6,6 +6,33 @@ import { HEADERS, HTTP, TIME } from "#types";
 import { logger } from "#utils/logger";
 
 /**
+ * Default CSP: every API route returns JSON, so nothing may be loaded at all.
+ */
+export const DEFAULT_CSP = "default-src 'none'; frame-ancestors 'none'";
+
+/**
+ * CSP for the Swagger UI page. It loads its stylesheet and bundle from jsDelivr,
+ * boots through an inline script and fetches the spec from /doc — all blocked by
+ * the default policy, which left the page blank.
+ *
+ * `'unsafe-inline'` for scripts is unavoidable: @hono/swagger-ui emits the
+ * bootstrap as a bare inline <script> with no nonce hook. It is scoped to the
+ * docs page, which renders no user input.
+ */
+export const DOCS_CSP = [
+	"default-src 'none'",
+	"script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://static.cloudflareinsights.com",
+	"style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+	"img-src 'self' data:",
+	"font-src 'self' data: https://cdn.jsdelivr.net",
+	"connect-src 'self' https://cloudflareinsights.com",
+	"frame-ancestors 'none'",
+].join("; ");
+
+/** Paths that render the interactive API documentation. */
+const DOCS_UI_PATHS = new Set(["/ui"]);
+
+/**
  * Security headers middleware for production hardening
  */
 export const securityHeaders: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
@@ -15,7 +42,7 @@ export const securityHeaders: MiddlewareHandler<{ Bindings: Env }> = async (c, n
 	c.header("X-Content-Type-Options", "nosniff");
 	c.header("X-Frame-Options", "DENY");
 	c.header("Referrer-Policy", "strict-origin-when-cross-origin");
-	c.header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
+	c.header("Content-Security-Policy", DOCS_UI_PATHS.has(c.req.path) ? DOCS_CSP : DEFAULT_CSP);
 	c.header("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
 	// HSTS: enforce HTTPS for 1 year, include subdomains
 	c.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");

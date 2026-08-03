@@ -68,6 +68,24 @@ describe("Security Headers Middleware", () => {
 		expect(response.headers.get("Content-Security-Policy")).toBe("default-src 'none'; frame-ancestors 'none'");
 	});
 
+	it("should relax Content-Security-Policy for the Swagger UI page", async () => {
+		const response = await makeRequest("/ui");
+		const csp = response.headers.get("Content-Security-Policy") ?? "";
+
+		expect(csp).toContain("script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net");
+		expect(csp).toContain("style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net");
+		expect(csp).toContain("connect-src 'self'");
+		// Framing stays forbidden even on the docs page
+		expect(csp).toContain("frame-ancestors 'none'");
+	});
+
+	it("should keep the strict Content-Security-Policy on /doc and API routes", async () => {
+		for (const path of ["/doc", "/health", "/public-key"]) {
+			const response = await makeRequest(path);
+			expect(response.headers.get("Content-Security-Policy")).toBe("default-src 'none'; frame-ancestors 'none'");
+		}
+	});
+
 	it("should set Permissions-Policy", async () => {
 		const response = await makeRequest("/health");
 		expect(response.headers.get("Permissions-Policy")).toBe("geolocation=(), microphone=(), camera=()");

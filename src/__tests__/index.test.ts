@@ -112,3 +112,33 @@ describe("Global Error Handling", () => {
 		}
 	});
 });
+
+describe("API Documentation Routes", () => {
+	it("should serve the OpenAPI spec at /doc", async () => {
+		const ctx = createExecutionContext();
+		const response = await app.fetch(new Request("http://localhost/doc"), env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(200);
+		const spec = (await response.json()) as { openapi: string; paths: Record<string, unknown> };
+		expect(spec.openapi).toMatch(/^3\./);
+		expect(Object.keys(spec.paths).length).toBeGreaterThan(0);
+	});
+
+	it("should serve the Swagger UI at /ui with a usable CSP", async () => {
+		const ctx = createExecutionContext();
+		const response = await app.fetch(new Request("http://localhost/ui"), env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(response.status).toBe(200);
+		const html = await response.text();
+		expect(html).toContain('id="swagger-ui"');
+		expect(html).toContain("SwaggerUIBundle");
+
+		// The page is useless unless the CSP allows the CDN assets and the
+		// inline bootstrap that mounts SwaggerUIBundle.
+		const csp = response.headers.get("Content-Security-Policy") ?? "";
+		expect(csp).toContain("https://cdn.jsdelivr.net");
+		expect(csp).toContain("'unsafe-inline'");
+	});
+});
