@@ -98,9 +98,9 @@ KEY_ID            = "D8BC04E534E7706F"
 ALLOWED_ORIGINS   = "https://admin.example.com"
 ```
 
-`ALLOWED_ISSUERS` is not a repository or organization allowlist. Read
-[Authentication](authentication.md#current-oidc-authorization-boundary) before
-enabling OIDC.
+`ALLOWED_ISSUERS` is not a repository or organization allowlist; authorization
+is the separate `oidc_subjects` table. Read
+[Authentication](authentication.md#oidc-authorization) before enabling OIDC.
 
 ## 5. Set secrets
 
@@ -192,7 +192,11 @@ printf 'smoke test' |
 
 ## Before production
 
-- Add repository/project claim authorization if using broad OIDC issuers.
+- Run `task db:migrate`, then trust at least one subject through
+  `POST /admin/subjects`. An empty `oidc_subjects` table denies every OIDC
+  caller, so signing stays broken until a row exists.
+- Scope each trusted subject prefix as narrowly as the subject shape allows and
+  pin `keyIds`; a prefix authorizes every workflow and ref beneath it.
 - Configure a non-empty `ALLOWED_ORIGINS` when browser access is required.
 - Define private-key backup and restoration procedures; no export endpoint
   exists.

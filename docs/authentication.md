@@ -368,6 +368,12 @@ Never substitute one credential for another.
 - OIDC callers: `issuer:subject`
 - Service-token callers: synthetic service-token issuer plus token name
 - Admin callers: source IP address
+- Revoked-trust reuse records: `oidc-revoked-reuse:<subject row id>`
 
 Signing and admin buckets each hold 100 tokens and refill at 100 tokens per
 minute. Rate-limiter failure is fail-closed with HTTP `503`.
+
+The OIDC signing bucket is keyed on `sub`, which GitHub varies per ref, so a
+trusted row is not limited to one bucket: a caller who can push branches draws a
+fresh budget per branch. Service tokens are metered per credential and do not
+have this. The revoked-reuse record is keyed on the row id for that reason.
