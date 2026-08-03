@@ -489,25 +489,29 @@ describe("Security Headers Middleware", () => {
 				}),
 			} as unknown as DurableObjectNamespace;
 
-			for (const sub of ["repo:flood/one:ref:refs/heads/main", "repo:flood/two:ref:refs/heads/anything-i-like"]) {
-				const token = await new jose.SignJWT({ iss: issuer, sub, aud: "gpg-signing-service" })
-					.setProtectedHeader({ alg: "ES256", kid })
-					.setIssuedAt()
-					.setExpirationTime("1h")
-					.sign(privateKey);
-				const response = await makeRequest(
-					"/sign",
-					{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
-					{ RATE_LIMITER: recordingLimiter },
-				);
-				expect(response.status).toBe(401);
+			try {
+				for (const sub of ["repo:flood/one:ref:refs/heads/main", "repo:flood/two:ref:refs/heads/anything-i-like"]) {
+					const token = await new jose.SignJWT({ iss: issuer, sub, aud: "gpg-signing-service" })
+						.setProtectedHeader({ alg: "ES256", kid })
+						.setIssuedAt()
+						.setExpirationTime("1h")
+						.sign(privateKey);
+					const response = await makeRequest(
+						"/sign",
+						{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+						{ RATE_LIMITER: recordingLimiter },
+					);
+					expect(response.status).toBe(401);
+				}
+
+				// One bucket for the row, whatever subject was presented.
+				expect(metered).toEqual([`oidc-revoked-reuse:${subjectId}`, `oidc-revoked-reuse:${subjectId}`]);
+				expect(metered.join(" ")).not.toContain("refs/heads");
+			} finally {
+				// `beforeEach` resets mocks and KV but does not reseed, so a failed
+				// assertion here would leave the table cleared for the rest of the file.
+				await seedTrustedSubjects(env.AUDIT_DB);
 			}
-
-			// One bucket for the row, whatever subject was presented.
-			expect(metered).toEqual([`oidc-revoked-reuse:${subjectId}`, `oidc-revoked-reuse:${subjectId}`]);
-			expect(metered.join(" ")).not.toContain("refs/heads");
-
-			await seedTrustedSubjects(env.AUDIT_DB);
 		});
 
 		it("does not write the revoked-reuse row when the caller is over budget or the limiter is down", async () => {

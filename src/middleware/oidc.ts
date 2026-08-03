@@ -14,10 +14,16 @@ import { resolveOIDCSubject } from "#utils/oidc-subjects";
 import { validateUrl } from "#utils/url-validation";
 
 /**
- * Rate-limiter namespace for revoked-trust reuse. Not an issuer, so it cannot
- * collide with the `<iss>:<sub>` buckets the signing path consumes —
- * `ALLOWED_ISSUERS` entries are URLs and `iss` is matched against that list
- * exactly.
+ * Rate-limiter namespace for revoked-trust reuse, kept disjoint from the
+ * `<iss>:<sub>` buckets the signing path consumes.
+ *
+ * Not because `ALLOWED_ISSUERS` is validated — it is a bare string, split on
+ * commas and checked nowhere; `SubjectCreateSchema.issuer` constrains stored
+ * *rows*, and the bucket name is built from `payload.iss`. The real guarantee is
+ * that a non-URL issuer cannot authenticate at all: `getJWKS` fetches
+ * `${issuer}/.well-known/openid-configuration` through `validateUrl`, which
+ * requires an absolute `https:` URL. So this string can never appear as an `iss`
+ * that reached the point of naming a bucket.
  */
 const REVOKED_REUSE_METER = "oidc-revoked-reuse";
 
@@ -38,6 +44,11 @@ const REVOKED_REUSE_METER = "oidc-revoked-reuse";
  * revoked trust to one bucket however many subjects it presents, the same shape
  * as the service-token path, which meters on `policy.name` rather than on
  * anything the caller picks.
+ *
+ * The argument above applies just as well to the *signing* path, which still
+ * meters on `<iss>:<sub>` — see the note on `oidcAuth` below. That is a capacity
+ * decision rather than a correctness one, so it is deliberately not changed
+ * here; do not read this comment as describing the whole service.
  *
  * @param c - Request context
  * @param requestId - This request's id, shared with the rest of the pipeline
@@ -88,7 +99,25 @@ async function recordRevokedReuse(
 	);
 }
 
-// OIDC validation middleware
+/**
+ * OIDC validation middleware.
+ *
+ * KNOWN GAP — the identity published here becomes the *signing* rate-limit
+ * bucket (`fetchRateLimiter(env, identity)` in the sign route), and it is
+ * `<iss>:<sub>`. GitHub puts the ref in `sub`, so an OIDC caller who can push a
+ * branch gets a fresh 100/min bucket per branch: the signing cap does not bound
+ * a trusted row, and every distinct `sub` leaves a permanent key in the limiter
+ * Durable Object, which nothing reaps. Service tokens do not have this — they
+ * meter on `policy.name`.
+ *
+ * Not fixed here because it is a capacity decision, not a correctness one.
+ * Metering on `policy.id` matches the service-token shape but collapses an
+ * owner-wide row to one shared bucket, which would throttle a busy org
+ * immediately; a per-row ceiling *above* the per-subject bucket keeps
+ * per-branch fairness at the cost of a second limiter round trip per signature.
+ * Either needs a number chosen against real traffic. `policy.id` is available
+ * for whichever is picked — it is what `recordRevokedReuse` already meters on.
+ */
 export const oidcAuth: MiddlewareHandler<{
 	Bindings: Env;
 	Variables: Variables;
