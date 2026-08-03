@@ -80,6 +80,7 @@
           "AUTH_MISSING",
           "AUTH_INVALID",
           "KEY_NOT_FOUND",
+          "KEY_NOT_ALLOWED",
           "KEY_PROCESSING_ERROR",
           "KEY_LIST_ERROR",
           "KEY_UPLOAD_ERROR",
@@ -543,6 +544,9 @@
           "lastUsedAt": {
             "type": "string",
             "nullable": true
+          },
+          "active": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -554,7 +558,8 @@
           "createdAt",
           "expiresAt",
           "revokedAt",
-          "lastUsedAt"
+          "lastUsedAt",
+          "active"
         ]
       },
       "SubjectName": {
@@ -654,6 +659,9 @@
           "lastUsedAt": {
             "type": "string",
             "nullable": true
+          },
+          "active": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -665,7 +673,8 @@
           "createdAt",
           "expiresAt",
           "revokedAt",
-          "lastUsedAt"
+          "lastUsedAt",
+          "active"
         ]
       },
       "SubjectRevokeResponse": {
@@ -676,11 +685,15 @@
           },
           "id": {
             "type": "string"
+          },
+          "name": {
+            "$ref": "#/components/schemas/SubjectName"
           }
         },
         "required": [
           "success",
-          "id"
+          "id",
+          "name"
         ]
       }
     },

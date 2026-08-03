@@ -94,11 +94,28 @@ widens access instead of renewing it.
 
 Names are also unique across all rows, revoked ones included, so a replacement
 needs a new `name`. Treat the name as a permanent label for one generation of a
-trust rather than a slot to reuse: every `sign` audit event carries the
+trust rather than a slot to reuse: every OIDC `sign` audit event carries the
 authorizing row's name in `metadata.subjectPolicy`, next to the JWT subject in
 `subject`. The subject alone cannot answer "what did the trust I just revoked
 sign?" — prefixes overlap, and a revoked row leaves no mark on the tokens it
-admitted.
+admitted. `DELETE /admin/subjects/:id` returns that name and logs it on the
+`subject_revoke` event too, so the trail joins to itself without a lookup
+against `oidc_subjects`.
+
+### What gets audited
+
+Two `sign` outcomes are worth alerting on, and both land in `audit_logs`:
+
+| Event                                     | Meaning                                                                                                                                                       |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `errorCode: KEY_NOT_ALLOWED`              | A live, trusted row asked for a key its `keyIds` grant does not cover — a misconfigured workflow, or a trust being used by something that should not hold it. |
+| `success: false`, `errorCode: SIGN_ERROR` | The caller was authorized and signing itself failed.                                                                                                          |
+
+A subject that is not trusted at all never reaches the route; it is refused in
+the OIDC middleware and logged as `Rejected untrusted OIDC subject`. That one is
+mostly noise — both issuers are shared with every repository on their platform,
+so unknown subjects arrive unprompted. `KEY_NOT_ALLOWED` is not noise: reaching
+it requires a token this service already decided to trust.
 
 ### Subject shapes
 

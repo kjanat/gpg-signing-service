@@ -40,6 +40,8 @@ export interface OIDCSubjectRecord {
 	expiresAt: string | null;
 	revokedAt: string | null;
 	lastUsedAt: string | null;
+	/** True when the row is neither revoked nor expired, i.e. it can authorize now. */
+	active: boolean;
 }
 
 interface OIDCSubjectRow {
@@ -207,6 +209,7 @@ export async function listOIDCSubjects(db: D1Database): Promise<OIDCSubjectRecor
 		)
 		.all<OIDCSubjectRow>();
 
+	const now = Date.now();
 	return results.map((row) => ({
 		id: row.id,
 		name: row.name,
@@ -217,14 +220,29 @@ export async function listOIDCSubjects(db: D1Database): Promise<OIDCSubjectRecor
 		expiresAt: row.expires_at,
 		revokedAt: row.revoked_at,
 		lastUsedAt: row.last_used_at,
+		// Same test `resolveOIDCSubject` applies, so the list cannot disagree with
+		// what the sign path will actually do.
+		active: !row.revoked_at && (!row.expires_at || Date.parse(row.expires_at) >= now),
 	}));
 }
 
-/** Revoke a subject by id. Returns false when the id is unknown. */
-export async function revokeOIDCSubject(db: D1Database, id: string): Promise<boolean> {
-	const result = await db
-		.prepare("UPDATE oidc_subjects SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL")
+/**
+ * Revoke a subject by id.
+ *
+ * Returns the revoked row's name, or null when the id is unknown or already
+ * revoked. The name rather than a bare boolean because `sign` events are keyed
+ * by name (`metadata.subjectPolicy`) while the revoke is keyed by id: without
+ * returning it here, no audit event carries both identifiers and "what did the
+ * trust I just revoked sign?" needs a join against `oidc_subjects` mid-incident.
+ *
+ * @param db - Audit/policy database
+ * @param id - Row id to revoke
+ * @returns The revoked row's name, or null
+ */
+export async function revokeOIDCSubject(db: D1Database, id: string): Promise<string | null> {
+	const row = await db
+		.prepare("UPDATE oidc_subjects SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL RETURNING name")
 		.bind(new Date().toISOString(), id)
-		.run();
-	return result.meta.changes > 0;
+		.first<{ name: string }>();
+	return row?.name ?? null;
 }

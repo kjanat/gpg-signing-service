@@ -99,10 +99,33 @@ app.openapi(signRoute, async (c) => {
 	// Both auth paths may carry a key allowlist; enforce it before any work.
 	const allowedKeyIds = c.get("allowedKeyIds");
 	if (allowedKeyIds && !allowedKeyIds.includes(keyIdParam)) {
+		// A trusted caller reaching past its own grant is the highest-signal event
+		// this service produces: either a misconfigured workflow or a credential
+		// being used by something that should not hold it. Returning bare would
+		// leave no way to tell which — an *untrusted* subject, a far weaker
+		// signal, already gets a log line in the OIDC middleware.
+		await scheduleBackgroundTask(
+			c,
+			requestId,
+			logAuditEvent(c.env.AUDIT_DB, {
+				requestId,
+				action: "sign",
+				issuer: claims.iss,
+				subject: claims.sub,
+				keyId: keyIdParam,
+				success: false,
+				errorCode: "KEY_NOT_ALLOWED",
+				metadata: JSON.stringify({ subjectPolicy: c.get("subjectPolicyName") }),
+			}),
+		);
+
 		return c.json(
 			{
 				error: `Token is not allowed to sign with key ${keyIdParam}`,
-				code: "INVALID_REQUEST" as const satisfies ErrorCode,
+				// Not INVALID_REQUEST: the request was well formed and the credential
+				// valid. Filtering audit_logs for scope denials needs it to be
+				// distinguishable from a 400.
+				code: "KEY_NOT_ALLOWED" as const satisfies ErrorCode,
 				requestId,
 			},
 			HTTP.Forbidden,
