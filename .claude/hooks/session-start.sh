@@ -72,7 +72,7 @@ elif [ -n "$GO_TOOLCHAIN" ]; then
 	# reproduces the exact error we are trying to avoid.
 	log "rebuilding golangci-lint with $GO_TOOLCHAIN (takes ~1-2 min, cached afterwards)"
 	GOTOOLCHAIN="$GO_TOOLCHAIN" go install \
-		github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest >/dev/null 2>&1 \
+		github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 >/dev/null 2>&1 \
 		|| log "WARN: golangci-lint install failed; 'task format' and 'task c:l' may fail on Go files"
 else
 	log "WARN: could not resolve Go toolchain from client/go.mod"

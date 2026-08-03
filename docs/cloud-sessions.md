@@ -109,7 +109,7 @@ npm install -g @go-task/cli || true
 # comes from the environment variables above; without it this rebuild is
 # pointless, because go install would use golangci-lint's own older toolchain.
 GOBIN=/usr/local/bin go install \
-  github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest || true
+  github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 || true
 
 # Optional: the released gpg-sign CLI. Use the direct download URL — the
 # releases API returns 403 through the proxy, but the asset URL itself is fine.

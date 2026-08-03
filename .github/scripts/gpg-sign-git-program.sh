@@ -69,6 +69,15 @@ if [[ -z "${GPG_SIGN_TOKEN:-}" ]]; then
 			"${oidc_url}&audience=gpg-signing-service" \
 			| jq -r '.value'
 	)"
+
+	# pipefail catches curl failing, but not a well-formed response without a
+	# .value — jq prints the literal string "null" and the shim would go on to
+	# send it as a bearer token, surfacing as a 401 that looks like a bad
+	# credential rather than a bad response.
+	if [[ -z "${GPG_SIGN_TOKEN}" || "${GPG_SIGN_TOKEN}" == "null" ]]; then
+		printf '%s\n' 'gpg-sign-git-program: OIDC endpoint returned no token value.' >&2
+		exit 1
+	fi
 fi
 export GPG_SIGN_TOKEN
 
