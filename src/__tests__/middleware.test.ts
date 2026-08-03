@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import * as jose from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "#gpg-signing-service";
+import { logAuditEvent } from "#utils/audit";
 import { logger } from "#utils/logger";
 import { insertOIDCSubject, revokeOIDCSubject } from "#utils/oidc-subjects";
 import { clearTrustedSubjects, seedTrustedSubjects } from "./helpers/oidc-subjects";
@@ -31,6 +32,24 @@ vi.mock("#utils/audit", async (importOriginal) => {
 		logAuditEvent: vi.fn(async () => undefined),
 	};
 });
+
+/** A RATE_LIMITER binding that answers every call with `body`, or `status` if given. */
+function rateLimiterAnswering(body: unknown, status?: number): DurableObjectNamespace {
+	return {
+		idFromName: () => ({}) as DurableObjectId,
+		get: () => ({
+			fetch: async () => (status ? new Response("boom", { status }) : Response.json(body)),
+		}),
+	} as unknown as DurableObjectNamespace;
+}
+
+/** A RATE_LIMITER binding that is unreachable. */
+function rateLimiterThrowing(reason: unknown = new Error("Rate limiter unavailable")): DurableObjectNamespace {
+	const fail = () => {
+		throw reason;
+	};
+	return { idFromName: fail, get: fail } as unknown as DurableObjectNamespace;
+}
 
 // Helper to make requests
 async function makeRequest(path: string, options: RequestInit = {}, customEnv?: Partial<Env>): Promise<Response> {
@@ -334,6 +353,18 @@ describe("Security Headers Middleware", () => {
 				"Revoked OIDC trust presented",
 				expect.objectContaining({ subjectId, subjectPolicy: "ci/killed" }),
 			);
+			// A killed credential still in use outlives the log store's retention,
+			// so it gets a durable row too — unlike the unknown-subject arm, which
+			// anyone can trigger and which stays log-only.
+			const reuseEvents = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+			const recorded = reuseEvents.find((event) => event.errorCode === "AUTH_INVALID");
+			expect(recorded).toBeDefined();
+			expect(JSON.parse(recorded?.metadata ?? "{}")).toMatchObject({
+				reason: "revoked_trust_presented",
+				subjectId,
+				subjectPolicy: "ci/killed",
+			});
+			vi.mocked(logAuditEvent).mockClear();
 
 			warnSpy.mockClear();
 			const stranger = await makeRequest("/sign", {
@@ -344,6 +375,78 @@ describe("Security Headers Middleware", () => {
 			expect(stranger.status).toBe(401);
 			expect(warnSpy).toHaveBeenCalledWith("Rejected untrusted OIDC subject", expect.any(Object));
 			expect(warnSpy).not.toHaveBeenCalledWith("Revoked OIDC trust presented", expect.any(Object));
+			// No durable row for the unknown arm: anyone holding any token the
+			// issuer will mint can reach it.
+			expect(vi.mocked(logAuditEvent).mock.calls).toHaveLength(0);
+			warnSpy.mockRestore();
+
+			await seedTrustedSubjects(env.AUDIT_DB);
+		});
+
+		it("does not write the revoked-reuse row when the caller is over budget or the limiter is down", async () => {
+			// The row is metered precisely so the holder of a revoked credential
+			// cannot flood the table the authorization store shares. Both failure
+			// modes must drop the write and leave the 401 unchanged.
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await clearTrustedSubjects(env.AUDIT_DB);
+
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "revoked-unmetered-key";
+			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const subjectId = await insertOIDCSubject(env.AUDIT_DB, {
+				name: "ci/unmetered",
+				issuer,
+				subjectPrefix: "repo:unmetered/svc",
+				keyIds: [],
+				expiresAt: null,
+			});
+			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toBe("ci/unmetered");
+
+			const token = await new jose.SignJWT({
+				iss: issuer,
+				sub: "repo:unmetered/svc:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "ES256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const request = () => ({
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			const overBudget = await makeRequest("/sign", request(), {
+				RATE_LIMITER: rateLimiterAnswering({ allowed: false, remaining: 0, resetAt: Date.now() + 30_000 }),
+			});
+			expect(overBudget.status).toBe(401);
+			expect(vi.mocked(logAuditEvent).mock.calls).toHaveLength(0);
+
+			const limiterErrored = await makeRequest("/sign", request(), { RATE_LIMITER: rateLimiterAnswering(null, 500) });
+			expect(limiterErrored.status).toBe(401);
+			expect(vi.mocked(logAuditEvent).mock.calls).toHaveLength(0);
+
+			const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+			const limiterDown = await makeRequest("/sign", request(), { RATE_LIMITER: rateLimiterThrowing() });
+			expect(limiterDown.status).toBe(401);
+			expect(vi.mocked(logAuditEvent).mock.calls).toHaveLength(0);
+			expect(warnSpy).toHaveBeenCalledWith(
+				"Could not meter a revoked-trust reuse, so it was not recorded",
+				expect.objectContaining({ error: expect.any(String) }),
+			);
+
+			// Same again with a non-Error rejection, which takes the String(error) branch.
+			warnSpy.mockClear();
+			const nonError = await makeRequest("/sign", request(), { RATE_LIMITER: rateLimiterThrowing("down") });
+			expect(nonError.status).toBe(401);
+			expect(warnSpy).toHaveBeenCalledWith(
+				"Could not meter a revoked-trust reuse, so it was not recorded",
+				expect.objectContaining({ error: "down" }),
+			);
 			warnSpy.mockRestore();
 
 			await seedTrustedSubjects(env.AUDIT_DB);

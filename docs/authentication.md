@@ -111,24 +111,33 @@ Every `sign` failure lands in `audit_logs` with `success: false` and one of:
 | `KEY_NOT_ALLOWED` | A live, trusted row asked for a key its `keyIds` grant does not cover — a misconfigured workflow, or a trust being used by something that should not hold it. |
 | `KEY_NOT_FOUND`   | The caller was authorized and the requested key is not stored.                                                                                                |
 | `SIGN_ERROR`      | The caller was authorized and signing itself failed.                                                                                                          |
+| `AUTH_INVALID`    | A **revoked** trust was presented. `metadata.reason` is `revoked_trust_presented`, with the row's `subjectId`, `subjectPolicy` and `revokedAt`.               |
 
-`KEY_NOT_ALLOWED` is the one to alert on: reaching it requires a token this
-service already decided to trust.
+The two to alert on are `KEY_NOT_ALLOWED` and `AUTH_INVALID`: both require a
+credential this service either trusts now or trusted deliberately in the past.
 
-A caller that is refused _before_ the route — no matching trust — produces no
-`audit_logs` row, deliberately. That path is reachable by anyone holding any
-token the issuer will mint, so a write there would be unmetered. The three cases
-are distinguished in the structured logs instead, and they are not equally
-interesting:
+Refusals before the route are metered before they are written, so a caller
+cannot flood the table that shares a database with the authorization store. If
+the limiter says no, or is unreachable, the refusal still stands but no row is
+written.
+
+Two refusals are **not** recorded in `audit_logs`, and are visible only in the
+structured logs:
 
 | Log message                       | Meaning                                                                                                                                          |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `Revoked OIDC trust presented`    | A trust someone deliberately killed is still being used. Includes `subjectId`, `subjectPolicy` and `revokedAt`. Alert on this.                   |
-| `Expired OIDC trust presented`    | A trust lapsed and its workflow has not noticed. Routine, but actionable by the row's owner.                                                     |
+| `Expired OIDC trust presented`    | A trust lapsed and its workflow has not noticed. Routine, and actionable by the row's owner.                                                     |
 | `Rejected untrusted OIDC subject` | An unknown subject. Mostly background traffic — both issuers are shared with every repository on their platform, so strangers arrive unprompted. |
 
-All three return the same `401 Subject is not trusted for signing`: telling a
-caller that its subject matches a revoked row would confirm the row exists.
+> [!IMPORTANT]
+> Workers Logs retention is short — 7 days on paid plans, 3 on Free, with
+> head-sampling above 5 billion logs/day account-wide. Anything you want to
+> alert on from these two lines has to be shipped off-platform first. The
+> durable events are the `audit_logs` rows above.
+
+Every refusal returns the same `401 Subject is not trusted for signing`
+regardless of which of the three it was: telling a caller that its subject
+matches a revoked row would confirm the row exists.
 
 ### Subject shapes
 

@@ -24,10 +24,26 @@ export type ArmoredPrivateKey = Brand<string, "ArmoredPrivateKey">;
 /** OIDC identity string in format `<iss>:<sub>` */
 export type Identity = Brand<string, "Identity">;
 
+const KEY_ID_PATTERN = /^[A-F0-9]{16}$/i;
+
+/**
+ * Does this string have the shape of a key ID?
+ *
+ * The non-throwing half of {@link createKeyId}, for callers that need to refuse
+ * a bad value rather than raise on it — a malformed query parameter is a 400,
+ * and turning it into an exception makes it a 500 somewhere up the stack.
+ *
+ * @param value - Candidate key id
+ * @returns true when the value is 16 hex characters
+ */
+export function isKeyIdShaped(value: string): boolean {
+	return KEY_ID_PATTERN.test(value);
+}
+
 /** Helper function to create validated key ID */
 export function createKeyId(value: string): KeyId {
 	// Basic validation - full validation via KeyIdSchema
-	if (!/^[A-F0-9]{16}$/i.test(value)) {
+	if (!isKeyIdShaped(value)) {
 		throw new Error(`Invalid KeyId format: ${value}`);
 	}
 	return value.toUpperCase() as KeyId;

@@ -26,8 +26,10 @@ CREATE TABLE IF NOT EXISTS oidc_subjects (
     last_used_at TEXT
 );
 
--- Lookups are always "active rows for this issuer", then prefix-matched in
--- application code, because SQL cannot express the delimiter rule.
+-- Lookups are always "every row for this issuer", then prefix-matched and
+-- liveness-checked in application code, because SQL cannot express the
+-- delimiter rule — and because a refusal has to say whether the matched row was
+-- revoked, expired or absent, which filtering them out in SQL would erase.
 CREATE INDEX IF NOT EXISTS idx_oidc_subjects_issuer ON oidc_subjects (issuer);
 
 -- Uniqueness applies to *live* rows only. Revoked rows are kept for the audit

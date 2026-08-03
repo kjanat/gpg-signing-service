@@ -13,7 +13,7 @@ import type { ErrorCode } from "#schemas/errors";
 import type { AnyStoredKey } from "#schemas/keys";
 import { AnyStoredKeySchema, isX509Key } from "#schemas/keys";
 import type { Identity, RateLimitResult, ValidatedOIDCClaims } from "#types";
-import { createKeyId, HEADERS, HTTP, TIME } from "#types";
+import { createKeyId, HEADERS, HTTP, isKeyIdShaped, TIME } from "#types";
 import { logAuditEvent } from "#utils/audit";
 import { fetchKeyStorage, fetchRateLimiter } from "#utils/durable-objects";
 import { scheduleBackgroundTask } from "#utils/execution";
@@ -24,22 +24,21 @@ import { signCommitDataX509 } from "#utils/x509";
 const app = createOpenAPIApp();
 
 /** Outcome of consulting the rate limiter, with the failure modes separated. */
-type RateLimitDecision =
-	| { kind: "ok"; rateLimit: RateLimitResult }
-	| { kind: "limited"; retryAfter: number }
-	| { kind: "unavailable" };
+type RateLimitDecision = { kind: "ok" } | { kind: "limited"; retryAfter: number } | { kind: "unavailable" };
 
 /**
  * Resolve an in-flight rate limiter call into a decision.
  *
- * `unavailable` rather than a throw, because the two callers want different
- * things from a limiter outage: the signing path refuses with 503, while a
- * request that is being denied anyway just needs to know it must not perform
- * unmetered work.
+ * Used by the refusal paths, which only need to know whether they may perform
+ * metered work — they have no signature to produce, so they never look at the
+ * remaining budget. The signing path keeps its own inline handling of the same
+ * response because it must distinguish an unreachable limiter (which reaches
+ * the route's `catch`) from one that answered with an error status (503), a
+ * split this collapses into `unavailable`.
  *
  * @param pending - An already-started `fetchRateLimiter` call
  * @param requestId - For correlating the outage in logs
- * @returns The limiter's verdict, or `unavailable`
+ * @returns Whether the caller is within budget, or `unavailable`
  */
 async function resolveRateLimit(pending: Promise<Response>, requestId: string): Promise<RateLimitDecision> {
 	let response: Response;
@@ -62,7 +61,7 @@ async function resolveRateLimit(pending: Promise<Response>, requestId: string): 
 	if (!rateLimit.allowed) {
 		return { kind: "limited", retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / 1000) };
 	}
-	return { kind: "ok", rateLimit };
+	return { kind: "ok" };
 }
 
 const signRoute = createRoute({
@@ -136,6 +135,29 @@ app.openapi(signRoute, async (c) => {
 
 	// Get key ID from query param or use default
 	const { keyId: keyIdQuery } = c.req.valid("query");
+
+	// Format-check the caller's value before any I/O. `PublicKeyQuerySchema`
+	// declares keyId as a bare optional string, so `createKeyId` further down is
+	// the only gate — and it *throws*, landing in the catch, which returns 500 and
+	// writes an audit row having never read the limiter's verdict. That is the one
+	// branch inside the metered window that escapes it, and it needs no key grant
+	// to reach. A malformed query parameter is a client error: no budget, no row,
+	// no 500.
+	//
+	// Only the caller's value is checked here. A malformed deploy-time `KEY_ID`
+	// still reaches `createKeyId` and surfaces as a 500, which is the correct
+	// volume for a broken deployment and is not something a caller can trigger.
+	if (keyIdQuery !== undefined && !isKeyIdShaped(keyIdQuery)) {
+		return c.json(
+			{
+				error: `Invalid key ID format: ${keyIdQuery}`,
+				code: "INVALID_REQUEST" as const satisfies ErrorCode,
+				requestId,
+			},
+			HTTP.BadRequest,
+		);
+	}
+
 	const keyIdParam = keyIdQuery || c.env.KEY_ID;
 
 	// Started here, before the key-scope check below, because that branch now
