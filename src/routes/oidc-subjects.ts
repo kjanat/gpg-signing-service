@@ -16,11 +16,21 @@ import { insertOIDCSubject, listOIDCSubjects, revokeOIDCSubject } from "#utils/o
 
 const app = createOpenAPIApp();
 
-/** How many surviving-trust names a single audit row will carry. */
+/** How many surviving-trust names a single audit row or log line will carry. */
 const AUDIT_NAME_LIMIT = 20;
 
 /**
- * Summarize surviving trusts for `audit_logs.metadata`, which has no length cap.
+ * Summarize surviving trusts for the two places they are recorded.
+ *
+ * `audit_logs.metadata` has no length cap at all. The Workers log has two hard
+ * ones — 256 KB of log data per request, past which no further context is
+ * recorded, and 16,384 characters per Logpush `logs` field, past which the
+ * remaining logs are dropped. Names are `.max(64)`, so a few hundred rows blows
+ * the Logpush budget for the whole request. Truncating matters more there than
+ * in D1: the thing being lost is the warning that the revoke was not final, and
+ * it takes the rest of the request's logs with it.
+ *
+ * The response carries the full lists either way.
  *
  * @param rows - Rows still trusting the revoked subject
  * @returns Their names, truncated with a marker when there are too many
@@ -356,8 +366,8 @@ app.openapi(revokeSubjectRoute, async (c) => {
 				requestId,
 				subjectId: id,
 				subjectPolicy: revoked.name,
-				coveredBy: revoked.stillCoveredBy.map((row) => row.name),
-				trustedWithin: revoked.stillTrustedWithin.map((row) => row.name),
+				coveredBy: auditNames(revoked.stillCoveredBy),
+				trustedWithin: auditNames(revoked.stillTrustedWithin),
 			});
 		}
 

@@ -285,8 +285,11 @@ export interface RevokedSubject {
 	 */
 	stillCoveredBy: CoveringSubject[];
 	/**
-	 * Live rows *nested under* the revoked prefix, broadest first — each is a
-	 * separate hole in the scope just revoked, so the widest one matters most.
+	 * Live rows *nested under* the revoked prefix, outermost first: where one of
+	 * these contains another, the container is listed above it. Rows in disjoint
+	 * scopes are not ordered against each other — a one-repo row can precede a
+	 * team-wide one — so read the whole list.
+	 *
 	 * Revoking a parent does not touch its children, so part of the revoked scope
 	 * keeps signing. Only when both lists are empty was the revoke final.
 	 */
@@ -366,11 +369,13 @@ export async function revokeOIDCSubject(db: D1Database, id: string): Promise<Rev
 	// lists are disjoint: the live-unique index forbids two live rows sharing a
 	// prefix, so no row can be both.
 	//
-	// Sorted *broadest* first, the opposite of the ancestor list. These rows do
-	// not compete for one resolution; each carves a piece out of the scope the
-	// operator just tried to cut, so the top line should be the biggest remaining
-	// hole. Longest-first would lead with a single repository and bury a
-	// team-wide row under it.
+	// Sorted by ascending prefix length, the opposite of the ancestor list. These
+	// rows do not compete for one resolution; each carves a piece out of the scope
+	// the operator just tried to cut. Ascending length is a *containment* order:
+	// where one of these contains another its prefix is a strict prefix, hence
+	// shorter, so containers sort above what they contain. It is not a breadth
+	// order — no total order on breadth exists without counting repositories — so
+	// disjoint scopes fall wherever their names happen to sort.
 	const stillTrustedWithin = live
 		.filter((candidate) => subjectMatchesPrefix(candidate.subject_prefix, row.subject_prefix))
 		.sort((a, b) => a.subject_prefix.length - b.subject_prefix.length)

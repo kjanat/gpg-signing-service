@@ -116,9 +116,10 @@ not touched, so the part of the scope you meant to cut keeps signing. Revoke
 - `stillCoveredBy` — rows that **cover** the revoked prefix, most specific
   first. The whole revoked scope keeps signing, under their grants; the first
   entry is the one resolution will actually pick.
-- `stillTrustedWithin` — rows **nested under** it, broadest first. Each is a
-  separate piece of the revoked scope that keeps signing, so the first entry is
-  the biggest remaining hole.
+- `stillTrustedWithin` — rows **nested under** it, outermost first: where one of
+  these contains another, the container is listed above it. Rows in disjoint
+  scopes are not ordered against each other — a one-repo row can precede a
+  team-wide one — so read the whole list, not just the first entry.
 
 **Only when both are empty was the revoke final.** During an incident, revoke
 those rows too, or replace them with narrower ones that exclude the compromised
