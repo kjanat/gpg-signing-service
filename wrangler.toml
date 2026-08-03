@@ -48,8 +48,9 @@ ALLOWED_ISSUERS  = "https://token.actions.githubusercontent.com,https://gitlab.c
 # Owner-wide, so any kjanat/* repo can use the service; narrow to individual
 # repos, or add other owners/GitLab subjects, as needed. Both forms are listed
 # because the subject changes shape when "immutable subject claims" is toggled
-# on the repo. A trailing "/" is what makes these owner-wide rather than an
-# exact match -- see isSubjectAllowed in src/middleware/oidc.ts.
+# on the repo. Entries are segment-bounded prefixes, so these are owner-wide:
+# "repo:kjanat/gpg-signing-service" would pin the single repo instead -- see
+# isSubjectAllowed in src/middleware/oidc.ts.
 ALLOWED_SUBJECTS = "repo:kjanat/,repo:kjanat@6353477/"
 KEY_ID           = "D8BC04E534E7706F"
 
@@ -97,8 +98,9 @@ ALLOWED_ISSUERS  = "https://token.actions.githubusercontent.com,https://gitlab.c
 # Owner-wide, so any kjanat/* repo can use the service; narrow to individual
 # repos, or add other owners/GitLab subjects, as needed. Both forms are listed
 # because the subject changes shape when "immutable subject claims" is toggled
-# on the repo. A trailing "/" is what makes these owner-wide rather than an
-# exact match -- see isSubjectAllowed in src/middleware/oidc.ts.
+# on the repo. Entries are segment-bounded prefixes, so these are owner-wide:
+# "repo:kjanat/gpg-signing-service" would pin the single repo instead -- see
+# isSubjectAllowed in src/middleware/oidc.ts.
 ALLOWED_SUBJECTS = "repo:kjanat/,repo:kjanat@6353477/"
 KEY_ID           = "D8BC04E534E7706F"
 ENVIRONMENT      = "staging"

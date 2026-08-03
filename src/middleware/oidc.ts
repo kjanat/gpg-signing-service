@@ -94,11 +94,21 @@ const SUBJECT_DELIMITERS = new Set([":", "@", "/"]);
  * `repo:<owner>@<ownerId>/<repo>@<repoId>:<context>` when the repository has
  * immutable subject claims enabled — list whichever forms you accept.
  *
- * @param sub - The `sub` claim from a verified token
+ * Note an entry that ends mid-segment is still segment-bounded, so `repo:owner`
+ * and `repo:owner/` are both owner-wide; only a full `owner/repo` entry pins a
+ * single repository. A bare `repo:` admits every repository on the issuer.
+ *
+ * @param sub - The `sub` claim, as decoded from the token payload
  * @param allowed - Comma-separated prefixes; empty or unset denies everything
  * @returns true when the subject matches an allowlist entry
  */
-export function isSubjectAllowed(sub: string, allowed: string | undefined): boolean {
+export function isSubjectAllowed(sub: string | undefined, allowed: string | undefined): boolean {
+	// `sub` comes from attacker-controlled JSON, so it is not necessarily the
+	// string the type claims. A token without one is denied, not a TypeError.
+	if (typeof sub !== "string" || sub === "") {
+		return false;
+	}
+
 	const prefixes = (allowed ?? "")
 		.split(",")
 		.map((entry) => entry.trim())

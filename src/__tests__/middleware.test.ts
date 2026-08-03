@@ -965,4 +965,66 @@ describe("OIDC Subject Allowlist", () => {
 		expect(isSubjectAllowed("repo:kjanat/gpg-signing-service:ref:x", allowed)).toBe(true);
 		expect(isSubjectAllowed("repo:third/party:ref:x", allowed)).toBe(false);
 	});
+
+	it("denies a missing or non-string subject rather than throwing", () => {
+		const allowed = "repo:kjanat/";
+		expect(isSubjectAllowed(undefined, allowed)).toBe(false);
+		expect(isSubjectAllowed("", allowed)).toBe(false);
+		// `sub` is parsed from attacker-controlled JSON; the type is not a promise.
+		expect(isSubjectAllowed({ toString: () => "repo:kjanat/x" } as unknown as string, allowed)).toBe(false);
+	});
+});
+
+// isSubjectAllowed being correct is worth nothing if validateOIDCToken stops
+// calling it, so exercise the rejection through the real request path.
+describe("OIDC Subject Allowlist enforcement", () => {
+	beforeEach(() => {
+		middlewareFetchMock.mockReset();
+		validateUrlMock.mockReset();
+	});
+
+	const tokenFor = async (claims: Record<string, unknown>): Promise<string> =>
+		new jose.SignJWT({
+			iss: "https://token.actions.githubusercontent.com",
+			aud: "gpg-signing-service",
+			...claims,
+		})
+			.setProtectedHeader({ alg: "ES256", kid: "test-key" })
+			.setExpirationTime("1h")
+			.sign((await jose.generateKeyPair("ES256")).privateKey);
+
+	const postSign = async (token: string, customEnv?: Partial<Env>): Promise<Response> =>
+		makeRequest(
+			"/sign",
+			{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+			customEnv,
+		);
+
+	it("rejects a subject outside the allowlist before any JWKS traffic", async () => {
+		const response = await postSign(await tokenFor({ sub: "repo:attacker/evil:ref:refs/heads/main" }));
+
+		expect(response.status).toBe(401);
+		const body = await parseJson<{ error: string; code: string }>(response);
+		expect(body.error).toBe("Subject not allowed");
+		expect(body.code).toBe("AUTH_INVALID");
+		// Denied before discovery/JWKS fetch, so an unknown caller cannot make the
+		// Worker issue outbound requests on its behalf.
+		expect(middlewareFetchMock).not.toHaveBeenCalled();
+	});
+
+	it("rejects every subject when the allowlist is unset", async () => {
+		const token = await tokenFor({ sub: "repo:kjanat/gpg-signing-service:ref:refs/heads/master" });
+		const response = await postSign(token, { ALLOWED_SUBJECTS: "" as Env["ALLOWED_SUBJECTS"] });
+
+		expect(response.status).toBe(401);
+		expect((await parseJson<{ error: string }>(response)).error).toBe("Subject not allowed");
+	});
+
+	it("rejects a token carrying no subject claim", async () => {
+		const response = await postSign(await tokenFor({}));
+
+		expect(response.status).toBe(401);
+		// Not a leaked "Cannot read properties of undefined" from the allowlist.
+		expect((await parseJson<{ error: string }>(response)).error).toBe("Subject not allowed");
+	});
 });

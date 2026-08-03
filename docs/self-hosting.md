@@ -85,6 +85,7 @@ Update `[vars]` in `wrangler.toml`:
 | ------------------- | -------------------------------------------------------- |
 | `KEY_ID`            | Default 16-character hexadecimal signing key ID          |
 | `ALLOWED_ISSUERS`   | Comma-separated OIDC issuer URLs                         |
+| `ALLOWED_SUBJECTS`  | Comma-separated OIDC `sub` prefixes permitted to sign    |
 | `EXPECTED_AUDIENCE` | Optional JWT audience; defaults to `gpg-signing-service` |
 | `ALLOWED_ORIGINS`   | Optional comma-separated browser CORS allowlist          |
 
@@ -93,12 +94,17 @@ Example:
 ```toml
 [vars]
 ALLOWED_ISSUERS   = "https://token.actions.githubusercontent.com"
+ALLOWED_SUBJECTS  = "repo:your-org/your-repo"
 EXPECTED_AUDIENCE = "gpg-signing-service"
 KEY_ID            = "D8BC04E534E7706F"
 ALLOWED_ORIGINS   = "https://admin.example.com"
 ```
 
-`ALLOWED_ISSUERS` is not a repository or organization allowlist. Read
+`ALLOWED_ISSUERS` is not a repository or organization allowlist —
+`ALLOWED_SUBJECTS` is. Set it to your own repositories before deploying: it
+fails closed, so leaving it unset makes every OIDC request to `/sign` return
+`401 Subject not allowed`, and copying the value from this repository's
+`wrangler.toml` allowlists someone else's repositories instead of yours. Read
 [Authentication](authentication.md#current-oidc-authorization-boundary) before
 enabling OIDC.
 

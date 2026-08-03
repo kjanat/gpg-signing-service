@@ -42,8 +42,16 @@ Check all of:
   `EXPECTED_AUDIENCE`;
 - `ALLOWED_ISSUERS` contains
   `https://token.actions.githubusercontent.com`;
+- `ALLOWED_SUBJECTS` covers the calling repository;
 - the token has not expired; and
 - discovery and JWKS endpoints are reachable.
+
+`Subject not allowed` means the token verified as far as its `sub` claim but
+the repository is not in `ALLOWED_SUBJECTS`. The allowlist fails closed, so an
+unset value produces this for every caller. If the repository has
+[immutable subject claims](https://docs.github.com/actions/deployment/security-hardening-your-deployments/about-security-hardening-with-openid-connect)
+enabled, its subject is `repo:owner@ownerId/repo@repoId:...`, and an entry
+written in the plain `repo:owner/repo` form will not match it.
 
 Use `core.getIDToken("gpg-signing-service")`. Raw endpoint responses store the
 JWT in `.value`, not `.token`.

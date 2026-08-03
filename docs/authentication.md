@@ -14,19 +14,34 @@ The install action's `token` input is unrelated to all service credentials.
 
 ## Current OIDC authorization boundary
 
+Which callers may sign is decided by `ALLOWED_SUBJECTS`, not by
+`ALLOWED_ISSUERS`. The issuers are shared infrastructure: every repository on
+GitHub Actions is issued tokens by `token.actions.githubusercontent.com`, every
+project on gitlab.com by `gitlab.com`, and the expected audience is public. So
+issuer and audience together identify a CI provider, never a caller.
+
+`ALLOWED_SUBJECTS` is a comma-separated list of `sub` prefixes, matched at
+segment boundaries (`:`, `@`, `/`) so `repo:me/svc` does not also admit
+`repo:me/svc-evil`. It **fails closed**: unset or empty rejects every OIDC
+caller.
+
+Entries are prefixes, so they are broader than they look. `repo:owner/repo`
+pins one repository across every workflow, ref, and environment in it;
+`repo:owner/` and `repo:owner` are both owner-wide; a bare `repo:` admits every
+repository on the issuer. Pick the narrowest form that covers your callers.
+
 > [!WARNING]
-> The service validates issuer, audience, time, algorithm, key ID, and JWT
-> signature. It does not authorize GitHub repository, organization, workflow,
-> ref, environment, GitLab namespace, or project claims.
+> The subject allowlist is per-caller, not per-key. An allowed OIDC subject may
+> sign with any stored key — key scoping (`allowedKeyIds`) applies only to
+> `gst_` service tokens. Prefer narrowly scoped service tokens where a caller
+> should reach only one key.
 
-With the checked-in issuer list, any GitHub Actions or GitLab job that can
-request a valid token with the expected audience can authenticate to `/sign`
-and select any stored key. Repository and project claims are used only as audit
-metadata.
-
-Do not treat `ALLOWED_ISSUERS` as a repository allowlist. Before exposing a
-shared deployment, add claim-based authorization or use narrowly scoped service
-tokens instead of broad OIDC access.
+GitHub subjects change shape when a repository enables
+[immutable subject claims](https://docs.github.com/actions/deployment/security-hardening-your-deployments/about-security-hardening-with-openid-connect):
+`repo:owner@ownerId/repo@repoId:...` instead of `repo:owner/repo:...`. List
+both forms, or enable immutable claims and list only that one — it is the
+stronger option, since a renamed or re-created repository of the same name
+cannot assume it.
 
 ## OIDC validation
 
@@ -37,9 +52,14 @@ The Worker:
 3. checks `nbf` and `exp` with 60 seconds of clock tolerance;
 4. checks `aud` against `EXPECTED_AUDIENCE`, which defaults to
    `gpg-signing-service`;
-5. fetches OIDC discovery and JWKS documents after SSRF validation;
-6. caches JWKS data in KV for five minutes; and
-7. verifies the JWT signature and signing-key usage.
+5. checks `sub` against comma-separated `ALLOWED_SUBJECTS`;
+6. fetches OIDC discovery and JWKS documents after SSRF validation;
+7. caches JWKS data in KV for five minutes; and
+8. verifies the JWT signature and signing-key usage.
+
+Steps 1-5 read the decoded payload before the signature is verified in step 8,
+so they reject cheaply and without outbound requests. They are deny-only
+filters: nothing is trusted until step 8 succeeds.
 
 ### GitHub Actions
 
@@ -87,6 +107,13 @@ sign:
 
 Do not rely on legacy `CI_JOB_JWT` examples; explicit `id_tokens` binds the
 token's audience.
+
+GitLab subjects are `project_path:<group>/<project>:<ref_type>:...`, so the
+allowlist entries take the `project_path:` form rather than `repo:`. The
+deployment in `wrangler.toml` lists only `repo:` prefixes; a GitLab caller
+against it is rejected at the subject check even though `https://gitlab.com`
+appears in `ALLOWED_ISSUERS`. Add a `project_path:` entry, or drop the issuer,
+to make the two agree.
 
 ## Service tokens
 
