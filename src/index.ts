@@ -2,7 +2,7 @@ import { swaggerUI } from "@hono/swagger-ui";
 import { createRoute } from "@hono/zod-openapi";
 import { logger } from "hono/logger";
 import * as openpgp from "openpgp";
-import { createOpenAPIApp, openApiConfig } from "#lib/openapi";
+import { createOpenAPIApp, openApiConfig, registerSecuritySchemes } from "#lib/openapi";
 import { callerAuth } from "#middleware/caller-auth";
 import { adminAuth } from "#middleware/oidc";
 import { adminRateLimit, productionCors, securityHeaders } from "#middleware/security";
@@ -148,7 +148,10 @@ app.route(
 		.route("/", tokenRoutes),
 );
 
-// OpenAPI Docs
+// OpenAPI Docs. Register the security schemes on the root app *after* every
+// route is mounted but before the document is generated, so `/doc` resolves the
+// `security` references the routes declare.
+registerSecuritySchemes(app);
 app.doc("/doc", openApiConfig);
 
 // Swagger UI
