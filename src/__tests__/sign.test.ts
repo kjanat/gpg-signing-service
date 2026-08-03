@@ -4,8 +4,8 @@ import * as jose from "jose";
 import * as openpgp from "openpgp";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "#gpg-signing-service";
-import { seedTrustedSubjects } from "./helpers/oidc-subjects";
 import { logger } from "#utils/logger";
+import { seedTrustedSubjects } from "./helpers/oidc-subjects";
 
 const parseJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
 

@@ -9,10 +9,10 @@ import {
 } from "micro509";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "#gpg-signing-service";
-import { seedTrustedSubjects } from "./helpers/oidc-subjects";
 import type { StoredX509Key } from "#schemas/keys";
 import { StoredX509KeySchema } from "#schemas/keys";
 import { parseAndValidateX509Key, signCommitDataX509 } from "#utils/x509";
+import { seedTrustedSubjects } from "./helpers/oidc-subjects";
 
 // Mock fetch for JWKS
 const { x509FetchMock } = vi.hoisted(() => ({ x509FetchMock: vi.fn() }));
