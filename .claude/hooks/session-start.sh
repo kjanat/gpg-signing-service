@@ -49,7 +49,13 @@ fi
 # --- 2. golangci-lint matching the module's Go version ----------------------
 # `go env GOVERSION` inside client/ resolves the toolchain go.mod actually asks
 # for, so this keeps working when client/go.mod bumps its go directive.
-GO_TOOLCHAIN="$(cd client && go env GOVERSION 2>/dev/null || echo "")"
+#
+# GOTOOLCHAIN=auto is not redundant: docs/cloud-sessions.md has you pin
+# GOTOOLCHAIN to an exact version in the environment, and a pin wins over
+# go.mod. Probing without the override then reports the *pinned* version and
+# exits 0, so a stale pin would have this rebuild golangci-lint with the very
+# toolchain that causes the mismatch — while logging success.
+GO_TOOLCHAIN="$(cd client && GOTOOLCHAIN=auto go env GOVERSION 2>/dev/null || echo "")"
 
 lint_ok() {
 	# The version mismatch only surfaces on config load, so probe for real
