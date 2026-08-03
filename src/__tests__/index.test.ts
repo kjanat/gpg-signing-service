@@ -125,6 +125,36 @@ describe("API Documentation Routes", () => {
 		expect(Object.keys(spec.paths).length).toBeGreaterThan(0);
 	});
 
+	it("should define every security scheme the routes reference", async () => {
+		const ctx = createExecutionContext();
+		const response = await app.fetch(new Request("http://localhost/doc"), env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		const spec = (await response.json()) as {
+			components?: { securitySchemes?: Record<string, unknown> };
+			paths: Record<string, Record<string, { security?: Record<string, unknown>[] }>>;
+		};
+
+		// `getOpenAPIDocument()` rebuilds `components` from the registry, so schemes
+		// passed via the config object silently vanished and left every `security`
+		// entry pointing at nothing: no Authorize button in /ui, no auth in the
+		// generated Go client.
+		const defined = Object.keys(spec.components?.securitySchemes ?? {});
+		expect(defined).toEqual(expect.arrayContaining(["oidcAuth", "bearerAuth", "serviceTokenAuth"]));
+
+		const referenced = new Set(
+			Object.values(spec.paths)
+				.flatMap((methods) => Object.values(methods))
+				.flatMap((operation) => operation.security ?? [])
+				.flatMap((requirement) => Object.keys(requirement)),
+		);
+
+		expect(referenced.size).toBeGreaterThan(0);
+		for (const name of referenced) {
+			expect(defined).toContain(name);
+		}
+	});
+
 	it("should serve the Swagger UI at /ui with a usable CSP", async () => {
 		const ctx = createExecutionContext();
 		const response = await app.fetch(new Request("http://localhost/ui"), env, ctx);

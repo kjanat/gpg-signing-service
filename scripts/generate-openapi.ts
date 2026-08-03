@@ -5,15 +5,10 @@ import path from "node:path";
 import app from "#gpg-signing-service";
 import { openApiConfig } from "#lib/openapi";
 
+// `securitySchemes` are registered on the app itself (see #lib/openapi), so the
+// generated spec and the served /doc are byte-identical by construction rather
+// than by a fixup that only ran here.
 const doc = app.getOpenAPIDocument(openApiConfig);
-
-// Ensure securitySchemes are included in components
-if (!doc.components) {
-	doc.components = {};
-}
-if (!doc.components.securitySchemes && openApiConfig.components?.securitySchemes) {
-	doc.components.securitySchemes = openApiConfig.components.securitySchemes;
-}
 
 const output = Bun.file(path.resolve(import.meta.dir, "..", "client/openapi.json"));
 
