@@ -17,6 +17,43 @@ import { insertOIDCSubject, listOIDCSubjects, revokeOIDCSubject } from "#utils/o
 
 const app = createOpenAPIApp();
 
+/**
+ * Describe which row is holding an (issuer, prefix) slot.
+ *
+ * Best-effort: a failure here must not turn a 409 into a 500, so it degrades
+ * to the plain message rather than propagating.
+ *
+ * @param db - Audit/policy database
+ * @param issuer - Issuer from the rejected request
+ * @param subjectPrefix - Prefix from the rejected request
+ * @returns A message naming the colliding row, and how to clear it if expired
+ */
+async function describePrefixConflict(db: D1Database, issuer: string, subjectPrefix: string): Promise<string> {
+	const base = `Issuer and subject prefix are already claimed: ${issuer} ${subjectPrefix}`;
+	try {
+		const row = await db
+			.prepare(
+				`SELECT id, expires_at FROM oidc_subjects
+         WHERE issuer = ? AND subject_prefix = ? AND revoked_at IS NULL`,
+			)
+			.bind(issuer, subjectPrefix)
+			.first<{ id: string; expires_at: string | null }>();
+
+		if (!row) {
+			return base;
+		}
+		if (row.expires_at && Date.parse(row.expires_at) < Date.now()) {
+			return (
+				`${base} — by row ${row.id}, which expired at ${row.expires_at} and so trusts nobody. ` +
+				`Revoke it (DELETE /admin/subjects/${row.id}) to renew this prefix; do not widen the prefix instead.`
+			);
+		}
+		return `${base} — by row ${row.id}. Revoke it to replace the trust.`;
+	} catch {
+		return base;
+	}
+}
+
 const createSubjectRoute = createRoute({
 	method: "post",
 	path: "/subjects",
@@ -123,8 +160,15 @@ app.openapi(createSubjectRoute, async (c) => {
 		if (message.includes("UNIQUE constraint failed")) {
 			// Two different collisions land here; blaming the name for a prefix
 			// clash sends the operator to change the one field that was fine.
+			//
+			// A prefix clash is not necessarily a live trust. Uniqueness is scoped
+			// to unrevoked rows, but an *expired* row is unrevoked — it authorizes
+			// nobody while still holding the slot. Saying "already trusted" there
+			// is false, and the nearest thing the operator can then type is a
+			// broader prefix, which is the one direction that opens access. Name
+			// the offending row instead.
 			const conflict = message.includes("subject_prefix")
-				? `Issuer and subject prefix are already trusted: ${body.issuer} ${body.subjectPrefix}`
+				? await describePrefixConflict(c.env.AUDIT_DB, body.issuer, body.subjectPrefix)
 				: `Subject name already exists: ${body.name}`;
 			return c.json(
 				{

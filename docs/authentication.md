@@ -75,6 +75,28 @@ entry in `ALLOWED_ISSUERS` might.
 Omit `keyIds` to allow every key. Omit `expiresInDays` for a trust that does
 not expire.
 
+### Renewing an expired trust
+
+Uniqueness on (issuer, prefix) covers every row that has not been revoked, and
+an expired row has not been revoked — it authorizes nobody but still holds the
+slot. So re-POSTing the same prefix after it expires returns `409`. Revoke the
+old row first, which frees the slot, then create the replacement:
+
+```bash
+curl -X DELETE "$GPG_SIGN_URL/admin/subjects/$OLD_ID" -H "Authorization: Bearer $ADMIN_TOKEN"
+# then POST the new trust as above
+```
+
+The `409` names the blocking row's id and its expiry, so `$OLD_ID` comes
+straight from the error. **Do not reach for a different prefix to get around
+it** — the nearest string that avoids the collision is a broader one, which
+widens access instead of renewing it.
+
+Names are also unique across all rows, revoked ones included, so a replacement
+needs a new `name`. Treat the name as a permanent label for one generation of a
+trust rather than a slot to reuse; the audit trail records it as the caller's
+identity.
+
 ### Subject shapes
 
 GitHub subjects are `repo:<owner>/<repo>:<context>`, or
