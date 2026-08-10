@@ -35,6 +35,23 @@ export const openApiConfig = {
 	},
 };
 
+/**
+ * Build the served OpenAPI document.
+ *
+ * `getOpenAPIDocument` rebuilds `components` from the registered route schemas
+ * and drops the `securitySchemes` handed to it in the config, which leaves every
+ * `security: [{ bearerAuth: [] }]` on a route referencing a scheme the document
+ * never defines. Re-attach them so the document is self-consistent.
+ */
+export function buildOpenAPIDocument(app: {
+	getOpenAPIDocument: (config: typeof openApiConfig) => ReturnType<OpenAPIHono["getOpenAPIDocument"]>;
+}) {
+	const doc = app.getOpenAPIDocument(openApiConfig);
+	doc.components ??= {};
+	doc.components.securitySchemes ??= openApiConfig.components.securitySchemes;
+	return doc;
+}
+
 export function createOpenAPIApp() {
 	return new OpenAPIHono<{ Bindings: Env; Variables: Variables }>({
 		defaultHook: (result, c) => {

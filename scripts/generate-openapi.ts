@@ -3,17 +3,11 @@
 
 import path from "node:path";
 import app from "#gpg-signing-service";
-import { openApiConfig } from "#lib/openapi";
+import { buildOpenAPIDocument } from "#lib/openapi";
 
-const doc = app.getOpenAPIDocument(openApiConfig);
-
-// Ensure securitySchemes are included in components
-if (!doc.components) {
-	doc.components = {};
-}
-if (!doc.components.securitySchemes && openApiConfig.components?.securitySchemes) {
-	doc.components.securitySchemes = openApiConfig.components.securitySchemes;
-}
+// Same builder the `/doc` route serves, so the checked-in spec and the
+// deployed one cannot drift apart.
+const doc = buildOpenAPIDocument(app);
 
 const output = Bun.file(path.resolve(import.meta.dir, "..", "client/openapi.json"));
 
