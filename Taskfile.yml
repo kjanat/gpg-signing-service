@@ -26,14 +26,14 @@ tasks:
   dev:
     desc: Start development server
     aliases: [d]
-    cmd: wrangler dev
+    cmd: mise exec -- wrangler dev
 
   deploy:
     desc: Deploy to Cloudflare Workers
     prompt:
       - "Are you sure?"
       - "This will affect live users!"
-    cmd: wrangler deploy --env=''
+    cmd: mise exec -- wrangler deploy --env=''
 
   test:
     desc: Run tests
@@ -60,7 +60,7 @@ tasks:
     cmds:
       - task: format
       - bun eslint src/
-      - biome lint
+      - mise exec -- biome lint
 
   lint:fix:
     desc: Lint and fix code
@@ -68,7 +68,7 @@ tasks:
     deps: [install:noscripts]
     cmds:
       - bun lint:eslint:fix
-      - bun lint:biome:fix
+      - mise exec -- bun lint:biome:fix
       - defer: { task: format }
 
   format:
@@ -106,7 +106,7 @@ tasks:
     aliases: [ts, type, tsc, tsgo]
     deps: [install:noscripts]
     sources: ["**/*.ts"]
-    cmd: run typecheck
+    cmd: mise exec -- run typecheck
 
   typegen:
     desc: Generate Worker types
@@ -114,7 +114,7 @@ tasks:
     deps: [install:noscripts]
     sources: ["**/*.ts"]
     generates: [worker-configuration.d.ts]
-    cmd: wrangler types
+    cmd: mise exec -- wrangler types
 
   generate:api:
     desc: Generate OpenAPI spec and client
@@ -135,8 +135,8 @@ tasks:
   db:create:
     desc: Create D1 database
     status:
-      - wrangler d1 list --json | jq -e 'map(.name) | contains(["{{.DATABASE_NAME}}"])'
-    cmd: wrangler d1 create {{.DATABASE_NAME}}
+      - mise exec -- wrangler d1 list --json | jq -e 'map(.name) | contains(["{{.DATABASE_NAME}}"])'
+    cmd: mise exec -- wrangler d1 create {{.DATABASE_NAME}}
 
   db:migrate:
     desc: Migrate D1 database
@@ -144,25 +144,25 @@ tasks:
       - "Are you sure?"
       - "This will affect live users!"
     status:
-      - wrangler d1 list --json | jq -e 'map(.name) | contains(["{{.DATABASE_NAME}}"])'
+      - mise exec -- wrangler d1 list --json | jq -e 'map(.name) | contains(["{{.DATABASE_NAME}}"])'
     cmd: |
-      wrangler d1 execute --remote {{.DATABASE_NAME}} \
+      mise exec -- wrangler d1 execute --remote {{.DATABASE_NAME}} \
         --file={{.SQL_MIGRATIONS_FILE}}
 
   db:migrate:local:
     desc: Migrate local D1 database
     status:
-      - wrangler d1 list --json | jq -e 'map(.name) | contains(["{{.DATABASE_NAME}}"])'
+      - mise exec -- wrangler d1 list --json | jq -e 'map(.name) | contains(["{{.DATABASE_NAME}}"])'
     cmd: |
-      wrangler d1 execute --local {{.DATABASE_NAME}} \
+      mise exec -- wrangler d1 execute --local {{.DATABASE_NAME}} \
         --file={{.SQL_MIGRATIONS_FILE}}
 
   kv:create:
     desc: Create KV namespace
     aliases: [kvc]
     status:
-      - wrangler kv namespace list | jq -e 'map(.title) | contains(["{{.KV_NAMESPACE}}"])'
-    cmd: wrangler kv namespace create {{.KV_NAMESPACE}}
+      - mise exec -- wrangler kv namespace list | jq -e 'map(.title) | contains(["{{.KV_NAMESPACE}}"])'
+    cmd: mise exec -- wrangler kv namespace create {{.KV_NAMESPACE}}
 
   install:
     desc: Install dependencies

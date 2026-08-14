@@ -4,6 +4,7 @@
   "useTabs": false,
   "indentWidth": 2,
   "newLineKind": "lf",
+  "incremental": true,
   "shfmt": {
     "useTabs": true,
     "binaryNextLine": true,
