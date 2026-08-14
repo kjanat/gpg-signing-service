@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from typing import NoReturn
 
 DEFAULT_BRANCH = os.environ.get("DEFAULT_BRANCH") or "master"
 ALLOW_RESIGN = os.environ.get("ALLOW_RESIGN") == "true"
@@ -13,16 +14,23 @@ BASE_REF = os.environ.get("BASE_REF", "").strip()
 ARMOR_MARKER = b"BEGIN PGP SIGNATURE"
 
 
+def escape(message: str) -> str:
+    return message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
 def warn(message: str) -> None:
-    data = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-    print(f"::warning::{data}")
+    print(f"::warning::{escape(message)}")
+
+
+def fail(message: str) -> NoReturn:
+    sys.exit(f"::error::{escape(message)}")
 
 
 def git(*args: str, stdin: bytes | None = None) -> bytes:
     result = subprocess.run(["git", *args], input=stdin, capture_output=True)
     if result.returncode != 0:
         detail = result.stderr.decode(errors="replace").strip()
-        sys.exit(f"::error::git {' '.join(args)} failed: {detail}")
+        fail(f"git {' '.join(args)} failed: {detail}")
     return result.stdout
 
 
@@ -30,7 +38,7 @@ def gpg_sign(*args: str, stdin: bytes | None = None) -> bytes:
     result = subprocess.run(["gpg-sign", *args], input=stdin, capture_output=True)
     if result.returncode != 0:
         detail = result.stderr.decode(errors="replace").strip()
-        sys.exit(f"::error::gpg-sign {' '.join(args)} failed: {detail}")
+        fail(f"gpg-sign {' '.join(args)} failed: {detail}")
     return result.stdout
 
 
@@ -38,14 +46,14 @@ def gpg(*args: str, stdin: bytes | None = None) -> bytes:
     result = subprocess.run(["gpg", *args], input=stdin, capture_output=True)
     if result.returncode != 0:
         detail = result.stderr.decode(errors="replace").strip()
-        sys.exit(f"::error::gpg {' '.join(args)} failed: {detail}")
+        fail(f"gpg {' '.join(args)} failed: {detail}")
     return result.stdout
 
 
 def request_signature(payload: bytes) -> bytes:
     signature = gpg_sign("sign", stdin=payload)
     if ARMOR_MARKER not in signature:
-        sys.exit(f"::error::signing service returned no signature: {signature!r}")
+        fail(f"signing service returned no signature: {signature!r}")
     return signature.strip(b"\n")
 
 
@@ -62,7 +70,7 @@ def keyring(armored: bytes) -> str:
     )
     if not listing.stdout.startswith(b"pub:") and b"\npub:" not in listing.stdout:
         detail = imported.stderr.decode(errors="replace").strip()
-        sys.exit(f"::error::could not import the public key: {detail}")
+        fail(f"could not import the public key: {detail}")
     return home
 
 
@@ -76,14 +84,14 @@ def key_identities(armored: bytes) -> set[str]:
             emails.add(fields[9].rsplit("<", 1)[1].rstrip(">").lower())
 
     if not emails:
-        sys.exit("::error::the signing key carries no user ID with an email address")
+        fail("the signing key carries no user ID with an email address")
     return emails
 
 
 def verify(commit: bytes, home: str) -> None:
     ok, detail = verify_status(commit, home)
     if not ok:
-        sys.exit(f"::error::{commit.decode()} did not verify: {detail}")
+        fail(f"{commit.decode()} did not verify: {detail}")
 
 
 def verify_status(commit: bytes, home: str) -> tuple[bool, str]:
@@ -100,7 +108,7 @@ def verify_status(commit: bytes, home: str) -> tuple[bool, str]:
 def header_of(raw: bytes) -> bytes:
     header, separator, _ = raw.partition(b"\n\n")
     if not separator:
-        sys.exit("::error::malformed commit object: no header/message separator")
+        fail("malformed commit object: no header/message separator")
     return header
 
 
@@ -163,7 +171,7 @@ def scan_bound() -> list[str]:
     if not SCAN_LIMIT:
         return []
     if not (SCAN_LIMIT.isascii() and SCAN_LIMIT.isdecimal() and SCAN_LIMIT.strip("0")):
-        sys.exit(f"::error::scan_limit must be a positive integer, got {SCAN_LIMIT!r}")
+        fail(f"scan_limit must be a positive integer, got {SCAN_LIMIT!r}")
     return [f"--max-count={SCAN_LIMIT}"]
 
 
@@ -175,7 +183,7 @@ def last_signed(home: str) -> str:
     )
     if objects.returncode != 0:
         detail = objects.stderr.decode(errors="replace").strip()
-        sys.exit(f"::error::git cat-file --batch failed: {detail}")
+        fail(f"git cat-file --batch failed: {detail}")
 
     data = objects.stdout
     offset = 0
@@ -188,7 +196,7 @@ def last_signed(home: str) -> str:
         offset += int(size) + 1
 
     scope = f"the last {SCAN_LIMIT} commit(s) on HEAD" if SCAN_LIMIT else "HEAD"
-    sys.exit(f"::error::no verified commit in {scope}; pass base explicitly")
+    fail(f"no verified commit in {scope}; pass base explicitly")
 
 
 def resolve_base(branch: str, home: str) -> str:
@@ -206,7 +214,7 @@ def resolve_base(branch: str, home: str) -> str:
 def main() -> None:
     branch = git("rev-parse", "--abbrev-ref", "HEAD").strip().decode()
     if branch == "HEAD":
-        sys.exit("::error::HEAD is detached; check out the branch you want signed")
+        fail("HEAD is detached; check out the branch you want signed")
 
     armored = gpg_sign("public-key")
     identities = key_identities(armored)
@@ -237,10 +245,8 @@ def main() -> None:
         return
 
     raw = {commit: git("cat-file", "commit", commit.decode()) for commit in commits}
-    ours = {
-        commit: SIGN_OTHERS or committer_email(raw[commit]) in identities
-        for commit in commits
-    }
+    mine = {commit: committer_email(raw[commit]) in identities for commit in commits}
+    ours = {commit: SIGN_OTHERS or mine[commit] for commit in commits}
 
     stale: set[bytes] = set()
     for commit in commits:
@@ -249,8 +255,8 @@ def main() -> None:
             stale.add(commit)
 
     if not stale:
-        others = sum(1 for commit in commits if not ours[commit])
-        if others == len(commits):
+        others = sum(1 for commit in commits if not mine[commit])
+        if others == len(commits) and not SIGN_OTHERS:
             warn(
                 f"Nothing was signed: all {others} commit(s) in {base}..HEAD were "
                 "committed by identities the key does not carry — dispatch with "
@@ -267,7 +273,7 @@ def main() -> None:
                 print(f"  would re-sign {commit.decode()[:8]}")
         blocked = f"would rewrite {len(resign)} already-signed commit(s) below the tip"
         remedy = "move the base forward or dispatch with allow_resign"
-        sys.exit(f"::error::signing {len(stale)} commit(s) {blocked}; {remedy}")
+        fail(f"signing {len(stale)} commit(s) {blocked}; {remedy}")
 
     rewritten: dict[bytes, bytes] = {}
     for commit in commits:
