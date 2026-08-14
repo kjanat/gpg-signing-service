@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import * as openpgp from "openpgp";
 import { describe, expect, it } from "vitest";
 import app from "#gpg-signing-service";
+import { openApiConfig } from "#lib/openapi";
 
 describe("Public Key Route", () => {
 	it("should return public key for valid keyId", async () => {
@@ -150,6 +151,13 @@ describe("API Documentation Routes", () => {
 		for (const name of referenced) {
 			expect(defined).toContain(name);
 		}
+	});
+
+	it("should include security schemes when generating a document directly", () => {
+		const spec = app.getOpenAPIDocument(openApiConfig);
+		expect(Object.keys(spec.components?.securitySchemes ?? {})).toEqual(
+			expect.arrayContaining(["oidcAuth", "bearerAuth", "serviceTokenAuth"]),
+		);
 	});
 
 	it("should serve the Swagger UI at /ui with a usable CSP", async () => {

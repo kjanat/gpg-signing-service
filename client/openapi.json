@@ -5,6 +5,26 @@
     "title": "GPG Signing Service API"
   },
   "components": {
+    "securitySchemes": {
+      "oidcAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "OIDC token from GitHub Actions or GitLab CI"
+      },
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Admin token for /admin/* endpoints"
+      },
+      "serviceTokenAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "gst_...",
+        "description": "Service token minted via POST /admin/tokens"
+      }
+    },
     "schemas": {
       "HealthResponse": {
         "type": "object",
@@ -740,27 +760,7 @@
         ]
       }
     },
-    "parameters": {},
-    "securitySchemes": {
-      "oidcAuth": {
-        "type": "http",
-        "scheme": "bearer",
-        "bearerFormat": "JWT",
-        "description": "OIDC token from GitHub Actions or GitLab CI"
-      },
-      "bearerAuth": {
-        "type": "http",
-        "scheme": "bearer",
-        "bearerFormat": "JWT",
-        "description": "Admin token for /admin/* endpoints"
-      },
-      "serviceTokenAuth": {
-        "type": "http",
-        "scheme": "bearer",
-        "bearerFormat": "gst_...",
-        "description": "Service token minted via POST /admin/tokens"
-      }
-    }
+    "parameters": {}
   },
   "paths": {
     "/health": {

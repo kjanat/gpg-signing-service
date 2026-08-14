@@ -11,45 +11,37 @@ export const openApiConfig = {
 	// See https://github.com/oapi-codegen/oapi-codegen/issues/373
 	openapi: "3.0.0",
 	info: { version: "1.0.0", title: "GPG Signing Service API" },
-	components: {
-		securitySchemes: {
-			oidcAuth: {
-				type: "http" as const,
-				scheme: "bearer",
-				bearerFormat: "JWT",
-				description: "OIDC token from GitHub Actions or GitLab CI",
-			},
-			bearerAuth: {
-				type: "http" as const,
-				scheme: "bearer",
-				bearerFormat: "JWT",
-				description: "Admin token for /admin/* endpoints",
-			},
-			serviceTokenAuth: {
-				type: "http" as const,
-				scheme: "bearer",
-				bearerFormat: "gst_...",
-				description: "Service token minted via POST /admin/tokens",
-			},
-		},
+};
+
+export const securitySchemes = {
+	oidcAuth: {
+		type: "http" as const,
+		scheme: "bearer",
+		bearerFormat: "JWT",
+		description: "OIDC token from GitHub Actions or GitLab CI",
+	},
+	bearerAuth: {
+		type: "http" as const,
+		scheme: "bearer",
+		bearerFormat: "JWT",
+		description: "Admin token for /admin/* endpoints",
+	},
+	serviceTokenAuth: {
+		type: "http" as const,
+		scheme: "bearer",
+		bearerFormat: "gst_...",
+		description: "Service token minted via POST /admin/tokens",
 	},
 };
 
 /**
- * Build the served OpenAPI document.
- *
- * `getOpenAPIDocument` rebuilds `components` from the registered route schemas
- * and drops the `securitySchemes` handed to it in the config, which leaves every
- * `security: [{ bearerAuth: [] }]` on a route referencing a scheme the document
- * never defines. Re-attach them so the document is self-consistent.
+ * Register the security schemes in an app's OpenAPI registry so every document
+ * generated from that app includes them in `components.securitySchemes`.
  */
-export function buildOpenAPIDocument(app: {
-	getOpenAPIDocument: (config: typeof openApiConfig) => ReturnType<OpenAPIHono["getOpenAPIDocument"]>;
-}) {
-	const doc = app.getOpenAPIDocument(openApiConfig);
-	doc.components ??= {};
-	doc.components.securitySchemes ??= openApiConfig.components.securitySchemes;
-	return doc;
+export function registerSecuritySchemes(app: OpenAPIHono<{ Bindings: Env; Variables: Variables }>): void {
+	for (const [name, scheme] of Object.entries(securitySchemes)) {
+		app.openAPIRegistry.registerComponent("securitySchemes", name, scheme);
+	}
 }
 
 export function createOpenAPIApp() {

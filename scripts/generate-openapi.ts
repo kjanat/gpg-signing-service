@@ -3,11 +3,9 @@
 
 import path from "node:path";
 import app from "#gpg-signing-service";
-import { buildOpenAPIDocument } from "#lib/openapi";
+import { openApiConfig } from "#lib/openapi";
 
-// Same builder the `/doc` route serves, so the checked-in spec and the
-// deployed one cannot drift apart.
-const doc = buildOpenAPIDocument(app);
+const doc = app.getOpenAPIDocument(openApiConfig);
 
 const output = Bun.file(path.resolve(import.meta.dir, "..", "client/openapi.json"));
 
