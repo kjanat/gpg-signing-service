@@ -12,6 +12,10 @@ SCAN_LIMIT = os.environ.get("SCAN_LIMIT", "").strip()
 ARMOR_MARKER = b"BEGIN PGP SIGNATURE"
 
 
+def warn(message: str) -> None:
+    print(f"::warning::{message}")
+
+
 def git(*args: str, stdin: bytes | None = None) -> bytes:
     result = subprocess.run(["git", *args], input=stdin, capture_output=True)
     if result.returncode != 0:
@@ -188,6 +192,10 @@ def last_signed(home: str) -> str:
 def resolve_base(branch: str, home: str) -> str:
     base = os.environ.get("BASE_REF", "").strip()
     if base:
+        if SCAN_LIMIT:
+            discarded = f"scan_limit={SCAN_LIMIT} was discarded because base={base}"
+            reason = "the scan for the last signed commit only runs when base is blank"
+            warn(f"{discarded} pins the range; {reason}")
         return git("rev-parse", "--verify", f"{base}^{{commit}}").strip().decode()
     if branch == DEFAULT_BRANCH:
         return last_signed(home)
@@ -203,10 +211,21 @@ def main() -> None:
     identities = key_identities(armored)
     home = keyring(armored)
 
+    head = git("rev-parse", "HEAD").strip()
     base = resolve_base(branch, home)
     commits = git("rev-list", "--reverse", "--topo-order", f"{base}..HEAD").split()
     if not commits:
-        print(f"No commits in {base}..HEAD; nothing to sign.")
+        if base == head.decode():
+            remedy = "pass the commit *before* the first one you want signed"
+            warn(
+                f"base resolved to {base}, which is HEAD itself; base is an "
+                f"exclusive lower bound, so the range is empty — {remedy}."
+            )
+        else:
+            warn(
+                f"No commits in {base}..HEAD; nothing was signed. Check that base "
+                "is an ancestor of HEAD on the branch you dispatched."
+            )
         return
 
     raw = {commit: git("cat-file", "commit", commit.decode()) for commit in commits}
@@ -223,7 +242,14 @@ def main() -> None:
 
     if not stale:
         others = sum(1 for commit in commits if not ours[commit])
-        print(f"Nothing to sign in {base}..HEAD ({others} commit(s) by others).")
+        if others == len(commits):
+            warn(
+                f"Nothing was signed: all {others} commit(s) in {base}..HEAD were "
+                "committed by identities the key does not carry — dispatch with "
+                "sign_others to include them."
+            )
+        else:
+            print(f"Nothing to sign in {base}..HEAD ({others} commit(s) by others).")
         return
 
     resign = [commit for commit in stale if is_signed(raw[commit])]
@@ -260,7 +286,6 @@ def main() -> None:
         rewritten[commit] = new
         print(f"  {mark} {commit.decode()[:8]} -> {new.decode()[:8]}")
 
-    head = git("rev-parse", "HEAD").strip()
     signed = sum(1 for commit in rewritten if ours[commit])
     print(f"Signed {signed} of {len(commits)} commit(s) in {base}..HEAD")
     _ = git("update-ref", "HEAD", rewritten.get(head, head).decode())
