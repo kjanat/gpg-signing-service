@@ -1,5 +1,7 @@
 import { z } from "@hono/zod-openapi";
 
+import { KeyIdSchema } from "#schemas/keys";
+
 /**
  * Service token name: human-readable CI identity, used as the audit subject.
  */
@@ -14,8 +16,12 @@ export const TokenNameSchema = z
 export const TokenCreateSchema = z
 	.object({
 		name: TokenNameSchema,
-		/** Key ids this token may sign with; omit for every key. */
-		keyIds: z.array(z.string().regex(/^[A-Fa-f0-9]{16}$/)).optional(),
+		/**
+		 * Key ids this token may sign with; omit for every key. Normalized to
+		 * uppercase. An empty array is refused: it stores as the empty key_ids
+		 * string, which means every key, so it would widen rather than restrict.
+		 */
+		keyIds: z.array(KeyIdSchema).min(1, "keyIds must list at least one key; omit it to allow every key").optional(),
 		/** Days until expiry; omit for a non-expiring token. */
 		expiresInDays: z.number().int().min(1).max(3650).optional(),
 	})

@@ -24,9 +24,16 @@ Git commit or that it belongs to the repository named in an OIDC claim.
 An accepted signing credential is therefore authority to obtain signatures over
 arbitrary text using accessible keys.
 
-OIDC currently authenticates issuer and audience but does not authorize
-repository, organization, workflow, ref, environment, namespace, or project
-claims. This is the most important deployment constraint.
+OIDC callers are authorized against the `oidc_subjects` table: a verified token
+must also match a trusted `(issuer, subject_prefix)` row, which carries its own
+expiry, revocation, and optional key allowlist. An empty table denies everyone,
+so a fresh deployment cannot sign over OIDC until a subject is trusted. See
+[Authentication](authentication.md#trusted-oidc-subjects).
+
+Authorization is on the subject prefix, matched at a delimiter boundary. It does
+not separately authorize workflow, ref, or environment claims, so a row granting
+`repo:owner/name` covers every workflow and every ref in that repository. Scope
+rows as narrowly as the subject shape allows and pin `keyIds`.
 
 ## Key material
 
@@ -53,6 +60,8 @@ deployment credentials. There is no private-key export endpoint.
   `kid`.
 - Service tokens contain 256 random bits and are stored only as SHA-256 hashes.
 - Service tokens support expiration, revocation, and optional key allowlists.
+- Trusted OIDC subjects support the same three, managed at runtime through
+  `/admin/subjects` rather than by redeploying.
 - The static admin token is compared in constant time.
 
 Service-token hashes are not a substitute for high entropy. An attacker who
@@ -62,14 +71,22 @@ obtains a plaintext `gst_` token can use it until expiration or revocation.
 
 The token bucket holds 100 requests and refills at 100 per minute.
 
-| Surface                    | Identity                         |
-| -------------------------- | -------------------------------- |
-| `/sign` with OIDC          | `issuer:subject`                 |
-| `/sign` with service token | synthetic issuer plus token name |
-| `/admin/*`                 | Client IP                        |
-| Public routes              | No application rate limiter      |
+| Surface                    | Identity                           |
+| -------------------------- | ---------------------------------- |
+| `/sign` with OIDC          | `issuer:subject`                   |
+| `/sign` with service token | synthetic issuer plus token name   |
+| Revoked-trust reuse record | `oidc-revoked-reuse:<subject row>` |
+| `/admin/*`                 | Client IP                          |
+| Public routes              | No application rate limiter        |
 
 Rate-limiter failure returns `503` rather than allowing the request.
+
+The OIDC signing identity is the caller's `sub`, and GitHub varies `sub` per ref,
+so one trusted row is not bounded to one bucket: a caller who can push branches
+gets a fresh budget per branch, and every distinct `sub` leaves a key in the
+limiter Durable Object that nothing reaps. Service tokens are metered per
+credential and do not have this. See the note on `oidcAuth` in
+`src/middleware/oidc.ts`.
 
 ## Audit behavior
 
@@ -77,9 +94,17 @@ D1 records successful and failed signing outcomes plus selected key and token
 lifecycle operations. Audit writes are scheduled in the background; an audit
 failure does not fail the primary operation.
 
-The service does not audit every rejected request. Authentication failures,
-invalid bodies, denied service-token key selections, and rate-limit rejections
-return before the signing audit is scheduled.
+The service does not audit every rejected request, but it does record the two
+refusals that carry signal. A denied key selection is written as
+`KEY_NOT_ALLOWED` on both auth paths, and a revoked OIDC trust being presented is
+written as `AUTH_INVALID` with a `metadata.reason` of `revoked_trust_presented`.
+Both writes are rate limited, so neither refusal can be used to flood the table
+it is recorded in.
+
+Invalid bodies, rate-limit rejections, and the remaining authentication failures
+return before any audit is scheduled. An unknown subject and an expired trust are
+logged only, the first because it is reachable by any holder of any token the
+issuer will mint.
 
 There is no built-in retention, export, alerting, or tamper-evident log chain.
 
@@ -109,7 +134,10 @@ release has no checksum file.
 
 Before relying on the service for protected production branches, account for:
 
-- missing OIDC claim-based authorization;
+- OIDC authorization that stops at the subject prefix, so a trusted row covers
+  every workflow and ref in its scope;
+- an OIDC signing rate limit keyed on the caller-chosen `sub`, which does not
+  bound a trusted row;
 - no HSM or external key-management boundary;
 - no private-key backup or restoration workflow;
 - no automated passphrase, admin-token, or key rotation;

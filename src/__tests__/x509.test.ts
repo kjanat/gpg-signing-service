@@ -12,6 +12,7 @@ import app from "#gpg-signing-service";
 import type { StoredX509Key } from "#schemas/keys";
 import { StoredX509KeySchema } from "#schemas/keys";
 import { parseAndValidateX509Key, signCommitDataX509 } from "#utils/x509";
+import { seedTrustedSubjects } from "./helpers/oidc-subjects";
 
 // Mock fetch for JWKS
 const { x509FetchMock } = vi.hoisted(() => ({ x509FetchMock: vi.fn() }));
@@ -361,6 +362,8 @@ describe("X.509 sign route", () => {
 	const kid = "x509-test-key";
 
 	beforeAll(async () => {
+		// The OIDC path now requires a trusted-subject row.
+		await seedTrustedSubjects(env.AUDIT_DB);
 		fixture = await generateX509Fixture("x509-sign-test");
 		const keys = await jose.generateKeyPair("ES256");
 		oidcPrivateKey = keys.privateKey;

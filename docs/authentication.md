@@ -12,21 +12,209 @@
 
 The install action's `token` input is unrelated to all service credentials.
 
-## Current OIDC authorization boundary
+## OIDC authorization
 
-> [!WARNING]
-> The service validates issuer, audience, time, algorithm, key ID, and JWT
-> signature. It does not authorize GitHub repository, organization, workflow,
-> ref, environment, GitLab namespace, or project claims.
+A verified token is not an authorized one. `ALLOWED_ISSUERS` is not a
+repository allowlist: `token.actions.githubusercontent.com` issues tokens to
+every repository on GitHub Actions, `gitlab.com` to every project there, and
+the audience is a public string. Issuer plus audience therefore says nothing
+about _who_ is calling.
 
-With the checked-in issuer list, any GitHub Actions or GitLab job that can
-request a valid token with the expected audience can authenticate to `/sign`
-and select any stored key. Repository and project claims are used only as audit
-metadata.
+Authorization is a separate table of trusted subjects, managed through
+[`/admin/subjects`](#trusted-oidc-subjects). A token is refused with
+`Subject is not trusted for signing` unless its issuer and `sub` match a live
+row, and each row carries its own key allowlist, expiry and revocation — the
+same lifecycle as a service token.
 
-Do not treat `ALLOWED_ISSUERS` as a repository allowlist. Before exposing a
-shared deployment, add claim-based authorization or use narrowly scoped service
-tokens instead of broad OIDC access.
+**An empty table denies everyone.** A fresh deployment cannot sign over OIDC
+until at least one subject is trusted, which is the intended failure direction.
+
+## Trusted OIDC subjects
+
+| Method   | Path                   | Purpose                             |
+| -------- | ---------------------- | ----------------------------------- |
+| `POST`   | `/admin/subjects`      | Trust an issuer and subject prefix  |
+| `GET`    | `/admin/subjects`      | List trusted subjects and their use |
+| `DELETE` | `/admin/subjects/{id}` | Revoke a trust (see below)          |
+
+```bash
+curl -X POST "$GPG_SIGN_URL/admin/subjects" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "kjanat-repos",
+    "issuer": "https://token.actions.githubusercontent.com",
+    "subjectPrefix": "repo:kjanat",
+    "keyIds": ["D8BC04E534E7706F"],
+    "expiresInDays": 365
+  }'
+```
+
+`subjectPrefix` is matched with a delimiter boundary, so `repo:owner/name`
+does not also admit `repo:owner/name-evil`. A prefix that ends at a delimiter
+is deliberately broader: `repo:owner/` trusts every repository of that owner,
+while still refusing `repo:ownerevil/`. Where several rows match, the longest
+prefix wins, so a specific repository can be granted different keys than the
+owner-wide row covering the rest.
+
+> [!TIP]
+> For an owner-wide trust prefer `repo:owner` over `repo:owner/`. The boundary
+> then falls on either `/` or `@`, so the row keeps matching if the repository
+> later enables immutable subject claims and its `sub` changes shape. It still
+> refuses `repo:ownerevil`. The failure is closed either way — signing breaks,
+> nothing opens — but it breaks at an awkward moment.
+
+A prefix must also contain a delimiter with something after it. `repo:` and
+`repo` are refused, because a prefix ending at a delimiter is owner-wide and a
+bare scheme would therefore be _host_-wide — every repository on the issuer.
+The practical consequence: an identity provider whose subjects are opaque, with
+no `:`, `@` or `/` in them, cannot be trusted through this table even by naming
+one in full. Neither GitHub nor GitLab produces such subjects, but a custom
+entry in `ALLOWED_ISSUERS` might.
+
+Omit `keyIds` to allow every key. Omit `expiresInDays` for a trust that does
+not expire.
+
+### Revoke is not subtraction
+
+Resolution takes the longest **live** prefix. Revoking a narrow row therefore
+does not necessarily stop the subject signing — it promotes the next row up,
+**with that row's key grant**:
+
+```
+repo:kjanat/       keyIds: []                 ← owner-wide, every key
+repo:kjanat/svc    keyIds: [D8BC04E534E7706F] ← this repo, one key
+```
+
+Revoke `repo:kjanat/svc` and that repository keeps signing, now under the
+owner-wide row — which pins no keys, so it just gained access to _every_ key.
+The revoke widened the grant.
+
+Revoking the **broad** row is the mirror image: rows nested underneath it are
+not touched, so the part of the scope you meant to cut keeps signing. Revoke
+`repo:kjanat/` and `repo:kjanat/svc` carries on.
+
+`DELETE /admin/subjects/{id}` answers with both:
+
+```json
+{
+  "success": true,
+  "id": "…",
+  "name": "kjanat-svc",
+  "stillCoveredBy": [
+    {
+      "id": "…",
+      "name": "kjanat-repos",
+      "subjectPrefix": "repo:kjanat/",
+      "keyIds": null
+    }
+  ],
+  "stillTrustedWithin": []
+}
+```
+
+- `stillCoveredBy` — rows that **cover** the revoked prefix, most specific
+  first. The whole revoked scope keeps signing, under their grants. The first
+  entry is the one resolution picks only where no `stillTrustedWithin` row
+  claims the subject: those are nested under the revoked prefix, so they are
+  longer than everything here and win. A pinned `keyIds` at the top of this list
+  is therefore not proof the scope was narrowed — read both lists.
+- `stillTrustedWithin` — rows **nested under** it, outermost first: where one of
+  these contains another, the container is listed above it. Rows in disjoint
+  scopes are not ordered against each other — a one-repo row can precede a
+  team-wide one — so read the whole list, not just the first entry.
+
+**Only when both are empty was the revoke final.** During an incident, revoke
+those rows too, or replace them with narrower ones that exclude the compromised
+subject. The service also logs
+`Revoked subject is still trusted through another row` and records both lists of
+names in the `subject_revoke` audit event.
+
+Expiry does the same thing with nobody watching: `expiresInDays` on a narrow,
+key-scoped row is a promotion to the parent's grant on its expiry date, not an
+end to access. Prefer revoking to letting a nested row lapse.
+
+### Renewing an expired trust
+
+Uniqueness on (issuer, prefix) covers every row that has not been revoked, and
+an expired row has not been revoked — it authorizes nobody but still holds the
+slot. So re-POSTing the same prefix after it expires returns `409`. Revoke the
+old row first, which frees the slot, then create the replacement:
+
+```bash
+curl -X DELETE "$GPG_SIGN_URL/admin/subjects/$OLD_ID" -H "Authorization: Bearer $ADMIN_TOKEN"
+# then POST the new trust as above
+```
+
+The `409` names the blocking row's id and its expiry, so `$OLD_ID` comes
+straight from the error. **Do not reach for a different prefix to get around
+it** — the nearest string that avoids the collision is a broader one, which
+widens access instead of renewing it.
+
+Names are also unique across all rows, revoked ones included, so a replacement
+needs a new `name`. Treat the name as a permanent label for one generation of a
+trust rather than a slot to reuse: every OIDC `sign` audit event carries the
+authorizing row's name in `metadata.subjectPolicy`, next to the JWT subject in
+`subject`. The subject alone cannot answer "what did the trust I just revoked
+sign?" — prefixes overlap, and a revoked row leaves no mark on the tokens it
+admitted. `DELETE /admin/subjects/:id` returns that name and logs it on the
+`subject_revoke` event too, so the trail joins to itself without a lookup
+against `oidc_subjects`.
+
+### What gets audited
+
+Every `sign` failure lands in `audit_logs` with `success: false` and one of:
+
+| `errorCode`       | Meaning                                                                                                                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `KEY_NOT_ALLOWED` | A live, trusted row asked for a key its `keyIds` grant does not cover — a misconfigured workflow, or a trust being used by something that should not hold it. |
+| `KEY_NOT_FOUND`   | The caller was authorized and the requested key is not stored.                                                                                                |
+| `SIGN_ERROR`      | The caller was authorized and signing itself failed.                                                                                                          |
+| `AUTH_INVALID`    | A **revoked** trust was presented. `metadata.reason` is `revoked_trust_presented`, with the row's `subjectId`, `subjectPolicy` and `revokedAt`.               |
+
+The two to alert on are `KEY_NOT_ALLOWED` and `AUTH_INVALID`: both require a
+credential this service either trusts now or trusted deliberately in the past.
+
+Refusals before the route are metered before they are written, so a caller
+cannot flood the table that shares a database with the authorization store. If
+the limiter says no, or is unreachable, the refusal still stands but no row is
+written.
+
+Two refusals are **not** recorded in `audit_logs`, and are visible only in the
+structured logs:
+
+| Log message                       | Meaning                                                                                                                                          |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Expired OIDC trust presented`    | A trust lapsed and its workflow has not noticed. Routine, and actionable by the row's owner.                                                     |
+| `Rejected untrusted OIDC subject` | An unknown subject. Mostly background traffic — both issuers are shared with every repository on their platform, so strangers arrive unprompted. |
+
+> [!IMPORTANT]
+> Workers Logs retention is short — 7 days on paid plans, 3 on Free, with
+> head-sampling above 5 billion logs/day account-wide. Anything you want to
+> alert on from these two lines has to be shipped off-platform first. The
+> durable events are the `audit_logs` rows above.
+
+Every refusal returns the same `401 Subject is not trusted for signing` body
+regardless of which of the three it was: telling a caller that its subject
+matches a revoked row would confirm the row exists. The `revoked` arm does cost
+a rate-limiter round-trip and a token of the caller's budget where the other two
+cost neither, so the three are not indistinguishable by timing — only by
+content. The audience for that difference is bounded to whoever can match a
+stored prefix, which on GitHub means the org that held the trust.
+
+The `key_id` on a `revoked_trust_presented` row is the sentinel `*`, not a key:
+the request never reached the point of choosing one. Filters and joins on
+`key_id` need to allow for it.
+
+### Subject shapes
+
+GitHub subjects are `repo:<owner>/<repo>:<context>`, or
+`repo:<owner>@<ownerId>/<repo>@<repoId>:<context>` when the repository has
+[immutable subject claims](https://docs.github.com/en/actions/reference/security/oidc)
+enabled. The immutable form is stronger — a renamed or re-created repository of
+the same name cannot assume it — but the two are stored and matched
+identically, so trust whichever form your repositories actually issue. Check
+yours under **Settings → Actions → OIDC configuration**.
 
 ## OIDC validation
 
@@ -38,8 +226,10 @@ The Worker:
 4. checks `aud` against `EXPECTED_AUDIENCE`, which defaults to
    `gpg-signing-service`;
 5. fetches OIDC discovery and JWKS documents after SSRF validation;
-6. caches JWKS data in KV for five minutes; and
-7. verifies the JWT signature and signing-key usage.
+6. caches JWKS data in KV for five minutes;
+7. verifies the JWT signature and signing-key usage; and
+8. resolves `iss` and `sub` to a trusted subject, refusing the request when
+   none matches and applying that subject's key allowlist.
 
 ### GitHub Actions
 
@@ -178,6 +368,12 @@ Never substitute one credential for another.
 - OIDC callers: `issuer:subject`
 - Service-token callers: synthetic service-token issuer plus token name
 - Admin callers: source IP address
+- Revoked-trust reuse records: `oidc-revoked-reuse:<subject row id>`
 
 Signing and admin buckets each hold 100 tokens and refill at 100 tokens per
 minute. Rate-limiter failure is fail-closed with HTTP `503`.
+
+The OIDC signing bucket is keyed on `sub`, which GitHub varies per ref, so a
+trusted row is not limited to one bucket: a caller who can push branches draws a
+fresh budget per branch. Service tokens are metered per credential and do not
+have this. The revoked-reuse record is keyed on the row id for that reason.

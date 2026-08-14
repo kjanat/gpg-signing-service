@@ -4,7 +4,10 @@ import * as jose from "jose";
 import * as openpgp from "openpgp";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "#gpg-signing-service";
+import { logAuditEvent } from "#utils/audit";
 import { logger } from "#utils/logger";
+import { insertOIDCSubject } from "#utils/oidc-subjects";
+import { seedTrustedSubjects } from "./helpers/oidc-subjects";
 
 const parseJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
 
@@ -20,11 +23,38 @@ vi.mock("#utils/audit", async (importOriginal) => {
 });
 
 // Helper to make requests
-async function makeRequest(path: string, options: RequestInit = {}): Promise<Response> {
+async function makeRequest(path: string, options: RequestInit = {}, envOverrides?: Partial<Env>): Promise<Response> {
 	const ctx = createExecutionContext();
-	const response = await app.fetch(new Request(`http://localhost${path}`, options), env, ctx);
+	// Overrides are layered onto a copy: mutating the shared `env` bindings leaks
+	// into the Durable Object suites, which run in the same worker.
+	const requestEnv = envOverrides ? { ...env, ...envOverrides } : env;
+	const response = await app.fetch(new Request(`http://localhost${path}`, options), requestEnv, ctx);
 	await waitOnExecutionContext(ctx);
 	return response;
+}
+
+/** A RATE_LIMITER binding whose every call answers with `body`. */
+function stubRateLimiter(body: unknown): DurableObjectNamespace {
+	return {
+		idFromName: () => ({}) as DurableObjectId,
+		get: () => ({ fetch: async () => Response.json(body) }),
+	} as unknown as DurableObjectNamespace;
+}
+
+/** A RATE_LIMITER binding that answers with an error status instead of a verdict. */
+function erroringRateLimiter(status = 500): DurableObjectNamespace {
+	return {
+		idFromName: () => ({}) as DurableObjectId,
+		get: () => ({ fetch: async () => new Response("boom", { status }) }),
+	} as unknown as DurableObjectNamespace;
+}
+
+/** A RATE_LIMITER binding that fails the way an unreachable one does. */
+function brokenRateLimiter(reason: unknown = new Error("Rate limiter unavailable")): DurableObjectNamespace {
+	const fail = () => {
+		throw reason;
+	};
+	return { idFromName: fail, get: fail } as unknown as DurableObjectNamespace;
 }
 
 // Helper to upload a test key
@@ -61,6 +91,10 @@ describe("Sign Route", () => {
 	const kid = "test-key";
 
 	beforeAll(async () => {
+		// The OIDC path now requires a trusted-subject row; without one every
+		// signed request is a 401 regardless of the token being valid.
+		await seedTrustedSubjects(env.AUDIT_DB);
+
 		// Generate OIDC keys
 		const keys = await jose.generateKeyPair("ES256");
 		oidcPrivateKey = keys.privateKey;
@@ -125,6 +159,262 @@ describe("Sign Route", () => {
 			expect(response.status).toBe(200);
 			const signature = await response.text();
 			expect(signature).toContain("-----BEGIN PGP SIGNATURE-----");
+		});
+
+		it("records which trusted subject authorized the signature", async () => {
+			await setupJWKSMock();
+			await uploadTestKey("A1B2C3D4E5F67890");
+			const token = await createToken();
+
+			const response = await makeRequest("/sign?keyId=A1B2C3D4E5F67890", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(200);
+
+			// The `sub` alone does not say which row admitted it: prefixes overlap,
+			// and a revoked row leaves no trace in the subject. Without the policy
+			// name, "what did the trust I just revoked sign?" is unanswerable.
+			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+			const signed = events.find((event) => event.action === "sign" && event.success);
+			expect(signed).toBeDefined();
+			expect(JSON.parse(signed?.metadata ?? "{}")).toMatchObject({
+				subjectPolicy: `${issuer}|repo:user/repo`,
+			});
+		});
+
+		it("records the authorizing subject on a failed signature too", async () => {
+			await setupJWKSMock();
+			const token = await createToken();
+
+			const response = await makeRequest("/sign?keyId=FFFFFFFFFFFFFFFF", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(404);
+
+			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+			const failed = events.find((event) => event.action === "sign" && !event.success);
+			expect(failed).toBeDefined();
+			expect(JSON.parse(failed?.metadata ?? "{}")).toMatchObject({
+				subjectPolicy: `${issuer}|repo:user/repo`,
+			});
+		});
+
+		it("rejects a malformed keyId as a 400, spending no budget and writing no audit row", async () => {
+			// `createKeyId` throws, and it throws *after* the limiter call has been
+			// started but *before* the Promise.all that reads its verdict — so left
+			// to the route's catch this was a 500 plus an audit write that ignored
+			// the limiter entirely. It needs no key grant to reach, which made it
+			// cheaper than the scope denial the metering rule was written for.
+			await setupJWKSMock();
+			const token = await createToken();
+
+			const response = await makeRequest(
+				"/sign?keyId=NOT-A-HEX-KEYID",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{ RATE_LIMITER: stubRateLimiter({ allowed: false, remaining: 0, resetAt: Date.now() + 30_000 }) },
+			);
+
+			expect(response.status).toBe(400);
+			expect(await response.json()).toMatchObject({ code: "INVALID_REQUEST" });
+
+			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+			expect(events).toHaveLength(0);
+		});
+
+		it("treats an empty keyId as absent, the way the fallback below it does", async () => {
+			// `?keyId=` is what a shell template emits for an unset variable, and
+			// `keyIdQuery || c.env.KEY_ID` already reads "" as not supplied. Refusing
+			// it would make the guard disagree with the line under it, and would make
+			// /sign answer differently from /public-key on the same query string.
+			await setupJWKSMock();
+			await uploadTestKey(env.KEY_ID);
+			const token = await createToken();
+
+			const response = await makeRequest("/sign?keyId=", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(200);
+			expect(await response.text()).toContain("-----BEGIN PGP SIGNATURE-----");
+		});
+
+		it("audits the same request id it echoes when the caller sends none", async () => {
+			// The default path: no X-Request-ID on the request. Every site that
+			// re-derives instead of reading the published value mints a *fresh*
+			// UUID, so the caller is handed a correlation key that joins to nothing
+			// — on the one endpoint whose output somebody may later have to account
+			// for. No test covered this because the ones that touch the header
+			// supply one, and then both sites agree.
+			await setupJWKSMock();
+			await uploadTestKey("A1B2C3D4E5F67890");
+			const token = await createToken();
+
+			const response = await makeRequest("/sign?keyId=A1B2C3D4E5F67890", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(200);
+			const echoed = response.headers.get("X-Request-ID");
+			expect(echoed).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+
+			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+			const signed = events.find((event) => event.action === "sign" && event.success);
+			expect(signed?.requestId).toBe(echoed);
+		});
+
+		it("audits a trusted subject reaching outside its key scope", async () => {
+			// The highest-signal event the service can produce: the credential is
+			// valid and the row is live, but the grant does not cover the key. If
+			// this returns bare, there is no way to tell a misconfigured workflow
+			// from a trust being used by something that should not hold it.
+			await insertOIDCSubject(env.AUDIT_DB, {
+				name: "ci/key-scoped",
+				issuer,
+				subjectPrefix: "repo:scoped/svc",
+				keyIds: ["AAAAAAAAAAAAAAAA"],
+				expiresAt: null,
+			});
+			await setupJWKSMock();
+			const token = await createToken({ sub: "repo:scoped/svc:ref:refs/heads/main" });
+
+			const response = await makeRequest("/sign?keyId=BBBBBBBBBBBBBBBB", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(403);
+			// Not INVALID_REQUEST: a scope denial has to be filterable apart from a
+			// malformed request.
+			expect(await response.json()).toMatchObject({ code: "KEY_NOT_ALLOWED" });
+
+			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+			const denied = events.find((event) => event.errorCode === "KEY_NOT_ALLOWED");
+			expect(denied).toMatchObject({
+				action: "sign",
+				success: false,
+				subject: "repo:scoped/svc:ref:refs/heads/main",
+				keyId: "BBBBBBBBBBBBBBBB",
+			});
+			expect(JSON.parse(denied?.metadata ?? "{}")).toMatchObject({ subjectPolicy: "ci/key-scoped" });
+		});
+
+		it("meters the scope denial, and writes nothing once the caller is over budget", async () => {
+			// The denial writes to D1, and audit_logs shares a database with the
+			// authorization table every request reads. Unmetered, one trusted token
+			// could bury the very event operators are told to alert on.
+			await insertOIDCSubject(env.AUDIT_DB, {
+				name: "ci/metered",
+				issuer,
+				subjectPrefix: "repo:metered/svc",
+				keyIds: ["AAAAAAAAAAAAAAAA"],
+				expiresAt: null,
+			});
+			await setupJWKSMock();
+			const token = await createToken({ sub: "repo:metered/svc:ref:refs/heads/main" });
+
+			const resetAt = Date.now() + 30_000;
+			const response = await makeRequest(
+				"/sign?keyId=BBBBBBBBBBBBBBBB",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{ RATE_LIMITER: stubRateLimiter({ allowed: false, remaining: 0, resetAt }) },
+			);
+
+			// The limiter's verdict wins over the denial: 429, not 403.
+			expect(response.status).toBe(429);
+			expect(await response.json()).toMatchObject({ code: "RATE_LIMITED" });
+
+			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+			expect(events.some((event) => event.errorCode === "KEY_NOT_ALLOWED")).toBe(false);
+		});
+
+		it("survives a non-Error rejection from the limiter", async () => {
+			await insertOIDCSubject(env.AUDIT_DB, {
+				name: "ci/limiter-nonerror",
+				issuer,
+				subjectPrefix: "repo:limiternonerror/svc",
+				keyIds: ["AAAAAAAAAAAAAAAA"],
+				expiresAt: null,
+			});
+			await setupJWKSMock();
+			const token = await createToken({ sub: "repo:limiternonerror/svc:ref:refs/heads/main" });
+
+			const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+			const response = await makeRequest(
+				"/sign?keyId=BBBBBBBBBBBBBBBB",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{ RATE_LIMITER: brokenRateLimiter("limiter exploded") },
+			);
+			expect(response.status).toBe(403);
+			expect(errorSpy).toHaveBeenCalledWith(
+				"Rate limiter unreachable",
+				expect.objectContaining({ error: "limiter exploded" }),
+			);
+			errorSpy.mockRestore();
+		});
+
+		it("treats a rate limiter error status the same as an outage", async () => {
+			await insertOIDCSubject(env.AUDIT_DB, {
+				name: "ci/limiter-error",
+				issuer,
+				subjectPrefix: "repo:limitererror/svc",
+				keyIds: ["AAAAAAAAAAAAAAAA"],
+				expiresAt: null,
+			});
+			await setupJWKSMock();
+			const token = await createToken({ sub: "repo:limitererror/svc:ref:refs/heads/main" });
+
+			const response = await makeRequest(
+				"/sign?keyId=BBBBBBBBBBBBBBBB",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{ RATE_LIMITER: erroringRateLimiter() },
+			);
+			expect(response.status).toBe(403);
+			expect(await response.json()).toMatchObject({ code: "KEY_NOT_ALLOWED" });
+
+			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+			expect(events.some((event) => event.errorCode === "KEY_NOT_ALLOWED")).toBe(false);
+		});
+
+		it("refuses without writing when the rate limiter is unavailable", async () => {
+			// Cannot meter, so must not write — but the denial still has to leave a
+			// trace and must still be a denial.
+			await insertOIDCSubject(env.AUDIT_DB, {
+				name: "ci/limiter-down",
+				issuer,
+				subjectPrefix: "repo:limiterdown/svc",
+				keyIds: ["AAAAAAAAAAAAAAAA"],
+				expiresAt: null,
+			});
+			await setupJWKSMock();
+			const token = await createToken({ sub: "repo:limiterdown/svc:ref:refs/heads/main" });
+
+			const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+			const response = await makeRequest(
+				"/sign?keyId=BBBBBBBBBBBBBBBB",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{ RATE_LIMITER: brokenRateLimiter() },
+			);
+			expect(response.status).toBe(403);
+			expect(await response.json()).toMatchObject({ code: "KEY_NOT_ALLOWED" });
+
+			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+			expect(events.some((event) => event.errorCode === "KEY_NOT_ALLOWED")).toBe(false);
+			expect(warnSpy).toHaveBeenCalledWith(
+				"Key scope denied while the rate limiter was unavailable",
+				expect.objectContaining({ keyId: "BBBBBBBBBBBBBBBB" }),
+			);
+			warnSpy.mockRestore();
 		});
 
 		it("should return 400 if commit data is missing", async () => {
@@ -297,7 +587,7 @@ describe("Sign Route", () => {
 				}) as unknown as DurableObjectStub;
 
 			try {
-				const response = await makeRequest("/sign?keyId=generic-error-key", {
+				const response = await makeRequest("/sign?keyId=EEEEEEEEEEEEEEEE", {
 					method: "POST",
 					headers: { Authorization: `Bearer ${token}` },
 					body: "commit data",
@@ -374,7 +664,7 @@ describe("Sign Route", () => {
 			const { logAuditEvent } = await import("#utils/audit");
 
 			// Upload a key first
-			const keyId = "SIGNCATCH1234567";
+			const keyId = "51617CA7C4123456";
 			await uploadTestKey(keyId);
 
 			// Mock to reject once to trigger catch
@@ -417,7 +707,7 @@ describe("Sign Route", () => {
 
 			const ctx = createExecutionContext();
 			await app.fetch(
-				new Request("http://localhost/sign?keyId=NONEXISTENT123", {
+				new Request("http://localhost/sign?keyId=DDDDDDDDDDDDDDDD", {
 					method: "POST",
 					headers: { Authorization: `Bearer ${token}` },
 					body: "commit data",

@@ -256,6 +256,15 @@ describe("admin token management", () => {
 			body: JSON.stringify({ name: "ci/badkey", keyIds: ["nope"] }),
 		});
 		expect(badKey.status).toBe(400);
+
+		// An empty array stores as the empty key_ids string, which means every
+		// key — so accepting it would widen a policy that asked to narrow.
+		const emptyKeys = await request("/admin/tokens", env.ADMIN_TOKEN, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ name: "ci/emptykeys", keyIds: [] }),
+		});
+		expect(emptyKeys.status).toBe(400);
 	});
 
 	it("requires admin auth", async () => {

@@ -13,7 +13,7 @@ import type { ErrorCode } from "#schemas/errors";
 import type { AnyStoredKey } from "#schemas/keys";
 import { AnyStoredKeySchema, isX509Key } from "#schemas/keys";
 import type { Identity, RateLimitResult, ValidatedOIDCClaims } from "#types";
-import { createKeyId, HEADERS, HTTP, TIME } from "#types";
+import { createKeyId, HEADERS, HTTP, isKeyIdShaped, TIME } from "#types";
 import { logAuditEvent } from "#utils/audit";
 import { fetchKeyStorage, fetchRateLimiter } from "#utils/durable-objects";
 import { scheduleBackgroundTask } from "#utils/execution";
@@ -22,6 +22,47 @@ import { signCommitData } from "#utils/signing";
 import { signCommitDataX509 } from "#utils/x509";
 
 const app = createOpenAPIApp();
+
+/** Outcome of consulting the rate limiter, with the failure modes separated. */
+type RateLimitDecision = { kind: "ok" } | { kind: "limited"; retryAfter: number } | { kind: "unavailable" };
+
+/**
+ * Resolve an in-flight rate limiter call into a decision.
+ *
+ * Used by the refusal paths, which only need to know whether they may perform
+ * metered work — they have no signature to produce, so they never look at the
+ * remaining budget. The signing path keeps its own inline handling of the same
+ * response because it must distinguish an unreachable limiter (which reaches
+ * the route's `catch`) from one that answered with an error status (503), a
+ * split this collapses into `unavailable`.
+ *
+ * @param pending - An already-started `fetchRateLimiter` call
+ * @param requestId - For correlating the outage in logs
+ * @returns Whether the caller is within budget, or `unavailable`
+ */
+async function resolveRateLimit(pending: Promise<Response>, requestId: string): Promise<RateLimitDecision> {
+	let response: Response;
+	try {
+		response = await pending;
+	} catch (error) {
+		logger.error("Rate limiter unreachable", {
+			requestId,
+			error: error instanceof Error ? error.message : String(error),
+		});
+		return { kind: "unavailable" };
+	}
+
+	if (!response.ok) {
+		logger.error("Rate limiter failed", { status: response.status, requestId });
+		return { kind: "unavailable" };
+	}
+
+	const rateLimit = (await response.json()) as RateLimitResult;
+	if (!rateLimit.allowed) {
+		return { kind: "limited", retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / 1000) };
+	}
+	return { kind: "ok" };
+}
 
 const signRoute = createRoute({
 	method: "post",
@@ -70,8 +111,11 @@ const signRoute = createRoute({
 });
 
 app.openapi(signRoute, async (c) => {
-	const { [HEADERS.REQUEST_ID]: requestIdHeader } = c.req.valid("header");
-	const requestId = requestIdHeader || crypto.randomUUID();
+	// Set by the global request-id middleware, which validates the caller's header
+	// and mints one otherwise. Reading it rather than re-deriving keeps this row
+	// joinable with the one the OIDC middleware may have written for the same
+	// request, and with the X-Request-ID echoed on the response.
+	const requestId = c.get("requestId");
 	const claims = c.get("oidcClaims") as ValidatedOIDCClaims;
 	const identity = c.get("identity") as Identity;
 
@@ -94,15 +138,105 @@ app.openapi(signRoute, async (c) => {
 
 	// Get key ID from query param or use default
 	const { keyId: keyIdQuery } = c.req.valid("query");
+
+	// Format-check the caller's value before any I/O. `PublicKeyQuerySchema`
+	// declares keyId as a bare optional string, so `createKeyId` further down is
+	// the only gate — and it *throws*, landing in the catch, which returns 500 and
+	// writes an audit row having never read the limiter's verdict. That is the one
+	// branch inside the metered window that escapes it, and it needs no key grant
+	// to reach. A malformed query parameter is a client error: no budget, no row,
+	// no 500.
+	//
+	// Only the caller's value is checked here. A malformed deploy-time `KEY_ID`
+	// still reaches `createKeyId` and surfaces as a 500, which is the correct
+	// volume for a broken deployment and is not something a caller can trigger.
+	//
+	// `keyIdQuery &&`, not `!== undefined`: three lines down `keyIdQuery ||
+	// c.env.KEY_ID` already reads the empty string as "not supplied", and
+	// `?keyId=` is what a shell template emits for an unset variable. `/public-key`
+	// shares this schema and still falls back, so the two routes must agree.
+	if (keyIdQuery && !isKeyIdShaped(keyIdQuery)) {
+		return c.json(
+			{
+				error: `Invalid key ID format: ${keyIdQuery}`,
+				code: "INVALID_REQUEST" as const satisfies ErrorCode,
+				requestId,
+			},
+			HTTP.BadRequest,
+		);
+	}
+
 	const keyIdParam = keyIdQuery || c.env.KEY_ID;
 
-	// Service tokens may carry a key allowlist; enforce it before any work.
+	// Started here, before the key-scope check below, because that branch now
+	// writes to D1: an unmetered write is a way for one trusted token to bury the
+	// very event operators are told to alert on, and `audit_logs` shares a
+	// database with `oidc_subjects`, which every authorization decision reads.
+	// Starting rather than awaiting keeps the signing path's overlap with the key
+	// fetch intact — the promise is already in flight when Promise.all takes it.
+	const rateLimitPromise = fetchRateLimiter(c.env, identity);
+	// `createKeyId` below can throw before the Promise.all that normally awaits
+	// this, which would leave the rejection unobserved. Attaching a handler does
+	// not consume it for the real consumers.
+	rateLimitPromise.catch(() => {});
+
+	// Both auth paths may carry a key allowlist; enforce it before any signing.
 	const allowedKeyIds = c.get("allowedKeyIds");
 	if (allowedKeyIds && !allowedKeyIds.includes(keyIdParam)) {
+		// A trusted caller reaching past its own grant is the highest-signal event
+		// this service produces: either a misconfigured workflow or a credential
+		// being used by something that should not hold it. Returning bare would
+		// leave no way to tell which — an *untrusted* subject, a far weaker
+		// signal, already gets a log line in the OIDC middleware.
+		//
+		// Metered like any other request, and the audit row is written only if the
+		// caller is within its budget, so the denial cannot be used to flood the
+		// table it is recorded in.
+		const decision = await resolveRateLimit(rateLimitPromise, requestId);
+		if (decision.kind === "limited") {
+			return c.json(
+				{
+					error: "Rate limit exceeded",
+					code: "RATE_LIMITED" as const satisfies ErrorCode,
+					retryAfter: decision.retryAfter,
+				},
+				HTTP.TooManyRequests,
+			);
+		}
+
+		if (decision.kind === "ok") {
+			await scheduleBackgroundTask(
+				c,
+				requestId,
+				logAuditEvent(c.env.AUDIT_DB, {
+					requestId,
+					action: "sign",
+					issuer: claims.iss,
+					subject: claims.sub,
+					keyId: keyIdParam,
+					success: false,
+					errorCode: "KEY_NOT_ALLOWED",
+					metadata: JSON.stringify({ subjectPolicy: c.get("subjectPolicyName") }),
+				}),
+			);
+		} else {
+			// Limiter unreachable: refuse anyway, but do not write unmetered. The
+			// log line keeps the denial from vanishing entirely.
+			logger.warn("Key scope denied while the rate limiter was unavailable", {
+				requestId,
+				issuer: claims.iss,
+				subject: claims.sub,
+				keyId: keyIdParam,
+			});
+		}
+
 		return c.json(
 			{
 				error: `Token is not allowed to sign with key ${keyIdParam}`,
-				code: "INVALID_REQUEST" as const satisfies ErrorCode,
+				// Not INVALID_REQUEST: the request was well formed and the credential
+				// valid. Filtering audit_logs for scope denials needs it to be
+				// distinguishable from a 400.
+				code: "KEY_NOT_ALLOWED" as const satisfies ErrorCode,
 				requestId,
 			},
 			HTTP.Forbidden,
@@ -117,7 +251,7 @@ app.openapi(signRoute, async (c) => {
 	try {
 		createKeyId(keyIdParam); // Validate key ID format (inside try so errors are caught)
 		const [rateLimitResponse, keyResponse] = await Promise.all([
-			fetchRateLimiter(c.env, identity),
+			rateLimitPromise,
 			fetchKeyStorage(c.env, `/get-key?keyId=${encodeURIComponent(keyIdParam)}`),
 		]);
 
@@ -178,6 +312,7 @@ app.openapi(signRoute, async (c) => {
 				metadata: JSON.stringify({
 					repository: claims.repository || claims.project_path,
 					dataLength: commitData.length,
+					subjectPolicy: c.get("subjectPolicyName"),
 				}),
 			}),
 		);
@@ -221,7 +356,7 @@ app.openapi(signRoute, async (c) => {
 				keyId: keyIdParam,
 				success: false,
 				errorCode: isKeyNotFound ? "KEY_NOT_FOUND" : "SIGN_ERROR",
-				metadata: JSON.stringify({ error: message }),
+				metadata: JSON.stringify({ error: message, subjectPolicy: c.get("subjectPolicyName") }),
 			}),
 		);
 

@@ -16,6 +16,13 @@ export interface Variables {
 	requestId: string;
 	/** Service-token key allowlist; null/absent means every key */
 	allowedKeyIds?: string[] | null;
+	/**
+	 * Name of the trusted-subject row that authorized an OIDC caller, so the
+	 * audit trail records *which trust* signed rather than only the JWT subject.
+	 * Absent on the service-token path, where the row's name is already the
+	 * synthetic `sub`.
+	 */
+	subjectPolicyName?: string;
 }
 
 /** Cloudflare Workers environment bindings */

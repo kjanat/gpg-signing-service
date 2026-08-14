@@ -1,5 +1,4 @@
 import { createRoute, z } from "@hono/zod-openapi";
-
 import { createOpenAPIApp } from "#lib/openapi";
 import {
 	ErrorResponseSchema,
@@ -9,7 +8,7 @@ import {
 	TokenRevokeResponseSchema,
 } from "#schemas";
 import type { ErrorCode } from "#schemas/errors";
-import { HEADERS, HTTP } from "#types";
+import { HTTP } from "#types";
 import { logAuditEvent } from "#utils/audit";
 import { scheduleBackgroundTask } from "#utils/execution";
 import { logger } from "#utils/logger";
@@ -52,7 +51,7 @@ const createTokenRoute = createRoute({
 });
 
 app.openapi(createTokenRoute, async (c) => {
-	const requestId = c.req.header(HEADERS.REQUEST_ID) || crypto.randomUUID();
+	const requestId = c.get("requestId");
 	const body = c.req.valid("json");
 
 	const token = generateToken();
@@ -136,7 +135,7 @@ const listTokensRoute = createRoute({
 });
 
 app.openapi(listTokensRoute, async (c) => {
-	const requestId = c.req.header(HEADERS.REQUEST_ID) || crypto.randomUUID();
+	const requestId = c.get("requestId");
 	try {
 		const tokens = await listServiceTokens(c.env.AUDIT_DB);
 		return c.json({ tokens }, HTTP.OK);
@@ -180,7 +179,7 @@ const revokeTokenRoute = createRoute({
 });
 
 app.openapi(revokeTokenRoute, async (c) => {
-	const requestId = c.req.header(HEADERS.REQUEST_ID) || crypto.randomUUID();
+	const requestId = c.get("requestId");
 	const { id } = c.req.valid("param");
 
 	try {

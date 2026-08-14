@@ -8,6 +8,8 @@ export const ErrorCodeSchema = z
 		"AUTH_MISSING",
 		"AUTH_INVALID",
 		"KEY_NOT_FOUND",
+		/** Caller is authenticated and trusted, but its grant does not cover this key. */
+		"KEY_NOT_ALLOWED",
 		"KEY_PROCESSING_ERROR",
 		"KEY_LIST_ERROR",
 		"KEY_UPLOAD_ERROR",
