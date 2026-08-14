@@ -2,7 +2,7 @@ import { swaggerUI } from "@hono/swagger-ui";
 import { createRoute } from "@hono/zod-openapi";
 import { logger } from "hono/logger";
 import * as openpgp from "openpgp";
-import { createOpenAPIApp, openApiConfig } from "#lib/openapi";
+import { buildOpenAPIDocument, createOpenAPIApp } from "#lib/openapi";
 import { callerAuth } from "#middleware/caller-auth";
 import { adminAuth } from "#middleware/oidc";
 import { adminRateLimit, productionCors, securityHeaders } from "#middleware/security";
@@ -149,7 +149,7 @@ app.route(
 );
 
 // OpenAPI Docs
-app.doc("/doc", openApiConfig);
+app.get("/doc", (c) => c.json(buildOpenAPIDocument(app)));
 
 // Swagger UI
 // `validatorUrl: "none"` disables Swagger UI's online validator badge, which
