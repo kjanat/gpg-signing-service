@@ -1,0 +1,20 @@
+#:schema https://mise.jdx.dev/schema/mise.json
+
+[tools]
+"cargo:runner-run" = "latest"
+biome              = "latest"
+cargo-binstall     = "latest"
+golangci-lint      = "latest"
+lefthook           = "latest"
+shellcheck         = "latest"
+task               = "latest"
+tombi              = "latest"
+uv                 = "latest"
+wrangler           = "latest"
+
+[settings]
+idiomatic_version_file_enable_tools = ["go"]
+
+[settings.cargo]
+binstall      = true
+binstall_only = true

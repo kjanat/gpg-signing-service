@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps: [
       uses: actions/checkout@v7,
-      uses: ./.github/actions/setup-task,
+      uses: jdx/mise-action@v4,
       uses: ./.github/actions/setup-bun,
       { run: task typecheck },
     ]
@@ -27,10 +27,8 @@ jobs:
     runs-on: ubuntu-latest
     steps: [
       uses: actions/checkout@v7,
-      uses: ./.github/actions/setup-task,
+      { uses: jdx/mise-action@v4, with: { working_directory: client } },
       uses: ./.github/actions/setup-bun,
-      uses: ./.github/actions/setup-go,
-      uses: ./.github/actions/setup-golangci-lint,
       uses: kjanat/install-dprint@v2,
       { run: task lint },
     ]
@@ -40,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     steps: [
       uses: actions/checkout@v7,
-      uses: ./.github/actions/setup-task,
+      uses: jdx/mise-action@v4,
       uses: ./.github/actions/setup-bun,
       { run: task test },
     ]

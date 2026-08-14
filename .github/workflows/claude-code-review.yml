@@ -6,14 +6,12 @@ jobs:
     permissions: { contents: write, pull-requests: write, issues: write, id-token: write }
     steps:
       - name: Check for Claude token
-        env:
-          CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        env: { CLAUDE_TOKEN: "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}" }
         run: echo "HAS_CLAUDE_TOKEN=${CLAUDE_TOKEN:+true}" >> "$GITHUB_ENV"
       - { uses: actions/checkout@v7, with: { fetch-depth: 0 } }
-      - { uses: ./.github/actions/setup-bun, id: bun }
-      - { uses: ./.github/actions/setup-task }
+      - { uses: jdx/mise-action@v4 }
       - { uses: kjanat/install-dprint@v2 }
-      - { uses: kjanat/runner@master }
+      - { uses: ./.github/actions/setup-bun, id: bun }
       - { run: runner install }
       # Dogfood: fixes Claude pushes to PR branches get signed by our own service
       - uses: ./.github/actions/setup-claude-signing
@@ -24,6 +22,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           # env beats the action's hardcoded bot git config — see claude.yml
           GIT_AUTHOR_NAME: ${{ vars.GIT_AUTHOR_NAME }}
           GIT_AUTHOR_EMAIL: ${{ vars.GIT_AUTHOR_EMAIL }}

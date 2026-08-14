@@ -4,9 +4,9 @@ description: Check if the API has changed after running the code generation task
 runs:
   using: composite
   steps:
-    - uses: ./.github/actions/setup-task
+    - uses: jdx/mise-action@v4
+      with: { working_directory: client }
     - uses: ./.github/actions/setup-bun
-    - uses: ./.github/actions/setup-go
     - shell: bash
       run: task generate:api
     - name: Check for changes
@@ -17,11 +17,11 @@ runs:
         EXIT_CODE=$?
 
         if [[ "${EXIT_CODE}" -ne 0 ]]; then
-         	# shellcheck disable=SC2016
           {
-            echo '::error::API generation resulted in changes. Please run `task generate:api` and commit the changes.'
-         	  printf '## Changed\n\n```text\n%s\n```\n\n<details open><summary><h2>Diff</h2></summary>\n\n```patch\n%s\n```\n\n</details>\n' \
-              "${CHANGED}" "${PATCH}" | tee -a "${GITHUB_STEP_SUMMARY}"
+            echo '::error::API generation resulted in changes. Please run "task generate:api" and commit the changes.'
+            printf '## Changed\n\n~~~text\n%s\n~~~\n\n<details open><summary><h2>Diff</h2></summary>\n\n~~~patch\n%s\n~~~\n\n</details>\n' \
+              "${CHANGED}" "${PATCH}" \
+            | tee -a "${GITHUB_STEP_SUMMARY}"
           }
          	exit "${EXIT_CODE}"
         else echo "::notice:API is up to date"; exit 0; fi

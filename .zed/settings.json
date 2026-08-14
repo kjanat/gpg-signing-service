@@ -1,12 +1,6 @@
 {
-  "formatter": [
-    {
-      "external": {
-        "command": "dprint",
-        "arguments": ["fmt", "--stdin", "{buffer_path}"]
-      }
-    }
-  ],
+  "format_on_save": "on",
+  "formatter": [{ "external": { "command": "dprint", "arguments": ["fmt", "--stdin", "{buffer_path}"] } }],
   "prettier": { "allowed": false },
   "languages": {
     "TypeScript": {

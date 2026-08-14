@@ -26,14 +26,14 @@ tasks:
   dev:
     desc: Start development server
     aliases: [d]
-    cmd: bunx wrangler dev
+    cmd: wrangler dev
 
   deploy:
     desc: Deploy to Cloudflare Workers
     prompt:
       - "Are you sure?"
       - "This will affect live users!"
-    cmd: bunx wrangler deploy
+    cmd: wrangler deploy
 
   test:
     desc: Run tests
@@ -60,7 +60,7 @@ tasks:
     cmds:
       - task: format
       - bun eslint src/
-      - bun biome lint
+      - biome lint
 
   lint:fix:
     desc: Lint and fix code
@@ -68,7 +68,7 @@ tasks:
     deps: [install:noscripts]
     cmds:
       - bunx eslint src/ --fix
-      - bun biome check --fix
+      - biome check --fix
       - defer:
           task: format
 
@@ -81,7 +81,7 @@ tasks:
       DPRINT_CONFIG_DISCOVERY: "false"
     cmds:
       - task: client:format
-      - bun dprint fmt {{.CLI_ARGS}} --config=$CONFIG --allow-no-files
+      - dprint fmt {{.CLI_ARGS}} --config=$CONFIG --allow-no-files
 
   format:check:
     silent: true
@@ -91,7 +91,7 @@ tasks:
     env:
       CONFIG: "{{.DPRINT_CONFIG}}"
       DPRINT_CONFIG_DISCOVERY: "false"
-    cmd: bun dprint check {{.CLI_ARGS}} --config=$CONFIG --allow-no-files
+    cmd: dprint check {{.CLI_ARGS}} --config=$CONFIG --allow-no-files
 
   format:staged:
     silent: true
@@ -100,7 +100,7 @@ tasks:
     env:
       CONFIG: "{{.DPRINT_CONFIG}}"
       DPRINT_CONFIG_DISCOVERY: "false"
-    cmd: bun dprint fmt --staged --config=$CONFIG --allow-no-files
+    cmd: dprint fmt --staged --config=$CONFIG --allow-no-files
 
   typecheck:
     desc: Typecheck code
@@ -109,7 +109,7 @@ tasks:
     sources:
       - "**/*.ts"
     cmds:
-      - bun run typecheck
+      - run typecheck
 
   typegen:
     desc: Generate Worker types
@@ -119,7 +119,7 @@ tasks:
       - "**/*.ts"
     generates:
       - worker-configuration.d.ts
-    cmd: bunx wrangler types
+    cmd: wrangler types
 
   generate:api:
     desc: Generate OpenAPI spec and client
@@ -144,8 +144,8 @@ tasks:
   db:create:
     desc: Create D1 database
     status:
-      - bunx wrangler d1 list --json | jq -e 'map(.name) | contains(["{{.DATABASE_NAME}}"])'
-    cmd: bunx wrangler d1 create {{.DATABASE_NAME}}
+      - wrangler d1 list --json | jq -e 'map(.name) | contains(["{{.DATABASE_NAME}}"])'
+    cmd: wrangler d1 create {{.DATABASE_NAME}}
 
   db:migrate:
     desc: Migrate D1 database
@@ -153,26 +153,26 @@ tasks:
       - "Are you sure?"
       - "This will affect live users!"
     status:
-      - bunx wrangler d1 list --json | jq -e 'map(.name) | contains(["{{.DATABASE_NAME}}"])'
+      - wrangler d1 list --json | jq -e 'map(.name) | contains(["{{.DATABASE_NAME}}"])'
     cmd: |
-      bunx wrangler d1 execute --remote {{.DATABASE_NAME}} \
+      wrangler d1 execute --remote {{.DATABASE_NAME}} \
         --file={{.SQL_MIGRATIONS_FILE}}
 
   db:migrate:local:
     desc: Migrate local D1 database
     status:
-      - bunx wrangler d1 list --json | jq -e 'map(.name) | contains(["{{.DATABASE_NAME}}"])'
+      - wrangler d1 list --json | jq -e 'map(.name) | contains(["{{.DATABASE_NAME}}"])'
     cmd: |
-      bunx wrangler d1 execute --local {{.DATABASE_NAME}} \
+      wrangler d1 execute --local {{.DATABASE_NAME}} \
         --file={{.SQL_MIGRATIONS_FILE}}
 
   kv:create:
     desc: Create KV namespace
     aliases: [kvc]
     status:
-      - bunx wrangler kv namespace list | jq -e 'map(.title) | contains(["{{.KV_NAMESPACE}}"])'
+      - wrangler kv namespace list | jq -e 'map(.title) | contains(["{{.KV_NAMESPACE}}"])'
     cmds:
-      - bunx wrangler kv namespace create {{.KV_NAMESPACE}}
+      - wrangler kv namespace create {{.KV_NAMESPACE}}
 
   install:
     desc: Install dependencies

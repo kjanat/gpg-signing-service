@@ -34,8 +34,8 @@
     "generate:oapi": "cd client && go tool oapi-codegen -config oapi-codegen.yaml openapi.json",
     "generate:oapigen": "bun scripts/generate-openapi.ts",
     "generate-key": "bash scripts/generate-key.sh",
-    "prepare": "run typegen",
-    "postinstall": "bunx lefthook install; bunx wrangler types >/dev/null",
+    "prepare": "sh ./scripts/cf.sh",
+    "lefthook:install": "lefthook install",
     "kv:create": "wrangler kv namespace create JWKS_CACHE",
     "kv:create:staging": "wrangler kv namespace create JWKS_CACHE --env staging",
     "lint": "run -pk lint:eslint lint:biome",
@@ -48,42 +48,40 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "run @typescript/native --noEmit",
-    "typegen": "wrangler types"
+    "typegen": "wrangler types >/dev/null"
   },
   "dependencies": {
     "@hono/swagger-ui": "0.6.1",
-    "@hono/zod-openapi": "1.5.1",
+    "@hono/zod-openapi": "1.6.0",
     "micro509": "0.14.0",
-    "hono": "4.12.33",
+    "hono": "4.13.2",
     "openpgp": "6.3.1",
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.6",
-    "@cloudflare/vitest-pool-workers": "0.20.1",
-    "@commitlint/cli": "21.2.1",
-    "@commitlint/config-conventional": "21.2.0",
+    "@cloudflare/vitest-pool-workers": "0.21.3",
+    "@commitlint/cli": "21.2.2",
+    "@commitlint/config-conventional": "21.2.2",
     "@eslint/js": "10.0.1",
     "@types/bun": "1.3.14",
-    "@typescript-eslint/eslint-plugin": "8.65.0",
-    "@typescript-eslint/parser": "8.65.0",
+    "@typescript-eslint/eslint-plugin": "8.67.0",
+    "@typescript-eslint/parser": "8.67.0",
     "@typescript/native": "npm:typescript@^7",
     "@vitest/coverage-istanbul": "4.1.10",
     "@vitest/runner": "4.1.10",
     "@vitest/snapshot": "4.1.10",
     "dprint": "0.55.2",
-    "eslint": "10.8.0",
+    "eslint": "10.8.1",
     "jiti": "2.7.0",
-    "jose": "6.2.7",
-    "runner-run": "0.24.0",
-    "tombi": "1.2.5",
-    "typescript": ">=6, <7",
-    "typescript-eslint": "8.65.0",
-    "vitest": "^4.1.0",
-    "wrangler": "4.118.0"
+    "jose": "6.2.8",
+    "typescript": "<7.0.2",
+    "typescript-eslint": "8.67.0",
+    "vitest": "^4.1.0"
   },
   "overrides": {
-    "typescript": ">=6, <7"
+    "typescript": {
+      ".": "<7"
+    }
   },
   "packageManager": "bun@1.3.14"
 }
