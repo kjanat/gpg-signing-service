@@ -8,12 +8,14 @@ DEFAULT_BRANCH = os.environ.get("DEFAULT_BRANCH") or "master"
 ALLOW_RESIGN = os.environ.get("ALLOW_RESIGN") == "true"
 SIGN_OTHERS = os.environ.get("SIGN_OTHERS") == "true"
 SCAN_LIMIT = os.environ.get("SCAN_LIMIT", "").strip()
+BASE_REF = os.environ.get("BASE_REF", "").strip()
 
 ARMOR_MARKER = b"BEGIN PGP SIGNATURE"
 
 
 def warn(message: str) -> None:
-    print(f"::warning::{message}")
+    data = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    print(f"::warning::{data}")
 
 
 def git(*args: str, stdin: bytes | None = None) -> bytes:
@@ -190,13 +192,12 @@ def last_signed(home: str) -> str:
 
 
 def resolve_base(branch: str, home: str) -> str:
-    base = os.environ.get("BASE_REF", "").strip()
-    if base:
+    if BASE_REF:
         if SCAN_LIMIT:
-            discarded = f"scan_limit={SCAN_LIMIT} was discarded because base={base}"
+            discarded = f"scan_limit={SCAN_LIMIT} was discarded because base={BASE_REF}"
             reason = "the scan for the last signed commit only runs when base is blank"
             warn(f"{discarded} pins the range; {reason}")
-        return git("rev-parse", "--verify", f"{base}^{{commit}}").strip().decode()
+        return git("rev-parse", "--verify", f"{BASE_REF}^{{commit}}").strip().decode()
     if branch == DEFAULT_BRANCH:
         return last_signed(home)
     return git("merge-base", "HEAD", f"origin/{DEFAULT_BRANCH}").strip().decode()
@@ -215,16 +216,23 @@ def main() -> None:
     base = resolve_base(branch, home)
     commits = git("rev-list", "--reverse", "--topo-order", f"{base}..HEAD").split()
     if not commits:
-        if base == head.decode():
-            remedy = "pass the commit *before* the first one you want signed"
-            warn(
-                f"base resolved to {base}, which is HEAD itself; base is an "
-                f"exclusive lower bound, so the range is empty — {remedy}."
-            )
-        else:
+        if base != head.decode():
             warn(
                 f"No commits in {base}..HEAD; nothing was signed. Check that base "
                 "is an ancestor of HEAD on the branch you dispatched."
+            )
+        elif BASE_REF:
+            remedy = "pass the commit before the first one you want signed"
+            warn(
+                f"base={BASE_REF} resolved to {base}, which is HEAD itself; base is "
+                f"an exclusive lower bound, so the range is empty — {remedy}."
+            )
+        elif branch == DEFAULT_BRANCH:
+            print(f"Nothing to sign; HEAD ({base}) is already signed and verified.")
+        else:
+            print(
+                f"Nothing to sign; {branch} adds no commits on top of "
+                f"origin/{DEFAULT_BRANCH} ({base})."
             )
         return
 
