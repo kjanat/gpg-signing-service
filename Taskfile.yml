@@ -16,7 +16,7 @@ vars:
   SQL_MIGRATIONS_FILE: ./migrations/0001_initial.sql
   DPRINT_CONFIG: .dprint.jsonc
 
-dotenv: [".dev.env"]
+dotenv: [.dev.env]
 
 tasks:
   default:
@@ -33,25 +33,25 @@ tasks:
     prompt:
       - "Are you sure?"
       - "This will affect live users!"
-    cmd: wrangler deploy
+    cmd: wrangler deploy --env=''
 
   test:
     desc: Run tests
     aliases: [t]
     deps: [install:noscripts]
-    cmd: bunx vitest run
+    cmd: bun run test
 
   test:coverage:
     desc: Run tests with coverage
     aliases: [tc]
     deps: [install:noscripts]
-    cmd: bunx vitest run --coverage
+    cmd: bun run test:coverage
 
   test:watch:
     desc: Run tests in watch mode
     aliases: [tw]
     deps: [install:noscripts]
-    cmd: bunx vitest
+    cmd: bun run test:watch
 
   lint:
     desc: Lint code
@@ -67,10 +67,9 @@ tasks:
     aliases: [lf]
     deps: [install:noscripts]
     cmds:
-      - bunx eslint src/ --fix
-      - biome check --fix
-      - defer:
-          task: format
+      - bun lint:eslint:fix
+      - bun lint:biome:fix
+      - defer: { task: format }
 
   format:
     silent: true
@@ -78,10 +77,10 @@ tasks:
     aliases: [fmt, f]
     env:
       CONFIG: "{{.DPRINT_CONFIG}}"
-      DPRINT_CONFIG_DISCOVERY: "false"
+      DPRINT_CONFIG_DISCOVERY: 0
     cmds:
       - task: client:format
-      - dprint fmt {{.CLI_ARGS}} --config=$CONFIG --allow-no-files
+      - dprint fmt {{.CLI_ARGS}} --config "${CONFIG}" --allow-no-files
 
   format:check:
     silent: true
@@ -90,8 +89,8 @@ tasks:
     deps: [install:noscripts]
     env:
       CONFIG: "{{.DPRINT_CONFIG}}"
-      DPRINT_CONFIG_DISCOVERY: "false"
-    cmd: dprint check {{.CLI_ARGS}} --config=$CONFIG --allow-no-files
+      DPRINT_CONFIG_DISCOVERY: 0
+    cmd: dprint check {{.CLI_ARGS}} --config "${CONFIG}" --allow-no-files
 
   format:staged:
     silent: true
@@ -99,47 +98,39 @@ tasks:
     aliases: [fs]
     env:
       CONFIG: "{{.DPRINT_CONFIG}}"
-      DPRINT_CONFIG_DISCOVERY: "false"
-    cmd: dprint fmt --staged --config=$CONFIG --allow-no-files
+      DPRINT_CONFIG_DISCOVERY: 0
+    cmd: dprint fmt --staged --config "${CONFIG}" --allow-no-files
 
   typecheck:
     desc: Typecheck code
     aliases: [ts, type, tsc, tsgo]
     deps: [install:noscripts]
-    sources:
-      - "**/*.ts"
-    cmds:
-      - run typecheck
+    sources: ["**/*.ts"]
+    cmd: run typecheck
 
   typegen:
     desc: Generate Worker types
     aliases: [tg]
     deps: [install:noscripts]
-    sources:
-      - "**/*.ts"
-    generates:
-      - worker-configuration.d.ts
+    sources: ["**/*.ts"]
+    generates: [worker-configuration.d.ts]
     cmd: wrangler types
 
   generate:api:
     desc: Generate OpenAPI spec and client
     aliases: [gapi, gen]
     deps: [install:noscripts]
-    sources:
-      - "**/*.ts"
-    generates:
-      - client/openapi.json
+    sources: ["**/*.ts"]
+    generates: [client/openapi.json]
     cmds:
-      - bun run scripts/generate-openapi.ts
+      - bun run generate:oapigen
       - task: client:generate
 
   generate:key:
     desc: Generate GPG key
     aliases: [gpg]
-    generates:
-      - ./.keys
-    cmds:
-      - bash scripts/generate-key.sh
+    generates: [./.keys]
+    cmd: bash scripts/generate-key.sh
 
   db:create:
     desc: Create D1 database
@@ -171,8 +162,7 @@ tasks:
     aliases: [kvc]
     status:
       - wrangler kv namespace list | jq -e 'map(.title) | contains(["{{.KV_NAMESPACE}}"])'
-    cmds:
-      - wrangler kv namespace create {{.KV_NAMESPACE}}
+    cmd: wrangler kv namespace create {{.KV_NAMESPACE}}
 
   install:
     desc: Install dependencies
