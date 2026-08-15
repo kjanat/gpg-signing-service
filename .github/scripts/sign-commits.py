@@ -200,14 +200,22 @@ def last_signed(home: str) -> str:
 
 
 def resolve_base(branch: str, home: str) -> str:
-    if BASE_REF:
-        if SCAN_LIMIT:
-            discarded = f"scan_limit={SCAN_LIMIT} was discarded because base={BASE_REF}"
-            reason = "the scan for the last signed commit only runs when base is blank"
-            warn(f"{discarded} pins the range; {reason}")
-        return git("rev-parse", "--verify", f"{BASE_REF}^{{commit}}").strip().decode()
-    if branch == DEFAULT_BRANCH:
+    if not BASE_REF and branch == DEFAULT_BRANCH:
         return last_signed(home)
+
+    if SCAN_LIMIT:
+        _ = scan_bound()
+        pinned = (
+            f"base={BASE_REF} pins the range"
+            if BASE_REF
+            else f"{branch} is not {DEFAULT_BRANCH}, so the range starts at the "
+            "merge base"
+        )
+        reason = "the scan for the last signed commit only runs when base is blank"
+        warn(f"scan_limit={SCAN_LIMIT} was discarded because {pinned}; {reason}")
+
+    if BASE_REF:
+        return git("rev-parse", "--verify", f"{BASE_REF}^{{commit}}").strip().decode()
     return git("merge-base", "HEAD", f"origin/{DEFAULT_BRANCH}").strip().decode()
 
 
@@ -302,7 +310,16 @@ def main() -> None:
 
     signed = sum(1 for commit in rewritten if ours[commit])
     print(f"Signed {signed} of {len(commits)} commit(s) in {base}..HEAD")
-    _ = git("update-ref", "HEAD", rewritten.get(head, head).decode())
+
+    tip = rewritten.get(head, head)
+    if not verify_status(tip, home)[0]:
+        warn(
+            f"Signed {signed} commit(s), but the tip {tip.decode()[:8]} still carries "
+            "no signature this key can verify; it was committed by an identity the "
+            "key does not carry — dispatch with sign_others to include it."
+        )
+
+    _ = git("update-ref", "HEAD", tip.decode())
 
 
 if __name__ == "__main__":
