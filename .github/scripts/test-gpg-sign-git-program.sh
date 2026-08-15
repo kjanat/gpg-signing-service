@@ -64,6 +64,10 @@ run_signing_case() {
 
 	printf 'commit object' | env \
 		-u GPG_SIGN_TOKEN \
+		-u GPG_OIDC_REQUEST_URL \
+		-u GPG_OIDC_REQUEST_TOKEN \
+		-u ACTIONS_ID_TOKEN_REQUEST_URL \
+		-u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
 		PATH="${tmp_dir}/bin:${PATH}" \
 		GPG_SIGN_URL='https://sign.example.test' \
 		"$@" \

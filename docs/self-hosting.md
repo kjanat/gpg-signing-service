@@ -124,11 +124,18 @@ Deploy staging explicitly with:
 task deploy:staging
 ```
 
-Both deploy tasks apply pending D1 migrations before uploading Worker code.
-The package `deploy` scripts do the same through their `predeploy` lifecycle
-hooks. If Cloudflare Workers Builds is connected, set its production deploy
-command to `bun run deploy`; the default `npx wrangler deploy` command bypasses
-the repository's migration step.
+Deploys intentionally do not apply schema changes. Apply pending migrations as
+an explicit operation before deploying:
+
+```bash
+task db:migrate
+task deploy
+```
+
+Use `task db:migrate:staging` before `task deploy:staging` for staging. On
+GitHub, dispatch the `D1 Migrations` workflow from `master`; its environment
+input selects the production or staging database and can carry environment
+protection rules independently of code deployment.
 
 ## 7. Upload the PGP key
 

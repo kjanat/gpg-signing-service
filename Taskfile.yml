@@ -28,16 +28,18 @@ tasks:
     cmd: mise exec -- wrangler dev
 
   deploy:
-    desc: Apply production D1 migrations and deploy to Cloudflare Workers
-    cmds:
-      - task: db:migrate
-      - wrangler deploy --env=''
+    desc: Deploy to production Cloudflare Workers
+    prompt:
+      - "Are you sure?"
+      - "This will affect live users!"
+    cmd: wrangler deploy --env=''
 
   deploy:staging:
-    desc: Apply staging D1 migrations and deploy to Cloudflare Workers
-    cmds:
-      - task: db:migrate:staging
-      - wrangler deploy --env staging
+    desc: Deploy to staging Cloudflare Workers
+    prompt:
+      - "Are you sure?"
+      - "This will affect staging users!"
+    cmd: wrangler deploy --env staging
 
   test:
     desc: Run tests
