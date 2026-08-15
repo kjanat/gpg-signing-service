@@ -709,11 +709,11 @@ db:migrate:rollback:
   prompt:
     - "Rollback to previous version? This cannot be undone!"
   cmd: |
-    # Load rollback script
+    # Load rollback script (the glob has to expand before the -f test)
     LAST_NUM=$(ls migrations/ | grep -E '^[0-9]+_' | tail -1 | cut -d_ -f1)
-    if [ -f "migrations/rollback/${LAST_NUM}_*.rollback.sql" ]; then
-      wrangler d1 execute {{.DATABASE_NAME}} --remote \
-        --file="migrations/rollback/${LAST_NUM}_*.rollback.sql"
+    ROLLBACK_FILE=$(find migrations/rollback -name "${LAST_NUM}_*.rollback.sql" -print -quit)
+    if [[ -n "${ROLLBACK_FILE}" ]]; then
+      wrangler d1 execute {{.DATABASE_NAME}} --remote --file="${ROLLBACK_FILE}"
     else
       echo "No rollback script found for migration ${LAST_NUM}"
       exit 1
