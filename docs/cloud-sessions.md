@@ -19,11 +19,19 @@ work — and repairs the toolchain if the environment was never configured.
 Cloud VMs ship Ubuntu 24.04 with `bun`, `go`, `node`, `dprint`, `jq`, and
 `golangci-lint` preinstalled. Two things still break:
 
-1. **`task` is not installed.** `CLAUDE.md` requires every command to go
-   through Taskfile, so without it the agent cannot run tests or linters at
-   all. Note the upstream `install.sh` pulls from GitHub releases via the API,
-   which the session proxy answers with `403` for repos not attached to the
-   session — install the npm package instead.
+1. **`task` and `mise` are not installed.** `CLAUDE.md` requires every command
+   to go through Taskfile, so without `task` the agent cannot run tests or
+   linters at all. `mise` is needed too, and not only as a way to get `task`:
+   the root `Taskfile.yml` invokes wrangler, biome and the typechecker as
+   `mise exec -- <tool>`, so `task lint` and `task typecheck` fail outright
+   without it.
+
+   Installing mise is the whole fix, because `.mise.toml` pins `task` and a
+   correctly-built `golangci-lint` alongside everything else — the same
+   mechanism CI uses via `jdx/mise-action`. Note the upstream Taskfile
+   `install.sh` pulls from GitHub releases via the API, which the session proxy
+   answers with `403` for repos not attached to the session; the npm package is
+   the fallback if mise itself cannot be fetched.
 
 2. **`golangci-lint` is built with the wrong Go.** The preinstalled binary is
    compiled with an older Go than `client/go.mod` targets, so it refuses to
@@ -38,7 +46,12 @@ Cloud VMs ship Ubuntu 24.04 with `bun`, `go`, `node`, `dprint`, `jq`, and
    to `golangci-lint` for `.go` files, so _formatting the whole repo fails_,
    including on files that have nothing to do with Go.
 
-   Reinstalling is not enough on its own. A plain `go install` builds
+   `.mise.toml` pins a prebuilt `golangci-lint` compiled with a current Go, so
+   once mise is installed this resolves itself. The rest of this item applies
+   only to the fallback path, where mise is unavailable and the binary has to be
+   built locally.
+
+   There, reinstalling is not enough on its own. A plain `go install` builds
    golangci-lint with the Go version _its own_ `go.mod` asks for — currently
    older than ours — reproducing the same error. The build has to be pinned to
    the toolchain this repo targets.
@@ -57,14 +70,17 @@ GIT_COMMITTER_EMAIL=info@kajkowalski.nl
 GPG_SIGN_URL=https://gpg.kajkowalski.nl
 ```
 
-`GOTOOLCHAIN` is the load-bearing one: it makes `go install` compile
-golangci-lint with a Go new enough for `client/go.mod`.
+`GOTOOLCHAIN` only matters on the fallback path, where it makes `go install`
+compile golangci-lint with a Go new enough for `client/go.mod`. When mise is
+available it is redundant, because `.mise.toml` pins a prebuilt binary. You can
+leave it out entirely; it is listed here for environments where mise cannot be
+installed.
 
-> **Keep `GOTOOLCHAIN` in step with `client/go.mod`.** It pins an exact
-> toolchain, so when the `go` directive moves past it, plain `go build` starts
-> failing with a toolchain error. Bump it in the same change that bumps
-> `go.mod`. The SessionStart hook derives the version from `go.mod` at runtime
-> and does not depend on this variable.
+> **If you set it, keep `GOTOOLCHAIN` in step with `client/go.mod`.** It pins an
+> exact toolchain, so when the `go` directive moves past it, plain `go build`
+> starts failing with a toolchain error. Bump it in the same change that bumps
+> `go.mod`. The SessionStart hook probes with `GOTOOLCHAIN=auto` so it derives
+> the version from `go.mod` at runtime rather than from a stale pin.
 
 The git identity variables mirror the repository variables the CI workflows
 use, so commits an agent makes look the same whether they come from a cloud
@@ -101,14 +117,20 @@ Code launches, and only when no cached environment exists.
 # start, and a broken tool is better than no session. The repo's SessionStart
 # hook re-checks and repairs anything that failed here.
 
-# Taskfile. The npm package, not the upstream install.sh, which fetches from
-# GitHub releases through the API and gets a 403 from the session proxy.
-npm install -g @go-task/cli || true
+# mise, which installs everything .mise.toml pins (task, golangci-lint, biome,
+# shellcheck, wrangler, ...) and is what the root Taskfile's `mise exec --`
+# calls need on PATH. Its installer downloads the release asset directly, which
+# the proxy allows — it is the releases *API* that returns 403.
+curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh || true
+mise install || true
+
+# Fallbacks, in case the mise install above did not take. Harmless when it did.
+command -v task >/dev/null 2>&1 || npm install -g @go-task/cli || true
 
 # golangci-lint built with the Go version client/go.mod targets. GOTOOLCHAIN
 # comes from the environment variables above; without it this rebuild is
 # pointless, because go install would use golangci-lint's own older toolchain.
-GOBIN=/usr/local/bin go install \
+command -v golangci-lint >/dev/null 2>&1 || GOBIN=/usr/local/bin go install \
   github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 || true
 
 # Optional: the released gpg-sign CLI. Use the direct download URL — the
@@ -120,11 +142,13 @@ curl -sSLf -o /usr/local/bin/gpg-sign \
 exit 0
 ```
 
-Both install targets (`/opt/node22/bin` for npm globals, `/usr/local/bin` for
-`GOBIN`) are already on `PATH`, so nothing needs to touch `PATH` afterwards.
+The install targets (`/opt/node22/bin` for npm globals, `/usr/local/bin` for
+`GOBIN` and the mise binary) are already on `PATH`. The tools mise manages live
+in its shims directory, which the SessionStart hook adds to `PATH` for you.
 
-Budget roughly 90 seconds; the golangci-lint build dominates. That is well
-inside the five-minute limit, and it only runs when the cache is cold.
+Budget roughly 60 seconds when mise succeeds, or 90 when the fallback
+golangci-lint build runs. Either is well inside the five-minute limit, and it
+only runs when the cache is cold.
 
 ### When the setup script re-runs
 
