@@ -255,11 +255,15 @@ def main() -> None:
     raw = {commit: git("cat-file", "commit", commit.decode()) for commit in commits}
     mine = {commit: committer_email(raw[commit]) in identities for commit in commits}
     ours = {commit: SIGN_OTHERS or mine[commit] for commit in commits}
+    verified_by_key = {
+        commit: is_signed(raw[commit]) and verify_status(commit, home)[0]
+        for commit in commits
+    }
 
     stale: set[bytes] = set()
     for commit in commits:
         moved = any(parent in stale for parent in parents_of(raw[commit]))
-        if moved or (ours[commit] and not is_signed(raw[commit])):
+        if moved or (ours[commit] and not verified_by_key[commit]):
             stale.add(commit)
 
     if not stale:

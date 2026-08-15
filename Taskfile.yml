@@ -48,10 +48,15 @@ tasks:
     cmds:
       - bun run test
       - task: test:signing-shim
+      - task: test:sign-commits
 
   test:signing-shim:
     desc: Test the Git commit signing shim credential paths
     cmd: bash .github/scripts/test-gpg-sign-git-program.sh
+
+  test:sign-commits:
+    desc: Test commit re-signing behavior
+    cmd: bash .github/scripts/test-sign-commits.sh
 
   test:coverage:
     desc: Run tests with coverage
