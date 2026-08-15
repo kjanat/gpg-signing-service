@@ -62,6 +62,10 @@ run_signing_case() {
 	local status_file="$2"
 	shift 2
 
+	# Clear every credential variable first, then let the case set only the ones
+	# it exercises. Without this the ambient environment leaks in: any job that
+	# ran setup-claude-signing exports GPG_OIDC_REQUEST_*, which outranks the
+	# native variables and makes the native case assert against the wrong URL.
 	printf 'commit object' | env \
 		-u GPG_SIGN_TOKEN \
 		-u GPG_OIDC_REQUEST_URL \
@@ -106,5 +110,49 @@ if printf 'commit object' | env \
 	exit 1
 fi
 
-grep -q 'OIDC request credentials are unavailable' "${tmp_dir}/missing-error"
+grep -q 'no credential available' "${tmp_dir}/missing-error"
+
+# Precedence 1: a pre-set GPG_SIGN_TOKEN is used as-is, and the OIDC endpoint is
+# never contacted — the mock curl would fail the assertions it carries if it were.
+printf 'commit object' | env \
+	-u GPG_OIDC_REQUEST_URL \
+	-u GPG_OIDC_REQUEST_TOKEN \
+	-u ACTIONS_ID_TOKEN_REQUEST_URL \
+	-u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+	PATH="${tmp_dir}/bin:${PATH}" \
+	GPG_SIGN_URL='https://sign.example.test' \
+	GPG_SIGN_TOKEN='minted-token' \
+	"${shim}" --status-fd=2 -bsau test-key \
+	>"${tmp_dir}/service-token-output" 2>"${tmp_dir}/service-token-status"
+
+grep -q '^-----BEGIN PGP SIGNATURE-----$' "${tmp_dir}/service-token-output"
+grep -q '^\[GNUPG:\] SIG_CREATED $' "${tmp_dir}/service-token-status"
+
+# A well-formed response with no .value must not be forwarded as a bearer token.
+cat >"${tmp_dir}/bin/jq" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+cat >/dev/null
+printf 'null\n'
+EOF
+chmod +x "${tmp_dir}/bin/jq"
+
+if printf 'commit object' | env \
+	-u GPG_SIGN_TOKEN \
+	-u GPG_OIDC_REQUEST_URL \
+	-u GPG_OIDC_REQUEST_TOKEN \
+	PATH="${tmp_dir}/bin:${PATH}" \
+	GPG_SIGN_URL='https://sign.example.test' \
+	EXPECTED_OIDC_URL='https://native.example.test/token?api-version=2.0' \
+	EXPECTED_OIDC_TOKEN='native-request-token' \
+	ACTIONS_ID_TOKEN_REQUEST_URL='https://native.example.test/token?api-version=2.0' \
+	ACTIONS_ID_TOKEN_REQUEST_TOKEN='native-request-token' \
+	"${shim}" --status-fd=2 -bsau test-key \
+	>"${tmp_dir}/null-output" 2>"${tmp_dir}/null-error"; then
+	echo 'expected a null token value to fail' >&2
+	exit 1
+fi
+
+grep -q 'returned no token value' "${tmp_dir}/null-error"
 printf 'signing shim tests passed\n'
