@@ -22,7 +22,10 @@ jobs:
       - { run: runner install }
       # Dogfood: any commit this run makes is signed by the service itself
       - uses: ./.github/actions/setup-claude-signing
-        with: { service-url: "${{ vars.SIGNING_SERVICE_URL }}" }
+        id: signing
+        with:
+          service-url: "${{ vars.SIGNING_SERVICE_URL }}"
+          claude-settings: "${{ vars.CLAUDE_SETTINGS }}"
       - uses: anthropics/claude-code-action@v1
         env:
           # gh CLI is preinstalled on ubuntu-latest; used for issue triage
@@ -40,7 +43,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           path_to_bun_executable: ${{ steps.bun.outputs.bun-path }}
-          settings: ${{ vars.CLAUDE_SETTINGS }}
+          settings: ${{ steps.signing.outputs.settings-file }}
           prompt: |
             Run the /verify-live audit for this repository (see
             .claude/commands/verify-live.md) against

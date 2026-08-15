@@ -39,7 +39,13 @@ tasks:
     desc: Run tests
     aliases: [t]
     deps: [install:noscripts]
-    cmd: bun run test
+    cmds:
+      - bun run test
+      - task: test:signing-shim
+
+  test:signing-shim:
+    desc: Test the Git commit signing shim credential paths
+    cmd: bash .github/scripts/test-gpg-sign-git-program.sh
 
   test:coverage:
     desc: Run tests with coverage

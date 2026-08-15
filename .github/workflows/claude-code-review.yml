@@ -7,7 +7,7 @@ jobs:
     steps:
       - name: Check for Claude token
         env: { CLAUDE_TOKEN: "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}" }
-        run: echo "HAS_CLAUDE_TOKEN=${CLAUDE_TOKEN:+true}" >> "$GITHUB_ENV"
+        run: printf 'HAS_CLAUDE_TOKEN=%s\n' "${CLAUDE_TOKEN:+true}" >> "${GITHUB_ENV}"
       - { uses: actions/checkout@v7, with: { fetch-depth: 0 } }
       - { uses: jdx/mise-action@v4 }
       - { uses: kjanat/install-dprint@v2 }
@@ -15,7 +15,10 @@ jobs:
       - { run: runner install }
       # Dogfood: fixes Claude pushes to PR branches get signed by our own service
       - uses: ./.github/actions/setup-claude-signing
-        with: { service-url: "${{ vars.SIGNING_SERVICE_URL }}" }
+        id: signing
+        with:
+          service-url: "${{ vars.SIGNING_SERVICE_URL }}"
+          claude-settings: "${{ vars.CLAUDE_SETTINGS }}"
       - name: Run Claude Code Review
         id: claude-review
         if: env.HAS_CLAUDE_TOKEN == 'true'
@@ -31,7 +34,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           path_to_bun_executable: ${{ steps.bun.outputs.bun-path }}
-          settings: ${{ vars.CLAUDE_SETTINGS }}
+          settings: ${{ steps.signing.outputs.settings-file }}
           allowed_bots: dependabot[bot],github-actions[bot]
           show_full_output: true
           claude_args: --permission-mode bypassPermissions
