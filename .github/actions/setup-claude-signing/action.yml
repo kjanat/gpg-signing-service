@@ -71,6 +71,7 @@ runs:
         # only settings.env is guaranteed to reach Claude Code's Bash tools.
         # Use neutral names so the runner-provided ACTIONS_* credentials do not
         # cross that process boundary under reserved names.
+        printf '::add-mask::%s\n' "${oidc_request_url}"
         printf '::add-mask::%s\n' "${oidc_request_token}"
 
         {
