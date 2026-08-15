@@ -3,8 +3,24 @@ set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
 sign_script="${repo_root}/.github/scripts/sign-commits.py"
+
+# Keep the fixture repo away from the caller's git config: a global
+# commit.gpgsign would sign (or block on pinentry for) the base commit.
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_SYSTEM=/dev/null
+
 tmp_dir="$(mktemp -d)"
-trap 'rm -rf "${tmp_dir}"' EXIT
+
+cleanup() {
+	local home
+	# sign-commits.py leaves a keyring per invocation; TMPDIR keeps them here.
+	for home in "${tmp_dir}"/sign-commits-* "${tmp_dir}"/*-gnupg; do
+		[[ -d "${home}" ]] || continue
+		gpgconf --homedir "${home}" --kill all >/dev/null 2>&1 || true
+	done
+	rm -rf "${tmp_dir}"
+}
+trap cleanup EXIT
 
 service_home="${tmp_dir}/service-gnupg"
 foreign_home="${tmp_dir}/foreign-gnupg"
@@ -70,6 +86,7 @@ GNUPGHOME="${foreign_home}" git -C "${test_repo}" verify-commit "${foreign}" \
 
 common_env=(
 	PATH="${tmp_dir}/bin:${PATH}"
+	TMPDIR="${tmp_dir}"
 	SERVICE_GNUPGHOME="${service_home}"
 	SERVICE_KEY="${service_key}"
 	GPG_SIGN_TOKEN=test-token

@@ -13,6 +13,17 @@ BASE_REF = os.environ.get("BASE_REF", "").strip()
 
 ARMOR_MARKER = b"BEGIN PGP SIGNATURE"
 
+STATUS_PREFIX = "[GNUPG:] "
+# git verify-commit --raw reports on stderr in status-fd form; most specific first.
+STATUS_REASONS = {
+    "BADSIG": "the signature does not match the commit",
+    "REVKEYSIG": "the signing key was revoked",
+    "EXPKEYSIG": "the signing key has expired",
+    "EXPSIG": "the signature has expired",
+    "NO_PUBKEY": "signed by a key this service does not carry",
+    "ERRSIG": "the signature could not be checked",
+}
+
 
 def escape(message: str) -> str:
     return message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
@@ -103,6 +114,18 @@ def verify_status(commit: bytes, home: str) -> tuple[bool, str]:
     detail = result.stderr.decode(errors="replace").strip()
     good = result.returncode == 0 and b"[GNUPG:] GOODSIG" in result.stderr
     return good, detail
+
+
+def verify_reason(detail: str) -> str:
+    seen = {
+        line.removeprefix(STATUS_PREFIX).split(" ", 1)[0]
+        for line in detail.splitlines()
+        if line.startswith(STATUS_PREFIX)
+    }
+    for status, reason in STATUS_REASONS.items():
+        if status in seen:
+            return reason
+    return ""
 
 
 def header_of(raw: bytes) -> bytes:
@@ -255,10 +278,13 @@ def main() -> None:
     raw = {commit: git("cat-file", "commit", commit.decode()) for commit in commits}
     mine = {commit: committer_email(raw[commit]) in identities for commit in commits}
     ours = {commit: SIGN_OTHERS or mine[commit] for commit in commits}
-    verified_by_key = {
-        commit: is_signed(raw[commit]) and verify_status(commit, home)[0]
-        for commit in commits
-    }
+    verified_by_key: dict[bytes, bool] = {}
+    verify_detail: dict[bytes, str] = {}
+    for commit in commits:
+        if not (ours[commit] and is_signed(raw[commit])):
+            verified_by_key[commit] = False
+            continue
+        verified_by_key[commit], verify_detail[commit] = verify_status(commit, home)
 
     stale: set[bytes] = set()
     for commit in commits:
@@ -282,7 +308,9 @@ def main() -> None:
     if resign and not ALLOW_RESIGN:
         for commit in commits:
             if commit in resign:
-                print(f"  would re-sign {commit.decode()[:8]}")
+                reason = verify_reason(verify_detail.get(commit, ""))
+                suffix = f" ({reason})" if reason else ""
+                print(f"  would re-sign {commit.decode()[:8]}{suffix}")
         blocked = f"would rewrite {len(resign)} already-signed commit(s) below the tip"
         remedy = "move the base forward or dispatch with allow_resign"
         fail(f"signing {len(stale)} commit(s) {blocked}; {remedy}")
