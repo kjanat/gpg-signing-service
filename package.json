@@ -27,6 +27,7 @@
     "deploy": "wrangler deploy",
     "predeploy:staging": "wrangler d1 migrations apply AUDIT_DB --remote --env staging",
     "deploy:staging": "wrangler deploy --env staging",
+    "preview": "wrangler versions upload",
     "dev": "wrangler dev",
     "dev:staging": "wrangler dev --env staging",
     "fmt": "dprint fmt",

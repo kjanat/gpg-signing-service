@@ -91,7 +91,7 @@ Example:
 [vars]
 ALLOWED_ISSUERS   = "https://token.actions.githubusercontent.com"
 EXPECTED_AUDIENCE = "gpg-signing-service"
-KEY_ID            = "D8BC04E534E7706F"
+KEY_ID            = "62E75E54497815DD"
 ALLOWED_ORIGINS   = "https://admin.example.com"
 ```
 
@@ -139,7 +139,7 @@ export GPG_SIGN_URL="https://your-worker.example"
 export GPG_SIGN_ADMIN_TOKEN="..."
 
 gpg-sign admin upload \
-  --key-id D8BC04E534E7706F \
+  --key-id 62E75E54497815DD \
   --file .keys/private-key.asc
 ```
 
@@ -172,7 +172,7 @@ The private key must be PKCS#8 PEM and match the certificate.
 ```bash
 gpg-sign health
 gpg-sign admin list
-gpg-sign public-key --key-id D8BC04E534E7706F > public-key.asc
+gpg-sign public-key --key-id 62E75E54497815DD > public-key.asc
 ```
 
 Create a service token or configure OIDC, then request a test signature:
@@ -180,7 +180,7 @@ Create a service token or configure OIDC, then request a test signature:
 ```bash
 export GPG_SIGN_TOKEN="gst_..."
 printf 'smoke test' |
-  gpg-sign sign --key-id D8BC04E534E7706F > smoke-test.asc
+  gpg-sign sign --key-id 62E75E54497815DD > smoke-test.asc
 ```
 
 Verify a PGP result:
