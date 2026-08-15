@@ -23,7 +23,10 @@ jobs:
       # this very service (OIDC-authenticated /sign call per commit). Every
       # @claude run doubles as a live integration test.
       - uses: ./.github/actions/setup-claude-signing
-        with: { service-url: "${{ vars.SIGNING_SERVICE_URL }}" }
+        id: signing
+        with:
+          service-url: "${{ vars.SIGNING_SERVICE_URL }}"
+          claude-settings: "${{ vars.CLAUDE_SETTINGS }}"
       - uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ github.token }}
@@ -50,7 +53,7 @@ jobs:
           # and a CLI --permission-mode flag always outranks a settings-file
           # `permissions.defaultMode`. That's why CLAUDE_SETTINGS' bypassPermissions
           # alone had no effect (see run 30770718579: 7 permission denials).
-          settings: ${{ vars.CLAUDE_SETTINGS }}
+          settings: ${{ steps.signing.outputs.settings-file }}
           # User claude_args are appended AFTER the action's hardcoded flags
           # (src/modes/tag/index.ts: `claudeArgs += \` ${userClaudeArgs}\``), and the
           # parser (base-action/src/parse-sdk-options.ts) treats:
