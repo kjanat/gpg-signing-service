@@ -45,20 +45,17 @@ The Durable Object classes are provisioned by the migration declared in
 Apply the versioned files in [`migrations/`](../migrations) in order:
 
 ```bash
-bunx wrangler d1 migrations apply gpg-signing-audit --remote
+task db:migrate
 ```
 
-This installs both the audit table and service-token table. The current
-`task db:migrate` and package script explicitly execute only
-`0001_initial.sql`; do not use them for a fresh full deployment until they are
-updated.
+Wrangler records each applied file in its migration ledger, applies every
+pending file from [`migrations/`](../migrations) in order, and leaves already
+applied migrations alone.
 
 For staging:
 
 ```bash
-bunx wrangler d1 migrations apply gpg-signing-audit-staging \
-  --remote \
-  --env staging
+task db:migrate:staging
 ```
 
 ## 3. Generate a PGP key
@@ -94,7 +91,7 @@ Example:
 [vars]
 ALLOWED_ISSUERS   = "https://token.actions.githubusercontent.com"
 EXPECTED_AUDIENCE = "gpg-signing-service"
-KEY_ID            = "D8BC04E534E7706F"
+KEY_ID            = "62E75E54497815DD"
 ALLOWED_ORIGINS   = "https://admin.example.com"
 ```
 
@@ -124,11 +121,21 @@ task deploy
 Deploy staging explicitly with:
 
 ```bash
-bunx wrangler deploy --env staging
+task deploy:staging
 ```
 
-There is no checked-in automated Worker deployment workflow. Deployments are
-operator-controlled Wrangler operations.
+Deploys intentionally do not apply schema changes. Apply pending migrations as
+an explicit operation before deploying:
+
+```bash
+task db:migrate
+task deploy
+```
+
+Use `task db:migrate:staging` before `task deploy:staging` for staging. On
+GitHub, dispatch the `D1 Migrations` workflow from `master`; its environment
+input selects the production or staging database and can carry environment
+protection rules independently of code deployment.
 
 ## 7. Upload the PGP key
 
@@ -139,7 +146,7 @@ export GPG_SIGN_URL="https://your-worker.example"
 export GPG_SIGN_ADMIN_TOKEN="..."
 
 gpg-sign admin upload \
-  --key-id D8BC04E534E7706F \
+  --key-id 62E75E54497815DD \
   --file .keys/private-key.asc
 ```
 
@@ -172,7 +179,7 @@ The private key must be PKCS#8 PEM and match the certificate.
 ```bash
 gpg-sign health
 gpg-sign admin list
-gpg-sign public-key --key-id D8BC04E534E7706F > public-key.asc
+gpg-sign public-key --key-id 62E75E54497815DD > public-key.asc
 ```
 
 Create a service token or configure OIDC, then request a test signature:
@@ -180,7 +187,7 @@ Create a service token or configure OIDC, then request a test signature:
 ```bash
 export GPG_SIGN_TOKEN="gst_..."
 printf 'smoke test' |
-  gpg-sign sign --key-id D8BC04E534E7706F > smoke-test.asc
+  gpg-sign sign --key-id 62E75E54497815DD > smoke-test.asc
 ```
 
 Verify a PGP result:

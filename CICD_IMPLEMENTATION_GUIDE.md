@@ -1,6 +1,6 @@
 # CI/CD Implementation Guide: Quick-Start Recommendations
 
-**Status**: Ready-to-implement code examples for improving CI/CD pipeline
+**Status**: Examples aligned with the repository's current CI/CD tooling
 
 ---
 
@@ -16,11 +16,11 @@ security:
     security-events: write
     contents: read
   steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v7
 
     # Initialize CodeQL
     - name: Initialize CodeQL
-      uses: github/codeql-action/init@v3
+      uses: github/codeql-action/init@v4
       with:
         languages: javascript,go
         # Optional: specify query suites
@@ -28,18 +28,18 @@ security:
 
     # Auto-build for JavaScript
     - name: Autobuild
-      uses: github/codeql-action/autobuild@v3
+      uses: github/codeql-action/autobuild@v4
 
     # Analyze with CodeQL
     - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v3
+      uses: github/codeql-action/analyze@v4
       with:
         category: /language:javascript,/language:go
 
     # Upload results to GitHub Security
     - name: Upload SARIF
       if: always()
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@v4
       with:
         sarif_file: "results"
 ```
@@ -60,10 +60,10 @@ dependencies:
   permissions:
     contents: read
   steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v7
     - uses: ./.github/actions/setup-bun
-    - uses: ./.github/actions/setup-go
-      with: { go-version: "1.24" }
+    - uses: jdx/mise-action@v4
+      with: { working_directory: client }
 
     # Check npm dependencies
     - name: Npm audit
@@ -83,9 +83,12 @@ dependencies:
     # Generate dependency report
     - name: Check dependencies summary
       run: |
-        echo "## Dependency Summary" >> $GITHUB_STEP_SUMMARY
-        echo "- npm modules: $(jq '.dependencies | length' package-lock.json)" >> $GITHUB_STEP_SUMMARY
-        echo "- Go modules: $(go list ./... | wc -l)" >> $GITHUB_STEP_SUMMARY
+        cat >>"${GITHUB_STEP_SUMMARY}" <<EOF
+        ## Dependency Summary
+
+        - npm modules: $(jq '.dependencies | length' package.json)
+        - Go packages: $(cd client && go list ./... | wc -l)
+        EOF
 ```
 
 **Effort**: 45 minutes
@@ -142,18 +145,19 @@ jobs:
 
       - name: Rollback on failure
         if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
         run: |
           echo "CRITICAL: Deployment health check failed"
           echo "Initiating automatic rollback..."
           # Trigger rollback workflow or action
           gh workflow run rollback.yml \
-            -f deployment_id="${{ github.run_id }}"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            -f workflow_run_id="${WORKFLOW_RUN_ID}"
 
       - name: Create deployment status
         if: always()
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const status = context.job.status === 'success' ? 'success' : 'failure';
@@ -171,56 +175,12 @@ jobs:
 
 ---
 
-## 4. Create Staging Environment Config
+## 4. Use the Staging Environment
 
-### Implementation (New file: `wrangler.staging.toml`)
-
-```toml
-#:schema ./node_modules/wrangler/config-schema.json
-
-name                = "gpg-signing-service-staging"
-main                = "src/index.ts"
-compatibility_date  = "2025-11-13"
-compatibility_flags = ["nodejs_compat"]
-observability       = { enabled = true }
-placement           = { mode = "smart" }
-
-# Durable Objects (staging instances)
-[[durable_objects.bindings]]
-name       = "KEY_STORAGE"
-class_name = "KeyStorage"
-
-[[durable_objects.bindings]]
-name       = "RATE_LIMITER"
-class_name = "RateLimiter"
-
-[[migrations]]
-tag                = "v1"
-new_sqlite_classes = ["KeyStorage", "RateLimiter"]
-
-# D1 Database (staging instance)
-[[d1_databases]]
-binding       = "AUDIT_DB"
-database_name = "gpg-signing-audit-staging"
-database_id   = "STAGING_DB_ID_HERE"
-
-# KV namespace (staging)
-[[kv_namespaces]]
-binding = "JWKS_CACHE"
-id      = "STAGING_KV_ID_HERE"
-
-# Staging domain
-[[routes]]
-pattern       = "gpg-staging.kajkowalski.nl"
-custom_domain = true
-
-[vars]
-BUN_VERSION     = "1.3.3"
-ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com"
-KEY_ID          = "62E75E54497815DD"
-ENVIRONMENT     = "staging"
-LOG_LEVEL       = "debug"
-```
+Staging is defined in `wrangler.toml` under `[env.staging]`, including its
+Durable Object, D1, KV, route, and variable bindings. Keep those bindings in
+the shared configuration instead of creating a separate
+`wrangler.staging.toml`.
 
 ### Update Taskfile for multi-env deploy
 
@@ -231,24 +191,20 @@ deploy:staging:
   desc: Deploy to staging environment
   prompt:
     - "Deploy to staging?"
-  cmds:
-    - bunx wrangler deploy --config wrangler.staging.toml
-    - task: deploy:check:staging
+  cmd: wrangler deploy --env staging
 
 deploy:prod:
   desc: Deploy to production (use with caution)
   prompt:
     - "Deploy to PRODUCTION?"
     - "This affects live users!"
-  cmds:
-    - bunx wrangler deploy
-    - task: deploy:check:prod
+  cmd: wrangler deploy --env=''
 
 deploy:check:staging:
   desc: Check staging deployment status
   cmd: |
     echo "Checking staging deployment..."
-    curl -f https://gpg-staging.kajkowalski.nl/health
+    curl -f https://staging.gpg.kajkowalski.nl/health
     echo "Staging deployment healthy"
 
 deploy:check:prod:
@@ -260,7 +216,7 @@ deploy:check:prod:
 ```
 
 **Effort**: 1-2 hours
-**Benefit**: Safe progressive rollout (staging → canary → production)
+**Benefit**: Safe progressive rollout from staging to canary to production
 
 ---
 
@@ -283,16 +239,17 @@ jobs:
       deployments: write
       id-token: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v4
       - uses: ./.github/actions/setup-bun
 
       - name: Deploy to Production
         run: |
           echo "Deploying to production..."
-          bunx wrangler deploy
+          wrangler deploy
 
       - name: Create deployment
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const deployment = await github.rest.repos.createDeployment({
@@ -324,7 +281,7 @@ jobs:
 
 In GitHub Settings:
 
-1. Go to `Settings` → `Branches`
+1. Go to `Settings`, then `Branches`
 2. Add branch protection for `main`/`master`
 3. Enable:
    - Require status checks to pass
@@ -351,26 +308,28 @@ set -euo pipefail
 echo "Setting up Cloudflare Workers monitoring..."
 
 # Option 1: Honeycomb (recommended for simplicity)
-if [ -z "${HONEYCOMB_API_KEY:-}" ]; then
-  echo "⚠️  HONEYCOMB_API_KEY not set"
+if [[ -z "${HONEYCOMB_API_KEY:-}" ]]; then
+  echo "HONEYCOMB_API_KEY not set"
   echo "Get key from: https://ui.honeycomb.io/account/api_keys"
   echo "Then run: wrangler secret put HONEYCOMB_API_KEY"
 else
-  echo "✅ Honeycomb API key configured"
+  echo "Honeycomb API key configured"
 fi
 
 # Option 2: Datadog
-if [ -z "${DATADOG_API_KEY:-}" ]; then
-  echo "⚠️  DATADOG_API_KEY not set (optional)"
+if [[ -z "${DATADOG_API_KEY:-}" ]]; then
+  echo "DATADOG_API_KEY not set (optional)"
 else
-  echo "✅ Datadog API key configured"
+  echo "Datadog API key configured"
 fi
 
 # Verify Analytics Engine binding
 echo "Verifying Analytics Engine binding..."
-bunx wrangler types | grep -q "AnalyticsEngineDataset" && \
-  echo "✅ Analytics Engine binding found" || \
-  echo "⚠️  Analytics Engine binding not configured"
+if wrangler types | grep -q "AnalyticsEngineDataset"; then
+  echo "Analytics Engine binding found"
+else
+  echo "Analytics Engine binding not configured"
+fi
 
 echo "Monitoring setup complete"
 ```
@@ -451,12 +410,12 @@ jobs:
     name: Track Deployment Metrics
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Calculate metrics
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             // Get deployment count (this month)
@@ -593,9 +552,12 @@ jobs:
   notify:
     name: Remind Team to Rotate Secrets
     runs-on: ubuntu-latest
+    env:
+      ISSUES_URL: ${{ github.server_url }}/${{ github.repository }}/issues
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
     steps:
       - name: Create issue for secret rotation
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             github.rest.issues.create({
@@ -628,23 +590,18 @@ See SECURITY.md for details.
             });
 
       - name: Alert in Slack (if configured)
-        if: env.SLACK_WEBHOOK
-        uses: slackapi/slack-github-action@v1
+        if: env.SLACK_WEBHOOK_URL != ''
+        uses: slackapi/slack-github-action@v4.0.0
         with:
-          webhook-url: ${{ env.SLACK_WEBHOOK }}
+          webhook: ${{ env.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
           payload: |
-            {
-              "text": "Quarterly secret rotation reminder",
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*GPG Signing Service*\nQuarterly secret rotation due. <https://github.com/${{ github.repository }}/issues|View issue>"
-                  }
-                }
-              ]
-            }
+            text: "Quarterly secret rotation reminder"
+            blocks:
+              - type: "section"
+                text:
+                  type: "mrkdwn"
+                  text: "GPG Signing Service\nQuarterly secret rotation due. <${{ env.ISSUES_URL }}|View issue>"
 ````
 
 ### Document in SECURITY.md
@@ -752,11 +709,11 @@ db:migrate:rollback:
   prompt:
     - "Rollback to previous version? This cannot be undone!"
   cmd: |
-    # Load rollback script
+    # Load rollback script (the glob has to expand before the -f test)
     LAST_NUM=$(ls migrations/ | grep -E '^[0-9]+_' | tail -1 | cut -d_ -f1)
-    if [ -f "migrations/rollback/${LAST_NUM}_*.rollback.sql" ]; then
-      bunx wrangler d1 execute {{.DATABASE_NAME}} --remote \
-        --file="migrations/rollback/${LAST_NUM}_*.rollback.sql"
+    ROLLBACK_FILE=$(find migrations/rollback -name "${LAST_NUM}_*.rollback.sql" -print -quit)
+    if [[ -n "${ROLLBACK_FILE}" ]]; then
+      wrangler d1 execute {{.DATABASE_NAME}} --remote --file="${ROLLBACK_FILE}"
     else
       echo "No rollback script found for migration ${LAST_NUM}"
       exit 1
@@ -798,10 +755,10 @@ db:migrate:rollback:
 ### Day 2: Add Staging Environment
 
 ```bash
-# 1. Create wrangler.staging.toml (1 hour)
-# 2. Create staging D1 database (30 min)
-# 3. Create staging KV namespace (30 min)
-# 4. Update deployment tasks (1 hour)
+# 1. Review [env.staging] in wrangler.toml
+# 2. Verify the staging D1 and KV bindings
+# 3. Verify the staging secrets
+# 4. Test task deploy:staging
 ```
 
 ### Day 3: Add Health Checks & Rollback

@@ -88,7 +88,7 @@ deployment is public or suitable for your workload.
 Run `gpg-sign <command> --help` for all flags.
 
 Key IDs must contain exactly 16 hexadecimal characters, for example
-`D8BC04E534E7706F`.
+`62E75E54497815DD`.
 
 ## Examples
 
@@ -101,7 +101,7 @@ GPG_SIGN_URL="https://your-worker.example" gpg-sign health
 ### Public key
 
 ```bash
-gpg-sign public-key --key-id D8BC04E534E7706F > signing-key.asc
+gpg-sign public-key --key-id 62E75E54497815DD > signing-key.asc
 gpg --import signing-key.asc
 ```
 
@@ -112,14 +112,14 @@ export GPG_SIGN_URL="https://your-worker.example"
 export GPG_SIGN_TOKEN="gst_..."
 
 printf 'data to sign' |
-  gpg-sign sign --key-id D8BC04E534E7706F > signature.asc
+  gpg-sign sign --key-id 62E75E54497815DD > signature.asc
 ```
 
 For Git:
 
 ```bash
 git cat-file commit HEAD |
-  gpg-sign sign --key-id D8BC04E534E7706F > commit.sig
+  gpg-sign sign --key-id 62E75E54497815DD > commit.sig
 ```
 
 `commit.sig` is not yet part of the commit. See
@@ -132,7 +132,7 @@ export GPG_SIGN_URL="https://your-worker.example"
 export GPG_SIGN_ADMIN_TOKEN="..."
 
 gpg-sign admin upload \
-  --key-id D8BC04E534E7706F \
+  --key-id 62E75E54497815DD \
   --file .keys/private-key.asc
 ```
 

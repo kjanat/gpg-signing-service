@@ -41,7 +41,7 @@ custom_domain = true
 ## Note: Use secrets to store sensitive data. (https://developers.cloudflare.com/workers/configuration/secrets/)
 [vars]
 ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com"
-KEY_ID          = "D8BC04E534E7706F"
+KEY_ID          = "62E75E54497815DD"
 
 # Secrets (set via `wrangler secret put`)
 # - KEY_PASSPHRASE: Passphrase for encrypted private key
@@ -80,5 +80,5 @@ id      = "1a1c95b63a59458a9347be82f1b961df"
 
 [env.staging.vars]  # Staging environment variables
 ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com"
-KEY_ID          = "D8BC04E534E7706F"
+KEY_ID          = "62E75E54497815DD"
 ENVIRONMENT     = "staging"
