@@ -294,7 +294,8 @@ Value: {
 
 **Database Migrations**:
 
-- D1 migrations: `task db:migrate` (applies `.sql` files in `migrations/`)
+- D1 migrations: `task db:migrate` (applies pending `.sql` files in
+  `migrations/` through Wrangler's migration ledger)
 - Durable Objects migrations: `wrangler.toml` `[[migrations]]` block
 - No automated rollback (must manually revert migrations)
 

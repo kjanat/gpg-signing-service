@@ -45,20 +45,17 @@ The Durable Object classes are provisioned by the migration declared in
 Apply the versioned files in [`migrations/`](../migrations) in order:
 
 ```bash
-bunx wrangler d1 migrations apply gpg-signing-audit --remote
+task db:migrate
 ```
 
-This installs both the audit table and service-token table. The current
-`task db:migrate` and package script explicitly execute only
-`0001_initial.sql`; do not use them for a fresh full deployment until they are
-updated.
+Wrangler records each applied file in its migration ledger, applies every
+pending file from [`migrations/`](../migrations) in order, and leaves already
+applied migrations alone.
 
 For staging:
 
 ```bash
-bunx wrangler d1 migrations apply gpg-signing-audit-staging \
-  --remote \
-  --env staging
+task db:migrate:staging
 ```
 
 ## 3. Generate a PGP key
@@ -124,11 +121,14 @@ task deploy
 Deploy staging explicitly with:
 
 ```bash
-bunx wrangler deploy --env staging
+task deploy:staging
 ```
 
-There is no checked-in automated Worker deployment workflow. Deployments are
-operator-controlled Wrangler operations.
+Both deploy tasks apply pending D1 migrations before uploading Worker code.
+The package `deploy` scripts do the same through their `predeploy` lifecycle
+hooks. If Cloudflare Workers Builds is connected, set its production deploy
+command to `bun run deploy`; the default `npx wrangler deploy` command bypasses
+the repository's migration step.
 
 ## 7. Upload the PGP key
 

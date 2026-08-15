@@ -13,7 +13,6 @@ includes:
 vars:
   DATABASE_NAME: gpg-signing-audit
   KV_NAMESPACE: JWKS_CACHE
-  SQL_MIGRATIONS_FILE: ./migrations/0001_initial.sql
   DPRINT_CONFIG: .dprint.jsonc
 
 dotenv: [.dev.env]
@@ -29,11 +28,16 @@ tasks:
     cmd: mise exec -- wrangler dev
 
   deploy:
-    desc: Deploy to Cloudflare Workers
-    prompt:
-      - "Are you sure?"
-      - "This will affect live users!"
-    cmd: mise exec -- wrangler deploy --env=''
+    desc: Apply production D1 migrations and deploy to Cloudflare Workers
+    cmds:
+      - task: db:migrate
+      - wrangler deploy --env=''
+
+  deploy:staging:
+    desc: Apply staging D1 migrations and deploy to Cloudflare Workers
+    cmds:
+      - task: db:migrate:staging
+      - wrangler deploy --env staging
 
   test:
     desc: Run tests
@@ -145,23 +149,22 @@ tasks:
     cmd: mise exec -- wrangler d1 create {{.DATABASE_NAME}}
 
   db:migrate:
-    desc: Migrate D1 database
+    desc: Apply pending production D1 migrations
     prompt:
       - "Are you sure?"
       - "This will affect live users!"
-    status:
-      - mise exec -- wrangler d1 list --json | jq -e 'map(.name) | contains(["{{.DATABASE_NAME}}"])'
-    cmd: |
-      mise exec -- wrangler d1 execute --remote {{.DATABASE_NAME}} \
-        --file={{.SQL_MIGRATIONS_FILE}}
+    cmd: wrangler d1 migrations apply AUDIT_DB --remote
 
   db:migrate:local:
-    desc: Migrate local D1 database
-    status:
-      - mise exec -- wrangler d1 list --json | jq -e 'map(.name) | contains(["{{.DATABASE_NAME}}"])'
-    cmd: |
-      mise exec -- wrangler d1 execute --local {{.DATABASE_NAME}} \
-        --file={{.SQL_MIGRATIONS_FILE}}
+    desc: Apply pending local D1 migrations
+    cmd: wrangler d1 migrations apply AUDIT_DB --local
+
+  db:migrate:staging:
+    desc: Apply pending staging D1 migrations
+    prompt:
+      - "Are you sure?"
+      - "This will affect staging users!"
+    cmd: wrangler d1 migrations apply AUDIT_DB --remote --env staging
 
   kv:create:
     desc: Create KV namespace

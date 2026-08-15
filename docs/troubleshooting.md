@@ -101,11 +101,11 @@ changes the commit SHA. See
 Apply all D1 migrations:
 
 ```bash
-bunx wrangler d1 migrations apply gpg-signing-audit --remote
+task db:migrate
 ```
 
-Fresh deployments need both `0001_initial.sql` and
-`0002_service_tokens.sql`.
+This applies every pending file in `migrations/`, including the service-token
+and OIDC-authorization tables.
 
 ### `429`
 
