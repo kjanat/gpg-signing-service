@@ -8,6 +8,9 @@ sign_script="${repo_root}/.github/scripts/sign-commits.py"
 # commit.gpgsign would sign (or block on pinentry for) the base commit.
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_SYSTEM=/dev/null
+# GIT_* identity vars outrank the fixture's local config; a runner that exports
+# them (GitHub Actions does) would silently rewrite the "foreign" committer.
+unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 
 tmp_dir="$(mktemp -d)"
 
@@ -102,8 +105,11 @@ if blocked="$(cd "${test_repo}" && env "${common_env[@]}" ALLOW_RESIGN=false pyt
 	exit 1
 fi
 grep -Fq 'dispatch with allow_resign' <<<"${blocked}"
+grep -Fq 'signed by a key this service does not carry' <<<"${blocked}"
 current="$(git -C "${test_repo}" rev-parse HEAD)"
 [[ "${current}" == "${foreign}" ]]
+committer="$(git -C "${test_repo}" log -1 --format='%ce' "${foreign}")"
+[[ "${committer}" == foreign@example.com ]]
 
 (cd "${test_repo}" && env "${common_env[@]}" ALLOW_RESIGN=true python3 "${sign_script}")
 resigned="$(git -C "${test_repo}" rev-parse HEAD)"

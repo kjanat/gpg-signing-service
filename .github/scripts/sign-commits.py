@@ -308,9 +308,16 @@ def main() -> None:
     if resign and not ALLOW_RESIGN:
         for commit in commits:
             if commit in resign:
-                reason = verify_reason(verify_detail.get(commit, ""))
-                suffix = f" ({reason})" if reason else ""
-                print(f"  would re-sign {commit.decode()[:8]}{suffix}")
+                if commit in verify_detail and not verified_by_key[commit]:
+                    # No PGP status at all (an SSH signature, say) still means
+                    # the signature we can check did not check out.
+                    reason = (
+                        verify_reason(verify_detail[commit])
+                        or "its signature did not verify"
+                    )
+                else:
+                    reason = "a rewritten parent invalidates its signature"
+                print(f"  would re-sign {commit.decode()[:8]} ({reason})")
         blocked = f"would rewrite {len(resign)} already-signed commit(s) below the tip"
         remedy = "move the base forward or dispatch with allow_resign"
         fail(f"signing {len(stale)} commit(s) {blocked}; {remedy}")
