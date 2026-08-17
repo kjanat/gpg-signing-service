@@ -150,4 +150,26 @@ current="$(git -C "${test_repo}" rev-parse HEAD)"
 git -C "${test_repo}" config --unset gpg.program
 git -C "${test_repo}" config --unset gpg.format
 
+# With sign_others off, a signed commit the key does not cover goes stale only
+# because a parent moved, and the rewrite strips its signature without
+# replacing it. The block message has to say that; "would re-sign" would be a
+# promise the run breaks.
+git -C "${test_repo}" config user.email 'service@example.com'
+printf 'ours, unsigned\n' >>"${test_repo}/fixture.txt"
+git -C "${test_repo}" add fixture.txt
+git -C "${test_repo}" commit --quiet --no-gpg-sign -m 'ours, unsigned'
+git -C "${test_repo}" config user.email 'foreign@example.com'
+printf 'foreign child\n' >>"${test_repo}/fixture.txt"
+git -C "${test_repo}" add fixture.txt
+GNUPGHOME="${foreign_home}" git -C "${test_repo}" commit --quiet -m 'foreign, signed'
+foreign_child="$(git -C "${test_repo}" rev-parse HEAD)"
+
+# `env` applies assignments in order, so these override common_env.
+others_env=("${common_env[@]}" BASE_REF="${resigned}" SIGN_OTHERS=false ALLOW_RESIGN=false)
+if dropped="$(cd "${test_repo}" && env "${others_env[@]}" python3 "${sign_script}" 2>&1)"; then
+	printf 'expected the foreign child to require allow_resign\n' >&2
+	exit 1
+fi
+grep -Fq "would drop the signature on ${foreign_child:0:8}" <<<"${dropped}"
+
 printf 'foreign signature re-signing test passed\n'

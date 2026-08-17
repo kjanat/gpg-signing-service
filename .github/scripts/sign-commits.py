@@ -330,7 +330,10 @@ def main() -> None:
                     )
                 else:
                     reason = "a rewritten parent invalidates its signature"
-                print(f"  would re-sign {commit.decode()[:8]} ({reason})")
+                # A commit the key does not cover is reparented, not re-signed:
+                # the rewrite strips its signature and nothing replaces it.
+                action = "re-sign" if ours[commit] else "drop the signature on"
+                print(f"  would {action} {commit.decode()[:8]} ({reason})")
         blocked = f"would rewrite {len(resign)} already-signed commit(s) below the tip"
         remedy = "move the base forward or dispatch with allow_resign"
         fail(f"signing {len(stale)} commit(s) {blocked}; {remedy}")
