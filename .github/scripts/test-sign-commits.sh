@@ -4,13 +4,27 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 sign_script="${repo_root}/.github/scripts/sign-commits.py"
 
+# The fixture must inherit no GIT_* state at all; unsetting just the identity
+# vars left the rest of the namespace reachable. Worst first:
+#   GIT_DIR / GIT_WORK_TREE  aim `git -C "${test_repo}"` back at the caller's
+#     repository, so `init` re-inits it and the fixture's commits and its
+#     `config user.email` land on the real repo. `reset --hard` does not undo
+#     the config half. Git does not export these to hooks, but anything that
+#     exports them by hand (bare-repo tooling, wrapper scripts) gets this.
+#   GIT_INDEX_FILE  fails the run outright ("error: Error building trees"), and
+#     git *does* export it to pre-commit / commit-msg hooks.
+#   GIT_CONFIG_COUNT / GIT_CONFIG_KEY_*  inject config that outranks the
+#     GIT_CONFIG_GLOBAL pin below, including the commit.gpgsign case it names.
+#   GIT_AUTHOR_* / GIT_COMMITTER_*  outrank the fixture's local config and
+#     silently rewrite the "foreign" committer (GitHub Actions exports these).
+# Quoted "${!GIT_@}" expands per-name like "$@", so an environment with no
+# GIT_* variables yields a bare, successful `unset`.
+unset "${!GIT_@}"
+
 # Keep the fixture repo away from the caller's git config: a global
 # commit.gpgsign would sign (or block on pinentry for) the base commit.
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_SYSTEM=/dev/null
-# GIT_* identity vars outrank the fixture's local config; a runner that exports
-# them (GitHub Actions does) would silently rewrite the "foreign" committer.
-unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 
 tmp_dir="$(mktemp -d)"
 
