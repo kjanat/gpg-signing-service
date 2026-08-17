@@ -107,7 +107,20 @@ def verify(commit: bytes, home: str) -> None:
 
 def verify_status(commit: bytes, home: str) -> tuple[bool, str]:
     result = subprocess.run(
-        ["git", "verify-commit", "--raw", commit.decode()],
+        # Pin the verifier the same way GNUPGHOME pins the keyring. A checkout
+        # that ran setup-claude-signing has gpg.program aimed at the sign-only
+        # shim, which exits 1 on --verify, so ambient config would report every
+        # commit -- including ones this key just signed -- as unverified.
+        [
+            "git",
+            "-c",
+            "gpg.program=gpg",
+            "-c",
+            "gpg.format=openpgp",
+            "verify-commit",
+            "--raw",
+            commit.decode(),
+        ],
         capture_output=True,
         env={**os.environ, "GNUPGHOME": home},
     )

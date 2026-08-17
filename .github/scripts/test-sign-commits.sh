@@ -136,4 +136,18 @@ current="$(git -C "${test_repo}" rev-parse HEAD)"
 [[ "${current}" == "${resigned}" ]]
 grep -Fq 'Nothing to sign' <<<"${rerun}"
 
+# Verification must not consult the caller's gpg.program. A checkout that ran
+# setup-claude-signing points it at the sign-only shim, which exits 1 on
+# --verify, so ambient config would report the commit we just signed as
+# unverified and block the next run on its own output.
+git -C "${test_repo}" config gpg.program \
+	"${repo_root}/.github/scripts/gpg-sign-git-program.sh"
+git -C "${test_repo}" config gpg.format openpgp
+shimmed="$(cd "${test_repo}" && env "${common_env[@]}" ALLOW_RESIGN=true python3 "${sign_script}")"
+grep -Fq 'Nothing to sign' <<<"${shimmed}"
+current="$(git -C "${test_repo}" rev-parse HEAD)"
+[[ "${current}" == "${resigned}" ]]
+git -C "${test_repo}" config --unset gpg.program
+git -C "${test_repo}" config --unset gpg.format
+
 printf 'foreign signature re-signing test passed\n'
