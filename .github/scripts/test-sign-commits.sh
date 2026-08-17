@@ -150,6 +150,16 @@ current="$(git -C "${test_repo}" rev-parse HEAD)"
 git -C "${test_repo}" config --unset gpg.program
 git -C "${test_repo}" config --unset gpg.format
 
+# Same trap through a different knob. The keyring is built by importing the
+# public key, so it carries no ownertrust; any gpg.minTrustLevel above the
+# default rejects a signature this key just made, and the run blocks on it.
+git -C "${test_repo}" config gpg.minTrustLevel fully
+trusted="$(cd "${test_repo}" && env "${common_env[@]}" ALLOW_RESIGN=true python3 "${sign_script}")"
+grep -Fq 'Nothing to sign' <<<"${trusted}"
+current="$(git -C "${test_repo}" rev-parse HEAD)"
+[[ "${current}" == "${resigned}" ]]
+git -C "${test_repo}" config --unset gpg.minTrustLevel
+
 # With sign_others off, a signed commit the key does not cover goes stale only
 # because a parent moved, and the rewrite strips its signature without
 # replacing it. The block message has to say that; "would re-sign" would be a
@@ -171,5 +181,20 @@ if dropped="$(cd "${test_repo}" && env "${others_env[@]}" python3 "${sign_script
 	exit 1
 fi
 grep -Fq "would drop the signature on ${foreign_child:0:8}" <<<"${dropped}"
+
+# Approving allow_resign has to describe the same act the block message did.
+# "reparent" is what an already-unsigned commit gets, so it cannot be what a
+# commit whose signature this run destroyed gets too.
+allowed_env=("${others_env[@]}" ALLOW_RESIGN=true)
+allowed="$(cd "${test_repo}" && env "${allowed_env[@]}" python3 "${sign_script}" 2>&1)"
+grep -Fq "stripped ${foreign_child:0:8}" <<<"${allowed}"
+grep -Fq "Dropped the signature on 1 commit(s)" <<<"${allowed}"
+reparented="$(git -C "${test_repo}" rev-parse HEAD)"
+[[ "${reparented}" != "${foreign_child}" ]]
+# `! cmd` is exempt from errexit, so this has to be a real branch to assert.
+if git -C "${test_repo}" cat-file commit "${reparented}" | grep -q '^gpgsig '; then
+	printf 'expected the reparented commit to carry no signature\n' >&2
+	exit 1
+fi
 
 printf 'foreign signature re-signing test passed\n'
