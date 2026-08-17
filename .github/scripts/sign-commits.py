@@ -111,12 +111,17 @@ def verify_status(commit: bytes, home: str) -> tuple[bool, str]:
         # that ran setup-claude-signing has gpg.program aimed at the sign-only
         # shim, which exits 1 on --verify, so ambient config would report every
         # commit -- including ones this key just signed -- as unverified.
+        # minTrustLevel is the same trap through a different knob: the keyring
+        # is built by importing the key, so it carries no ownertrust, and any
+        # setting above the default rejects an otherwise good signature.
         [
             "git",
             "-c",
             "gpg.program=gpg",
             "-c",
             "gpg.format=openpgp",
+            "-c",
+            "gpg.minTrustLevel=undefined",
             "verify-commit",
             "--raw",
             commit.decode(),
@@ -349,7 +354,11 @@ def main() -> None:
             mark = "signed  "
         else:
             body = payload
-            mark = "reparent"
+            # Same distinction the allow_resign block message draws: a signed
+            # commit the key does not cover loses its signature here and gets
+            # nothing back. "reparent" reads identically for a commit that
+            # never carried one, so name the destructive case.
+            mark = "stripped" if is_signed(raw[commit]) else "reparent"
         new = git(
             "hash-object",
             "-t",
@@ -365,6 +374,18 @@ def main() -> None:
 
     signed = sum(1 for commit in rewritten if ours[commit])
     print(f"Signed {signed} of {len(commits)} commit(s) in {base}..HEAD")
+
+    dropped = [c for c in rewritten if not ours[c] and is_signed(raw[c])]
+    if dropped:
+        # An annotation, not just a log line: this is the run destroying
+        # signatures it cannot replace, and the log scrolls past.
+        shas = ", ".join(commit.decode()[:8] for commit in dropped)
+        warn(
+            f"Dropped the signature on {len(dropped)} commit(s) ({shas}); they were "
+            "committed by identities the key does not carry, so the rewrite stripped "
+            "each signature and nothing replaced it — dispatch with sign_others to "
+            "sign them instead."
+        )
 
     tip = rewritten.get(head, head)
     if not verify_status(tip, home)[0]:
