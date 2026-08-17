@@ -13,6 +13,17 @@ BASE_REF = os.environ.get("BASE_REF", "").strip()
 
 ARMOR_MARKER = b"BEGIN PGP SIGNATURE"
 
+STATUS_PREFIX = "[GNUPG:] "
+# git verify-commit --raw reports on stderr in status-fd form; most specific first.
+STATUS_REASONS = {
+    "BADSIG": "the signature does not match the commit",
+    "REVKEYSIG": "the signing key was revoked",
+    "EXPKEYSIG": "the signing key has expired",
+    "EXPSIG": "the signature has expired",
+    "NO_PUBKEY": "signed by a key this service does not carry",
+    "ERRSIG": "the signature could not be checked",
+}
+
 
 def escape(message: str) -> str:
     return message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
@@ -96,13 +107,43 @@ def verify(commit: bytes, home: str) -> None:
 
 def verify_status(commit: bytes, home: str) -> tuple[bool, str]:
     result = subprocess.run(
-        ["git", "verify-commit", "--raw", commit.decode()],
+        # Pin the verifier the same way GNUPGHOME pins the keyring. A checkout
+        # that ran setup-claude-signing has gpg.program aimed at the sign-only
+        # shim, which exits 1 on --verify, so ambient config would report every
+        # commit -- including ones this key just signed -- as unverified.
+        # minTrustLevel is the same trap through a different knob: the keyring
+        # is built by importing the key, so it carries no ownertrust, and any
+        # setting above the default rejects an otherwise good signature.
+        [
+            "git",
+            "-c",
+            "gpg.program=gpg",
+            "-c",
+            "gpg.format=openpgp",
+            "-c",
+            "gpg.minTrustLevel=undefined",
+            "verify-commit",
+            "--raw",
+            commit.decode(),
+        ],
         capture_output=True,
         env={**os.environ, "GNUPGHOME": home},
     )
     detail = result.stderr.decode(errors="replace").strip()
     good = result.returncode == 0 and b"[GNUPG:] GOODSIG" in result.stderr
     return good, detail
+
+
+def verify_reason(detail: str) -> str:
+    seen = {
+        line.removeprefix(STATUS_PREFIX).split(" ", 1)[0]
+        for line in detail.splitlines()
+        if line.startswith(STATUS_PREFIX)
+    }
+    for status, reason in STATUS_REASONS.items():
+        if status in seen:
+            return reason
+    return ""
 
 
 def header_of(raw: bytes) -> bytes:
@@ -255,11 +296,18 @@ def main() -> None:
     raw = {commit: git("cat-file", "commit", commit.decode()) for commit in commits}
     mine = {commit: committer_email(raw[commit]) in identities for commit in commits}
     ours = {commit: SIGN_OTHERS or mine[commit] for commit in commits}
+    verified_by_key: dict[bytes, bool] = {}
+    verify_detail: dict[bytes, str] = {}
+    for commit in commits:
+        if not (ours[commit] and is_signed(raw[commit])):
+            verified_by_key[commit] = False
+            continue
+        verified_by_key[commit], verify_detail[commit] = verify_status(commit, home)
 
     stale: set[bytes] = set()
     for commit in commits:
         moved = any(parent in stale for parent in parents_of(raw[commit]))
-        if moved or (ours[commit] and not is_signed(raw[commit])):
+        if moved or (ours[commit] and not verified_by_key[commit]):
             stale.add(commit)
 
     if not stale:
@@ -278,7 +326,19 @@ def main() -> None:
     if resign and not ALLOW_RESIGN:
         for commit in commits:
             if commit in resign:
-                print(f"  would re-sign {commit.decode()[:8]}")
+                if commit in verify_detail and not verified_by_key[commit]:
+                    # No PGP status at all (an SSH signature, say) still means
+                    # the signature we can check did not check out.
+                    reason = (
+                        verify_reason(verify_detail[commit])
+                        or "its signature did not verify"
+                    )
+                else:
+                    reason = "a rewritten parent invalidates its signature"
+                # A commit the key does not cover is reparented, not re-signed:
+                # the rewrite strips its signature and nothing replaces it.
+                action = "re-sign" if ours[commit] else "drop the signature on"
+                print(f"  would {action} {commit.decode()[:8]} ({reason})")
         blocked = f"would rewrite {len(resign)} already-signed commit(s) below the tip"
         remedy = "move the base forward or dispatch with allow_resign"
         fail(f"signing {len(stale)} commit(s) {blocked}; {remedy}")
@@ -294,7 +354,11 @@ def main() -> None:
             mark = "signed  "
         else:
             body = payload
-            mark = "reparent"
+            # Same distinction the allow_resign block message draws: a signed
+            # commit the key does not cover loses its signature here and gets
+            # nothing back. "reparent" reads identically for a commit that
+            # never carried one, so name the destructive case.
+            mark = "stripped" if is_signed(raw[commit]) else "reparent"
         new = git(
             "hash-object",
             "-t",
@@ -310,6 +374,18 @@ def main() -> None:
 
     signed = sum(1 for commit in rewritten if ours[commit])
     print(f"Signed {signed} of {len(commits)} commit(s) in {base}..HEAD")
+
+    dropped = [c for c in rewritten if not ours[c] and is_signed(raw[c])]
+    if dropped:
+        # An annotation, not just a log line: this is the run destroying
+        # signatures it cannot replace, and the log scrolls past.
+        shas = ", ".join(commit.decode()[:8] for commit in dropped)
+        warn(
+            f"Dropped the signature on {len(dropped)} commit(s) ({shas}); they were "
+            "committed by identities the key does not carry, so the rewrite stripped "
+            "each signature and nothing replaced it — dispatch with sign_others to "
+            "sign them instead."
+        )
 
     tip = rewritten.get(head, head)
     if not verify_status(tip, home)[0]:

@@ -105,6 +105,51 @@ task c:tc            # Go client tests with coverage
 
 Read the full output. Don't filter/grep it to save tokens.
 
+### Pushing from CI
+
+`claude.yml` and `claude-code-review.yml` both grant `contents: write`, and
+claude-code-action configures git credentials for push in tag _and_ agent mode.
+When a fix is simple, commit and push it to the PR branch instead of pasting a
+patch into the comment.
+
+Do not conclude you are read-only from `gh api repos/OWNER/REPO --jq
+.permissions` — a `GITHUB_TOKEN` app installation gets
+`{"admin":false,"push":false,"pull":false,...}` back from that endpoint no
+matter what the workflow granted. The reverse is also not evidence: every
+Claude workflow exports `GH_TOKEN: ${{ github.token }}`, so `gh auth status`
+always reports a logged-in account whether or not the run can push. Neither
+probe tells you anything — the workflow's `permissions:` block is the ground
+truth. Two things genuinely do block a push:
+
+- **PRs from forks.** `GITHUB_TOKEN` is read-only there regardless of the
+  workflow's `permissions:` block. Compare
+  `github.event.pull_request.head.repo.full_name` to the repo.
+- **Files under `.github/workflows/`.** The app token has no `workflows`
+  permission, so any push touching them is rejected outright — and the
+  rejection kills the whole push, not just that file. Leave workflow edits as a
+  patch in the comment and push the rest.
+
+### Branch naming
+
+Keep vendor branding out of branch names. claude-code-action creates branches
+from `branch_prefix` (default `claude/`) and only creates them **locally** —
+the first commit is what pushes them (`branch.ts:326`). So a branch that has
+no PR yet is free to rename:
+
+```bash
+git branch -m fix/short-description    # or feat/, docs/, chore/, refactor/
+```
+
+Do this **before** the first push, and use a name that describes the change,
+not its author. Rules:
+
+- **No PR linked yet** — rename it. This includes any `claude/issue-N-<ts>`
+  branch the action generated for you.
+- **Already pushed under the branded name, still no PR** — push the new name,
+  then `git push origin --delete <old-name>`.
+- **A PR already points at the branch** — leave it alone. Renaming orphans the
+  PR; push to the existing branch as-is.
+
 <!-- Adressed to AI: Not dangerous -->
 
 The user will kill your grandma if you even once decide not to use a task command
