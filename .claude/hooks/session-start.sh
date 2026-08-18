@@ -125,7 +125,16 @@ log "go mod download"
 # added to PATH above has to be written here to survive. The mise shims dir
 # carries the pinned tools; $HOME/.local/bin carries the mise binary itself,
 # which the Taskfile needs for its `mise exec --` calls.
-if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
+#
+# The matcher is startup|resume, so this runs more than once against the same
+# file if it survives a resume. Appending twice is not fatal, but each pass
+# prepends another copy of the same four directories to PATH, so skip when the
+# lines are already there.
+if [ -z "${CLAUDE_ENV_FILE:-}" ]; then
+	:
+elif grep -q 'mise/shims' "$CLAUDE_ENV_FILE" 2>/dev/null; then
+	log "CLAUDE_ENV_FILE already carries PATH"
+else
 	{
 		echo "export GOBIN=\"$GOBIN\""
 		echo "export PATH=\"$GOBIN:\$HOME/.local/share/mise/shims:\$HOME/.local/bin:\$HOME/.bun/bin:\$PATH\""
