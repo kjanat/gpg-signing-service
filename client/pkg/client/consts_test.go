@@ -40,6 +40,7 @@ const (
 	testMsgTest        = "test"
 	testMsgRateLimited = "rate limit exceeded"
 	testMsgServerError = "server error"
+	testMsgExpired     = "token expired"
 
 	// Table-driven test case names and operations.
 	testOpSign           = "Sign"

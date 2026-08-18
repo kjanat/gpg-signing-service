@@ -123,7 +123,7 @@ func (c *Client) Health(ctx context.Context) (*HealthStatus, error) {
 			}
 	}
 
-	return nil, newUnexpectedStatusError(resp.StatusCode())
+	return nil, newStatusError(resp.StatusCode(), resp.Body)
 }
 
 // PublicKey retrieves the public signing key.
@@ -173,7 +173,7 @@ func (c *Client) PublicKey(ctx context.Context, keyID string) (string, error) {
 		}
 	}
 
-	return "", newUnexpectedStatusError(resp.StatusCode())
+	return "", newStatusError(resp.StatusCode(), resp.Body)
 }
 
 // Sign signs commit data and returns the signature.
@@ -203,7 +203,7 @@ func (c *Client) Sign(ctx context.Context, commitData string, keyID string) (*Si
 		return nil, mappedErr
 	}
 
-	return nil, newUnexpectedStatusError(resp.StatusCode())
+	return nil, newStatusError(resp.StatusCode(), resp.Body)
 }
 
 // UploadKey uploads a new signing key (admin operation).
@@ -257,7 +257,7 @@ func (c *Client) UploadKey(ctx context.Context, keyID string, armoredPrivateKey 
 		}
 	}
 
-	return nil, newUnexpectedStatusError(resp.StatusCode())
+	return nil, newStatusError(resp.StatusCode(), resp.Body)
 }
 
 // ListKeys lists all signing keys (admin operation).
@@ -293,7 +293,7 @@ func (c *Client) ListKeys(ctx context.Context) ([]KeyMetadata, error) {
 		}
 	}
 
-	return nil, newUnexpectedStatusError(resp.StatusCode())
+	return nil, newStatusError(resp.StatusCode(), resp.Body)
 }
 
 // DeleteKey deletes a signing key (admin operation).
@@ -331,7 +331,7 @@ func (c *Client) DeleteKey(ctx context.Context, keyID string) error {
 		}
 	}
 
-	return newUnexpectedStatusError(resp.StatusCode())
+	return newStatusError(resp.StatusCode(), resp.Body)
 }
 
 // AuditLogs queries audit logs (admin operation).
@@ -356,7 +356,7 @@ func (c *Client) AuditLogs(ctx context.Context, filter AuditFilter) (*AuditResul
 		return nil, mappedErr
 	}
 
-	return nil, newUnexpectedStatusError(resp.StatusCode())
+	return nil, newStatusError(resp.StatusCode(), resp.Body)
 }
 
 // AdminPublicKey retrieves the public key via the admin endpoint.
@@ -398,7 +398,7 @@ func (c *Client) AdminPublicKey(ctx context.Context, keyID string) (string, erro
 		}
 	}
 
-	return "", newUnexpectedStatusError(resp.StatusCode())
+	return "", newStatusError(resp.StatusCode(), resp.Body)
 }
 
 func mapAuditResponseError(resp *api.GetAdminAuditResponse) error {

@@ -226,9 +226,6 @@ Example:
 
 		result, err := c.Sign(ctx, string(data), keyID)
 		if err != nil {
-			if client.IsAuthError(err) {
-				return fmt.Errorf("authentication failed: %w", err)
-			}
 			if client.IsRateLimitError(err) {
 				// The wrapper already retried, so this is a final failure
 				return fmt.Errorf("rate limit exceeded: %w", err)
@@ -303,9 +300,6 @@ var adminUploadCmd = &cobra.Command{
 
 		result, err := c.UploadKey(ctx, keyID, string(keyData))
 		if err != nil {
-			if client.IsAuthError(err) {
-				return fmt.Errorf("authentication failed: %w", err)
-			}
 			return fmt.Errorf("key upload failed: %w", err)
 		}
 
@@ -342,9 +336,6 @@ var adminListCmd = &cobra.Command{
 
 		keys, err := c.ListKeys(ctx)
 		if err != nil {
-			if client.IsAuthError(err) {
-				return fmt.Errorf("authentication failed: %w", err)
-			}
 			return fmt.Errorf("failed to list keys: %w", err)
 		}
 
@@ -391,9 +382,6 @@ var adminDeleteCmd = &cobra.Command{
 
 		err = c.DeleteKey(ctx, keyID)
 		if err != nil {
-			if client.IsAuthError(err) {
-				return fmt.Errorf("authentication failed: %w", err)
-			}
 			if client.IsKeyNotFound(err) {
 				fmt.Printf("Key '%s' was not found\n", keyID)
 				if jsonOutput {
@@ -440,9 +428,6 @@ var adminPublicKeyCmd = &cobra.Command{
 		// Use the admin-specific endpoint to ensure admin auth is exercised
 		pubKey, err := c.AdminPublicKey(ctx, keyID)
 		if err != nil {
-			if client.IsAuthError(err) {
-				return fmt.Errorf("authentication failed: %w", err)
-			}
 			if client.IsKeyNotFound(err) {
 				return fmt.Errorf("key not found")
 			}
@@ -507,9 +492,6 @@ var adminAuditCmd = &cobra.Command{
 
 		result, err := c.AuditLogs(ctx, filter)
 		if err != nil {
-			if client.IsAuthError(err) {
-				return fmt.Errorf("authentication failed: %w", err)
-			}
 			return fmt.Errorf("failed to get audit logs: %w", err)
 		}
 

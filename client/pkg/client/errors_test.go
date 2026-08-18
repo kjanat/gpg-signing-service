@@ -67,27 +67,42 @@ func TestAuthError(t *testing.T) {
 		name      string
 		code      string
 		message   string
+		requestID string
 		wantError string
 	}{
 		{
 			name:      "auth error with message",
 			code:      "INVALID_TOKEN",
-			message:   "token expired",
-			wantError: "authentication failed: token expired",
+			message:   testMsgExpired,
+			wantError: "authentication failed: INVALID_TOKEN: " + testMsgExpired,
 		},
 		{
 			name:      "auth error empty message",
 			code:      "NO_CREDENTIALS",
 			message:   "",
-			wantError: "authentication failed: ",
+			wantError: "authentication failed: NO_CREDENTIALS: ",
+		},
+		{
+			name:      "auth error without a code",
+			message:   testMsgExpired,
+			wantError: "authentication failed: " + testMsgExpired,
+		},
+		{
+			name:      "auth error with request id",
+			code:      "AUTH_INVALID",
+			message:   "Subject is not trusted for signing",
+			requestID: testRequestID,
+			wantError: "authentication failed: AUTH_INVALID: Subject is not trusted for signing " +
+				"(request " + testRequestID + ")",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := &AuthError{
-				Code:    tt.code,
-				Message: tt.message,
+				Code:      tt.code,
+				Message:   tt.message,
+				RequestID: tt.requestID,
 			}
 
 			errStr := err.Error()
@@ -236,7 +251,7 @@ func TestIsAuthError(t *testing.T) {
 			name: "auth error",
 			err: &AuthError{
 				Code:    "INVALID_TOKEN",
-				Message: "token expired",
+				Message: testMsgExpired,
 			},
 			match: true,
 		},
