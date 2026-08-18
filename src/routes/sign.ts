@@ -13,7 +13,7 @@ import type { ErrorCode } from "#schemas/errors";
 import type { AnyStoredKey } from "#schemas/keys";
 import { AnyStoredKeySchema, isX509Key } from "#schemas/keys";
 import type { Identity, RateLimitResult, ValidatedOIDCClaims } from "#types";
-import { createKeyId, HEADERS, HTTP, isKeyIdShaped, TIME } from "#types";
+import { createIdentity, createKeyId, HEADERS, HTTP, isKeyIdShaped, TIME } from "#types";
 import { logAuditEvent } from "#utils/audit";
 import { fetchKeyStorage, fetchRateLimiter } from "#utils/durable-objects";
 import { scheduleBackgroundTask } from "#utils/execution";
@@ -22,6 +22,23 @@ import { signCommitData } from "#utils/signing";
 import { signCommitDataX509 } from "#utils/x509";
 
 const app = createOpenAPIApp();
+
+/**
+ * Rate-limiter namespace for the per-row signing ceiling. Not an issuer, so it
+ * cannot collide with the `<iss>:<sub>` buckets — a non-URL issuer cannot
+ * authenticate, since JWKS discovery runs the issuer through `validateUrl`.
+ */
+const SUBJECT_ROW_METER = "oidc-subject-row";
+
+/**
+ * Signatures per minute per trusted row, across every subject it covers.
+ *
+ * Ten times the per-caller budget: high enough that a busy org spread over many
+ * repositories and refs never meets it, low enough that one row cannot be
+ * multiplied into unbounded signing by minting subjects. Tune against real
+ * traffic rather than treating this number as load-bearing.
+ */
+const SUBJECT_ROW_LIMIT = 1000;
 
 /** Outcome of consulting the rate limiter, with the failure modes separated. */
 type RateLimitDecision = { kind: "ok" } | { kind: "limited"; retryAfter: number } | { kind: "unavailable" };
@@ -175,6 +192,21 @@ app.openapi(signRoute, async (c) => {
 	// Starting rather than awaiting keeps the signing path's overlap with the key
 	// fetch intact — the promise is already in flight when Promise.all takes it.
 	const rateLimitPromise = fetchRateLimiter(c.env, identity);
+
+	// Second tier. The bucket above is keyed on `<iss>:<sub>`, and GitHub puts the
+	// ref in `sub`, so a caller who can push branches mints a fresh budget per
+	// branch — the per-caller cap does not bound the trusted *row*. This one is
+	// keyed on the row id, which is server-side and unforgeable, with a ceiling
+	// well above the per-caller budget so no single workflow's behaviour changes:
+	// it only stops one row from being multiplied without limit. Started here
+	// rather than awaited so it overlaps the first tier and the key fetch.
+	//
+	// Absent on the service-token path, which is already metered per credential.
+	const subjectPolicyId = c.get("subjectPolicyId");
+	const rowLimitPromise = subjectPolicyId
+		? fetchRateLimiter(c.env, createIdentity(SUBJECT_ROW_METER, subjectPolicyId), SUBJECT_ROW_LIMIT)
+		: undefined;
+	rowLimitPromise?.catch(() => {});
 	// `createKeyId` below can throw before the Promise.all that normally awaits
 	// this, which would leave the rejection unobserved. Attaching a handler does
 	// not consume it for the real consumers.
@@ -254,6 +286,29 @@ app.openapi(signRoute, async (c) => {
 			rateLimitPromise,
 			fetchKeyStorage(c.env, `/get-key?keyId=${encodeURIComponent(keyIdParam)}`),
 		]);
+
+		// The row ceiling is advisory relative to the per-caller bucket: if it is
+		// exhausted the caller is over budget regardless of which subject it
+		// presented. A limiter outage here is not fatal — the first tier already
+		// answered, and failing closed twice would turn one outage into two.
+		if (rowLimitPromise) {
+			const rowDecision = await resolveRateLimit(rowLimitPromise, requestId);
+			if (rowDecision.kind === "limited") {
+				logger.warn("Trusted row hit its signing ceiling", {
+					requestId,
+					subjectPolicy: c.get("subjectPolicyName"),
+					subjectPolicyId,
+				});
+				return c.json(
+					{
+						error: "Rate limit exceeded",
+						code: "RATE_LIMITED" as const satisfies ErrorCode,
+						retryAfter: rowDecision.retryAfter,
+					},
+					HTTP.TooManyRequests,
+				);
+			}
+		}
 
 		// Process rate limit
 		if (!rateLimitResponse.ok) {

@@ -272,6 +272,74 @@ describe("Sign Route", () => {
 			expect(signed?.requestId).toBe(echoed);
 		});
 
+		it("meters signing per trusted row as well as per subject", async () => {
+			// The per-caller bucket is keyed on `<iss>:<sub>`, and GitHub puts the ref
+			// in `sub`, so branches multiply budgets. The second tier is keyed on the
+			// row id, which the caller cannot vary.
+			await setupJWKSMock();
+			await uploadTestKey("A1B2C3D4E5F67890");
+
+			const metered: string[] = [];
+			const recordingLimiter = {
+				idFromName: () => ({}) as DurableObjectId,
+				get: () => ({
+					fetch: async (request: Request) => {
+						const params = new URL(request.url).searchParams;
+						metered.push(`${params.get("identity")}|${params.get("limit") ?? "default"}`);
+						return Response.json({ allowed: true, remaining: 99, resetAt: Date.now() + 60_000 });
+					},
+				}),
+			} as unknown as DurableObjectNamespace;
+
+			for (const ref of ["refs/heads/main", "refs/heads/anything-i-like"]) {
+				const token = await createToken({ sub: `repo:user/repo:ref:${ref}` });
+				const response = await makeRequest(
+					"/sign?keyId=A1B2C3D4E5F67890",
+					{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+					{ RATE_LIMITER: recordingLimiter },
+				);
+				expect(response.status).toBe(200);
+			}
+
+			// Per-caller buckets differ per ref — that is the tier being bounded.
+			const perCaller = metered.filter((entry) => entry.startsWith(issuer));
+			expect(new Set(perCaller).size).toBe(2);
+
+			// The row ceiling is one bucket for both, at the wider limit.
+			const perRow = metered.filter((entry) => entry.startsWith("oidc-subject-row:"));
+			expect(perRow).toHaveLength(2);
+			expect(new Set(perRow).size).toBe(1);
+			expect(perRow[0]).toMatch(/\|1000$/);
+			expect(perRow.join(" ")).not.toContain("refs/heads");
+		});
+
+		it("refuses with 429 once a trusted row hits its ceiling, even under budget per caller", async () => {
+			await setupJWKSMock();
+			await uploadTestKey("A1B2C3D4E5F67890");
+			const token = await createToken();
+
+			// Per-caller bucket allows; the row bucket does not.
+			const tieredLimiter = {
+				idFromName: () => ({}) as DurableObjectId,
+				get: () => ({
+					fetch: async (request: Request) => {
+						const identity = new URL(request.url).searchParams.get("identity") ?? "";
+						const allowed = !identity.startsWith("oidc-subject-row:");
+						return Response.json({ allowed, remaining: allowed ? 99 : 0, resetAt: Date.now() + 30_000 });
+					},
+				}),
+			} as unknown as DurableObjectNamespace;
+
+			const response = await makeRequest(
+				"/sign?keyId=A1B2C3D4E5F67890",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{ RATE_LIMITER: tieredLimiter },
+			);
+
+			expect(response.status).toBe(429);
+			expect(await response.json()).toMatchObject({ code: "RATE_LIMITED" });
+		});
+
 		it("audits a trusted subject reaching outside its key scope", async () => {
 			// The highest-signal event the service can produce: the credential is
 			// valid and the row is live, but the grant does not cover the key. If

@@ -4,14 +4,21 @@ import { createRateLimitAllowed, createRateLimitDenied, HTTP, MediaType } from "
 interface TokenBucket {
 	tokens: number;
 	lastRefill: number;
+	/**
+	 * This bucket's capacity, stored rather than assumed: buckets with different
+	 * ceilings share one Durable Object, and a bucket refilled against the wrong
+	 * capacity would silently grant the wrong budget.
+	 */
+	capacity?: number;
 }
 
 export class RateLimiter implements DurableObject {
 	private state: DurableObjectState;
 
-	// Rate limit configuration
-	private readonly maxTokens = 100; // Max requests per window
-	private readonly refillRate = 100; // Tokens per minute
+	// Rate limit configuration. A bucket refills at its own capacity per window,
+	// so a wider bucket refills proportionally faster rather than taking longer to
+	// recover than a narrow one.
+	private readonly maxTokens = 100; // Default capacity, and requests per window
 	private readonly windowMs = 60_000; // 1 minute window
 
 	constructor(state: DurableObjectState) {
@@ -25,10 +32,16 @@ export class RateLimiter implements DurableObject {
 		try {
 			switch (path) {
 				case "/check":
-					return await this.checkLimit(url.searchParams.get("identity") || "default");
+					return await this.checkLimit(
+						url.searchParams.get("identity") || "default",
+						this.parseLimit(url.searchParams.get("limit")),
+					);
 
 				case "/consume":
-					return await this.consumeToken(url.searchParams.get("identity") || "default");
+					return await this.consumeToken(
+						url.searchParams.get("identity") || "default",
+						this.parseLimit(url.searchParams.get("limit")),
+					);
 
 				case "/reset":
 					if (request.method !== "POST") {
@@ -50,8 +63,25 @@ export class RateLimiter implements DurableObject {
 		}
 	}
 
-	private async checkLimit(identity: string): Promise<Response> {
-		const bucket = await this.getBucket(identity);
+	/**
+	 * Read a caller-supplied bucket capacity, falling back to the default.
+	 *
+	 * Bounded and integral: the value reaches here from application code, not
+	 * from a request, but a NaN would poison the stored bucket permanently.
+	 *
+	 * @param raw - The `limit` query parameter, if present
+	 * @returns A usable capacity
+	 */
+	private parseLimit(raw: string | null): number {
+		const parsed = Number(raw);
+		if (!raw || !Number.isFinite(parsed) || parsed < 1) {
+			return this.maxTokens;
+		}
+		return Math.min(Math.floor(parsed), 1_000_000);
+	}
+
+	private async checkLimit(identity: string, capacity = this.maxTokens): Promise<Response> {
+		const bucket = await this.getBucket(identity, capacity);
 		const resetAt = bucket.lastRefill + this.windowMs;
 
 		const result: RateLimitResult =
@@ -63,8 +93,8 @@ export class RateLimiter implements DurableObject {
 		});
 	}
 
-	private async consumeToken(identity: string): Promise<Response> {
-		const bucket = await this.getBucket(identity);
+	private async consumeToken(identity: string, capacity = this.maxTokens): Promise<Response> {
+		const bucket = await this.getBucket(identity, capacity);
 		const resetAt = bucket.lastRefill + this.windowMs;
 
 		if (bucket.tokens < 1) {
@@ -107,19 +137,23 @@ export class RateLimiter implements DurableObject {
 		});
 	}
 
-	private async getBucket(identity: string): Promise<TokenBucket> {
+	private async getBucket(identity: string, capacity = this.maxTokens): Promise<TokenBucket> {
 		const now = Date.now();
 		let bucket = await this.state.storage.get<TokenBucket>(`bucket:${identity}`);
 
 		if (!bucket) {
-			bucket = { tokens: this.maxTokens, lastRefill: now };
+			bucket = { tokens: capacity, lastRefill: now, capacity };
 		} else {
-			// Refill tokens based on time elapsed
+			// Refill proportionally to the bucket's own capacity, so a wide bucket
+			// refills as fast as it drains. A bucket stored before capacities were
+			// per-bucket has none recorded and falls back to the default.
+			const bucketCapacity = bucket.capacity ?? this.maxTokens;
 			const elapsed = now - bucket.lastRefill;
-			const tokensToAdd = (elapsed / this.windowMs) * this.refillRate;
+			const tokensToAdd = (elapsed / this.windowMs) * bucketCapacity;
 
-			bucket.tokens = Math.min(this.maxTokens, bucket.tokens + tokensToAdd);
+			bucket.tokens = Math.min(bucketCapacity, bucket.tokens + tokensToAdd);
 			bucket.lastRefill = now;
+			bucket.capacity = bucketCapacity;
 		}
 
 		await this.state.storage.put(`bucket:${identity}`, bucket);

@@ -45,10 +45,8 @@ const REVOKED_REUSE_METER = "oidc-revoked-reuse";
  * as the service-token path, which meters on `policy.name` rather than on
  * anything the caller picks.
  *
- * The argument above applies just as well to the *signing* path, which still
- * meters on `<iss>:<sub>` — see the note on `oidcAuth` below. That is a capacity
- * decision rather than a correctness one, so it is deliberately not changed
- * here; do not read this comment as describing the whole service.
+ * The signing path applies the same argument as a second tier: a per-caller
+ * bucket for fairness, plus a per-row ceiling keyed the same way this is.
  *
  * @param c - Request context
  * @param requestId - This request's id, shared with the rest of the pipeline
@@ -102,21 +100,16 @@ async function recordRevokedReuse(
 /**
  * OIDC validation middleware.
  *
- * KNOWN GAP — the identity published here becomes the *signing* rate-limit
- * bucket (`fetchRateLimiter(env, identity)` in the sign route), and it is
- * `<iss>:<sub>`. GitHub puts the ref in `sub`, so an OIDC caller who can push a
- * branch gets a fresh 100/min bucket per branch: the signing cap does not bound
- * a trusted row, and every distinct `sub` leaves a permanent key in the limiter
- * Durable Object, which nothing reaps. Service tokens do not have this — they
- * meter on `policy.name`.
+ * The identity published here is `<iss>:<sub>` and becomes the sign route's
+ * per-caller rate-limit bucket. GitHub puts the ref in `sub`, so that bucket
+ * alone does not bound a trusted *row* — a caller who can push branches mints a
+ * fresh budget per branch. `subjectPolicyId` is published alongside it for the
+ * route's second-tier ceiling, which is keyed on the row and closes that gap;
+ * see `SUBJECT_ROW_LIMIT` in `routes/sign.ts`.
  *
- * Not fixed here because it is a capacity decision, not a correctness one.
- * Metering on `policy.id` matches the service-token shape but collapses an
- * owner-wide row to one shared bucket, which would throttle a busy org
- * immediately; a per-row ceiling *above* the per-subject bucket keeps
- * per-branch fairness at the cost of a second limiter round trip per signature.
- * Either needs a number chosen against real traffic. `policy.id` is available
- * for whichever is picked — it is what `recordRevokedReuse` already meters on.
+ * Still outstanding: every distinct `sub` leaves a permanent `bucket:` key in
+ * the limiter Durable Object, and nothing reaps them. The row ceiling bounds the
+ * signing *rate* but not that growth.
  */
 export const oidcAuth: MiddlewareHandler<{
 	Bindings: Env;
@@ -233,6 +226,8 @@ export const oidcAuth: MiddlewareHandler<{
 	// prefix matching over the whole history. The service-token path gets this
 	// for free by putting the policy name in its synthetic `sub`.
 	c.set("subjectPolicyName", policy.name);
+	// Metering handle for the sign route's per-row ceiling; see the note above.
+	c.set("subjectPolicyId", policy.id);
 
 	// The last-used stamp is bookkeeping; do not make every signature wait on a
 	// D1 write for it.

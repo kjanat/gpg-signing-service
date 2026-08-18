@@ -20,11 +20,16 @@ export async function fetchKeyStorage(env: Env, endpoint: string, options?: Requ
  * Fetch from RATE_LIMITER Durable Object
  * @param env - Environment bindings
  * @param identity - Identity string to rate limit
+ * @param limit - Bucket capacity; omit for the default per-caller budget
  */
-export async function fetchRateLimiter(env: Env, identity: string): Promise<Response> {
+export async function fetchRateLimiter(env: Env, identity: string, limit?: number): Promise<Response> {
 	const id = env.RATE_LIMITER.idFromName("global");
 	const limiter = env.RATE_LIMITER.get(id);
-	return limiter.fetch(new Request(`http://internal/consume?identity=${encodeURIComponent(identity)}`));
+	const query = new URLSearchParams({ identity });
+	if (limit !== undefined) {
+		query.set("limit", String(limit));
+	}
+	return limiter.fetch(new Request(`http://internal/consume?${query}`));
 }
 
 /**

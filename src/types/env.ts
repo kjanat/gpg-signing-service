@@ -23,6 +23,13 @@ export interface Variables {
 	 * synthetic `sub`.
 	 */
 	subjectPolicyName?: string;
+	/**
+	 * Id of the trusted-subject row that authorized an OIDC caller. Server-side
+	 * and stable, unlike `sub`, which the caller varies per ref — so this is what
+	 * the per-row signing ceiling is metered on. Absent on the service-token path,
+	 * which is already metered per credential.
+	 */
+	subjectPolicyId?: string;
 }
 
 /** Cloudflare Workers environment bindings */
