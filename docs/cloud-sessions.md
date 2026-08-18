@@ -26,9 +26,9 @@ Cloud VMs ship Ubuntu 24.04 with `bun`, `go`, `node`, `dprint`, `jq`, and
    `mise exec -- <tool>`, so `task lint` and `task typecheck` fail outright
    without it.
 
-   Installing mise is the whole fix, because `.mise.toml` pins `task` and a
-   correctly-built `golangci-lint` alongside everything else — the same
-   mechanism CI uses via `jdx/mise-action`. Note the upstream Taskfile
+   Installing mise is the whole fix, because `.mise.toml` lists `task` and a
+   prebuilt `golangci-lint` alongside everything else — the same mechanism CI
+   uses via `jdx/mise-action`. Note the upstream Taskfile
    `install.sh` pulls from GitHub releases via the API, which the session proxy
    answers with `403` for repos not attached to the session; the npm package is
    the fallback if mise itself cannot be fetched.
@@ -46,10 +46,14 @@ Cloud VMs ship Ubuntu 24.04 with `bun`, `go`, `node`, `dprint`, `jq`, and
    to `golangci-lint` for `.go` files, so _formatting the whole repo fails_,
    including on files that have nothing to do with Go.
 
-   `.mise.toml` pins a prebuilt `golangci-lint` compiled with a current Go, so
-   once mise is installed this resolves itself. The rest of this item applies
-   only to the fallback path, where mise is unavailable and the binary has to be
-   built locally.
+   `.mise.toml` asks mise for a prebuilt `golangci-lint`, which today resolves
+   to a binary compiled with a current Go, so once mise is installed this
+   resolves itself. Nothing _holds_ that, though — the entry is `latest` and
+   there is no `mise.lock` — so pin an exact version there if the mismatch ever
+   comes back.
+
+   The rest of this item applies only to the fallback path, where mise is
+   unavailable and the binary has to be built locally.
 
    There, reinstalling is not enough on its own. A plain `go install` builds
    golangci-lint with the Go version _its own_ `go.mod` asks for — currently
@@ -72,7 +76,7 @@ GPG_SIGN_URL=https://gpg.kajkowalski.nl
 
 `GOTOOLCHAIN` only matters on the fallback path, where it makes `go install`
 compile golangci-lint with a Go new enough for `client/go.mod`. When mise is
-available it is redundant, because `.mise.toml` pins a prebuilt binary. You can
+available it is redundant, because `.mise.toml` supplies a prebuilt binary. You can
 leave it out entirely; it is listed here for environments where mise cannot be
 installed.
 
@@ -117,7 +121,7 @@ Code launches, and only when no cached environment exists.
 # start, and a broken tool is better than no session. The repo's SessionStart
 # hook re-checks and repairs anything that failed here.
 
-# mise, which installs everything .mise.toml pins (task, golangci-lint, biome,
+# mise, which installs everything .mise.toml lists (task, golangci-lint, biome,
 # shellcheck, wrangler, ...) and is what the root Taskfile's `mise exec --`
 # calls need on PATH. Its installer downloads the release asset directly, which
 # the proxy allows — it is the releases *API* that returns 403.

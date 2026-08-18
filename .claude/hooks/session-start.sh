@@ -16,9 +16,11 @@
 #      This breaks `task client:lint` AND `task format` / `dprint fmt`, because
 #      dprint shells out to golangci-lint for .go files.
 #
-# `.mise.toml` pins both `task` and a correctly-built `golangci-lint`, so
-# installing mise and running `mise install` is the whole fix — the same
-# mechanism CI uses via jdx/mise-action. The hand-rolled installs below are a
+# `.mise.toml` lists both `task` and a prebuilt `golangci-lint`, so installing
+# mise and running `mise install` is the whole fix — the same mechanism CI uses
+# via jdx/mise-action. Both are requested as `latest` and there is no
+# `mise.lock`, so the correctly-built golangci-lint is what mise resolves today
+# rather than something held by a pin. The hand-rolled installs below are a
 # fallback for when mise itself cannot be fetched.
 #
 # Everything here is idempotent and skipped when the tool is already good, so
@@ -90,7 +92,7 @@ lint_ok() {
 }
 
 if lint_ok; then
-	# The mise-pinned binary lands here; the rebuild below is only for sessions
+	# The mise-provided binary lands here; the rebuild below is only for sessions
 	# where mise could not be installed.
 	log "golangci-lint OK: $(golangci-lint --version 2>&1 | head -1)"
 elif [ -n "$GO_TOOLCHAIN" ]; then
