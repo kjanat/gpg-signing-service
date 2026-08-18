@@ -83,17 +83,30 @@ grep -q 'unsupported invocation (sign-only shim)' "${tmp_dir}/verify-error"
 #
 # -u GPG_SIGN_URL is not decoration — setup-claude-signing exports it through
 # GITHUB_ENV, so in CI this case inherits a real one and asserts nothing.
-if printf 'commit object' | env \
-	-u GPG_SIGN_URL \
-	PATH="${tmp_dir}/bin:${PATH}" \
-	GPG_SIGN_TOKEN='minted-token' \
-	"${shim}" --status-fd=2 -bsau test-key \
-	>"${tmp_dir}/no-url-output" 2>"${tmp_dir}/no-url-error"; then
-	echo 'expected a missing GPG_SIGN_URL to fail' >&2
-	exit 1
-fi
+#
+# Unset and empty both have to fail: the guard is ${GPG_SIGN_URL:?...}, and
+# covering only the unset case cannot tell that apart from a plain ${...?...},
+# which would let an empty value through to curl as a bare
+# "&audience=gpg-signing-service".
+for url_case in unset empty; do
+	if [ "${url_case}" = unset ]; then
+		url_env=(-u GPG_SIGN_URL)
+	else
+		url_env=(GPG_SIGN_URL=)
+	fi
 
-grep -q 'GPG_SIGN_URL must point at the signing service' "${tmp_dir}/no-url-error"
+	if printf 'commit object' | env \
+		"${url_env[@]}" \
+		PATH="${tmp_dir}/bin:${PATH}" \
+		GPG_SIGN_TOKEN='minted-token' \
+		"${shim}" --status-fd=2 -bsau test-key \
+		>"${tmp_dir}/no-url-output" 2>"${tmp_dir}/no-url-error"; then
+		echo "expected GPG_SIGN_URL (${url_case}) to fail" >&2
+		exit 1
+	fi
+
+	grep -q 'GPG_SIGN_URL must point at the signing service' "${tmp_dir}/no-url-error"
+done
 
 run_signing_case() {
 	local output_file="$1"
@@ -176,6 +189,25 @@ printf 'commit object' | env \
 
 grep -q '^-----BEGIN PGP SIGNATURE-----$' "${tmp_dir}/service-token-output"
 grep -q '^\[GNUPG:\] SIG_CREATED $' "${tmp_dir}/service-token-status"
+
+# git passes -bsau <key>, but the shim also advertises -bsa and --detach-sign.
+# Every case above uses -bsau, so dropping the other two aliases leaves the
+# suite green while breaking any caller that uses them.
+for signing_arg in -bsa --detach-sign; do
+	printf 'commit object' | env \
+		-u GPG_OIDC_REQUEST_URL \
+		-u GPG_OIDC_REQUEST_TOKEN \
+		-u ACTIONS_ID_TOKEN_REQUEST_URL \
+		-u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+		PATH="${tmp_dir}/bin:${PATH}" \
+		GPG_SIGN_URL='https://sign.example.test' \
+		GPG_SIGN_TOKEN='minted-token' \
+		"${shim}" --status-fd=2 "${signing_arg}" \
+		>"${tmp_dir}/alias-arg-output" 2>"${tmp_dir}/alias-arg-status"
+
+	grep -q '^-----BEGIN PGP SIGNATURE-----$' "${tmp_dir}/alias-arg-output"
+	grep -q '^\[GNUPG:\] SIG_CREATED $' "${tmp_dir}/alias-arg-status"
+done
 
 # A well-formed response with no .value must not be forwarded as a bearer token:
 # curl succeeds, jq prints the literal string "null".
