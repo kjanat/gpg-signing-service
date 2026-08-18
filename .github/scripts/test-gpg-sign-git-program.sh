@@ -14,6 +14,7 @@ set -euo pipefail
 
 header=''
 url=''
+fail_on_http_error=false
 while (($#)); do
 	case "$1" in
 		--header | -H)
@@ -21,6 +22,7 @@ while (($#)); do
 			shift 2
 			;;
 		-sSf)
+			fail_on_http_error=true
 			shift
 			;;
 		*)
@@ -32,6 +34,10 @@ done
 
 test "${header}" = "Authorization: bearer ${EXPECTED_OIDC_TOKEN}"
 test "${url}" = "${EXPECTED_OIDC_URL}&audience=gpg-signing-service"
+# -f is load-bearing: without it curl exits 0 on an HTTP 4xx/5xx and pipes the
+# error body to jq, leaving the null-value guard as the only thing between a
+# failed token request and a bearer header built from an error page.
+test "${fail_on_http_error}" = true
 printf '{"value":"minted-token"}\n'
 EOF
 
@@ -86,8 +92,13 @@ grep -q 'unsupported invocation (sign-only shim)' "${tmp_dir}/verify-error"
 #
 # Unset and empty both have to fail: the guard is ${GPG_SIGN_URL:?...}, and
 # covering only the unset case cannot tell that apart from a plain ${...?...},
-# which would let an empty value through to curl as a bare
-# "&audience=gpg-signing-service".
+# which fires on unset but not on null. What an empty value would reach is
+# `gpg-sign sign`, not curl — the OIDC request URL is built from oidc_url, and
+# GPG_SIGN_URL is never part of it. getBaseURL() in client/cmd/gpg-sign/main.go
+# treats empty as unset and falls back to the hardcoded
+# https://gpg.kajkowalski.nl, so a weakened guard does not fail loudly: it sends
+# the commit object and the bearer token to the upstream default host instead of
+# whichever deployment the caller configured.
 for url_case in unset empty; do
 	if [ "${url_case}" = unset ]; then
 		url_env=(-u GPG_SIGN_URL)
