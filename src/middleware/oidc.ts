@@ -107,9 +107,10 @@ async function recordRevokedReuse(
  * route's second-tier ceiling, which is keyed on the row and closes that gap;
  * see `SUBJECT_ROW_LIMIT` in `routes/sign.ts`.
  *
- * Still outstanding: every distinct `sub` leaves a permanent `bucket:` key in
- * the limiter Durable Object, and nothing reaps them. The row ceiling bounds the
- * signing *rate* but not that growth.
+ * Every distinct `sub` still writes its own `bucket:` key in the limiter Durable
+ * Object; the row ceiling bounds the signing *rate*, not that growth. The
+ * limiter's reaper is what bounds it, by deleting buckets that have refilled to
+ * capacity — see `alarm` in `durable-objects/rate-limiter.ts`.
  */
 export const oidcAuth: MiddlewareHandler<{
 	Bindings: Env;

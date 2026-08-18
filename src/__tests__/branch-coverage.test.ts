@@ -206,13 +206,14 @@ describe("Branch Coverage Helpers", () => {
 
 	describe("Middleware branches", () => {
 		it("fails admin rate limit when allowance is false", async () => {
-			const denyResponse = new Response(
-				JSON.stringify({
-					allowed: false,
-					resetAt: Date.now() + 10_000,
-					remaining: 0,
-				}),
-				{ status: 200, headers: { "Content-Type": "application/json" } },
+			// 429, the way the real Durable Object answers a denial. A 200 here is the
+			// shape the limiter never produces, and it is what let the middleware read
+			// every 429 as an outage while this assertion still passed.
+			const denyResponse = Response.json(
+				{ allowed: false, resetAt: Date.now() + 10_000, remaining: 0 },
+				{
+					status: 429,
+				},
 			);
 
 			const customEnv = {

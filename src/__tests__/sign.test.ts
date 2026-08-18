@@ -360,6 +360,33 @@ describe("Sign Route", () => {
 			expect(metered.filter((identity) => identity.startsWith("oidc-subject-row:"))).toHaveLength(0);
 		});
 
+		it("never hands back a retry hint of zero, however close the token is", async () => {
+			// A denial's `resetAt` is when the bucket next holds a token, and refill is
+			// proportional to capacity: 60ms on the 1000-wide row bucket, 600ms on the
+			// default. Both are shorter than a Worker-to-Durable-Object round trip can
+			// be, so the bare `ceil((resetAt - now) / 1000)` reaches zero or below by
+			// the time the answer is read. `RateLimitErrorSchema` declares `retryAfter`
+			// positive and the Go client only honours a positive hint, so an
+			// underflowed one is both off-spec and silently dropped for generic
+			// backoff — which is the client retrying faster than it was told to.
+			await setupJWKSMock();
+			await uploadTestKey("A1B2C3D4E5F67890");
+			const token = await createToken();
+
+			// Already elapsed: the worst case, a round trip longer than the debt.
+			const response = await makeRequest(
+				"/sign?keyId=A1B2C3D4E5F67890",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{ RATE_LIMITER: stubRateLimiter({ allowed: false, remaining: 0, resetAt: Date.now() - 40 }) },
+			);
+
+			expect(response.status).toBe(429);
+			const body = await parseJson<{ code: string; retryAfter: number }>(response);
+			expect(body.code).toBe("RATE_LIMITED");
+			expect(body.retryAfter).toBeGreaterThan(0);
+			expect(Number.isInteger(body.retryAfter)).toBe(true);
+		});
+
 		it("refuses with 429 once a trusted row hits its ceiling, even under budget per caller", async () => {
 			await setupJWKSMock();
 			await uploadTestKey("A1B2C3D4E5F67890");
@@ -704,14 +731,10 @@ describe("Sign Route", () => {
 			const originalGet = env.RATE_LIMITER.get;
 			env.RATE_LIMITER.get = () =>
 				({
-					fetch: async () =>
-						new Response(
-							JSON.stringify({
-								allowed: false,
-								remaining: 0,
-								resetAt: Date.now() + 60000,
-							}),
-						),
+					// Through `limiterResponse`, so this denial rides a 429 the way the
+					// real object's does. Hand-rolling a 200 here is the shape that let
+					// a route reading every 429 as an outage pass this assertion.
+					fetch: async () => limiterResponse({ allowed: false, remaining: 0, resetAt: Date.now() + 60000 }),
 				}) as unknown as DurableObjectStub;
 
 			try {
