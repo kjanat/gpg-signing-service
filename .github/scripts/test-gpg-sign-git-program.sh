@@ -112,13 +112,24 @@ fi
 
 grep -q 'no credential available' "${tmp_dir}/missing-error"
 
-# Precedence 1: a pre-set GPG_SIGN_TOKEN is used as-is, and the OIDC endpoint is
-# never contacted — the mock curl would fail the assertions it carries if it were.
+# Precedence 1: a pre-set GPG_SIGN_TOKEN is used as-is and the OIDC endpoint is
+# never contacted. Swap in a curl that always fails, so "never contacted" is what
+# the case actually proves rather than a side effect of which variables happen to
+# be unset. Everything after this point supplies its own mocks.
+cat >"${tmp_dir}/bin/curl" <<'EOF'
+#!/usr/bin/env bash
+echo 'curl must not be called when GPG_SIGN_TOKEN is set' >&2
+exit 1
+EOF
+chmod +x "${tmp_dir}/bin/curl"
+
 printf 'commit object' | env \
 	-u GPG_OIDC_REQUEST_URL \
 	-u GPG_OIDC_REQUEST_TOKEN \
 	-u ACTIONS_ID_TOKEN_REQUEST_URL \
 	-u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+	-u EXPECTED_OIDC_URL \
+	-u EXPECTED_OIDC_TOKEN \
 	PATH="${tmp_dir}/bin:${PATH}" \
 	GPG_SIGN_URL='https://sign.example.test' \
 	GPG_SIGN_TOKEN='minted-token' \
@@ -128,7 +139,15 @@ printf 'commit object' | env \
 grep -q '^-----BEGIN PGP SIGNATURE-----$' "${tmp_dir}/service-token-output"
 grep -q '^\[GNUPG:\] SIG_CREATED $' "${tmp_dir}/service-token-status"
 
-# A well-formed response with no .value must not be forwarded as a bearer token.
+# A well-formed response with no .value must not be forwarded as a bearer token:
+# curl succeeds, jq prints the literal string "null".
+cat >"${tmp_dir}/bin/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+cat >/dev/null 2>&1 || true
+printf '{"value":null}\n'
+EOF
 cat >"${tmp_dir}/bin/jq" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -136,7 +155,7 @@ set -euo pipefail
 cat >/dev/null
 printf 'null\n'
 EOF
-chmod +x "${tmp_dir}/bin/jq"
+chmod +x "${tmp_dir}/bin/curl" "${tmp_dir}/bin/jq"
 
 if printf 'commit object' | env \
 	-u GPG_SIGN_TOKEN \
