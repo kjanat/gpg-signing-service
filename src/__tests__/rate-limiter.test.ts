@@ -245,6 +245,43 @@ describe("RateLimiter Durable Object", () => {
 			});
 		});
 
+		it("sweeps past a full page instead of re-reading it", async () => {
+			// `list` has no implicit cursor. A first page of live buckets used to
+			// hide every key behind it from the sweep *and* re-arm the alarm at one
+			// second, so the object woke every second forever and reaped nothing —
+			// on the one Durable Object that gates every signature.
+			const stub = getRateLimiter("reap-paging");
+			await stub.fetch("http://localhost/consume?identity=seed");
+
+			await runInDurableObject(stub, async (instance, state) => {
+				const now = Date.now();
+				// A full page (`sweepBatch`) of live buckets, all sorting before the
+				// one stale bucket behind them.
+				const live = Array.from({ length: 1000 }, (_, index) => [
+					`bucket:a${String(index).padStart(5, "0")}`,
+					{ tokens: 5, lastRefill: now, capacity: 100 },
+				]);
+				for (let index = 0; index < live.length; index += 128) {
+					await state.storage.put(Object.fromEntries(live.slice(index, index + 128)));
+				}
+				await state.storage.put("bucket:zzz-idle", { tokens: 100, lastRefill: now - 120_000, capacity: 100 });
+				await state.storage.delete("bucket:seed");
+
+				// First alarm consumes the full page and carries a cursor past it.
+				await (instance as RateLimiter).alarm();
+				expect(await state.storage.get("sweep:cursor")).toBeDefined();
+
+				// Second alarm resumes behind the cursor and reaps what the first
+				// could not see, then ends the pass.
+				await (instance as RateLimiter).alarm();
+				expect(await state.storage.get("bucket:zzz-idle")).toBeUndefined();
+				expect(await state.storage.get("sweep:cursor")).toBeUndefined();
+				// The live page is untouched, and still holds the reaper armed.
+				expect(await state.storage.get("bucket:a00000")).toBeDefined();
+				expect(await state.storage.getAlarm()).not.toBeNull();
+			});
+		}, 60_000);
+
 		it("answers a reaped identity exactly as it answers a fresh one", async () => {
 			const stub = getRateLimiter("reap-equivalence");
 			await stub.fetch("http://localhost/consume?identity=recycled");

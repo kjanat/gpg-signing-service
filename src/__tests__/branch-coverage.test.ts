@@ -314,6 +314,40 @@ describe("Branch Coverage Helpers", () => {
 			expect(json).toHaveBeenCalledWith(expect.objectContaining({ code: "AUTH_MISSING" }), 401);
 		});
 
+		it("returns the admin limiter's 429 as a verdict rather than an outage", async () => {
+			// The real Durable Object answers a denied consume with a 429 carrying
+			// the verdict. Reading that as a failure answered 503 with no
+			// `retryAfter` and made the `allowed` branch unreachable.
+			const customEnv = {
+				...env,
+				RATE_LIMITER: {
+					idFromName: () => ({}) as any,
+					get: () => ({
+						fetch: () =>
+							Promise.resolve(Response.json({ allowed: false, resetAt: Date.now() + 60_000 }, { status: 429 })),
+					}),
+				},
+			};
+
+			const json = vi.fn();
+			const context = {
+				req: {
+					header: (name: string) => (name === "Authorization" ? "Bearer admin" : "1.2.3.4"),
+				},
+				env: customEnv,
+				json,
+			};
+
+			await import("#middleware/security").then(({ adminRateLimit }) =>
+				adminRateLimit(context as any, () => Promise.resolve()),
+			);
+
+			expect(json).toHaveBeenCalledWith(
+				expect.objectContaining({ code: "RATE_LIMITED", retryAfter: expect.any(Number) }),
+				429,
+			);
+		});
+
 		it("fails closed when admin rate limiter fails", async () => {
 			const customEnv = {
 				...env,

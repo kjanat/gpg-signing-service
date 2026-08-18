@@ -29,6 +29,9 @@ export class RateLimiter implements DurableObject {
 	private readonly sweepIntervalMs = 300_000; // 5 minutes
 	private readonly sweepBatch = 1000; // Keys examined per alarm
 	private readonly deleteChunk = 128; // Storage delete() takes at most 128 keys
+	// Where the last sweep stopped. Outside the `bucket:` prefix so it is neither
+	// listed nor reaped by the sweep it drives.
+	private readonly sweepCursorKey = "sweep:cursor";
 
 	constructor(state: DurableObjectState) {
 		this.state = state;
@@ -199,16 +202,27 @@ export class RateLimiter implements DurableObject {
 	 *
 	 * Deleting one is not a reset: `getBucket` creates a missing bucket full, so a
 	 * reaped bucket and an idle one answer identically. What it drops is the key.
+	 *
+	 * One page per alarm, resumed from a persisted cursor, so a pass covers the
+	 * whole prefix rather than the first `sweepBatch` keys of it.
 	 */
 	async alarm(): Promise<void> {
 		const now = Date.now();
+		// Resume where the last alarm stopped. `list` has no implicit cursor, so
+		// without one it returns the same lexicographic page every time: a first
+		// page of live buckets both hides every key behind it from the sweep and
+		// re-arms it at a second, forever.
+		const cursor = await this.state.storage.get<string>(this.sweepCursorKey);
 		const buckets = await this.state.storage.list<TokenBucket>({
 			prefix: "bucket:",
+			...(cursor === undefined ? {} : { startAfter: cursor }),
 			limit: this.sweepBatch,
 		});
 
 		const stale: string[] = [];
+		let lastKey: string | undefined;
 		for (const [key, bucket] of buckets) {
+			lastKey = key;
 			if (now - bucket.lastRefill >= this.idleTtlMs) {
 				stale.push(key);
 			}
@@ -218,12 +232,26 @@ export class RateLimiter implements DurableObject {
 			await this.state.storage.delete(stale.slice(index, index + this.deleteChunk));
 		}
 
-		// A full batch means the sweep was truncated; come back promptly rather
-		// than draining a large backlog one five-minute window at a time. Otherwise
-		// re-arm only while live buckets remain, so an idle object stops waking.
-		const truncated = buckets.size === this.sweepBatch;
-		if (truncated || stale.length < buckets.size) {
-			await this.state.storage.setAlarm(now + (truncated ? 1_000 : this.sweepIntervalMs));
+		// A full page means keys remain behind it: carry the cursor past it and
+		// come back promptly, rather than draining a large backlog one five-minute
+		// window at a time — or, without the cursor, never draining it at all.
+		if (buckets.size === this.sweepBatch && lastKey !== undefined) {
+			await this.state.storage.put(this.sweepCursorKey, lastKey);
+			await this.state.storage.setAlarm(now + 1_000);
+			return;
+		}
+
+		// A short page ends the pass; the next one starts from the beginning.
+		await this.state.storage.delete(this.sweepCursorKey);
+
+		// Re-arm only while buckets remain — asked of the whole object rather than
+		// of this page, since a pass can end on a page that was entirely stale
+		// while live buckets sit in the pages before it. An object with nothing
+		// left stops waking itself, and `scheduleSweep` re-arms it on the next
+		// consume.
+		const remaining = await this.state.storage.list<TokenBucket>({ prefix: "bucket:", limit: 1 });
+		if (remaining.size > 0) {
+			await this.state.storage.setAlarm(now + this.sweepIntervalMs);
 		}
 	}
 }

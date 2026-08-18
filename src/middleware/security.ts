@@ -122,7 +122,12 @@ export const adminRateLimit: MiddlewareHandler<{ Bindings: Env }> = async (c, ne
 			new Request(`http://internal/consume?identity=${encodeURIComponent(identity)}`),
 		);
 
-		if (!rateLimitResponse.ok) {
+		// A denied consume is a *verdict*, and the Durable Object delivers it as a
+		// 429 with the verdict in the body — so `!ok` alone reads the one answer
+		// this middleware exists to detect as an outage, answering 503 with no
+		// `retryAfter` and leaving the `allowed` branch below unreachable. Same
+		// reading as the sign route's `resolveRateLimit`.
+		if (!rateLimitResponse.ok && rateLimitResponse.status !== HTTP.TooManyRequests) {
 			throw new Error(`Rate limiter returned ${rateLimitResponse.status}`);
 		}
 
