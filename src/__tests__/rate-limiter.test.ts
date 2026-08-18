@@ -20,6 +20,71 @@ describe("RateLimiter Durable Object", () => {
 		await getRateLimiter("warmup").fetch("http://localhost/check?identity=warmup");
 	}, WARMUP_TIMEOUT_MS);
 
+	describe("per-bucket capacity", () => {
+		it("applies a lowered ceiling without waiting for the bucket to drain", async () => {
+			// Nothing reaps `bucket:` keys, so a capacity pinned at creation would
+			// outlive every later change to the route's ceiling — the tunable would
+			// silently stop tuning for exactly the rows already in use.
+			const stub = getRateLimiter("capacity-lowered");
+			await stub.fetch("http://localhost/consume?identity=lowered&limit=1000");
+
+			const lowered = (await (
+				await stub.fetch("http://localhost/consume?identity=lowered&limit=10")
+			).json()) as RateLimitResult;
+
+			expect(lowered.allowed).toBe(true);
+			if (lowered.allowed) {
+				expect(lowered.remaining).toBeLessThanOrEqual(10);
+			}
+		});
+
+		it("refills a widened bucket past its former ceiling", async () => {
+			// Widening grants no tokens outright; what it changes is the ceiling and
+			// the refill rate. A bucket held at 10 can never pass 10 however long it
+			// waits, so crossing it is the proof the new capacity took.
+			const stub = getRateLimiter("capacity-widened");
+			await stub.fetch("http://localhost/consume?identity=widened&limit=10");
+			await stub.fetch("http://localhost/consume?identity=widened&limit=1000");
+
+			// At 1000/min this is ~6 tokens; at the former ceiling, ~0.07. Waiting
+			// longer under load only widens the gap, so the margin is one-sided.
+			await new Promise((resolve) => setTimeout(resolve, 400));
+
+			const widened = (await (
+				await stub.fetch("http://localhost/consume?identity=widened&limit=1000")
+			).json()) as RateLimitResult;
+
+			expect(widened.allowed).toBe(true);
+			if (widened.allowed) {
+				expect(widened.remaining).toBeGreaterThan(10);
+			}
+		});
+
+		it("keeps a wide bucket's ceiling when the caller names no limit", async () => {
+			// `/check` names no limit; it must not narrow a bucket it only reads.
+			const stub = getRateLimiter("capacity-unnamed");
+			await stub.fetch("http://localhost/consume?identity=unnamed&limit=1000");
+
+			const checked = (await (await stub.fetch("http://localhost/check?identity=unnamed")).json()) as RateLimitResult;
+
+			expect(checked.allowed).toBe(true);
+			if (checked.allowed) {
+				expect(checked.remaining).toBeGreaterThan(900);
+			}
+		});
+
+		it("falls back to the default for a malformed limit", async () => {
+			const stub = getRateLimiter("capacity-malformed");
+			const response = await stub.fetch("http://localhost/consume?identity=malformed&limit=not-a-number");
+
+			const result = (await response.json()) as RateLimitResult;
+			expect(result.allowed).toBe(true);
+			if (result.allowed) {
+				expect(result.remaining).toBe(99);
+			}
+		});
+	});
+
 	describe("/check endpoint", () => {
 		it("should return allowed for new identity", async () => {
 			const stub = getRateLimiter("check-new");

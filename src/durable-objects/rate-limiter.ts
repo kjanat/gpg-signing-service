@@ -64,23 +64,27 @@ export class RateLimiter implements DurableObject {
 	}
 
 	/**
-	 * Read a caller-supplied bucket capacity, falling back to the default.
+	 * Read a caller-supplied bucket capacity.
 	 *
 	 * Bounded and integral: the value reaches here from application code, not
 	 * from a request, but a NaN would poison the stored bucket permanently.
 	 *
+	 * Returns `undefined` rather than the default when nothing usable was
+	 * supplied, so `getBucket` can tell "no opinion" — which must not overwrite a
+	 * wide bucket's stored ceiling — from an explicit capacity, which must.
+	 *
 	 * @param raw - The `limit` query parameter, if present
-	 * @returns A usable capacity
+	 * @returns A usable capacity, or `undefined` if none was supplied
 	 */
-	private parseLimit(raw: string | null): number {
+	private parseLimit(raw: string | null): number | undefined {
 		const parsed = Number(raw);
 		if (!raw || !Number.isFinite(parsed) || parsed < 1) {
-			return this.maxTokens;
+			return undefined;
 		}
 		return Math.min(Math.floor(parsed), 1_000_000);
 	}
 
-	private async checkLimit(identity: string, capacity = this.maxTokens): Promise<Response> {
+	private async checkLimit(identity: string, capacity?: number): Promise<Response> {
 		const bucket = await this.getBucket(identity, capacity);
 		const resetAt = bucket.lastRefill + this.windowMs;
 
@@ -93,7 +97,7 @@ export class RateLimiter implements DurableObject {
 		});
 	}
 
-	private async consumeToken(identity: string, capacity = this.maxTokens): Promise<Response> {
+	private async consumeToken(identity: string, capacity?: number): Promise<Response> {
 		const bucket = await this.getBucket(identity, capacity);
 		const resetAt = bucket.lastRefill + this.windowMs;
 
@@ -137,20 +141,26 @@ export class RateLimiter implements DurableObject {
 		});
 	}
 
-	private async getBucket(identity: string, capacity = this.maxTokens): Promise<TokenBucket> {
+	private async getBucket(identity: string, capacity?: number): Promise<TokenBucket> {
 		const now = Date.now();
 		let bucket = await this.state.storage.get<TokenBucket>(`bucket:${identity}`);
 
 		if (!bucket) {
-			bucket = { tokens: capacity, lastRefill: now, capacity };
+			const newCapacity = capacity ?? this.maxTokens;
+			bucket = { tokens: newCapacity, lastRefill: now, capacity: newCapacity };
 		} else {
-			// Refill proportionally to the bucket's own capacity, so a wide bucket
-			// refills as fast as it drains. A bucket stored before capacities were
-			// per-bucket has none recorded and falls back to the default.
-			const bucketCapacity = bucket.capacity ?? this.maxTokens;
+			// An explicitly supplied capacity wins over the stored one, so the
+			// ceilings in the routes stay tunable: nothing reaps `bucket:` keys, so a
+			// capacity pinned at creation would outlive every later change to it.
+			// Falls back to the stored value when the caller has no opinion — the
+			// `/check` path names no limit — and to the default for buckets written
+			// before capacities were per-bucket.
+			const bucketCapacity = capacity ?? bucket.capacity ?? this.maxTokens;
 			const elapsed = now - bucket.lastRefill;
 			const tokensToAdd = (elapsed / this.windowMs) * bucketCapacity;
 
+			// Clamped to the current capacity, so a lowered ceiling takes effect on
+			// the next request rather than after the bucket happens to drain.
 			bucket.tokens = Math.min(bucketCapacity, bucket.tokens + tokensToAdd);
 			bucket.lastRefill = now;
 			bucket.capacity = bucketCapacity;
