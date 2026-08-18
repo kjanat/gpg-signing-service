@@ -52,11 +52,19 @@ design records.
 | Call `/sign`                                    | Accepted OIDC JWT or `gst_` service token |
 | Call `/admin/*`                                 | Deployment's static `ADMIN_TOKEN`         |
 
-The current OIDC implementation validates issuer, audience, time, algorithm,
-and signature, but does **not** authorize repository, organization, workflow,
-ref, environment, namespace, or project claims. An accepted signing credential
-can request signatures over arbitrary non-empty text with any accessible key.
-Read the [authentication](docs/authentication.md) and
+A verified OIDC token is not an authorized one. `ALLOWED_ISSUERS` is not a
+repository allowlist — every repository on GitHub Actions gets a token from the
+same issuer — so authorization is a separate table of trusted subjects managed
+through `/admin/subjects`. A token is refused with `Subject is not trusted for
+signing` unless its issuer and `sub` match a live row, and each row carries its
+own key allowlist, expiry, and revocation. **An empty table denies everyone**:
+a fresh deployment cannot sign over OIDC until a subject is trusted.
+
+Trust is granted per issuer, subject prefix, and key. Within that grant a
+trusted caller can request signatures over arbitrary non-empty text with any
+key its row allows; the service does not further authorize workflow, ref,
+environment, or project claims. Read the
+[authentication](docs/authentication.md) and
 [security](docs/security-model.md) guides before exposing a deployment.
 
 ## Quick start: install the CLI

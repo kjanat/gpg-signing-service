@@ -176,10 +176,19 @@ c, err := client.New(baseURL string, opts ...Option)
 
 #### Error Types
 
-- `AuthError` - Authentication failures
+- `AuthError` - Authentication failures (carries the service's `Code`,
+  `Message`, and `RequestID`)
 - `RateLimitError` - Rate limit exceeded (includes retry-after duration)
 - `ValidationError` - Invalid request data
 - `ServiceError` - API errors with codes
+
+Every non-2xx response is reported with the service's own `error` and `code`
+when the body carries them, including statuses the OpenAPI document does not
+declare. A `401` on `Sign` therefore reads
+`authentication failed: AUTH_INVALID: Subject is not trusted for signing`
+rather than a bare status number — that particular message means the credential
+verified but no trusted subject covers it. Only a response with no usable error
+body falls back to `ErrUnexpectedStatus`.
 
 #### Helper Functions
 

@@ -35,8 +35,13 @@ installer action.
 
 ### `401` with GitHub Actions
 
-Check all of:
+The likely cause on a first call is authorization, not authentication: a
+verified token still needs a trusted subject. Check all of:
 
+- the calling repository's `sub` matches a live row in `GET /admin/subjects` —
+  a body of `Subject is not trusted for signing` means the credential verified
+  and nothing trusts it, and an empty table denies everyone (see
+  [trusted OIDC subjects](authentication.md#trusted-oidc-subjects));
 - the job grants `id-token: write`;
 - the token was requested with audience `gpg-signing-service`, or the configured
   `EXPECTED_AUDIENCE`;
@@ -45,13 +50,21 @@ Check all of:
 - the token has not expired; and
 - discovery and JWKS endpoints are reachable.
 
+The response body separates these: `AUTH_MISSING` is an absent header,
+`Issuer not allowed: <iss>` an unlisted issuer, `Subject is not trusted for
+signing` an unregistered caller, and any other `AUTH_INVALID` a verification
+failure. `gpg-sign` prints that body, so read it before working down the list.
+
 Use `core.getIDToken("gpg-signing-service")`. Raw endpoint responses store the
 JWT in `.value`, not `.token`.
 
 ### `401` with GitLab
 
-Declare `id_tokens` and set `aud` to the configured expected audience. Legacy
-`CI_JOB_JWT` examples do not establish that audience.
+Check the project's `sub` matches a live row in `GET /admin/subjects` first;
+`Subject is not trusted for signing` is a verified token that nothing trusts.
+
+Then declare `id_tokens` and set `aud` to the configured expected audience.
+Legacy `CI_JOB_JWT` examples do not establish that audience.
 
 ### Invalid `gst_` token
 

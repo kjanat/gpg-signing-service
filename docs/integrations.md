@@ -13,6 +13,13 @@ The examples below stop after requesting `commit.sig`.
 
 ## GitHub Actions with OIDC
 
+> [!IMPORTANT]
+> This example returns `401` until the deployment trusts the calling
+> repository. OIDC authorization is a table of trusted subjects: register the
+> repository's issuer and subject prefix through `/admin/subjects` first — see
+> [trusted OIDC subjects](authentication.md#trusted-oidc-subjects). An empty
+> table denies everyone.
+
 ```yaml
 name: Request commit signature
 
@@ -57,7 +64,9 @@ jobs:
 ```
 
 The workflow needs `id-token: write` only for OIDC. Add `contents: write` only
-if a later step intentionally updates repository refs.
+if a later step intentionally updates repository refs. A `401` here is almost
+always the missing subject row rather than a token fault; the error `gpg-sign`
+prints carries the service's own message.
 
 ## GitHub Actions with a service token
 

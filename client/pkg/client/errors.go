@@ -1,8 +1,10 @@
 package client
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 )
 
@@ -39,10 +41,20 @@ func (e *ServiceError) Error() string {
 type AuthError struct {
 	Code    string
 	Message string
+	// RequestID is the server's request identifier when the response carried
+	// one. Empty for locally constructed errors.
+	RequestID string
 }
 
 func (e *AuthError) Error() string {
-	return fmt.Sprintf("authentication failed: %s", e.Message)
+	msg := e.Message
+	if e.Code != "" {
+		msg = e.Code + ": " + msg
+	}
+	if e.RequestID != "" {
+		return fmt.Sprintf("authentication failed: %s (request %s)", msg, e.RequestID)
+	}
+	return fmt.Sprintf("authentication failed: %s", msg)
 }
 
 // RateLimitError represents the rate limit having been exceeded.
@@ -108,4 +120,60 @@ func IsServiceError(err error) bool {
 
 func newUnexpectedStatusError(code int) error {
 	return fmt.Errorf("%w: %d", ErrUnexpectedStatus, code)
+}
+
+// apiErrorBody is the service's error envelope. The generated client only
+// exposes typed fields for statuses the OpenAPI document declares per
+// operation, so a response the document omits — a 401 on /sign above all —
+// arrives with its body intact but no field to read it from.
+type apiErrorBody struct {
+	Error     string `json:"error"`
+	Code      string `json:"code"`
+	RequestID string `json:"requestId"`
+}
+
+// newStatusError builds the richest error the response supports.
+//
+// The service answers every refusal with a precise message — `AUTH_MISSING`,
+// `Issuer not allowed: <iss>`, `Subject is not trusted for signing` — and
+// collapsing that to "unexpected status code: 401" throws away the one thing
+// that tells an operator which of those it hit. A CI-only OIDC token cannot be
+// replayed from a laptop to recover it, so the body is read here or not at all.
+//
+// Falls back to the bare sentinel when the body is not a usable error envelope,
+// which keeps text responses and empty bodies behaving as before.
+func newStatusError(statusCode int, body []byte) error {
+	parsed, ok := parseAPIErrorBody(body)
+	if !ok {
+		return newUnexpectedStatusError(statusCode)
+	}
+
+	if statusCode == http.StatusUnauthorized {
+		return &AuthError{
+			Code:      parsed.Code,
+			Message:   parsed.Error,
+			RequestID: parsed.RequestID,
+		}
+	}
+
+	return &ServiceError{
+		Code:       parsed.Code,
+		Message:    parsed.Error,
+		StatusCode: statusCode,
+		RequestID:  parsed.RequestID,
+	}
+}
+
+// parseAPIErrorBody reports whether body is an error envelope carrying a
+// message. A body without `error` says nothing the status code did not, so it
+// is treated as unparseable rather than surfaced as an empty message.
+func parseAPIErrorBody(body []byte) (apiErrorBody, bool) {
+	var parsed apiErrorBody
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return apiErrorBody{}, false
+	}
+	if parsed.Error == "" {
+		return apiErrorBody{}, false
+	}
+	return parsed, true
 }

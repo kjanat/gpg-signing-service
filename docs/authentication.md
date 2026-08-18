@@ -75,6 +75,26 @@ entry in `ALLOWED_ISSUERS` might.
 Omit `keyIds` to allow every key. Omit `expiresInDays` for a trust that does
 not expire.
 
+### Immutable subject claims change `sub` under a live row
+
+A GitHub repository that enables immutable subject claims stops issuing
+`repo:owner/name:…` and starts issuing `repo:owner@<owner_id>/name@<repo_id>:…`.
+Nothing about the deployment changes, and nothing warns: an exact-repository row
+written for the old shape simply stops matching, and signing fails with a bare
+`401` and `Subject is not trusted for signing` at whatever later date the
+setting is flipped.
+
+The failure is closed — no trust widens — but it arrives detached from its
+cause. Two ways to survive it:
+
+- prefer an owner-wide `repo:owner` prefix, whose boundary falls on either `/`
+  or `@`, so it matches both shapes; or
+- when the setting is toggled deliberately, add the new-shape row before
+  flipping it, and revoke the old one after.
+
+`GET /admin/subjects` lists the prefixes as written, so comparing a failing
+run's `sub` against that list identifies this immediately.
+
 ### Revoke is not subtraction
 
 Resolution takes the longest **live** prefix. Revoking a narrow row therefore

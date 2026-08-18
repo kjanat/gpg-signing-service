@@ -458,3 +458,91 @@ func TestSignKeyNotAllowed(t *testing.T) {
 		t.Errorf("request id was discarded: %q", se.RequestID)
 	}
 }
+
+// TestSignUntrustedSubject checks that a 401 reaches the caller with the
+// service's own message. The OpenAPI document declares no 401 for /sign, so the
+// generated client has no typed field for it and the response would otherwise
+// collapse to "unexpected status code: 401" — the exact failure an operator
+// cannot debug, because a CI-only OIDC token cannot be replayed from a laptop
+// to read the body by hand.
+func TestSignUntrustedSubject(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = fmt.Fprint(w, `{"error":"Subject is not trusted for signing",`+
+			`"code":"AUTH_INVALID","requestId":"1b4e28ba-2fa1-11d2-883f-0016d3cca427"}`)
+	}))
+	defer server.Close()
+
+	c, _ := New(server.URL)
+	_, err := c.Sign(context.Background(), "commit data", "")
+	if err == nil {
+		t.Fatal("expected an error for a 401 response")
+	}
+	if !IsAuthError(err) {
+		t.Errorf("expected IsAuthError, got %v", err)
+	}
+	if errors.Is(err, ErrUnexpectedStatus) {
+		t.Error("a 401 carrying an error body must not report as an unexpected status")
+	}
+
+	var ae *AuthError
+	if !errors.As(err, &ae) {
+		t.Fatalf("expected an *AuthError, got %T", err)
+	}
+	if ae.Message != "Subject is not trusted for signing" {
+		t.Errorf("server message was discarded: %q", ae.Message)
+	}
+	if ae.Code != "AUTH_INVALID" {
+		t.Errorf("error code was discarded: %q", ae.Code)
+	}
+	if ae.RequestID != "1b4e28ba-2fa1-11d2-883f-0016d3cca427" {
+		t.Errorf("request id was discarded: %q", ae.RequestID)
+	}
+	if !strings.Contains(err.Error(), "Subject is not trusted for signing") {
+		t.Errorf("message missing from rendered error: %q", err.Error())
+	}
+}
+
+// TestSignAuthErrorWithoutBody keeps the fallback honest: a 401 with nothing to
+// read still has to produce an error, and the sentinel is all that is left.
+func TestSignAuthErrorWithoutBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	c, _ := New(server.URL)
+	_, err := c.Sign(context.Background(), "commit data", "")
+	if !errors.Is(err, ErrUnexpectedStatus) {
+		t.Fatalf("expected the unexpected-status sentinel, got %v", err)
+	}
+	if IsAuthError(err) {
+		t.Error("an empty body carries no auth detail to report")
+	}
+}
+
+// TestSignUndocumentedStatusWithBody covers the non-401 half of the same gap: a
+// status the document does not declare still carries a usable envelope.
+func TestSignUndocumentedStatusWithBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTeapot)
+		_, _ = fmt.Fprint(w, `{"error":"brewing refused","code":"INTERNAL_ERROR"}`)
+	}))
+	defer server.Close()
+
+	c, _ := New(server.URL)
+	_, err := c.Sign(context.Background(), "commit data", "")
+
+	var se *ServiceError
+	if !errors.As(err, &se) {
+		t.Fatalf("expected a *ServiceError, got %T (%v)", err, err)
+	}
+	if se.StatusCode != http.StatusTeapot {
+		t.Errorf("expected status 418, got %d", se.StatusCode)
+	}
+	if se.Message != "brewing refused" {
+		t.Errorf("server message was discarded: %q", se.Message)
+	}
+}
