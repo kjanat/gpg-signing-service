@@ -719,21 +719,27 @@ sign_commits:
 
 ## OpenAPI Specification
 
-Full OpenAPI 3.1 specification available in `openapi.yaml`. Use with:
+The generated OpenAPI 3.0 specification is served live at `GET /doc` and
+checked in at [`client/openapi.json`](client/openapi.json). Use it with:
 
-- **Swagger UI**: Host openapi.yaml for interactive API explorer
+- **Swagger UI**: Already deployed at <https://gpg.kajkowalski.nl/ui>
 - **Code Generation**: Generate SDKs in multiple languages
 - **Documentation**: Generate beautiful API docs
 - **Testing**: Automated validation against spec
 
-Example hosting:
+> [!NOTE]
+> The spec is pinned to OpenAPI 3.0.0 because `oapi-codegen` does not support
+> 3.1.x yet
+> ([oapi-codegen#373](https://github.com/oapi-codegen/oapi-codegen/issues/373)).
+
+Example hosting of the checked-in contract:
 
 ```bash
 # Using Swagger UI Docker
 docker run \
   -p 8080:8080 \
-  -e SWAGGER_JSON=/openapi.yaml \
-  -v $(pwd)/openapi.yaml:/openapi.yaml \
+  -e SWAGGER_JSON=/openapi.json \
+  -v $(pwd)/client/openapi.json:/openapi.json \
   swaggerapi/swagger-ui
 ```
 

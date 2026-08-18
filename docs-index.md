@@ -20,19 +20,16 @@ Complete, production-ready API documentation for the GPG Signing Service.
 
 ### Specifications
 
-**openapi.yaml** - 🔧 Complete API specification (YAML)
+**`client/openapi.json`** - 🔧 Complete API specification
 
-- OpenAPI 3.1.0 format (industry standard)
+- OpenAPI 3.0.0 format, generated from the routes in `src/` via `task gen`
+- Served live at `GET /doc`, with Swagger UI at `GET /ui`
 - Machine-readable endpoint definitions
 - All request/response schemas
 - Error codes and security schemes
-- Import into Swagger UI, ReDoc, Postman
-
-**openapi.json** - 🔧 Same specification in JSON format
-
-- Auto-generated from openapi.yaml
-- Use with code generators and tools
-- Programmatic access via JSON parsers
+- Import into Swagger UI, ReDoc, Postman; use with code generators
+- Pinned to 3.0.0 because `oapi-codegen` does not support 3.1.x yet
+  ([oapi-codegen#373](https://github.com/oapi-codegen/oapi-codegen/issues/373))
 
 ### Documentation
 
@@ -84,7 +81,7 @@ Includes:
 ## Documentation Quality
 
 ✓ 3,000+ lines of comprehensive documentation\
-✓ OpenAPI 3.1.0 specification (industry standard)\
+✓ OpenAPI 3.0.0 specification (industry standard)\
 ✓ 100% endpoint coverage (8 endpoints fully documented)\
 ✓ 16 error codes defined and explained\
 ✓ Working code examples in 4 languages\
@@ -103,14 +100,14 @@ Includes:
 
 ### For API Integration
 
-1. Import **openapi.yaml** into Postman, Insomnia, or Swagger UI
+1. Import **`client/openapi.json`** into Postman, Insomnia, or Swagger UI
 2. Follow authentication setup in **API.md**
 3. Test endpoints using examples from **examples/**
-4. Generate client SDKs from **openapi.json** if needed
+4. Generate client SDKs from **`client/openapi.json`** if needed
 
 ### For API Documentation Hosting
 
-1. Use **openapi.yaml** with Swagger UI or ReDoc
+1. Use **`client/openapi.json`** with Swagger UI or ReDoc
 2. Include **API.md** for additional context
 3. Host **examples/** for developer reference
 4. Setup auto-generation from openapi specification
@@ -154,13 +151,13 @@ See **API.md** and **examples/** for complete examples.
 
 ```tree
 gpg-signing-service/
-├── openapi.yaml         # OpenAPI 3.1 specification (YAML)
-├── openapi.json         # OpenAPI 3.1 specification (JSON)
 ├── API.md               # Developer guide with examples
 ├── DOCUMENTATION.md     # Overview and navigation
 ├── DEVELOPER_GUIDE.md   # Context and key concepts
 ├── DOCS_SUMMARY.txt     # Quick reference summary
 ├── docs-index.md        # This file
+├── client/
+│   └── openapi.json     # Generated OpenAPI 3.0 specification
 └── examples/
     ├── README.md        # Examples guide
     ├── bash/
@@ -180,7 +177,7 @@ gpg-signing-service/
 
 All documentation follows industry best practices:
 
-- **OpenAPI 3.1.0** - Current standard for API specifications
+- **OpenAPI 3.0.0** - Consumed by the Go client generator
 - **Professional Writing** - Clear, concise technical content
 - **Complete Examples** - Production-ready code samples
 - **Security-Focused** - All security considerations documented
@@ -194,7 +191,7 @@ All documentation follows industry best practices:
 1. ✓ Review **DOCS_SUMMARY.txt** for overview
 2. ✓ Choose a file based on your role:
    - **Developer**: Start with **API.md**
-   - **Integrator**: Start with **openapi.yaml** + **examples/**
+   - **Integrator**: Start with **`client/openapi.json`** + **examples/**
    - **Administrator**: Start with **DEVELOPER_GUIDE.md**
 3. ✓ Setup authentication with your CI/CD system
 4. ✓ Test endpoints using provided examples
@@ -203,7 +200,7 @@ All documentation follows industry best practices:
 
 ## Support
 
-- **OpenAPI Specification**: See `openapi.yaml`
+- **OpenAPI Specification**: See `client/openapi.json`
 - **Implementation Details**: See `API.md`
 - **Code Examples**: See `examples/`
 - **Troubleshooting**: See `DOCUMENTATION.md`
@@ -212,7 +209,7 @@ All documentation follows industry best practices:
 ## Version Information
 
 - **API Version**: 1.0.0
-- **OpenAPI Version**: 3.1.0
+- **OpenAPI Version**: 3.0.0
 - **Generated**: 2024-01-15
 - **Status**: Production-ready
 

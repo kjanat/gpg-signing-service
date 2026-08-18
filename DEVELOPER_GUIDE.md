@@ -12,13 +12,12 @@ the GPG Signing Service.
 
 ### Core Documentation
 
-| File                   | Purpose                                | Audience                              |
-| ---------------------- | -------------------------------------- | ------------------------------------- |
-| **openapi.yaml**       | OpenAPI 3.1 specification (YAML)       | Tools, code generators, API platforms |
-| **openapi.json**       | OpenAPI 3.1 specification (JSON)       | Programmatic access, automation       |
-| **API.md**             | Developer-friendly guide with examples | Software engineers, integrators       |
-| **DOCUMENTATION.md**   | Overview and usage guide               | Everyone                              |
-| **DEVELOPER_GUIDE.md** | This file - navigation and context     | Contributors, API users               |
+| File                      | Purpose                                | Audience                              |
+| ------------------------- | -------------------------------------- | ------------------------------------- |
+| **`client/openapi.json`** | Generated OpenAPI 3.0 specification    | Tools, code generators, API platforms |
+| **API.md**                | Developer-friendly guide with examples | Software engineers, integrators       |
+| **DOCUMENTATION.md**      | Overview and usage guide               | Everyone                              |
+| **DEVELOPER_GUIDE.md**    | This file - navigation and context     | Contributors, API users               |
 
 ### Examples
 
@@ -41,9 +40,10 @@ the GPG Signing Service.
 
 ### For API Integration
 
-1. **OpenAPI Import**: Load `openapi.yaml` into Swagger UI or Postman
-2. **Code Generation**: Use `openapi.json` with code generators
-3. **Documentation**: Host `openapi.yaml` with ReDoc or similar
+1. **OpenAPI Import**: Load `client/openapi.json` into Swagger UI or Postman
+2. **Code Generation**: Use `client/openapi.json` with code generators
+3. **Documentation**: Browse the deployed Swagger UI at `GET /ui`, or host
+   `client/openapi.json` with ReDoc or similar
 4. **Testing**: Use examples as test cases
 
 ### For Administration
@@ -166,7 +166,7 @@ See examples/python/manage_keys.py rotate command for complete implementation.
 
 ## Integration Checklist
 
-- [ ] Import openapi.yaml into API documentation tool
+- [ ] Import `client/openapi.json` into API documentation tool
 - [ ] Setup OIDC token retrieval in CI/CD
 - [ ] Test signing with public key retrieval
 - [ ] Configure admin token as secret
@@ -202,7 +202,7 @@ See examples/python/manage_keys.py rotate command for complete implementation.
 
 ### With Postman
 
-1. Import openapi.yaml as Postman collection
+1. Import `client/openapi.json` as Postman collection
 2. Create environment with variables:
    - `base_url`: https://gpg.kajkowalski.nl
    - `admin_token`: your token value
@@ -211,11 +211,14 @@ See examples/python/manage_keys.py rotate command for complete implementation.
 
 ### With Swagger UI
 
+The deployed service already hosts Swagger UI at
+<https://gpg.kajkowalski.nl/ui>. To run it against the checked-in contract:
+
 ```bash
-# Local Swagger UI pointing to openapi.yaml
+# Local Swagger UI pointing to client/openapi.json
 docker run -p 8080:8080 \
-  -v $(pwd)/openapi.yaml:/openapi.yaml:ro \
-  -e SWAGGER_JSON=/openapi.yaml \
+  -v $(pwd)/client/openapi.json:/openapi.json:ro \
+  -e SWAGGER_JSON=/openapi.json \
   swaggerapi/swagger-ui
 ```
 
@@ -256,7 +259,7 @@ Check:
 
 ## API Specification Format
 
-OpenAPI 3.1.0 with:
+OpenAPI 3.0.0 with:
 
 - Full endpoint documentation
 - Request/response schemas
@@ -265,34 +268,42 @@ OpenAPI 3.1.0 with:
 - Rate limiting headers
 - Audit logging details
 
+> [!NOTE]
+> The spec is pinned to 3.0.0 on purpose: `oapi-codegen` does not support
+> OpenAPI 3.1.x yet
+> ([oapi-codegen#373](https://github.com/oapi-codegen/oapi-codegen/issues/373)).
+> The pin lives in `src/lib/openapi.ts`.
+
 ### Specification Compliance
 
-All endpoints and responses validate against `openapi.yaml` schema.\
+All endpoints and responses validate against the `client/openapi.json` schema.\
 Use tools like:
 
 ```bash
-# Validate response against spec
-swagger-cli validate openapi.yaml
+# Validate the spec
+bunx @redocly/cli lint client/openapi.json
 
 # Generate tests from spec
-dredd openapi.yaml https://gpg.kajkowalski.nl
+dredd client/openapi.json https://gpg.kajkowalski.nl
 ```
 
 ## Keeping Documentation Updated
 
-When API changes:
+The spec is generated from the route definitions in `src/`; it is never edited
+by hand. When the API changes:
 
-1. **Update openapi.yaml** with new endpoints/parameters
-2. **Validate**: `swagger-cli validate openapi.yaml`
-3. **Regenerate JSON**: `yq . openapi.yaml | jq . > openapi.json`
-4. **Update API.md** with new examples
-5. **Update examples/** directory
-6. **Commit and push** documentation changes
+1. **Update the route/schema definitions** in `src/` (`@hono/zod-openapi`
+   registrations plus `src/lib/openapi.ts`)
+2. **Regenerate**: `task gen` (runs `scripts/generate-openapi.ts` and the Go
+   client generator, refreshing `client/openapi.json`)
+3. **Update `docs/api.md`** with new examples
+4. **Update examples/** directory
+5. **Commit and push** the regenerated spec and documentation changes
 
 ## Support
 
 - **Issues/Questions**: GitHub repository issues
-- **Specification**: See `openapi.yaml` for complete definition
+- **Specification**: See `client/openapi.json` for complete definition
 - **Examples**: See `examples/` directory
 - **Troubleshooting**: See DOCUMENTATION.md
 
@@ -301,12 +312,13 @@ When API changes:
 ### Documentation (in root directory)
 
 ```
-openapi.yaml          888 lines - Full OpenAPI 3.1 specification
-openapi.json         1086 lines - Same spec in JSON format
 API.md                722 lines - Developer guide with examples
 DOCUMENTATION.md      386 lines - Overview and usage
 DEVELOPER_GUIDE.md              - This file
 ```
+
+The OpenAPI specification is generated, not hand-written, and lives at
+`client/openapi.json`.
 
 ### Examples (in examples/ directory)
 
@@ -329,7 +341,7 @@ gitlab-ci/
 
 ## Statistics
 
-- **OpenAPI Schema**: 888 lines (YAML), 1086 lines (JSON)
+- **OpenAPI Schema**: `client/openapi.json` (generated)
 - **API Documentation**: 722 lines (markdown)
 - **Complete Examples**: 4 bash scripts, 2 Python modules, 2 CI workflows
 - **Total Documentation**: 3000+ lines of production-ready content
@@ -337,5 +349,5 @@ gitlab-ci/
 ---
 
 Last updated: 2025-11-19\
-OpenAPI Version: `3.1.0`\
+OpenAPI Version: `3.0.0`\
 API Version: `1.0.0`
