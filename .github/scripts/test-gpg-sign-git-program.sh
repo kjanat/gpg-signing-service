@@ -57,6 +57,44 @@ EOF
 
 chmod +x "${tmp_dir}/bin/curl" "${tmp_dir}/bin/jq" "${tmp_dir}/bin/gpg-sign"
 
+# The shim is sign-only, and git calls gpg.program with --verify whenever it
+# shows a signature. That rejection is load-bearing: if it ever regressed into a
+# silent success, `git log --show-signature` would report commits as verified
+# without anything having verified them. Nothing below covers it, because every
+# other case invokes the shim the way git invokes it to sign.
+#
+# GPG_SIGN_TOKEN is set deliberately, so a pass proves the guard fires on the
+# arguments rather than on a missing credential.
+if printf 'commit object' | env \
+	PATH="${tmp_dir}/bin:${PATH}" \
+	GPG_SIGN_URL='https://sign.example.test' \
+	GPG_SIGN_TOKEN='minted-token' \
+	"${shim}" --status-fd=2 --verify /dev/null - \
+	>"${tmp_dir}/verify-output" 2>"${tmp_dir}/verify-error"; then
+	echo 'expected --verify to be rejected by the sign-only shim' >&2
+	exit 1
+fi
+
+grep -q 'unsupported invocation (sign-only shim)' "${tmp_dir}/verify-error"
+
+# GPG_SIGN_URL is required, and the message has to name it: git reports any
+# non-zero exit from gpg.program as "gpg failed to sign the data", so an
+# unnamed failure is indistinguishable from a rejected credential.
+#
+# -u GPG_SIGN_URL is not decoration — setup-claude-signing exports it through
+# GITHUB_ENV, so in CI this case inherits a real one and asserts nothing.
+if printf 'commit object' | env \
+	-u GPG_SIGN_URL \
+	PATH="${tmp_dir}/bin:${PATH}" \
+	GPG_SIGN_TOKEN='minted-token' \
+	"${shim}" --status-fd=2 -bsau test-key \
+	>"${tmp_dir}/no-url-output" 2>"${tmp_dir}/no-url-error"; then
+	echo 'expected a missing GPG_SIGN_URL to fail' >&2
+	exit 1
+fi
+
+grep -q 'GPG_SIGN_URL must point at the signing service' "${tmp_dir}/no-url-error"
+
 run_signing_case() {
 	local output_file="$1"
 	local status_file="$2"
