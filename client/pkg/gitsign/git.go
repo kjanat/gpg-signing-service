@@ -13,20 +13,6 @@ import (
 // checked out.
 const detachedHead = "HEAD"
 
-// verifyConfig pins the verifier the same way GNUPGHOME pins the keyring.
-//
-// A checkout that installed a sign-only gpg shim has gpg.program aimed at it,
-// and that shim exits 1 on --verify, so ambient config would report every
-// commit — including ones this key just signed — as unverified. minTrustLevel
-// is the same trap through a different knob: the keyring is built by importing
-// the key, so it carries no ownertrust, and any setting above the default
-// rejects an otherwise good signature.
-var verifyConfig = []string{
-	"-c", "gpg.program=gpg",
-	"-c", "gpg.format=openpgp",
-	"-c", "gpg.minTrustLevel=undefined",
-}
-
 // repo runs git plumbing against one working tree.
 type repo struct {
 	dir string
@@ -115,23 +101,6 @@ func (r *repo) updateRef(ctx context.Context, sha, old string) error {
 // objectFormat returns the repository's hash algorithm, "sha1" or "sha256".
 func (r *repo) objectFormat(ctx context.Context) (string, error) {
 	return r.gitLine(ctx, "rev-parse", "--show-object-format")
-}
-
-// verifyStatus reports whether the commit carries a signature the keyring in
-// home accepts, alongside gpg's raw status output for diagnosis.
-func (r *repo) verifyStatus(ctx context.Context, sha, home string) (bool, string) {
-	args := make([]string, 0, len(verifyConfig)+3)
-	args = append(args, verifyConfig...)
-	args = append(args, "verify-commit", "--raw", sha)
-
-	_, stderr, err := capture(ctx, command{
-		program: gitProgram,
-		args:    args,
-		dir:     r.dir,
-		env:     []string{"GNUPGHOME=" + home},
-	})
-	good := err == nil && bytes.Contains(stderr, []byte("[GNUPG:] GOODSIG"))
-	return good, strings.TrimSpace(string(stderr))
 }
 
 // batchObject is one record from "git cat-file --batch".

@@ -110,9 +110,9 @@ func TestRunRemapsBothMergeParents(t *testing.T) {
 func TestRunBlocksResignWithoutOptIn(t *testing.T) {
 	dir, svc := serviceFixture(t)
 	base := head(t, dir)
-	foreign := newGPGHome(t, foreignUID)
+	foreign := newEntity(t, foreignName, foreignEmail)
 	commit(t, dir, "mine", serviceEmail)
-	commitSignedBy(t, dir, "theirs", foreignEmail, foreign, foreignEmail)
+	commitSignedBy(t, dir, "theirs", foreignEmail, foreign)
 	before := head(t, dir)
 
 	result, out, err := runEngine(t, dir, svc.api, Options{Base: base})
@@ -142,9 +142,9 @@ func TestRunBlocksResignWithoutOptIn(t *testing.T) {
 func TestRunStripsForeignSignatureWithOptIn(t *testing.T) {
 	dir, svc := serviceFixture(t)
 	base := head(t, dir)
-	foreign := newGPGHome(t, foreignUID)
+	foreign := newEntity(t, foreignName, foreignEmail)
 	commit(t, dir, "mine", serviceEmail)
-	commitSignedBy(t, dir, "theirs", foreignEmail, foreign, foreignEmail)
+	commitSignedBy(t, dir, "theirs", foreignEmail, foreign)
 
 	result, out, err := runEngine(t, dir, svc.api, Options{Base: base, AllowResign: true})
 	if err != nil {
@@ -315,10 +315,10 @@ func TestRunRejectsNegativeScanLimit(t *testing.T) {
 func TestRunReportsResignForCommitsTheKeyCovers(t *testing.T) {
 	dir, svc := serviceFixture(t)
 	base := head(t, dir)
-	foreign := newGPGHome(t, foreignUID)
+	foreign := newEntity(t, foreignName, foreignEmail)
 	// Committed under the service's own address, but signed by a key the
 	// service does not hold.
-	commitSignedBy(t, dir, "mine but foreign-signed", serviceEmail, foreign, foreignEmail)
+	commitSignedBy(t, dir, "mine but foreign-signed", serviceEmail, foreign)
 
 	_, out, err := runEngine(t, dir, svc.api, Options{Base: base})
 
@@ -362,10 +362,10 @@ func TestRunResolvesBaseFromTheMergeBase(t *testing.T) {
 // alone, a sha256 repository fails at the post-signing verification with an
 // empty detail, long after the cause is visible.
 func TestRunRefusesASHA256Repository(t *testing.T) {
-	requireTools(t)
+	requireGit(t)
 
-	home := newGPGHome(t, serviceUID)
-	svc := &fixture{home: home, api: newService(t, home, serviceUID)}
+	entity := newEntity(t, serviceName, serviceEmail)
+	svc := &fixture{entity: entity, api: newService(t, entity)}
 
 	dir := t.TempDir()
 	git(t, dir, nil, "init", "--initial-branch=master", "--object-format=sha256")

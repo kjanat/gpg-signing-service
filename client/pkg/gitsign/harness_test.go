@@ -10,81 +10,74 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ProtonMail/go-crypto/openpgp"
+	"github.com/ProtonMail/go-crypto/openpgp/armor"
+	"github.com/ProtonMail/go-crypto/openpgp/packet"
 	"github.com/kjanat/gpg-signing-service/client/pkg/client"
 )
 
 const (
-	serviceUID   = "Service Key <service@example.test>"
+	serviceName  = "Service Key"
 	serviceEmail = "service@example.test"
-	foreignUID   = "Someone Else <someone@example.test>"
+	foreignName  = "Someone Else"
 	foreignEmail = "someone@example.test"
 )
 
-// requireTools skips tests that need real git and gpg binaries, so the suite
-// still runs on a machine that has neither.
-func requireTools(t *testing.T) {
+// requireGit skips tests that need a real git binary, so the suite still runs
+// on a machine that has none. Nothing here needs gpg: keys are generated,
+// signed with, and verified in-process.
+func requireGit(t *testing.T) {
 	t.Helper()
-	for _, tool := range []string{gitProgram, gpgProgram} {
-		if _, err := exec.LookPath(tool); err != nil {
-			t.Skipf("%s is not on PATH; skipping the git-dependent test", tool)
-		}
+	if _, err := exec.LookPath(gitProgram); err != nil {
+		t.Skipf("%s is not on PATH; skipping the git-dependent test", gitProgram)
 	}
 }
 
-// newGPGHome generates a throwaway signing key and returns its GNUPGHOME.
-func newGPGHome(t *testing.T, uid string) string {
+// newEntity generates a throwaway ed25519 signing key.
+func newEntity(t *testing.T, name, email string) *openpgp.Entity {
 	t.Helper()
 
-	home := t.TempDir()
-	// #nosec G302 -- this is a directory, which needs the execute bit to be usable.
-	if err := os.Chmod(home, 0o700); err != nil {
-		t.Fatalf("could not secure the test keyring: %v", err)
-	}
-	// Registered after t.TempDir's own cleanup, so it runs first and the
-	// agent's sockets are gone before the directory is removed.
-	t.Cleanup(func() { killAgent(home) })
-
-	out, err := gpgCommand(home, "--quick-generate-key", uid, "ed25519", "sign", "never").CombinedOutput()
+	entity, err := openpgp.NewEntity(name, "", email, &packet.Config{Algorithm: packet.PubKeyAlgoEdDSA})
 	if err != nil {
-		t.Fatalf("could not generate a test key: %v\n%s", err, out)
+		t.Fatalf("could not generate a test key: %v", err)
 	}
-	return home
+	return entity
 }
 
-// exportKey returns the armored public key of the given home.
-func exportKey(t *testing.T, home, uid string) string {
+// exportKey returns the armored public key, the shape the service hands back.
+func exportKey(t *testing.T, entity *openpgp.Entity) string {
 	t.Helper()
 
-	var stdout, stderr bytes.Buffer
-	cmd := gpgCommand(home, "--armor", "--export", uid)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("could not export the test key: %v\n%s", err, stderr.String())
+	var buf bytes.Buffer
+	block, err := armor.Encode(&buf, openpgp.PublicKeyType, nil)
+	if err != nil {
+		t.Fatalf("could not armor the test key: %v", err)
 	}
-	return stdout.String()
+	if err := entity.Serialize(block); err != nil {
+		t.Fatalf("could not serialize the test key: %v", err)
+	}
+	if err := block.Close(); err != nil {
+		t.Fatalf("could not close the armor block: %v", err)
+	}
+	return buf.String()
 }
 
 // detachSign produces the armored detached signature the fake service returns.
-func detachSign(t *testing.T, home, uid string, payload []byte) string {
+func detachSign(t *testing.T, entity *openpgp.Entity, payload []byte) string {
 	t.Helper()
 
-	var stdout, stderr bytes.Buffer
-	cmd := gpgCommand(home, "--armor", "--detach-sign", "--local-user", uid)
-	cmd.Stdin = bytes.NewReader(payload)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("could not sign the test payload: %v\n%s", err, stderr.String())
+	var buf bytes.Buffer
+	if err := openpgp.ArmoredDetachSign(&buf, entity, bytes.NewReader(payload), nil); err != nil {
+		t.Fatalf("could not sign the test payload: %v", err)
 	}
-	return stdout.String()
+	return buf.String()
 }
 
-// newService stands up a signing service backed by a local gpg key.
-func newService(t *testing.T, home, uid string) *client.Client {
+// newService stands up a signing service backed by a local key.
+func newService(t *testing.T, entity *openpgp.Entity) *client.Client {
 	t.Helper()
 
-	armored := exportKey(t, home, uid)
+	armored := exportKey(t, entity)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		if r.URL.Path == "/public-key" {
@@ -96,7 +89,7 @@ func newService(t *testing.T, home, uid string) *client.Client {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		_, _ = fmt.Fprint(w, detachSign(t, home, uid, payload))
+		_, _ = fmt.Fprint(w, detachSign(t, entity, payload))
 	}))
 	t.Cleanup(server.Close)
 
@@ -114,20 +107,6 @@ func readAll(r *http.Request) ([]byte, error) {
 	return buf.Bytes(), err
 }
 
-// gpgCommand builds a batch gpg invocation against a throwaway keyring.
-func gpgCommand(home string, args ...string) *exec.Cmd {
-	full := gpgArgs(home, "--pinentry-mode", "loopback", "--passphrase", "")
-	// #nosec G204 -- test fixture; every argument is a literal from this file.
-	return exec.Command(gpgProgram, append(full, args...)...)
-}
-
-// killAgent stops the gpg-agent a throwaway keyring started, so its sockets are
-// gone before t.TempDir tries to remove the directory.
-func killAgent(home string) {
-	// #nosec G204 -- test fixture; the only variable is a t.TempDir path.
-	_ = exec.Command("gpgconf", "--homedir", home, "--kill", "all").Run()
-}
-
 // git runs a git command in the test repository.
 func git(t *testing.T, dir string, env []string, args ...string) string {
 	t.Helper()
@@ -143,6 +122,26 @@ func git(t *testing.T, dir string, env []string, args ...string) string {
 		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, stderr.String())
 	}
 	return strings.TrimSpace(stdout.String())
+}
+
+// gitRaw runs a git command and returns its stdout untrimmed, for the object
+// bytes where a trailing newline is part of the content.
+func gitRaw(t *testing.T, dir string, stdin []byte, args ...string) []byte {
+	t.Helper()
+
+	var stdout, stderr bytes.Buffer
+	// #nosec G204 -- test fixture; the arguments come from this file's helpers.
+	cmd := exec.Command(gitProgram, args...)
+	cmd.Dir = dir
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, stderr.String())
+	}
+	return stdout.Bytes()
 }
 
 // initRepo creates an empty repository on master with one root commit.
@@ -175,12 +174,28 @@ func commit(t *testing.T, dir, message, email string) string {
 
 // commitSignedBy adds an empty commit signed with a key the service does not
 // hold, which is how a foreign signature gets into the fixtures.
-func commitSignedBy(t *testing.T, dir, message, email, home, uid string) {
+//
+// It writes the signed object the same way git does — sign the payload, embed
+// it, rehash — because the alternative is asking a gpg binary the rest of this
+// package no longer needs.
+func commitSignedBy(t *testing.T, dir, message, email string, entity *openpgp.Entity) {
 	t.Helper()
 
-	env := append(identity(email), "GNUPGHOME="+home)
-	git(t, dir, env, "-c", "gpg.program=gpg", "-c", "gpg.format=openpgp",
-		"-c", "user.signingkey="+uid, "commit", "-S", "--allow-empty", "-m", message)
+	sha := commit(t, dir, message, email)
+	raw := gitRaw(t, dir, nil, "cat-file", "commit", sha)
+
+	parents, err := parentsOf(raw)
+	if err != nil {
+		t.Fatalf("could not read the fixture commit: %v", err)
+	}
+	payload, err := unsignedObject(raw, parents)
+	if err != nil {
+		t.Fatalf("could not rebuild the fixture commit: %v", err)
+	}
+
+	signed := withSignature(payload, []byte(strings.Trim(detachSign(t, entity, payload), "\n")))
+	newSHA := gitRaw(t, dir, signed, "hash-object", "-t", "commit", "-w", "--stdin")
+	git(t, dir, nil, "update-ref", "HEAD", strings.TrimSpace(string(newSHA)), sha)
 }
 
 // runEngine drives the engine and captures its progress output.
@@ -207,19 +222,19 @@ func marks(result *Result) []string {
 	return out
 }
 
-// fixture pairs a signing service with the keyring it signs from.
+// fixture pairs a signing service with the key it signs from.
 type fixture struct {
-	home string
-	api  *client.Client
+	entity *openpgp.Entity
+	api    *client.Client
 }
 
 // serviceFixture builds a repository plus a service that share one key.
 func serviceFixture(t *testing.T) (string, *fixture) {
 	t.Helper()
-	requireTools(t)
+	requireGit(t)
 
-	home := newGPGHome(t, serviceUID)
-	return initRepo(t), &fixture{home: home, api: newService(t, home, serviceUID)}
+	entity := newEntity(t, serviceName, serviceEmail)
+	return initRepo(t), &fixture{entity: entity, api: newService(t, entity)}
 }
 
 // head returns the commit the test repository's HEAD points at.
@@ -233,22 +248,12 @@ func head(t *testing.T, dir string) string {
 func assertVerifies(t *testing.T, dir string, f *fixture, sha string) {
 	t.Helper()
 
-	verifyHome := t.TempDir()
-	// #nosec G302 -- this is a directory, which needs the execute bit to be usable.
-	if err := os.Chmod(verifyHome, 0o700); err != nil {
-		t.Fatalf("could not secure the verification keyring: %v", err)
+	key, err := newSigningKey(exportKey(t, f.entity))
+	if err != nil {
+		t.Fatalf("could not read the service key: %v", err)
 	}
-	t.Cleanup(func() { killAgent(verifyHome) })
-
-	importKey := gpgCommand(verifyHome, "--quiet", "--import")
-	importKey.Stdin = strings.NewReader(exportKey(t, f.home, serviceUID))
-	if out, err := importKey.CombinedOutput(); err != nil {
-		t.Fatalf("could not import the service key: %v\n%s", err, out)
-	}
-
-	good, detail := (&repo{dir: dir}).verifyStatus(t.Context(), sha, verifyHome)
-	if !good {
-		t.Errorf("%s does not verify against the service key:\n%s", short(sha), detail)
+	if good, detail := key.verify(gitRaw(t, dir, nil, "cat-file", "commit", sha)); !good {
+		t.Errorf("%s does not verify against the service key: %s", short(sha), detail)
 	}
 }
 

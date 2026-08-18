@@ -4,16 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 )
 
-const (
-	// gitProgram and gpgProgram are the external binaries this package drives.
-	gitProgram = "git"
-	gpgProgram = "gpg"
-)
+// gitProgram is the only external binary this package drives. Signature
+// verification is in-process; see pgp.go.
+const gitProgram = "git"
 
 // CommandError reports a subprocess that exited non-zero. It carries the
 // program's own stderr, because a bare "exit status 128" says nothing about
@@ -41,24 +38,16 @@ type command struct {
 	args    []string
 	dir     string
 	stdin   []byte
-	// env entries are appended to the caller's environment, so a single
-	// GNUPGHOME override does not have to reconstruct PATH.
-	env []string
 }
 
 // capture runs the command and returns stdout and stderr regardless of exit
-// status. Callers that only care about success should use run instead; capture
-// exists for git verify-commit, whose status lines are the point even when it
-// exits non-zero.
+// status. Callers that only care about success should use run instead.
 func capture(ctx context.Context, c command) (stdout, stderr []byte, err error) {
 	// #nosec G204 -- the program is a fixed literal and the arguments are
 	// built from constant git verbs plus revisions this package read back out
 	// of the repository itself.
 	cmd := exec.CommandContext(ctx, c.program, c.args...)
 	cmd.Dir = c.dir
-	if len(c.env) > 0 {
-		cmd.Env = append(os.Environ(), c.env...)
-	}
 	if c.stdin != nil {
 		cmd.Stdin = bytes.NewReader(c.stdin)
 	}

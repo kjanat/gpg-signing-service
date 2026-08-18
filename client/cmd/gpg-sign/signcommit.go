@@ -25,7 +25,8 @@ The range starts at --base when given. Otherwise, on the default branch it
 starts at the last commit this key already verifies, and on any other branch at
 the merge base with origin/<default-branch>.
 
-Requires the git and gpg binaries on PATH.
+Requires the git binary on PATH. Signature verification runs in-process, so
+no gpg installation is needed.
 
 Example:
   gpg-sign sign-commit --key-id=62E75E54497815DD

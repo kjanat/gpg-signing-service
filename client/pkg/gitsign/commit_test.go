@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
 const (
@@ -116,9 +118,9 @@ func TestCommitterEmail(t *testing.T) {
 	}
 }
 
-func TestCommitHeaderRejectsMalformedObject(t *testing.T) {
-	if _, err := parentsOf([]byte("tree " + treeSHA)); !errors.Is(err, errMalformed) {
-		t.Fatalf("expected errMalformed, got %v", err)
+func TestDecodeRejectsMalformedObject(t *testing.T) {
+	if _, err := parentsOf([]byte("not a commit object")); !errors.Is(err, object.ErrMalformedCommit) {
+		t.Fatalf("expected ErrMalformedCommit, got %v", err)
 	}
 }
 
@@ -132,10 +134,13 @@ func TestUnsignedObjectPlacesParentsInPlace(t *testing.T) {
 		"committer C O Mitter <committer@example.test> 1700000000 +0000",
 	}, "message\n")
 
-	got := string(unsignedObject(raw, []string{newParent}))
+	got, err := unsignedObject(raw, []string{newParent})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	want := "tree " + treeSHA + "\nparent " + newParent + "\n" + testAuthor +
 		"\ncommitter C O Mitter <committer@example.test> 1700000000 +0000\n\nmessage\n"
-	if got != want {
+	if string(got) != want {
 		t.Errorf("expected:\n%q\ngot:\n%q", want, got)
 	}
 }
@@ -148,7 +153,11 @@ func TestUnsignedObjectRemapsEveryMergeParent(t *testing.T) {
 		testAuthor,
 	}, "merge\n")
 
-	got := string(unsignedObject(raw, []string{newParent, parentTwo}))
+	remapped, err := unsignedObject(raw, []string{newParent, parentTwo})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := string(remapped)
 	if !strings.Contains(got, "parent "+newParent+"\nparent "+parentTwo+"\n") {
 		t.Errorf("expected both parents in order, got:\n%q", got)
 	}
@@ -167,7 +176,11 @@ func TestUnsignedObjectDropsSignatureAndContinuations(t *testing.T) {
 		" -----END PGP SIGNATURE-----",
 	}, "message\n")
 
-	got := string(unsignedObject(raw, nil))
+	stripped, err := unsignedObject(raw, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := string(stripped)
 	if strings.Contains(got, "gpgsig") || strings.Contains(got, "AAAA") {
 		t.Errorf("expected the signature and its continuations to be gone, got:\n%q", got)
 	}
@@ -181,7 +194,11 @@ func TestUnsignedObjectDropsSignatureAndContinuations(t *testing.T) {
 func TestUnsignedObjectKeepsMultiParagraphMessage(t *testing.T) {
 	raw := rawCommit([]string{"tree " + treeSHA, testAuthor}, "subject\n\nbody paragraph\n")
 
-	got := string(unsignedObject(raw, nil))
+	kept, err := unsignedObject(raw, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := string(kept)
 	if !strings.HasSuffix(got, "\n\nsubject\n\nbody paragraph\n") {
 		t.Errorf("expected the whole message to survive, got:\n%q", got)
 	}
@@ -207,7 +224,10 @@ func TestWithSignatureRoundTrips(t *testing.T) {
 		testAuthor,
 	}, "message\n")
 
-	stripped := unsignedObject(withSignature(payload, []byte(testArmor)), []string{parentOne})
+	stripped, err := unsignedObject(withSignature(payload, []byte(testArmor)), []string{parentOne})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if string(stripped) != string(payload) {
 		t.Errorf("expected:\n%q\ngot:\n%q", payload, stripped)
 	}

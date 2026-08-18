@@ -2,133 +2,118 @@ package gitsign
 
 import (
 	"bytes"
-	"errors"
+	"fmt"
+	"io"
 	"strings"
+
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
-var (
-	headerSeparator = []byte("\n\n")
-	gpgsigPrefix    = []byte("gpgsig ")
-	parentPrefix    = []byte("parent ")
-	committerPrefix = []byte("committer ")
-	continuation    = []byte(" ")
-)
+// headerSeparator is the blank line between a commit's headers and its
+// message.
+var headerSeparator = []byte("\n\n")
 
-// errMalformed is returned for a commit object with no header/message break.
-var errMalformed = errors.New("malformed commit object: no header/message separator")
-
-// commitHeader returns the header block of a raw commit object.
-func commitHeader(raw []byte) ([]byte, error) {
-	head, _, found := bytes.Cut(raw, headerSeparator)
-	if !found {
-		return nil, errMalformed
+// decodeCommit parses a raw commit object.
+//
+// go-git's decoder is used rather than a hand-rolled one because it already
+// knows the cases this package would otherwise have to rediscover: mergetag
+// and encoding headers, unknown headers that must survive a rewrite, the
+// gpgsig-sha256 spelling, and space-indented continuations.
+func decodeCommit(raw []byte) (*object.Commit, error) {
+	source := &plumbing.MemoryObject{}
+	source.SetType(plumbing.CommitObject)
+	if _, err := source.Write(raw); err != nil {
+		return nil, err
 	}
-	return head, nil
+
+	commit := &object.Commit{}
+	if err := commit.Decode(source); err != nil {
+		return nil, fmt.Errorf("could not read the commit object: %w", err)
+	}
+	return commit, nil
 }
 
-// headerLines splits the header into its lines, including the space-indented
-// continuations of multi-line headers such as gpgsig.
-func headerLines(raw []byte) ([][]byte, error) {
-	head, err := commitHeader(raw)
+// encodeObject runs an encoder into a fresh in-memory object and returns its
+// bytes.
+func encodeObject(encode func(plumbing.EncodedObject) error) ([]byte, error) {
+	encoded := &plumbing.MemoryObject{}
+	if err := encode(encoded); err != nil {
+		return nil, err
+	}
+	reader, err := encoded.Reader()
 	if err != nil {
 		return nil, err
 	}
-	return bytes.Split(head, []byte("\n")), nil
+	defer func() { _ = reader.Close() }()
+	return io.ReadAll(reader)
 }
 
 // parentsOf returns the commit's parent SHAs in order.
 func parentsOf(raw []byte) ([]string, error) {
-	lines, err := headerLines(raw)
+	commit, err := decodeCommit(raw)
 	if err != nil {
 		return nil, err
 	}
-	parents := make([]string, 0, 2)
-	for _, line := range lines {
-		if bytes.HasPrefix(line, parentPrefix) {
-			parents = append(parents, string(line[len(parentPrefix):]))
-		}
+	parents := make([]string, 0, len(commit.ParentHashes))
+	for _, parent := range commit.ParentHashes {
+		parents = append(parents, parent.String())
 	}
 	return parents, nil
 }
 
-// isSigned reports whether the commit already carries a gpgsig header. It says
-// nothing about whether that signature verifies, or even whether it is PGP.
+// isSigned reports whether the commit already carries a signature header. It
+// says nothing about whether that signature verifies, or even whether it is
+// PGP: git writes an SSH signature into the same header.
 func isSigned(raw []byte) (bool, error) {
-	lines, err := headerLines(raw)
+	commit, err := decodeCommit(raw)
 	if err != nil {
 		return false, err
 	}
-	for _, line := range lines {
-		if bytes.HasPrefix(line, gpgsigPrefix) {
-			return true, nil
-		}
-	}
-	return false, nil
+	return commit.PGPSignature != "", nil
 }
 
 // committerEmail returns the lowercased address from the committer header, or
 // the empty string if the header carries none.
 func committerEmail(raw []byte) (string, error) {
-	lines, err := headerLines(raw)
+	commit, err := decodeCommit(raw)
 	if err != nil {
 		return "", err
 	}
-	for _, line := range lines {
-		if !bytes.HasPrefix(line, committerPrefix) {
-			continue
-		}
-		open := bytes.LastIndexByte(line, '<')
-		closed := bytes.LastIndexByte(line, '>')
-		if open < 0 || closed < open {
-			continue
-		}
-		return strings.ToLower(string(line[open+1 : closed])), nil
-	}
-	return "", nil
+	return strings.ToLower(commit.Committer.Email), nil
 }
 
-// unsignedObject rebuilds the commit without any gpgsig header and with the
-// given parents in place of the originals.
+// unsignedObject rebuilds the commit without any signature header and with the
+// given parents in place of the originals. The result is the payload a
+// signature is computed over.
 //
-// The new parent lines land where the first original parent line was, because
-// git requires the header order tree, parent..., author, committer. Appending
-// them at the end would produce an object git refuses to read back.
-func unsignedObject(raw []byte, parents []string) []byte {
-	head, message, _ := bytes.Cut(raw, headerSeparator)
-	lines := bytes.Split(head, []byte("\n"))
-
-	out := make([][]byte, 0, len(lines)+len(parents))
-	placed := false
-	for index := 0; index < len(lines); index++ {
-		line := lines[index]
-
-		if bytes.HasPrefix(line, gpgsigPrefix) {
-			// Drop the header and every space-indented continuation of it.
-			for index+1 < len(lines) && bytes.HasPrefix(lines[index+1], continuation) {
-				index++
-			}
-			continue
-		}
-
-		if bytes.HasPrefix(line, parentPrefix) {
-			if !placed {
-				for _, parent := range parents {
-					out = append(out, append([]byte("parent "), parent...))
-				}
-				placed = true
-			}
-			continue
-		}
-
-		out = append(out, line)
+// When the parents are unchanged this returns the original bytes with the
+// signature headers stripped verbatim, which is what git itself signs. Only a
+// commit whose parents actually moved is re-encoded from its fields, and that
+// one is being given a new SHA regardless.
+func unsignedObject(raw []byte, parents []string) ([]byte, error) {
+	commit, err := decodeCommit(raw)
+	if err != nil {
+		return nil, err
 	}
 
-	return assemble(out, message)
+	hashes := make([]plumbing.Hash, 0, len(parents))
+	for _, parent := range parents {
+		hashes = append(hashes, plumbing.NewHash(parent))
+	}
+	commit.ParentHashes = hashes
+
+	return encodeObject(commit.EncodeWithoutSignature)
 }
 
 // withSignature appends the armored signature to the payload's headers in
 // git's multi-line header form: the first armor line on the gpgsig header
 // itself, every later line indented by one space.
+//
+// This is a byte-level append rather than a re-encode on purpose. The service
+// signed exactly these payload bytes, so stripping the header again has to
+// return exactly these payload bytes; round-tripping through the commit struct
+// would risk normalizing something the signature covers.
 func withSignature(payload, signature []byte) []byte {
 	armor := bytes.Split(bytes.Trim(signature, "\n"), []byte("\n"))
 	head, message, _ := bytes.Cut(payload, headerSeparator)

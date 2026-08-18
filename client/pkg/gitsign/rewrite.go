@@ -55,7 +55,7 @@ func (s *session) classify(ctx context.Context, commits []string) (*workset, err
 		w.signed[commit] = signed
 
 		if w.ours[commit] && signed {
-			good, detail := s.repo.verifyStatus(ctx, commit, s.home)
+			good, detail := s.key.verify(raw)
 			w.verified[commit] = good
 			w.detail[commit] = detail
 			w.checked[commit] = true
@@ -101,11 +101,10 @@ func (s *session) guard(w *workset, commits []string) error {
 
 		reason := "a rewritten parent invalidates its signature"
 		if w.checked[commit] && !w.verified[commit] {
-			// No PGP status at all (an SSH signature, say) still means the
-			// signature we can check did not check out.
-			if reason = verifyReason(w.detail[commit]); reason == "" {
-				reason = "its signature did not verify"
-			}
+			// The detail is already the explanation; an unrecognized
+			// failure carries the library's own words rather than being
+			// flattened into "did not verify".
+			reason = w.detail[commit]
 		}
 		// A commit the key does not cover is reparented, not re-signed: the
 		// rewrite strips its signature and nothing replaces it.
@@ -144,7 +143,7 @@ func (s *session) rewrite(ctx context.Context, w *workset, commits []string, bas
 			return err
 		}
 		if mark == MarkSigned {
-			if good, detail := s.repo.verifyStatus(ctx, newSHA, s.home); !good {
+			if good, detail := s.verifyWritten(ctx, newSHA); !good {
 				return fmt.Errorf("%s did not verify after signing: %s", newSHA, detail)
 			}
 			s.result.Signed++
@@ -162,7 +161,7 @@ func (s *session) rewrite(ctx context.Context, w *workset, commits []string, bas
 	if replacement, ok := rewritten[head]; ok {
 		tip = replacement
 	}
-	if good, _ := s.repo.verifyStatus(ctx, tip, s.home); !good {
+	if good, _ := s.verifyWritten(ctx, tip); !good {
 		s.warn("Signed %d commit(s), but the tip %s still carries no signature this key can verify; "+
 			"it was committed by an identity the key does not carry — re-run with --sign-others "+
 			"(dispatch with sign_others from CI) to include it.", s.result.Signed, short(tip))
@@ -194,7 +193,10 @@ func (s *session) rebuild(ctx context.Context, w *workset, commit string, rewrit
 		}
 	}
 
-	payload := unsignedObject(w.raw[commit], remapped)
+	payload, err := unsignedObject(w.raw[commit], remapped)
+	if err != nil {
+		return nil, "", fmt.Errorf("%s: %w", commit, err)
+	}
 	if !w.ours[commit] {
 		// "reparent" reads identically for a commit that never carried a
 		// signature, so name the destructive case separately.
@@ -221,4 +223,15 @@ func (s *session) requestSignature(ctx context.Context, payload []byte) ([]byte,
 		return nil, fmt.Errorf("the signing service returned no PGP signature: %q", result.Signature)
 	}
 	return []byte(strings.Trim(result.Signature, "\n")), nil
+}
+
+// verifyWritten reads an object back out of the repository and checks it
+// against the service key. Reading it back rather than checking the bytes in
+// hand is the point: it proves git stored what this run built.
+func (s *session) verifyWritten(ctx context.Context, sha string) (bool, string) {
+	raw, err := s.repo.catFileCommit(ctx, sha)
+	if err != nil {
+		return false, err.Error()
+	}
+	return s.key.verify(raw)
 }

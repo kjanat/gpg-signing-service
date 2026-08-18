@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
+	"time"
 
 	"github.com/kjanat/gpg-signing-service/client/pkg/client"
 )
@@ -135,11 +135,11 @@ func Run(ctx context.Context, signer Signer, opts Options) (*Result, error) {
 	s.result.Branch = branch
 
 	// git names the signature header after the repository's hash algorithm:
-	// gpgsig for sha1, gpgsig-sha256 for sha256. This package reads and writes
-	// the sha1 spelling only, so on a sha256 repository it would strip no
-	// existing signature, write a header git never reads, and die at the
-	// post-signing verification with an empty detail. Refuse while the cause
-	// is still visible.
+	// gpgsig for sha1, gpgsig-sha256 for sha256. This package writes the sha1
+	// spelling only, and go-git's object decoder is compiled for 20-byte
+	// hashes, so a sha256 repository's tree and parent lines do not survive a
+	// round trip either. Refuse while the cause is still visible rather than
+	// failing somewhere downstream of a written object.
 	format, err := s.repo.objectFormat(ctx)
 	if err != nil {
 		return nil, err
@@ -153,15 +153,14 @@ func Run(ctx context.Context, signer Signer, opts Options) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("could not fetch the public key: %w", err)
 	}
-	s.identities, err = keyIdentities(ctx, []byte(armored))
+	s.key, err = newSigningKey(armored)
 	if err != nil {
 		return nil, err
 	}
-	s.home, err = keyring(ctx, []byte(armored))
+	s.identities, err = s.key.identities(time.Now())
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = os.RemoveAll(s.home) }()
 
 	if err := s.run(ctx); err != nil {
 		return s.result, err
@@ -174,7 +173,7 @@ type session struct {
 	repo       *repo
 	signer     Signer
 	opts       Options
-	home       string
+	key        *signingKey
 	identities map[string]bool
 	result     *Result
 }
@@ -287,7 +286,7 @@ func (s *session) lastSigned(ctx context.Context) (string, error) {
 		if !signed {
 			continue
 		}
-		if good, _ := s.repo.verifyStatus(ctx, object.sha, s.home); good {
+		if good, _ := s.key.verify(object.raw); good {
 			return object.sha, nil
 		}
 	}

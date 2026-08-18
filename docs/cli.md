@@ -202,8 +202,8 @@ gpg-sign --json admin audit \
   any non-empty input.
 - `sign-commit` rewrites commit SHAs. It stops at `git update-ref HEAD` and
   never pushes; publishing the result is a force push you perform yourself. It
-  needs `git` and `gpg` on `PATH`, refuses a detached `HEAD`, and handles PGP
-  only.
+  needs `git` on `PATH` — signatures are verified in-process, so no `gpg`
+  installation is required — refuses a detached `HEAD`, and handles PGP only.
 - `sign-commit` writes the `gpgsig` header, so it requires a `sha1` repository.
   A `sha256` repository names the header `gpgsig-sha256`; the command refuses
   one rather than writing a signature Git will not read.
