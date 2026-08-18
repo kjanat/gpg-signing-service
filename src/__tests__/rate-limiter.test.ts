@@ -75,6 +75,34 @@ describe("RateLimiter Durable Object", () => {
 			}
 		});
 
+		it("scales the retry hint to the bucket's capacity, not the window", async () => {
+			// Refill is proportional to capacity, so a wide bucket repays one token in
+			// a fraction of a window. Reporting the window told a refused caller to
+			// wait 60s over 60ms of debt — and on the row bucket that hint idles every
+			// sibling under the trusted row, not just the caller that spent it.
+			const stub = getRateLimiter("retry-hint");
+			await runInDurableObject(stub, async (_instance, state) => {
+				// Seeded empty rather than drained: 1000 round-trips is what the CI
+				// timeout above was about. The denial path performs no write, so the
+				// seeded state is what the request sees.
+				await state.storage.put("bucket:wide", { tokens: 0, lastRefill: Date.now(), capacity: 1000 });
+				await state.storage.put("bucket:narrow", { tokens: 0, lastRefill: Date.now(), capacity: 100 });
+			});
+
+			const wide = await stub.fetch("http://localhost/consume?identity=wide&limit=1000");
+			const narrow = await stub.fetch("http://localhost/consume?identity=narrow");
+			expect(wide.status).toBe(429);
+			expect(narrow.status).toBe(429);
+
+			// One token against a ceiling of 1000 is ~60ms; against 100, ~600ms.
+			// Either way, not the 60s the window would have reported.
+			const wideResult = (await wide.json()) as RateLimitResult;
+			const narrowResult = (await narrow.json()) as RateLimitResult;
+			expect(wideResult.resetAt - Date.now()).toBeLessThan(500);
+			expect(narrowResult.resetAt - Date.now()).toBeGreaterThan(wideResult.resetAt - Date.now());
+			expect(narrowResult.resetAt - Date.now()).toBeLessThan(5_000);
+		});
+
 		it("falls back to the default for a malformed limit", async () => {
 			const stub = getRateLimiter("capacity-malformed");
 			const response = await stub.fetch("http://localhost/consume?identity=malformed&limit=not-a-number");
@@ -281,6 +309,26 @@ describe("RateLimiter Durable Object", () => {
 				expect(await state.storage.getAlarm()).not.toBeNull();
 			});
 		}, 60_000);
+
+		it("leaves a wide bucket alone, since reaping it would lose its ceiling", async () => {
+			// The safety argument is that a reaped bucket and an idle one answer
+			// identically. That holds only at the default ceiling: reaping a wide
+			// bucket drops its stored capacity, and `/check` names no limit, so it
+			// would then be answered against 100 rather than the 1000 it was created
+			// with. There is one wide bucket per trusted row, so they are not the
+			// growth being bounded and skipping them costs nothing.
+			const stub = getRateLimiter("reap-wide");
+			await stub.fetch("http://localhost/consume?identity=wide-row&limit=1000");
+
+			await runInDurableObject(stub, async (instance, state) => {
+				await backdate(state, "bucket:wide-row");
+				await (instance as RateLimiter).alarm();
+				expect(await state.storage.get("bucket:wide-row")).toBeDefined();
+			});
+
+			const checked = (await (await stub.fetch("http://localhost/check?identity=wide-row")).json()) as RateLimitResult;
+			expect(checked.allowed && checked.remaining).toBeGreaterThan(900);
+		});
 
 		it("answers a reaped identity exactly as it answers a fresh one", async () => {
 			const stub = getRateLimiter("reap-equivalence");

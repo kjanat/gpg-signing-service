@@ -96,12 +96,28 @@ export class RateLimiter implements DurableObject {
 		return Math.min(Math.floor(parsed), 1_000_000);
 	}
 
+	/**
+	 * When a denied bucket next holds a whole token.
+	 *
+	 * Refill is proportional to capacity, so a wide bucket repays its debt fast:
+	 * one token against a ceiling of 1000 is back in 60ms, not 60s. Reporting the
+	 * window instead told every refused caller to wait a full minute — a 1000x
+	 * overstatement on the row bucket, which is the one whose `Retry-After` idles
+	 * every sibling under a trusted row rather than just the caller that spent it.
+	 */
+	private retryAt(bucket: TokenBucket, now: number): number {
+		const capacity = bucket.capacity ?? this.maxTokens;
+		return now + Math.ceil(((1 - bucket.tokens) / capacity) * this.windowMs);
+	}
+
 	private async checkLimit(identity: string, capacity?: number): Promise<Response> {
 		const bucket = await this.getBucket(identity, capacity);
 		const resetAt = bucket.lastRefill + this.windowMs;
 
 		const result: RateLimitResult =
-			bucket.tokens >= 1 ? createRateLimitAllowed(Math.floor(bucket.tokens), resetAt) : createRateLimitDenied(resetAt);
+			bucket.tokens >= 1
+				? createRateLimitAllowed(Math.floor(bucket.tokens), resetAt)
+				: createRateLimitDenied(this.retryAt(bucket, Date.now()));
 
 		return new Response(JSON.stringify(result), {
 			status: HTTP.OK,
@@ -114,13 +130,14 @@ export class RateLimiter implements DurableObject {
 		const resetAt = bucket.lastRefill + this.windowMs;
 
 		if (bucket.tokens < 1) {
-			const result: RateLimitResult = createRateLimitDenied(resetAt);
+			const retryAt = this.retryAt(bucket, Date.now());
+			const result: RateLimitResult = createRateLimitDenied(retryAt);
 
 			return new Response(JSON.stringify(result), {
 				status: HTTP.TooManyRequests,
 				headers: {
 					"Content-Type": MediaType.ApplicationJson,
-					"Retry-After": String(Math.ceil((resetAt - Date.now()) / 1000)),
+					"Retry-After": String(Math.max(1, Math.ceil((retryAt - Date.now()) / 1000))),
 				},
 			});
 		}
@@ -203,6 +220,13 @@ export class RateLimiter implements DurableObject {
 	 * Deleting one is not a reset: `getBucket` creates a missing bucket full, so a
 	 * reaped bucket and an idle one answer identically. What it drops is the key.
 	 *
+	 * That equivalence holds unconditionally only for buckets at the default
+	 * ceiling. A reaped wide bucket loses its stored capacity, and a caller that
+	 * names no limit — `/check` — would then be answered against the default
+	 * rather than the ceiling the bucket was created with. Wide buckets are
+	 * therefore left alone: there is one per trusted row, so they are not the
+	 * growth this exists to bound, and skipping them costs nothing.
+	 *
 	 * One page per alarm, resumed from a persisted cursor, so a pass covers the
 	 * whole prefix rather than the first `sweepBatch` keys of it.
 	 */
@@ -223,7 +247,8 @@ export class RateLimiter implements DurableObject {
 		let lastKey: string | undefined;
 		for (const [key, bucket] of buckets) {
 			lastKey = key;
-			if (now - bucket.lastRefill >= this.idleTtlMs) {
+			const isDefaultCeiling = (bucket.capacity ?? this.maxTokens) === this.maxTokens;
+			if (isDefaultCeiling && now - bucket.lastRefill >= this.idleTtlMs) {
 				stale.push(key);
 			}
 		}

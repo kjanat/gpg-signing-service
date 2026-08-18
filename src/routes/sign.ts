@@ -229,15 +229,22 @@ app.openapi(signRoute, async (c) => {
 	// branch — the per-caller cap does not bound the trusted *row*. This one is
 	// keyed on the row id, which is server-side and unforgeable, with a ceiling
 	// well above the per-caller budget so no single workflow's behaviour changes:
-	// it only stops one row from being multiplied without limit. Started here
-	// rather than awaited so it overlaps the first tier and the key fetch.
+	// it only stops one row from being multiplied without limit.
+	//
+	// Deliberately *not* started in parallel with the first tier. A denied bucket
+	// costs itself nothing — `consumeToken` returns before decrementing — so a
+	// request the per-caller tier already refused would still spend a row token.
+	// One branch looping at 1000 req/min would then hold the row at its ceiling
+	// on traffic that was never signed, refusing every sibling branch under the
+	// same trusted row; and being refused is exactly what provokes a client to
+	// retry. Both buckets live in one single-threaded Durable Object, so firing
+	// them together only ever overlapped the wire time, never the work.
 	//
 	// Absent on the service-token path, which is already metered per credential.
 	const subjectPolicyId = c.get("subjectPolicyId");
-	const rowLimitPromise = subjectPolicyId
-		? fetchRateLimiter(c.env, createIdentity(SUBJECT_ROW_METER, subjectPolicyId), SUBJECT_ROW_LIMIT)
+	const consumeRowToken = subjectPolicyId
+		? () => fetchRateLimiter(c.env, createIdentity(SUBJECT_ROW_METER, subjectPolicyId), SUBJECT_ROW_LIMIT)
 		: undefined;
-	rowLimitPromise?.catch(() => {});
 	// `createKeyId` below can throw before the Promise.all that normally awaits
 	// this, which would leave the rejection unobserved. Attaching a handler does
 	// not consume it for the real consumers.
@@ -267,37 +274,40 @@ app.openapi(signRoute, async (c) => {
 			);
 		}
 
-		// The row ceiling governs this branch too. Without it the per-caller bucket
-		// is the only bound on the D1 write below, and that bucket is keyed on
-		// `sub` — so a row that can mint subjects could still flood `audit_logs`
-		// past its ceiling, which is the flooding this tier exists to stop.
-		const scopeRowRetryAfter = await resolveRowCeiling(rowLimitPromise, requestId);
-		if (scopeRowRetryAfter !== undefined) {
-			// Named apart from the signing path's ceiling refusal, and carrying the
-			// denial's own fields: this branch returns before the D1 write, so the
-			// scope violation leaves no audit row. Refusing here without recording
-			// what was refused would let anything able to hold the row at its
-			// ceiling silence the highest-signal event the service produces — the
-			// same reasoning as the limiter-unavailable branch below.
-			logger.warn("Key scope denied while the trusted row was at its signing ceiling", {
-				requestId,
-				subjectPolicy: c.get("subjectPolicyName"),
-				subjectPolicyId,
-				issuer: claims.iss,
-				subject: claims.sub,
-				keyId: keyIdParam,
-			});
-			return c.json(
-				{
-					error: "Rate limit exceeded",
-					code: "RATE_LIMITED" as const satisfies ErrorCode,
-					retryAfter: scopeRowRetryAfter,
-				},
-				HTTP.TooManyRequests,
-			);
-		}
-
 		if (decision.kind === "ok") {
+			// The row ceiling governs this branch too. Without it the per-caller
+			// bucket is the only bound on the D1 write below, and that bucket is
+			// keyed on `sub` — so a row that can mint subjects could still flood
+			// `audit_logs` past its ceiling, which is the flooding this tier exists
+			// to stop. Consulted only once the first tier allowed: what it bounds is
+			// the write, and a caller the first tier refused writes nothing.
+			const scopeRowRetryAfter = await resolveRowCeiling(consumeRowToken?.(), requestId);
+			if (scopeRowRetryAfter !== undefined) {
+				// Named apart from the signing path's ceiling refusal, and carrying
+				// the denial's own fields: this branch returns before the D1 write, so
+				// the scope violation leaves no audit row. Refusing here without
+				// recording what was refused would let anything able to hold the row
+				// at its ceiling silence the highest-signal event the service
+				// produces — the same reasoning as the limiter-unavailable branch
+				// below.
+				logger.warn("Key scope denied while the trusted row was at its signing ceiling", {
+					requestId,
+					subjectPolicy: c.get("subjectPolicyName"),
+					subjectPolicyId,
+					issuer: claims.iss,
+					subject: claims.sub,
+					keyId: keyIdParam,
+				});
+				return c.json(
+					{
+						error: "Rate limit exceeded",
+						code: "RATE_LIMITED" as const satisfies ErrorCode,
+						retryAfter: scopeRowRetryAfter,
+					},
+					HTTP.TooManyRequests,
+				);
+			}
+
 			await scheduleBackgroundTask(
 				c,
 				requestId,
@@ -348,26 +358,6 @@ app.openapi(signRoute, async (c) => {
 			fetchKeyStorage(c.env, `/get-key?keyId=${encodeURIComponent(keyIdParam)}`),
 		]);
 
-		// The row ceiling is advisory relative to the per-caller bucket: if it is
-		// exhausted the caller is over budget regardless of which subject it
-		// presented.
-		const rowRetryAfter = await resolveRowCeiling(rowLimitPromise, requestId);
-		if (rowRetryAfter !== undefined) {
-			logger.warn("Trusted row hit its signing ceiling", {
-				requestId,
-				subjectPolicy: c.get("subjectPolicyName"),
-				subjectPolicyId,
-			});
-			return c.json(
-				{
-					error: "Rate limit exceeded",
-					code: "RATE_LIMITED" as const satisfies ErrorCode,
-					retryAfter: rowRetryAfter,
-				},
-				HTTP.TooManyRequests,
-			);
-		}
-
 		// Process rate limit. A 429 carries the verdict, not a failure — treating
 		// it as one turned every genuine per-caller refusal into a 503.
 		if (!rateLimitResponse.ok && rateLimitResponse.status !== HTTP.TooManyRequests) {
@@ -394,6 +384,27 @@ app.openapi(signRoute, async (c) => {
 					error: "Rate limit exceeded",
 					code: "RATE_LIMITED" as const satisfies ErrorCode,
 					retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / 1000),
+				},
+				HTTP.TooManyRequests,
+			);
+		}
+
+		// The row ceiling, consulted only now that the per-caller tier has allowed.
+		// Ordered this way for two reasons: the caller is told which budget it
+		// actually exceeded — its own, not its neighbours' — and a refused request
+		// no longer spends a token from the bucket its siblings share.
+		const rowRetryAfter = await resolveRowCeiling(consumeRowToken?.(), requestId);
+		if (rowRetryAfter !== undefined) {
+			logger.warn("Trusted row hit its signing ceiling", {
+				requestId,
+				subjectPolicy: c.get("subjectPolicyName"),
+				subjectPolicyId,
+			});
+			return c.json(
+				{
+					error: "Rate limit exceeded",
+					code: "RATE_LIMITED" as const satisfies ErrorCode,
+					retryAfter: rowRetryAfter,
 				},
 				HTTP.TooManyRequests,
 			);

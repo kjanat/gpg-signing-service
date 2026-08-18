@@ -328,6 +328,38 @@ describe("Sign Route", () => {
 			expect(perRow.join(" ")).not.toContain("refs/heads");
 		});
 
+		it("spends no row token on a request its own bucket already refused", async () => {
+			// A denied bucket costs itself nothing, so firing both tiers together let
+			// refused traffic drain the bucket every sibling branch shares — and being
+			// refused is what provokes the retry that refuses it again. One branch
+			// looping could hold the whole row at its ceiling without signing once.
+			await setupJWKSMock();
+			await uploadTestKey("A1B2C3D4E5F67890");
+			const token = await createToken();
+
+			const metered: string[] = [];
+			const perCallerExhausted = {
+				idFromName: () => ({}) as DurableObjectId,
+				get: () => ({
+					fetch: async (request: Request) => {
+						const identity = new URL(request.url).searchParams.get("identity") ?? "";
+						metered.push(identity);
+						const allowed = identity.startsWith("oidc-subject-row:");
+						return limiterResponse({ allowed, remaining: allowed ? 999 : 0, resetAt: Date.now() + 30_000 });
+					},
+				}),
+			} as unknown as DurableObjectNamespace;
+
+			const response = await makeRequest(
+				"/sign?keyId=A1B2C3D4E5F67890",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{ RATE_LIMITER: perCallerExhausted },
+			);
+
+			expect(response.status).toBe(429);
+			expect(metered.filter((identity) => identity.startsWith("oidc-subject-row:"))).toHaveLength(0);
+		});
+
 		it("refuses with 429 once a trusted row hits its ceiling, even under budget per caller", async () => {
 			await setupJWKSMock();
 			await uploadTestKey("A1B2C3D4E5F67890");
