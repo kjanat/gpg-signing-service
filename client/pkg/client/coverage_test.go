@@ -85,9 +85,9 @@ func TestMalformedJSONResponses(t *testing.T) {
 	}{
 		{"Health", http.MethodGet, `{"status": "healthy", INVALID}`},
 		{testOpSign, "POST", `{"signature": "sig", BROKEN`},
-		{"UploadKey", "POST", `{"success": true MISSING_BRACE`},
-		{"ListKeys", http.MethodGet, `{"keys": [`},
-		{"AuditLogs", http.MethodGet, `{"logs": [{"id": "not-a-uuid"}]}`},
+		{testOpUploadKey, "POST", `{"success": true MISSING_BRACE`},
+		{testOpListKeys, http.MethodGet, `{"keys": [`},
+		{testOpAuditLogs, http.MethodGet, `{"logs": [{"id": "not-a-uuid"}]}`},
 	}
 
 	for _, tc := range testCases {
@@ -120,17 +120,17 @@ func TestMalformedJSONResponses(t *testing.T) {
 				// Sign returns text content directly, not JSON,
 				// so this test is not applicable, skip it
 				return
-			case "UploadKey":
+			case testOpUploadKey:
 				_, err := client.UploadKey(ctx, "id", "key")
 				if err == nil {
 					t.Error("expected JSON unmarshal error")
 				}
-			case "ListKeys":
+			case testOpListKeys:
 				_, err := client.ListKeys(ctx)
 				if err == nil {
 					t.Error("expected JSON unmarshal error")
 				}
-			case "AuditLogs":
+			case testOpAuditLogs:
 				_, err := client.AuditLogs(ctx, AuditFilter{})
 				if err == nil {
 					t.Error("expected invalid UUID error")

@@ -147,6 +147,10 @@ const createSubjectRoute = createRoute({
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Invalid request",
 		},
+		[HTTP.Unauthorized]: {
+			content: { "application/json": { schema: ErrorResponseSchema } },
+			description: "Missing or invalid admin token",
+		},
 		[HTTP.Conflict]: {
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Subject name, or issuer and prefix pair, already exists",
@@ -273,6 +277,10 @@ const listSubjectsRoute = createRoute({
 			content: { "application/json": { schema: SubjectListResponseSchema } },
 			description: "Subjects",
 		},
+		[HTTP.Unauthorized]: {
+			content: { "application/json": { schema: ErrorResponseSchema } },
+			description: "Missing or invalid admin token",
+		},
 		[HTTP.InternalServerError]: {
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Internal server error",
@@ -317,6 +325,10 @@ const revokeSubjectRoute = createRoute({
 		[HTTP.OK]: {
 			content: { "application/json": { schema: SubjectRevokeResponseSchema } },
 			description: "Subject revoked",
+		},
+		[HTTP.Unauthorized]: {
+			content: { "application/json": { schema: ErrorResponseSchema } },
+			description: "Missing or invalid admin token",
 		},
 		[HTTP.NotFound]: {
 			content: { "application/json": { schema: ErrorResponseSchema } },

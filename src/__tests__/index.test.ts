@@ -153,6 +153,44 @@ describe("API Documentation Routes", () => {
 		}
 	});
 
+	it("should declare a 401 on every operation that requires a credential", async () => {
+		const ctx = createExecutionContext();
+		const response = await app.fetch(new Request("http://localhost/doc"), env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		const spec = (await response.json()) as {
+			paths: Record<
+				string,
+				Record<
+					string,
+					{
+						security?: Record<string, unknown>[];
+						responses: Record<string, { content?: Record<string, { schema?: { $ref?: string } }> }>;
+					}
+				>
+			>;
+		};
+
+		// An undeclared status has no typed field in a generated client, so every
+		// 401 the auth middleware returns arrives with its body intact and nowhere
+		// to read it from — which is how `Subject is not trusted for signing`
+		// reached operators as a bare "unexpected status code: 401".
+		const authenticated = Object.entries(spec.paths).flatMap(([path, methods]) =>
+			Object.entries(methods)
+				.filter(([, operation]) => (operation.security ?? []).length > 0)
+				.map(([method, operation]) => ({ id: `${method.toUpperCase()} ${path}`, operation })),
+		);
+		expect(authenticated.length).toBeGreaterThan(0);
+
+		for (const { id, operation } of authenticated) {
+			const unauthorized = operation.responses["401"];
+			expect(unauthorized, `${id} declares no 401`).toBeDefined();
+			expect(unauthorized?.content?.["application/json"]?.schema?.$ref, `${id} 401 schema`).toBe(
+				"#/components/schemas/ErrorResponse",
+			);
+		}
+	});
+
 	it("should include security schemes when generating a document directly", () => {
 		const spec = app.getOpenAPIDocument(openApiConfig);
 		expect(Object.keys(spec.components?.securitySchemes ?? {})).toEqual(

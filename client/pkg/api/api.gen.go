@@ -1531,6 +1531,7 @@ type GetAdminAuditResponse struct {
 	HTTPResponse *http.Response
 	JSON200      *AuditLogsResponse
 	JSON400      *ErrorResponse
+	JSON401      *ErrorResponse
 	JSON500      *ErrorResponse
 }
 
@@ -1562,6 +1563,7 @@ type GetAdminKeysResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *KeyListResponse
+	JSON401      *ErrorResponse
 	JSON500      *ErrorResponse
 }
 
@@ -1594,6 +1596,7 @@ type PostAdminKeysResponse struct {
 	HTTPResponse *http.Response
 	JSON201      *KeyResponse
 	JSON400      *ErrorResponse
+	JSON401      *ErrorResponse
 	JSON500      *ErrorResponse
 }
 
@@ -1626,6 +1629,7 @@ type PostAdminKeysX509Response struct {
 	HTTPResponse *http.Response
 	JSON201      *X509KeyResponse
 	JSON400      *ErrorResponse
+	JSON401      *ErrorResponse
 	JSON500      *ErrorResponse
 }
 
@@ -1657,6 +1661,7 @@ type DeleteAdminKeysKeyIdResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *KeyDeletionResponse
+	JSON401      *ErrorResponse
 	JSON500      *ErrorResponse
 }
 
@@ -1687,6 +1692,7 @@ func (r DeleteAdminKeysKeyIdResponse) ContentType() string {
 type GetAdminKeysKeyIdPublicResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
+	JSON401      *ErrorResponse
 	JSON404      *ErrorResponse
 	JSON500      *ErrorResponse
 }
@@ -1719,6 +1725,7 @@ type GetAdminSubjectsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *SubjectListResponse
+	JSON401      *ErrorResponse
 	JSON500      *ErrorResponse
 }
 
@@ -1751,6 +1758,7 @@ type PostAdminSubjectsResponse struct {
 	HTTPResponse *http.Response
 	JSON201      *SubjectCreatedResponse
 	JSON400      *ErrorResponse
+	JSON401      *ErrorResponse
 	JSON409      *ErrorResponse
 	JSON500      *ErrorResponse
 }
@@ -1783,6 +1791,7 @@ type DeleteAdminSubjectsIdResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *SubjectRevokeResponse
+	JSON401      *ErrorResponse
 	JSON404      *ErrorResponse
 	JSON500      *ErrorResponse
 }
@@ -1815,6 +1824,7 @@ type GetAdminTokensResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *TokenListResponse
+	JSON401      *ErrorResponse
 	JSON500      *ErrorResponse
 }
 
@@ -1847,6 +1857,7 @@ type PostAdminTokensResponse struct {
 	HTTPResponse *http.Response
 	JSON201      *TokenCreatedResponse
 	JSON400      *ErrorResponse
+	JSON401      *ErrorResponse
 	JSON409      *ErrorResponse
 	JSON500      *ErrorResponse
 }
@@ -1879,6 +1890,7 @@ type DeleteAdminTokensIdResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *TokenRevokeResponse
+	JSON401      *ErrorResponse
 	JSON404      *ErrorResponse
 	JSON500      *ErrorResponse
 }
@@ -1973,6 +1985,7 @@ type PostSignResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON400      *ErrorResponse
+	JSON401      *ErrorResponse
 	JSON403      *ErrorResponse
 	JSON404      *ErrorResponse
 	JSON429      *RateLimitError
@@ -2207,6 +2220,13 @@ func ParseGetAdminAuditResponse(rsp *http.Response) (*GetAdminAuditResponse, err
 		}
 		response.JSON400 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -2239,6 +2259,13 @@ func ParseGetAdminKeysResponse(rsp *http.Response) (*GetAdminKeysResponse, error
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ErrorResponse
@@ -2280,6 +2307,13 @@ func ParsePostAdminKeysResponse(rsp *http.Response) (*PostAdminKeysResponse, err
 		}
 		response.JSON400 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -2320,6 +2354,13 @@ func ParsePostAdminKeysX509Response(rsp *http.Response) (*PostAdminKeysX509Respo
 		}
 		response.JSON400 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -2353,6 +2394,13 @@ func ParseDeleteAdminKeysKeyIdResponse(rsp *http.Response) (*DeleteAdminKeysKeyI
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -2379,6 +2427,13 @@ func ParseGetAdminKeysKeyIdPublicResponse(rsp *http.Response) (*GetAdminKeysKeyI
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -2418,6 +2473,13 @@ func ParseGetAdminSubjectsResponse(rsp *http.Response) (*GetAdminSubjectsRespons
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ErrorResponse
@@ -2459,6 +2521,13 @@ func ParsePostAdminSubjectsResponse(rsp *http.Response) (*PostAdminSubjectsRespo
 		}
 		response.JSON400 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -2498,6 +2567,13 @@ func ParseDeleteAdminSubjectsIdResponse(rsp *http.Response) (*DeleteAdminSubject
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest ErrorResponse
@@ -2539,6 +2615,13 @@ func ParseGetAdminTokensResponse(rsp *http.Response) (*GetAdminTokensResponse, e
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -2579,6 +2662,13 @@ func ParsePostAdminTokensResponse(rsp *http.Response) (*PostAdminTokensResponse,
 		}
 		response.JSON400 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
 		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -2618,6 +2708,13 @@ func ParseDeleteAdminTokensIdResponse(rsp *http.Response) (*DeleteAdminTokensIdR
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest ErrorResponse
@@ -2725,6 +2822,13 @@ func ParsePostSignResponse(rsp *http.Response) (*PostSignResponse, error) {
 		}
 		response.JSON400 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
 		var dest ErrorResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -2770,69 +2874,70 @@ func ParsePostSignResponse(rsp *http.Response) (*PostSignResponse, error) {
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

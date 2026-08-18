@@ -90,7 +90,7 @@ Common status codes:
 | Status | Meaning                                               |
 | ------ | ----------------------------------------------------- |
 | `400`  | Invalid body, query, header, or identifier            |
-| `401`  | Missing or invalid credential                         |
+| `401`  | Missing, invalid, or untrusted credential             |
 | `403`  | Service token cannot use the selected key             |
 | `404`  | Route, key, or token not found                        |
 | `409`  | Duplicate service-token name                          |

@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -406,7 +407,7 @@ func TestAuditLogs(t *testing.T) {
 				{
 					"id":           testRequestID,
 					fieldTimestamp: time.Now().Format(time.RFC3339),
-					"requestId":    "550e8400-e29b-41d4-a716-446655440001",
+					fieldRequestID: "550e8400-e29b-41d4-a716-446655440001",
 					"action":       testOpSignLower,
 					"issuer":       "user@example.com",
 					"subject":      testKeyID1,
@@ -555,5 +556,68 @@ func BenchmarkPublicKey(b *testing.B) {
 
 	for b.Loop() {
 		_, _ = client.PublicKey(context.Background(), "")
+	}
+}
+
+// TestAdminMethodsSurfaceUnauthorized covers the admin half of the gap the
+// /sign 401 exposed. The document declares a 401 on every operation that takes
+// a credential, so a mistyped or rotated ADMIN_TOKEN reaches the caller as the
+// service's own message instead of "unexpected status code: 401".
+func TestAdminMethodsSurfaceUnauthorized(t *testing.T) {
+	calls := map[string]func(context.Context, *Client) error{
+		testOpUploadKey: func(ctx context.Context, c *Client) error {
+			_, err := c.UploadKey(ctx, testKeyID, "-----BEGIN PGP PRIVATE KEY BLOCK-----")
+			return err
+		},
+		testOpListKeys: func(ctx context.Context, c *Client) error {
+			_, err := c.ListKeys(ctx)
+			return err
+		},
+		"DeleteKey": func(ctx context.Context, c *Client) error {
+			return c.DeleteKey(ctx, testKeyID)
+		},
+		testOpAuditLogs: func(ctx context.Context, c *Client) error {
+			_, err := c.AuditLogs(ctx, AuditFilter{})
+			return err
+		},
+		"AdminPublicKey": func(ctx context.Context, c *Client) error {
+			_, err := c.AdminPublicKey(ctx, testKeyID)
+			return err
+		},
+	}
+
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					fieldError:     "Invalid admin token",
+					fieldCode:      testCodeAuthInvalid,
+					fieldRequestID: testRequestID,
+				})
+			}))
+			defer server.Close()
+
+			client, _ := New(server.URL)
+			err := call(context.Background(), client)
+
+			var authErr *AuthError
+			if !errors.As(err, &authErr) {
+				t.Fatalf("expected an *AuthError, got %T (%v)", err, err)
+			}
+			if errors.Is(err, ErrUnexpectedStatus) {
+				t.Error("a 401 carrying an error body must not report as an unexpected status")
+			}
+			if authErr.Message != "Invalid admin token" {
+				t.Errorf("server message was discarded: %q", authErr.Message)
+			}
+			if authErr.Code != testCodeAuthInvalid {
+				t.Errorf("error code was discarded: %q", authErr.Code)
+			}
+			if authErr.RequestID != testRequestID {
+				t.Errorf("request id was discarded: %q", authErr.RequestID)
+			}
+		})
 	}
 }

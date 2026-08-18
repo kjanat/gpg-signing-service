@@ -39,6 +39,10 @@ const createTokenRoute = createRoute({
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Invalid request",
 		},
+		[HTTP.Unauthorized]: {
+			content: { "application/json": { schema: ErrorResponseSchema } },
+			description: "Missing or invalid admin token",
+		},
 		[HTTP.Conflict]: {
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Token name already exists",
@@ -127,6 +131,10 @@ const listTokensRoute = createRoute({
 			content: { "application/json": { schema: TokenListResponseSchema } },
 			description: "Tokens",
 		},
+		[HTTP.Unauthorized]: {
+			content: { "application/json": { schema: ErrorResponseSchema } },
+			description: "Missing or invalid admin token",
+		},
 		[HTTP.InternalServerError]: {
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Internal server error",
@@ -166,6 +174,10 @@ const revokeTokenRoute = createRoute({
 		[HTTP.OK]: {
 			content: { "application/json": { schema: TokenRevokeResponseSchema } },
 			description: "Token revoked",
+		},
+		[HTTP.Unauthorized]: {
+			content: { "application/json": { schema: ErrorResponseSchema } },
+			description: "Missing or invalid admin token",
 		},
 		[HTTP.NotFound]: {
 			content: { "application/json": { schema: ErrorResponseSchema } },

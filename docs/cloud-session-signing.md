@@ -146,9 +146,13 @@ live service —
 ```console
 $ git commit -m "test"
 error: gpg failed to sign the data:
-Error: signing failed: unexpected status code: 401
+Error: signing failed: authentication failed: AUTH_INVALID: Invalid service token
 fatal: failed to write commit object
 ```
+
+The service's own `code` and message come through — `AUTH_INVALID` with
+`Subject is not trusted for signing` is the OIDC equivalent, and means the
+credential was accepted but its subject holds no trusted row.
 
 — and no commit object is written, so a failed signature can never masquerade as
 an unsigned commit that slipped through.

@@ -183,8 +183,10 @@ c, err := client.New(baseURL string, opts ...Option)
 - `ServiceError` - API errors with codes
 
 Every non-2xx response is reported with the service's own `error` and `code`
-when the body carries them, including statuses the OpenAPI document does not
-declare. A `401` on `Sign` therefore reads
+when the body carries them. The OpenAPI document declares a `401` on every
+operation that takes a credential, so the code and message are decoded from the
+typed response; anything the document does not describe is read from the error
+envelope directly. A `401` on `Sign` therefore reads
 `authentication failed: AUTH_INVALID: Subject is not trusted for signing`
 rather than a bare status number — that particular message means the credential
 verified but no trusted subject covers it. Only a response with no usable error

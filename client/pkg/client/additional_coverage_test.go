@@ -52,9 +52,9 @@ func TestSignMethodAllPaths(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				fieldError:  "internal error",
-				fieldCode:   ErrCodeInternalError,
-				"requestId": testRequestID,
+				fieldError:     "internal error",
+				fieldCode:      ErrCodeInternalError,
+				fieldRequestID: testRequestID,
 			})
 		}))
 		defer server.Close()

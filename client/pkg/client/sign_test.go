@@ -460,11 +460,10 @@ func TestSignKeyNotAllowed(t *testing.T) {
 }
 
 // TestSignUntrustedSubject checks that a 401 reaches the caller with the
-// service's own message. The OpenAPI document declares no 401 for /sign, so the
-// generated client has no typed field for it and the response would otherwise
-// collapse to "unexpected status code: 401" — the exact failure an operator
-// cannot debug, because a CI-only OIDC token cannot be replayed from a laptop
-// to read the body by hand.
+// service's own message. Without the declared 401 the generated client has no
+// typed field to decode into and the response collapses to "unexpected status
+// code: 401" — the exact failure an operator cannot debug, because a CI-only
+// OIDC token cannot be replayed from a laptop to read the body by hand.
 func TestSignUntrustedSubject(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -493,7 +492,7 @@ func TestSignUntrustedSubject(t *testing.T) {
 	if ae.Message != "Subject is not trusted for signing" {
 		t.Errorf("server message was discarded: %q", ae.Message)
 	}
-	if ae.Code != "AUTH_INVALID" {
+	if ae.Code != testCodeAuthInvalid {
 		t.Errorf("error code was discarded: %q", ae.Code)
 	}
 	if ae.RequestID != "1b4e28ba-2fa1-11d2-883f-0016d3cca427" {

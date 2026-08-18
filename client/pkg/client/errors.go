@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/kjanat/gpg-signing-service/client/pkg/api"
 )
 
 // Error codes returned by the service in the `code` field of an error response.
@@ -118,14 +120,31 @@ func IsServiceError(err error) bool {
 	return errors.As(err, &se) && se.StatusCode >= 500
 }
 
+// newAuthErrorFromResponse turns the service's 401 envelope into an AuthError.
+//
+// The document declares a 401 on every operation that requires a credential, so
+// this is the mapped path — newStatusError below only ever sees a 401 the
+// document does not cover (an unauthenticated endpoint behind a proxy that
+// challenges, say).
+func newAuthErrorFromResponse(body *api.ErrorResponse) *AuthError {
+	authErr := &AuthError{
+		Code:    string(body.Code),
+		Message: body.Error,
+	}
+	if body.RequestId != nil {
+		authErr.RequestID = body.RequestId.String()
+	}
+	return authErr
+}
+
 func newUnexpectedStatusError(code int) error {
 	return fmt.Errorf("%w: %d", ErrUnexpectedStatus, code)
 }
 
 // apiErrorBody is the service's error envelope. The generated client only
 // exposes typed fields for statuses the OpenAPI document declares per
-// operation, so a response the document omits — a 401 on /sign above all —
-// arrives with its body intact but no field to read it from.
+// operation, so a response the document omits arrives with its body intact but
+// no field to read it from.
 type apiErrorBody struct {
 	Error     string `json:"error"`
 	Code      string `json:"code"`
@@ -140,8 +159,11 @@ type apiErrorBody struct {
 // that tells an operator which of those it hit. A CI-only OIDC token cannot be
 // replayed from a laptop to recover it, so the body is read here or not at all.
 //
-// Falls back to the bare sentinel when the body is not a usable error envelope,
-// which keeps text responses and empty bodies behaving as before.
+// Every status the document declares is mapped before a call reaches this
+// point; what is left is whatever the document does not describe — a proxy's
+// 502, a gateway's 401 challenge — so the envelope is parsed by hand. Falls
+// back to the bare sentinel when the body is not a usable error envelope, which
+// keeps text responses and empty bodies behaving as before.
 func newStatusError(statusCode int, body []byte) error {
 	parsed, ok := parseAPIErrorBody(body)
 	if !ok {

@@ -243,6 +243,10 @@ func (c *Client) UploadKey(ctx context.Context, keyID string, armoredPrivateKey 
 		}, nil
 	}
 
+	if resp.JSON401 != nil {
+		return nil, newAuthErrorFromResponse(resp.JSON401)
+	}
+
 	if resp.JSON400 != nil || resp.JSON500 != nil {
 		errResp := resp.JSON400
 		statusCode := 400
@@ -285,6 +289,10 @@ func (c *Client) ListKeys(ctx context.Context) ([]KeyMetadata, error) {
 		return keys, nil
 	}
 
+	if resp.JSON401 != nil {
+		return nil, newAuthErrorFromResponse(resp.JSON401)
+	}
+
 	if resp.JSON500 != nil {
 		return nil, &ServiceError{
 			Code:       string(resp.JSON500.Code),
@@ -321,6 +329,10 @@ func (c *Client) DeleteKey(ctx context.Context, keyID string) error {
 			Message:    fmt.Sprintf("key %s not found", keyID),
 			StatusCode: 200,
 		}
+	}
+
+	if resp.JSON401 != nil {
+		return newAuthErrorFromResponse(resp.JSON401)
 	}
 
 	if resp.JSON500 != nil {
@@ -382,6 +394,10 @@ func (c *Client) AdminPublicKey(ctx context.Context, keyID string) (string, erro
 		return string(resp.Body), nil
 	}
 
+	if resp.JSON401 != nil {
+		return "", newAuthErrorFromResponse(resp.JSON401)
+	}
+
 	if resp.JSON404 != nil {
 		return "", &ServiceError{
 			Code:       string(resp.JSON404.Code),
@@ -402,6 +418,10 @@ func (c *Client) AdminPublicKey(ctx context.Context, keyID string) (string, erro
 }
 
 func mapAuditResponseError(resp *api.GetAdminAuditResponse) error {
+	if resp.JSON401 != nil {
+		return newAuthErrorFromResponse(resp.JSON401)
+	}
+
 	if resp.JSON400 == nil && resp.JSON500 == nil {
 		return nil
 	}
@@ -520,6 +540,12 @@ func mapSignResponseError(resp *api.PostSignResponse) error {
 			Code:    string(resp.JSON400.Code),
 			Message: resp.JSON400.Error,
 		}
+	case resp.JSON401 != nil:
+		// The refusal a first-time caller actually hits: an unregistered subject
+		// answers `Subject is not trusted for signing`, and no amount of correct
+		// issuer or audience configuration changes it. Carrying the code through
+		// is what separates it from a missing header or an unlisted issuer.
+		return newAuthErrorFromResponse(resp.JSON401)
 	case resp.JSON403 != nil:
 		// Without this case the 403 falls through to a bare "unexpected status
 		// code", discarding both the server's message and the KEY_NOT_ALLOWED code

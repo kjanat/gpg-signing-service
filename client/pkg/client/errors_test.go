@@ -89,7 +89,7 @@ func TestAuthError(t *testing.T) {
 		},
 		{
 			name:      "auth error with request id",
-			code:      "AUTH_INVALID",
+			code:      testCodeAuthInvalid,
 			message:   "Subject is not trusted for signing",
 			requestID: testRequestID,
 			wantError: "authentication failed: AUTH_INVALID: Subject is not trusted for signing " +

@@ -155,6 +155,10 @@ const signRoute = createRoute({
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Bad Request",
 		},
+		[HTTP.Unauthorized]: {
+			content: { "application/json": { schema: ErrorResponseSchema } },
+			description: "Missing, invalid, or untrusted signing credential",
+		},
 		[HTTP.Forbidden]: {
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Token not allowed to use this key",

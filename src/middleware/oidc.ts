@@ -132,7 +132,11 @@ export const oidcAuth: MiddlewareHandler<{
 
 	const token = authHeader.split(" ")[1];
 	if (!token) {
-		return c.json({ error: "Missing token" }, HTTP.Unauthorized);
+		// `code` is not decoration: the document now declares this 401 as an
+		// ErrorResponse, and every client that reads the envelope branches on the
+		// code rather than the prose. A bare `Bearer ` is the same fault as no
+		// header at all, so it carries the same code.
+		return c.json({ error: "Missing token", code: "AUTH_MISSING" }, HTTP.Unauthorized);
 	}
 
 	// Deliberately narrow: this catch echoes the thrown message to the caller,

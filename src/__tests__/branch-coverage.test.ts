@@ -285,7 +285,7 @@ describe("Branch Coverage Helpers", () => {
 
 			await import("#middleware/oidc").then(({ oidcAuth }) => oidcAuth(context as any, () => Promise.resolve()));
 
-			expect(json).toHaveBeenCalledWith({ error: "Missing token" }, 401);
+			expect(json).toHaveBeenCalledWith({ error: "Missing token", code: "AUTH_MISSING" }, 401);
 		});
 
 		it("maps jose JWKS error to friendly message", async () => {

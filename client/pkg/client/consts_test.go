@@ -18,6 +18,7 @@ const (
 	fieldStatus      = "status"
 	fieldVersion     = "version"
 	fieldTimestamp   = "timestamp"
+	fieldRequestID   = "requestId"
 
 	// Stub server and request fixtures.
 	testBaseURL   = "http://localhost:8080"
@@ -32,18 +33,22 @@ const (
 	testAlgorithmRSA = "RSA"
 
 	// Error codes and messages returned by stub responses.
-	testCodeInvalid    = "INVALID"
-	testCodeError      = "ERROR"
-	testCodeTest       = "TEST"
-	testMsgBadRequest  = "bad request"
-	testMsgKeyNotFound = "key not found"
-	testMsgTest        = "test"
-	testMsgRateLimited = "rate limit exceeded"
-	testMsgServerError = "server error"
-	testMsgExpired     = "token expired"
+	testCodeInvalid     = "INVALID"
+	testCodeError       = "ERROR"
+	testCodeTest        = "TEST"
+	testCodeAuthInvalid = "AUTH_INVALID"
+	testMsgBadRequest   = "bad request"
+	testMsgKeyNotFound  = "key not found"
+	testMsgTest         = "test"
+	testMsgRateLimited  = "rate limit exceeded"
+	testMsgServerError  = "server error"
+	testMsgExpired      = "token expired"
 
 	// Table-driven test case names and operations.
 	testOpSign           = "Sign"
+	testOpUploadKey      = "UploadKey"
+	testOpListKeys       = "ListKeys"
+	testOpAuditLogs      = "AuditLogs"
 	testOpSignLower      = "sign"
 	testNameNilError     = "nil error"
 	testNameValidation   = "validation error"
