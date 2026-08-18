@@ -41,6 +41,7 @@ This tool allows you to:
   - Check service health
   - Retrieve public keys
   - Sign commit data
+  - Apply signatures to commits in a local repository
   - Manage keys (admin)
   - Query audit logs (admin)
 
@@ -61,6 +62,7 @@ func init() {
 	rootCmd.AddCommand(healthCmd)
 	rootCmd.AddCommand(publicKeyCmd)
 	rootCmd.AddCommand(signCmd)
+	rootCmd.AddCommand(signCommitCmd)
 	rootCmd.AddCommand(adminCmd)
 }
 

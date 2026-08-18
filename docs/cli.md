@@ -4,7 +4,8 @@ The CLI is an HTTP client for a deployed signing service. It can check health,
 retrieve PGP public keys, request detached PGP signatures, and perform PGP key
 administration.
 
-It does not attach a signature to a Git commit.
+`sign` returns a detached signature and does not touch a commit. `sign-commit`
+does attach one, by rewriting the commit objects in the current repository.
 
 ## Install
 
@@ -79,11 +80,15 @@ deployment is public or suitable for your workload.
 | `gpg-sign health`                               | None                  | Check service and storage health          |
 | `gpg-sign public-key [--key-id ID]`             | None                  | Retrieve a PGP public key                 |
 | `gpg-sign sign [--key-id ID]`                   | OIDC or service token | Sign stdin and print a detached signature |
+| `gpg-sign sign-commit [flags]`                  | OIDC or service token | Embed signatures in commits and move HEAD |
 | `gpg-sign admin upload --key-id ID --file FILE` | Admin                 | Upload an armored PGP private key         |
 | `gpg-sign admin list`                           | Admin                 | List stored key metadata                  |
 | `gpg-sign admin delete --key-id ID`             | Admin                 | Delete a key                              |
 | `gpg-sign admin public-key --key-id ID`         | Admin                 | Retrieve public material for a key        |
 | `gpg-sign admin audit [flags]`                  | Admin                 | Query audit records                       |
+
+`sign-commit` flags: `--base`, `--default-branch`, `--allow-resign`,
+`--sign-others`, `--scan-limit`, `--repo`, `--key-id`.
 
 Run `gpg-sign <command> --help` for all flags.
 
@@ -125,6 +130,46 @@ git cat-file commit HEAD |
 `commit.sig` is not yet part of the commit. See
 [CI integrations](integrations.md#requesting-versus-applying-a-signature).
 
+### Apply signatures to commits
+
+```bash
+export GPG_SIGN_URL="https://your-worker.example"
+export GPG_SIGN_TOKEN="gst_..."
+
+gpg-sign sign-commit --base origin/master --key-id 62E75E54497815DD
+```
+
+This rewrites every commit in `origin/master..HEAD` and moves the local `HEAD`
+ref to the rewritten tip. It prints one line per commit:
+
+```text
+  signed   3f2a91c4 -> 7d84be10
+  reparent a10ce7bb -> 2c9f4a55
+Signed 1 of 2 commit(s) in 8ab30c91..HEAD
+HEAD now points at 2c9f4a55. Nothing was pushed; publishing this rewrite needs a force push.
+```
+
+Without `--base`, the range starts at the last commit this key already verifies
+when you are on `--default-branch`, and at the merge base with
+`origin/<default-branch>` otherwise. `--scan-limit` bounds that backward scan
+and is ignored when `--base` pins the range.
+
+The command refuses to rewrite commits that already carry a signature. It
+prints what it would do to each and exits non-zero:
+
+```text
+  would drop the signature on a10ce7bb (signed by a key this service does not carry)
+Error: signing 2 commit(s) would rewrite 1 already-signed commit(s) below the tip; move the base forward or re-run with --allow-resign (dispatch with allow_resign from CI)
+```
+
+`--allow-resign` proceeds anyway. A signed commit whose committer this key does
+not cover loses its signature with nothing to replace it — that commit is marked
+`stripped`, and the run warns about it. `--sign-others` signs those commits
+instead of stripping them.
+
+`--json` prints a machine-readable summary on stdout and sends progress to
+stderr.
+
 ### Upload a PGP key
 
 ```bash
@@ -155,3 +200,7 @@ gpg-sign --json admin audit \
   not HTTP `429` or `5xx` responses.
 - Supplying bytes to `sign` grants no Git-specific validation; the service signs
   any non-empty input.
+- `sign-commit` rewrites commit SHAs. It stops at `git update-ref HEAD` and
+  never pushes; publishing the result is a force push you perform yourself. It
+  needs `git` and `gpg` on `PATH`, refuses a detached `HEAD`, and handles PGP
+  only.

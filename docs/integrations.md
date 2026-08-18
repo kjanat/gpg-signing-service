@@ -9,7 +9,8 @@ Applying a PGP signature to an existing commit reconstructs the commit object,
 changes its SHA, and may require rewriting descendants and force-pushing a
 branch. Treat that as a separate, privileged workflow.
 
-The examples below stop after requesting `commit.sig`.
+The examples below stop after requesting `commit.sig`. To apply one, see
+[Applying a PGP signature](#applying-a-pgp-signature).
 
 ## GitHub Actions with OIDC
 
@@ -148,23 +149,47 @@ Prefer an expiration and key allowlist when the token is created. See
 
 ## Applying a PGP signature
 
+`gpg-sign sign-commit` performs the reconstruction locally. It walks the
+commits in `base..HEAD`, strips any existing `gpgsig` header, remaps parents
+onto the commits it has already rewritten, requests a signature for each, writes
+the new objects, verifies them against the service key, and moves the local
+`HEAD` ref:
+
+```bash
+gpg-sign sign-commit --base origin/master --key-id 62E75E54497815DD
+```
+
+This is still a privileged workflow. The command stops at `git update-ref HEAD`
+and never pushes, because every rewritten commit has a new SHA and publishing
+them means a force push. That decision stays with you:
+
+```bash
+git push --force-with-lease origin HEAD
+```
+
+Before you do, review branch protection, concurrent writers on the branch, the
+descendants your rewrite orphans, and the exact push target. Never silently add
+a force push to a general CI workflow.
+
+Two guards are on by default. The command will not rewrite a commit that already
+carries a signature unless you pass `--allow-resign`, and it will not sign a
+commit whose committer the key does not cover unless you pass `--sign-others`.
+Without `--sign-others`, such a commit that sits below a rewritten one has its
+signature stripped and nothing put back; the run marks it `stripped` and warns.
+
+See [the CLI reference](cli.md#apply-signatures-to-commits) for the full flag
+set and output.
+
 The repository's
-[`sign-commits.yml`](../.github/workflows/sign-commits.yml) demonstrates the
-low-level `gpgsig` reconstruction sequence. It is an internal example, not a
-drop-in reusable workflow:
-
-- it uses repository-local setup actions;
-- it handles PGP signatures only;
-- updating the commit changes its SHA; and
-- its final force push can rewrite branch history.
-
-Review branch protection, concurrency, merge-commit handling, descendants, and
-the exact push target before adapting it. Never silently add a force push to a
-general CI workflow.
+[`sign-commits.yml`](../.github/workflows/sign-commits.yml) drives the same
+algorithm from a Python script and adds the final force push. It is an internal
+example, not a drop-in reusable workflow: it uses repository-local setup
+actions, and it handles PGP signatures only.
 
 ## X.509
 
 The service can create detached PKCS#7 signatures for Git's
 `gpg.format=x509`, but the current `gpg-sign` high-level client rejects
-non-PGP response markers. Use the HTTP API or generated raw Go client until the
-CLI supports X.509 end to end.
+non-PGP response markers. That limit applies to `sign-commit` too: it rejects
+any signing response without a `-----BEGIN PGP SIGNATURE-----` marker. Use the
+HTTP API or generated raw Go client until the CLI supports X.509 end to end.
