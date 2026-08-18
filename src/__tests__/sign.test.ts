@@ -409,6 +409,46 @@ describe("Sign Route", () => {
 			expect(events.some((event) => event.errorCode === "KEY_NOT_ALLOWED")).toBe(false);
 		});
 
+		it("refuses the scope denial once the trusted row is at its ceiling", async () => {
+			// The denial writes to D1, and the per-caller bucket is keyed on `sub` —
+			// so if the row ceiling did not govern this branch, a row that can mint
+			// subjects would still flood `audit_logs` past it. Same multiplication
+			// the second tier exists to stop, on the path that writes.
+			await insertOIDCSubject(env.AUDIT_DB, {
+				name: "ci/row-ceiling",
+				issuer,
+				subjectPrefix: "repo:rowceiling/svc",
+				keyIds: ["AAAAAAAAAAAAAAAA"],
+				expiresAt: null,
+			});
+			await setupJWKSMock();
+			const token = await createToken({ sub: "repo:rowceiling/svc:ref:refs/heads/main" });
+
+			// Per-caller bucket allows; the row bucket does not.
+			const tieredLimiter = {
+				idFromName: () => ({}) as DurableObjectId,
+				get: () => ({
+					fetch: async (request: Request) => {
+						const identity = new URL(request.url).searchParams.get("identity") ?? "";
+						const allowed = !identity.startsWith("oidc-subject-row:");
+						return Response.json({ allowed, remaining: allowed ? 99 : 0, resetAt: Date.now() + 30_000 });
+					},
+				}),
+			} as unknown as DurableObjectNamespace;
+
+			const response = await makeRequest(
+				"/sign?keyId=BBBBBBBBBBBBBBBB",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{ RATE_LIMITER: tieredLimiter },
+			);
+
+			expect(response.status).toBe(429);
+			expect(await response.json()).toMatchObject({ code: "RATE_LIMITED" });
+
+			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+			expect(events.some((event) => event.errorCode === "KEY_NOT_ALLOWED")).toBe(false);
+		});
+
 		it("survives a non-Error rejection from the limiter", async () => {
 			await insertOIDCSubject(env.AUDIT_DB, {
 				name: "ci/limiter-nonerror",

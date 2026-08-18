@@ -81,6 +81,32 @@ async function resolveRateLimit(pending: Promise<Response>, requestId: string): 
 	return { kind: "ok" };
 }
 
+/**
+ * Resolve the per-row ceiling, if this caller has one, into a retry delay.
+ *
+ * Both refusal paths consult it: the signing path, and the key-scope denial,
+ * whose D1 write is otherwise bounded only by the per-caller bucket — and that
+ * bucket is keyed on `sub`, which is the multiplication this tier exists to
+ * stop. Only one of them runs per request, so the response is read once.
+ *
+ * An outage is deliberately not fatal here: the per-caller tier has already
+ * answered, and failing closed twice would turn one outage into two.
+ *
+ * @param pending - An already-started row-ceiling `fetchRateLimiter` call
+ * @param requestId - For correlating the refusal in logs
+ * @returns Seconds to wait if the row is over its ceiling, else `undefined`
+ */
+async function resolveRowCeiling(
+	pending: Promise<Response> | undefined,
+	requestId: string,
+): Promise<number | undefined> {
+	if (!pending) {
+		return undefined;
+	}
+	const decision = await resolveRateLimit(pending, requestId);
+	return decision.kind === "limited" ? decision.retryAfter : undefined;
+}
+
 const signRoute = createRoute({
 	method: "post",
 	path: "/",
@@ -236,6 +262,27 @@ app.openapi(signRoute, async (c) => {
 			);
 		}
 
+		// The row ceiling governs this branch too. Without it the per-caller bucket
+		// is the only bound on the D1 write below, and that bucket is keyed on
+		// `sub` — so a row that can mint subjects could still flood `audit_logs`
+		// past its ceiling, which is the flooding this tier exists to stop.
+		const scopeRowRetryAfter = await resolveRowCeiling(rowLimitPromise, requestId);
+		if (scopeRowRetryAfter !== undefined) {
+			logger.warn("Trusted row hit its signing ceiling", {
+				requestId,
+				subjectPolicy: c.get("subjectPolicyName"),
+				subjectPolicyId,
+			});
+			return c.json(
+				{
+					error: "Rate limit exceeded",
+					code: "RATE_LIMITED" as const satisfies ErrorCode,
+					retryAfter: scopeRowRetryAfter,
+				},
+				HTTP.TooManyRequests,
+			);
+		}
+
 		if (decision.kind === "ok") {
 			await scheduleBackgroundTask(
 				c,
@@ -289,25 +336,22 @@ app.openapi(signRoute, async (c) => {
 
 		// The row ceiling is advisory relative to the per-caller bucket: if it is
 		// exhausted the caller is over budget regardless of which subject it
-		// presented. A limiter outage here is not fatal — the first tier already
-		// answered, and failing closed twice would turn one outage into two.
-		if (rowLimitPromise) {
-			const rowDecision = await resolveRateLimit(rowLimitPromise, requestId);
-			if (rowDecision.kind === "limited") {
-				logger.warn("Trusted row hit its signing ceiling", {
-					requestId,
-					subjectPolicy: c.get("subjectPolicyName"),
-					subjectPolicyId,
-				});
-				return c.json(
-					{
-						error: "Rate limit exceeded",
-						code: "RATE_LIMITED" as const satisfies ErrorCode,
-						retryAfter: rowDecision.retryAfter,
-					},
-					HTTP.TooManyRequests,
-				);
-			}
+		// presented.
+		const rowRetryAfter = await resolveRowCeiling(rowLimitPromise, requestId);
+		if (rowRetryAfter !== undefined) {
+			logger.warn("Trusted row hit its signing ceiling", {
+				requestId,
+				subjectPolicy: c.get("subjectPolicyName"),
+				subjectPolicyId,
+			});
+			return c.json(
+				{
+					error: "Rate limit exceeded",
+					code: "RATE_LIMITED" as const satisfies ErrorCode,
+					retryAfter: rowRetryAfter,
+				},
+				HTTP.TooManyRequests,
+			);
 		}
 
 		// Process rate limit
