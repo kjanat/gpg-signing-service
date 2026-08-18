@@ -21,6 +21,15 @@ export class RateLimiter implements DurableObject {
 	private readonly maxTokens = 100; // Default capacity, and requests per window
 	private readonly windowMs = 60_000; // 1 minute window
 
+	// Reaping. Identities are caller-varied — `<iss>:<sub>` carries the git ref —
+	// so the set of bucket keys grows without bound while nothing removes them.
+	// A bucket idle for a full window has refilled to capacity, which is exactly
+	// what a *missing* bucket is created as, so deleting it changes no verdict.
+	private readonly idleTtlMs = 60_000;
+	private readonly sweepIntervalMs = 300_000; // 5 minutes
+	private readonly sweepBatch = 1000; // Keys examined per alarm
+	private readonly deleteChunk = 128; // Storage delete() takes at most 128 keys
+
 	constructor(state: DurableObjectState) {
 		this.state = state;
 	}
@@ -113,9 +122,12 @@ export class RateLimiter implements DurableObject {
 			});
 		}
 
-		// Consume one token
+		// Consume one token. This is the only path that persists a bucket: a bucket
+		// nobody has drawn down is fully described by its absence, so `/check` and
+		// the refill above stay read-only rather than minting a key per identity.
 		bucket.tokens -= 1;
 		await this.state.storage.put(`bucket:${identity}`, bucket);
+		await this.scheduleSweep();
 
 		const result: RateLimitResult = createRateLimitAllowed(Math.floor(bucket.tokens), resetAt);
 
@@ -166,7 +178,52 @@ export class RateLimiter implements DurableObject {
 			bucket.capacity = bucketCapacity;
 		}
 
-		await this.state.storage.put(`bucket:${identity}`, bucket);
 		return bucket;
+	}
+
+	/**
+	 * Arm the reaper if it is not already armed.
+	 *
+	 * Re-arming on every write would push the sweep out indefinitely under
+	 * sustained traffic — precisely when there is most to reap — so an existing
+	 * alarm is left alone.
+	 */
+	private async scheduleSweep(): Promise<void> {
+		if ((await this.state.storage.getAlarm()) === null) {
+			await this.state.storage.setAlarm(Date.now() + this.sweepIntervalMs);
+		}
+	}
+
+	/**
+	 * Delete buckets that have refilled to capacity.
+	 *
+	 * Deleting one is not a reset: `getBucket` creates a missing bucket full, so a
+	 * reaped bucket and an idle one answer identically. What it drops is the key.
+	 */
+	async alarm(): Promise<void> {
+		const now = Date.now();
+		const buckets = await this.state.storage.list<TokenBucket>({
+			prefix: "bucket:",
+			limit: this.sweepBatch,
+		});
+
+		const stale: string[] = [];
+		for (const [key, bucket] of buckets) {
+			if (now - bucket.lastRefill >= this.idleTtlMs) {
+				stale.push(key);
+			}
+		}
+
+		for (let index = 0; index < stale.length; index += this.deleteChunk) {
+			await this.state.storage.delete(stale.slice(index, index + this.deleteChunk));
+		}
+
+		// A full batch means the sweep was truncated; come back promptly rather
+		// than draining a large backlog one five-minute window at a time. Otherwise
+		// re-arm only while live buckets remain, so an idle object stops waking.
+		const truncated = buckets.size === this.sweepBatch;
+		if (truncated || stale.length < buckets.size) {
+			await this.state.storage.setAlarm(now + (truncated ? 1_000 : this.sweepIntervalMs));
+		}
 	}
 }

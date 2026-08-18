@@ -1,5 +1,7 @@
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeAll, describe, expect, it } from "vitest";
+import type { RateLimiter } from "#durable-objects/rate-limiter";
 import type { RateLimitResult } from "#types";
 
 /**
@@ -112,43 +114,25 @@ describe("RateLimiter Durable Object", () => {
 		it("should return denied when tokens are exhausted", async () => {
 			const stub = getRateLimiter("check-exhausted");
 
-			// Consume until the bucket actually reports empty rather than a fixed
-			// count: the bucket refills at one token per 600ms, so a fixed loop that
-			// runs slowly under load hands tokens back faster than it takes them and
-			// the check below finds the bucket non-empty.
-			let denied: Response | undefined;
-			for (let i = 0; i < 500 && !denied; i++) {
-				const consumed = await stub.fetch("http://localhost/consume?identity=exhausted-user");
-				if (consumed.status === 429) {
-					denied = consumed;
-				}
-			}
-			expect(denied).toBeDefined();
+			// A capacity of one drains in a single call, so neither the drain nor the
+			// `/check` below is racing the refill. Draining down from 100 needed a
+			// loop bounded at 500 sequential round-trips, and a run slow enough to
+			// need them was a run slow enough to blow the 5s test timeout.
+			await stub.fetch("http://localhost/consume?identity=exhausted-user&limit=1");
+			const denied = await stub.fetch("http://localhost/consume?identity=exhausted-user&limit=1");
 
-			// Assert on the denial itself rather than a second round-trip: the loop
-			// exits with a fraction of a token left, and the bucket refills at one
-			// per 600ms, so a separate /check can be answered *after* enough time
-			// has passed to hand that fraction back.
-			const result = (await denied?.json()) as RateLimitResult;
+			const result = (await denied.json()) as RateLimitResult;
+			expect(denied.status).toBe(429);
 			expect(result.allowed).toBe(false);
 			expect(result.remaining).toBe(0);
 
-			// /check has its own denied branch. The bucket sits just under one token
-			// and refills at one per 600ms, so a stalled scheduler can hand it back
-			// between calls — drain again rather than assuming a single round-trip
-			// wins the race.
-			let checked: RateLimitResult | undefined;
-			for (let i = 0; i < 10; i++) {
-				const response = await stub.fetch("http://localhost/check?identity=exhausted-user");
-				expect(response.status).toBe(200);
-				checked = (await response.json()) as RateLimitResult;
-				if (!checked.allowed) {
-					break;
-				}
-				await stub.fetch("http://localhost/consume?identity=exhausted-user");
-			}
-			expect(checked?.allowed).toBe(false);
-			expect(checked?.remaining).toBe(0);
+			// `/check` has its own denied branch, and at a capacity of one the bucket
+			// needs a full window to hand a token back.
+			const response = await stub.fetch("http://localhost/check?identity=exhausted-user");
+			expect(response.status).toBe(200);
+			const checked = (await response.json()) as RateLimitResult;
+			expect(checked.allowed).toBe(false);
+			expect(checked.remaining).toBe(0);
 		});
 	});
 
@@ -188,19 +172,15 @@ describe("RateLimiter Durable Object", () => {
 		it("should return 429 when tokens exhausted", async () => {
 			const stub = getRateLimiter("consume-exhausted");
 
-			let hitLimit = false;
-			// Bounded well above the bucket size: refill runs at one token per 600ms,
-			// so a loop that iterates slowly under load needs more turns than the
-			// 100-token capacity to get ahead of it.
-			for (let i = 0; i < 500; i++) {
-				const res = await stub.fetch("http://localhost/consume?identity=test-user");
-				if (res.status === 429) {
-					hitLimit = true;
-					break;
-				}
-			}
+			// Drained by giving the bucket a capacity of one rather than by racing
+			// the refill down from 100. The loop this replaces cost up to 500
+			// sequential round-trips into a single-threaded Durable Object, which
+			// overran vitest's 5s default under CI load — a timeout that reported as
+			// the whole file erroring rather than as this assertion.
+			await stub.fetch("http://localhost/consume?identity=test-user&limit=1");
+			const denied = await stub.fetch("http://localhost/consume?identity=test-user&limit=1");
 
-			expect(hitLimit).toBe(true);
+			expect(denied.status).toBe(429);
 		});
 
 		it("should use default identity when not provided", async () => {
@@ -210,6 +190,79 @@ describe("RateLimiter Durable Object", () => {
 			expect(response.status).toBe(200);
 			const result = (await response.json()) as RateLimitResult;
 			expect(result.allowed).toBe(true);
+		});
+	});
+
+	describe("bucket reaping", () => {
+		/** Move a bucket's clock back past a full window without waiting one out. */
+		async function backdate(state: DurableObjectState, key: string) {
+			const bucket = await state.storage.get<{ tokens: number; lastRefill: number }>(key);
+			expect(bucket).toBeDefined();
+			await state.storage.put(key, { ...bucket, lastRefill: Date.now() - 120_000 });
+		}
+
+		it("persists no key for a bucket nobody has drawn down", async () => {
+			// `/check` used to mint a row per identity it was asked about, which on
+			// the admin limiter is one row per source IP, before any credential.
+			const stub = getRateLimiter("reap-read-only");
+			await stub.fetch("http://localhost/check?identity=untouched");
+
+			await runInDurableObject(stub, async (_instance, state) => {
+				expect(await state.storage.get("bucket:untouched")).toBeUndefined();
+			});
+		});
+
+		it("reaps a bucket that has refilled to capacity and keeps a live one", async () => {
+			const stub = getRateLimiter("reap-sweep");
+			await stub.fetch("http://localhost/consume?identity=idle");
+			await stub.fetch("http://localhost/consume?identity=busy");
+
+			await runInDurableObject(stub, async (instance, state) => {
+				await backdate(state, "bucket:idle");
+				await (instance as RateLimiter).alarm();
+
+				// Not a reset: a missing bucket is created full, which is what an idle
+				// one has refilled to, so the two answer identically.
+				expect(await state.storage.get("bucket:idle")).toBeUndefined();
+				expect(await state.storage.get("bucket:busy")).toBeDefined();
+				// A live bucket remains, so the reaper stays armed for it.
+				expect(await state.storage.getAlarm()).not.toBeNull();
+			});
+		});
+
+		it("stops re-arming once nothing is left to reap", async () => {
+			// Otherwise an object that has gone quiet wakes itself forever.
+			const stub = getRateLimiter("reap-quiesce");
+			await stub.fetch("http://localhost/consume?identity=lonely");
+
+			await runInDurableObject(stub, async (instance, state) => {
+				await backdate(state, "bucket:lonely");
+				await state.storage.deleteAlarm();
+				await (instance as RateLimiter).alarm();
+
+				expect(await state.storage.get("bucket:lonely")).toBeUndefined();
+				expect(await state.storage.getAlarm()).toBeNull();
+			});
+		});
+
+		it("answers a reaped identity exactly as it answers a fresh one", async () => {
+			const stub = getRateLimiter("reap-equivalence");
+			await stub.fetch("http://localhost/consume?identity=recycled");
+
+			await runInDurableObject(stub, async (instance, state) => {
+				await backdate(state, "bucket:recycled");
+				await (instance as RateLimiter).alarm();
+			});
+
+			const recycled = (await (
+				await stub.fetch("http://localhost/consume?identity=recycled")
+			).json()) as RateLimitResult;
+			const fresh = (await (
+				await stub.fetch("http://localhost/consume?identity=never-seen")
+			).json()) as RateLimitResult;
+
+			expect(recycled).toStrictEqual(expect.objectContaining({ allowed: true }));
+			expect(recycled.allowed && recycled.remaining).toBe(fresh.allowed && fresh.remaining);
 		});
 	});
 

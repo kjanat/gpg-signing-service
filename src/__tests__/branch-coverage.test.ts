@@ -51,6 +51,7 @@ vi.mock("#middleware/oidc", async (importOriginal) => {
 // Minimal in-memory DurableObjectState mock
 function createState(): DurableObjectState {
 	const store = new Map<string, any>();
+	let alarm: number | null = null;
 	return {
 		storage: {
 			async get(key: string) {
@@ -59,17 +60,32 @@ function createState(): DurableObjectState {
 			async put(key: string, value: any) {
 				store.set(key, value);
 			},
-			async delete(key: string) {
-				const existed = store.has(key);
-				store.delete(key);
-				return existed;
+			async delete(key: string | string[]) {
+				const keys = Array.isArray(key) ? key : [key];
+				let deleted = 0;
+				for (const k of keys) {
+					if (store.delete(k)) deleted += 1;
+				}
+				return Array.isArray(key) ? deleted : deleted > 0;
 			},
-			async list({ prefix }: { prefix: string }) {
+			async list({ prefix, limit }: { prefix: string; limit?: number }) {
 				const filtered = new Map<string, any>();
 				for (const [k, v] of store.entries()) {
+					if (limit !== undefined && filtered.size >= limit) break;
 					if (k.startsWith(prefix)) filtered.set(k, v);
 				}
 				return filtered;
+			},
+			// The limiter arms an alarm to reap abandoned buckets; without these the
+			// consume path throws and every case here reports as a 500.
+			async getAlarm() {
+				return alarm;
+			},
+			async setAlarm(scheduled: number) {
+				alarm = scheduled;
+			},
+			async deleteAlarm() {
+				alarm = null;
 			},
 		},
 	} as unknown as DurableObjectState;
