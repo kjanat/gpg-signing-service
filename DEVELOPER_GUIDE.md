@@ -312,9 +312,9 @@ by hand. When the API changes:
 ### Documentation (in root directory)
 
 ```
-API.md                722 lines - Developer guide with examples
-DOCUMENTATION.md      386 lines - Overview and usage
-DEVELOPER_GUIDE.md              - This file
+API.md                - Developer guide with examples
+DOCUMENTATION.md      - Overview and usage
+DEVELOPER_GUIDE.md    - This file
 ```
 
 The OpenAPI specification is generated, not hand-written, and lives at
@@ -342,7 +342,7 @@ gitlab-ci/
 ## Statistics
 
 - **OpenAPI Schema**: `client/openapi.json` (generated)
-- **API Documentation**: 722 lines (markdown)
+- **API Documentation**: API.md, DOCUMENTATION.md, docs/ (markdown)
 - **Complete Examples**: 4 bash scripts, 2 Python modules, 2 CI workflows
 - **Total Documentation**: 3000+ lines of production-ready content
 

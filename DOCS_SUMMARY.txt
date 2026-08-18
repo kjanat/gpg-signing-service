@@ -10,21 +10,20 @@ LOCATION: /home/kjanat/projects/gpg-signing-service/
   DOCUMENTATION FILES CREATED
 ================================================================================
 
-ROOT DIRECTORY
---------------
-openapi.yaml (888 lines)
-  - OpenAPI 3.1 specification in YAML format
-  - Machine-readable API contract
+GENERATED SPECIFICATION
+-----------------------
+client/openapi.json
+  - Generated OpenAPI 3.0 specification (regenerate with `task gen`)
+  - Machine-readable API contract, served live at GET /doc
   - Compatible with Swagger UI, ReDoc, code generators
   - Includes all 8 endpoints with full documentation
   - Security schemes, error codes, examples
+  - Pinned to 3.0.0 because oapi-codegen does not support 3.1.x yet
+    (https://github.com/oapi-codegen/oapi-codegen/issues/373)
 
-openapi.json (1086 lines)
-  - Same specification in JSON format
-  - Auto-generated from openapi.yaml
-  - Use with tools preferring JSON input
-
-API.md (722 lines)
+ROOT DIRECTORY
+--------------
+API.md
   - Complete developer guide with working examples
   - Quick start section
   - Authentication flows (GitHub Actions, GitLab CI)
@@ -33,7 +32,7 @@ API.md (722 lines)
   - Integration examples and troubleshooting
   - Security best practices
 
-DOCUMENTATION.md (386 lines)
+DOCUMENTATION.md
   - Overview of all documentation
   - Quick links by use case
   - Common use cases with examples
@@ -51,7 +50,7 @@ DEVELOPER_GUIDE.md
 
 EXAMPLES DIRECTORY
 ------------------
-examples/README.md (800+ lines)
+examples/README.md
   - Quick start examples
   - Complete working code in multiple languages
   - Installation and setup instructions
@@ -71,7 +70,7 @@ Total Lines:          3000+ lines of documentation
 Total Files:          6 main documentation files
 Example Scripts:      Complete implementations (bash, python)
 Coverage:             8 endpoints, 16 error codes, 3 auth methods
-API Spec Format:      OpenAPI 3.1.0 (industry standard)
+API Spec Format:      OpenAPI 3.0.0 (generated from src/)
 Standards Compliance: Full JSON Schema validation
 
 ================================================================================
@@ -134,14 +133,14 @@ Security
 FOR DEVELOPERS
   1. Start with API.md (quick start section)
   2. Check examples/ for your platform (GitHub/GitLab/Shell/Python)
-  3. Reference openapi.yaml for complete endpoint specs
+  3. Reference client/openapi.json for complete endpoint specs
   4. Use DEVELOPER_GUIDE.md for navigation and key concepts
 
 FOR INTEGRATORS
-  1. Import openapi.yaml into Postman or Insomnia
+  1. Import client/openapi.json (or GET /doc) into Postman or Insomnia
   2. Use API.md for authentication setup
   3. Test with curl commands in examples/bash/
-  4. Generate client SDKs from openapi.json if needed
+  4. Generate client SDKs from client/openapi.json if needed
 
 FOR ADMINISTRATION
   1. See examples/bash/manage-keys.sh for key operations
@@ -150,9 +149,10 @@ FOR ADMINISTRATION
   4. Monitor via health endpoint (GET /health)
 
 FOR DOCUMENTATION HOSTING
-  1. Host openapi.yaml with Swagger UI: `docker run ... swaggerapi/swagger-ui`
-  2. Or use ReDoc: Include openapi.yaml in HTML
-  3. Generate static docs from openapi.yaml
+  1. Swagger UI is already deployed at GET /ui; to self-host, mount
+     client/openapi.json: `docker run ... swaggerapi/swagger-ui`
+  2. Or use ReDoc: point spec-url at client/openapi.json or GET /doc
+  3. Generate static docs from client/openapi.json
   4. Update with API.md for context and examples
 
 ================================================================================
@@ -160,7 +160,7 @@ FOR DOCUMENTATION HOSTING
 ================================================================================
 
 Documentation is production-ready:
-  ✓ Complete OpenAPI 3.1 specification
+  ✓ Complete OpenAPI 3.0 specification
   ✓ 100% endpoint coverage
   ✓ Request/response examples for all operations
   ✓ All error codes documented
@@ -199,7 +199,7 @@ See API.md for detailed examples.
   NEXT STEPS
 ================================================================================
 
-1. ✓ Review openapi.yaml for complete specification
+1. ✓ Review client/openapi.json for complete specification
 2. ✓ Import into API documentation tool (Swagger/ReDoc)
 3. ✓ Copy examples/ to your repository
 4. ✓ Setup authentication (OIDC, Bearer token)
@@ -213,8 +213,7 @@ See API.md for detailed examples.
 ================================================================================
 
 Documentation Files:
-  - openapi.yaml: Complete specification
-  - openapi.json: Specification as JSON
+  - client/openapi.json: Complete generated specification
   - API.md: Developer guide
   - DOCUMENTATION.md: Overview
   - DEVELOPER_GUIDE.md: Navigation and context
@@ -234,7 +233,7 @@ For issues or questions:
 ================================================================================
 
 API Version:          1.0.0
-OpenAPI Version:      3.1.0
+OpenAPI Version:      3.0.0
 Documentation Date:   2024-01-15
 Compatibility:        Cloudflare Workers, Hono framework
 
