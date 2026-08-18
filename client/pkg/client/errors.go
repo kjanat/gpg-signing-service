@@ -126,7 +126,17 @@ func IsServiceError(err error) bool {
 // this is the mapped path — newStatusError below only ever sees a 401 the
 // document does not cover (an unauthenticated endpoint behind a proxy that
 // challenges, say).
-func newAuthErrorFromResponse(body *api.ErrorResponse) *AuthError {
+//
+// A body that decodes but carries no message — `{}`, or `null` — says nothing
+// the status code did not, and an `AuthError` built from it prints as a bare
+// "authentication failed: ". parseAPIErrorBody rejects that same body on the
+// fallback path, so this returns the same sentinel rather than letting the two
+// paths disagree about what a usable envelope is.
+func newAuthErrorFromResponse(body *api.ErrorResponse) error {
+	if body == nil || body.Error == "" {
+		return newUnexpectedStatusError(http.StatusUnauthorized)
+	}
+
 	authErr := &AuthError{
 		Code:    string(body.Code),
 		Message: body.Error,

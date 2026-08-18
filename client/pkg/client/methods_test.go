@@ -621,3 +621,36 @@ func TestAdminMethodsSurfaceUnauthorized(t *testing.T) {
 		})
 	}
 }
+
+// TestUnauthorizedWithoutMessageFallsBackToSentinel pins the boundary between
+// the two 401 paths. The declared response is decoded by the generated client
+// whether or not the body carries anything, so `{}` would otherwise become an
+// AuthError printing as a bare "authentication failed: " — while the same body
+// on an undeclared status is rejected by parseAPIErrorBody and reported as
+// ErrUnexpectedStatus. Callers branch on that sentinel, so both paths have to
+// agree on what counts as a usable envelope.
+func TestUnauthorizedWithoutMessageFallsBackToSentinel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	client, _ := New(server.URL)
+
+	_, err := client.ListKeys(context.Background())
+	if !errors.Is(err, ErrUnexpectedStatus) {
+		t.Errorf("a 401 with no message must report as an unexpected status, got %T (%v)", err, err)
+	}
+
+	var authErr *AuthError
+	if errors.As(err, &authErr) {
+		t.Errorf("a message-less 401 must not become an AuthError: %q", authErr.Error())
+	}
+
+	_, err = client.Sign(context.Background(), "commit data", "")
+	if !errors.Is(err, ErrUnexpectedStatus) {
+		t.Errorf("Sign: a 401 with no message must report as an unexpected status, got %T (%v)", err, err)
+	}
+}
