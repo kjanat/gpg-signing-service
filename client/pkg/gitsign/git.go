@@ -103,10 +103,18 @@ func (r *repo) hashObject(ctx context.Context, body []byte) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// updateRef moves HEAD to the given commit.
-func (r *repo) updateRef(ctx context.Context, sha string) error {
-	_, err := r.git(ctx, "update-ref", detachedHead, sha)
+// updateRef moves HEAD to the given commit, but only if it still points at
+// old. The run makes one network round-trip per commit, so the branch has a
+// long window to move underneath it; without the compare-and-swap, a commit
+// made in another terminal meanwhile would be discarded without a word.
+func (r *repo) updateRef(ctx context.Context, sha, old string) error {
+	_, err := r.git(ctx, "update-ref", detachedHead, sha, old)
 	return err
+}
+
+// objectFormat returns the repository's hash algorithm, "sha1" or "sha256".
+func (r *repo) objectFormat(ctx context.Context) (string, error) {
+	return r.gitLine(ctx, "rev-parse", "--show-object-format")
 }
 
 // verifyStatus reports whether the commit carries a signature the keyring in

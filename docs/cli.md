@@ -204,3 +204,9 @@ gpg-sign --json admin audit \
   never pushes; publishing the result is a force push you perform yourself. It
   needs `git` and `gpg` on `PATH`, refuses a detached `HEAD`, and handles PGP
   only.
+- `sign-commit` writes the `gpgsig` header, so it requires a `sha1` repository.
+  A `sha256` repository names the header `gpgsig-sha256`; the command refuses
+  one rather than writing a signature Git will not read.
+- `sign-commit` refuses to move `HEAD` if the branch changed while it was
+  signing. The rewritten objects are left unreferenced and the branch is
+  untouched; re-run once the branch is settled.

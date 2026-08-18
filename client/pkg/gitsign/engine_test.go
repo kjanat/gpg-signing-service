@@ -1,9 +1,12 @@
 package gitsign
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/kjanat/gpg-signing-service/client/pkg/client"
 )
 
 func TestRunSignsEveryCommitInRange(t *testing.T) {
@@ -328,5 +331,98 @@ func TestRunReportsResignForCommitsTheKeyCovers(t *testing.T) {
 	}
 	if !strings.Contains(out, "signed by a key this service does not carry") {
 		t.Errorf("expected gpg's own reason in the report, got:\n%s", out)
+	}
+}
+
+// The merge-base path is what a feature branch takes with no --base: the range
+// starts where the branch forked from origin/<default-branch>.
+func TestRunResolvesBaseFromTheMergeBase(t *testing.T) {
+	dir, svc := serviceFixture(t)
+	fork := head(t, dir)
+	// Stand in for the fetched remote branch the fork point is measured against.
+	git(t, dir, nil, "update-ref", "refs/remotes/origin/master", fork)
+	git(t, dir, nil, "checkout", "-b", "feature")
+	commit(t, dir, "feature work", serviceEmail)
+
+	result, out, err := runEngine(t, dir, svc.api, Options{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v\n%s", err, out)
+	}
+
+	if result.Base != fork {
+		t.Errorf("expected the range to start at the fork point %s, got %s", short(fork), short(result.Base))
+	}
+	if result.Signed != 1 || result.Scanned != 1 {
+		t.Fatalf("expected 1 of 1 signed, got %d of %d", result.Signed, result.Scanned)
+	}
+	assertVerifies(t, dir, svc, result.Tip)
+}
+
+// git names the signature header after the repository's hash algorithm. Left
+// alone, a sha256 repository fails at the post-signing verification with an
+// empty detail, long after the cause is visible.
+func TestRunRefusesASHA256Repository(t *testing.T) {
+	requireTools(t)
+
+	home := newGPGHome(t, serviceUID)
+	svc := &fixture{home: home, api: newService(t, home, serviceUID)}
+
+	dir := t.TempDir()
+	git(t, dir, nil, "init", "--initial-branch=master", "--object-format=sha256")
+	git(t, dir, nil, "config", "commit.gpgsign", "false")
+	commit(t, dir, "root", serviceEmail)
+	base := head(t, dir)
+	commit(t, dir, "first", serviceEmail)
+
+	_, _, err := runEngine(t, dir, svc.api, Options{Base: base})
+	if err == nil {
+		t.Fatal("expected a sha256 repository to be refused")
+	}
+	if !strings.Contains(err.Error(), "sha256") || !strings.Contains(err.Error(), "gpgsig-sha256") {
+		t.Errorf("expected the error to name the object format and the header it needs, got: %v", err)
+	}
+	if got := head(t, dir); got == "" {
+		t.Error("expected HEAD to be untouched")
+	}
+}
+
+// movingSigner commits to the branch the first time it is asked for a
+// signature, which is the race updateRef's compare-and-swap exists to catch.
+type movingSigner struct {
+	Signer
+	t    *testing.T
+	dir  string
+	done bool
+}
+
+func (m *movingSigner) Sign(ctx context.Context, commitData, keyID string) (*client.SignResult, error) {
+	if !m.done {
+		m.done = true
+		commit(m.t, m.dir, "concurrent", serviceEmail)
+	}
+	return m.Signer.Sign(ctx, commitData, keyID)
+}
+
+// A run makes one network round-trip per commit, so the branch has a long
+// window to move underneath it. Without the compare-and-swap that commit would
+// be discarded without a word.
+func TestRunRefusesWhenHeadMovedDuringTheRun(t *testing.T) {
+	dir, svc := serviceFixture(t)
+	base := head(t, dir)
+	commit(t, dir, "mine", serviceEmail)
+
+	signer := &movingSigner{Signer: svc.api, t: t, dir: dir}
+	result, err := Run(t.Context(), signer, Options{Dir: dir, Base: base, DefaultBranch: "master"})
+	if err == nil {
+		t.Fatal("expected the run to refuse to move a branch that changed underneath it")
+	}
+	if !strings.Contains(err.Error(), "HEAD moved") {
+		t.Errorf("expected the error to name the cause, got: %v", err)
+	}
+	if result != nil && result.RefUpdated {
+		t.Error("the run must not report a ref update it did not make")
+	}
+	if got := head(t, dir); got == base {
+		t.Error("expected the concurrent commit to survive")
 	}
 }

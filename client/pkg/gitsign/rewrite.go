@@ -168,8 +168,9 @@ func (s *session) rewrite(ctx context.Context, w *workset, commits []string, bas
 			"(dispatch with sign_others from CI) to include it.", s.result.Signed, short(tip))
 	}
 
-	if err := s.repo.updateRef(ctx, tip); err != nil {
-		return err
+	if err := s.repo.updateRef(ctx, tip, head); err != nil {
+		return fmt.Errorf("HEAD moved while the run was signing, so the rewrite was not applied; "+
+			"the new objects are unreferenced and the branch is untouched: %w", err)
 	}
 	s.result.Tip = tip
 	s.result.RefUpdated = true

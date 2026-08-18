@@ -18,6 +18,10 @@ const pgpArmorMarker = "-----BEGIN PGP SIGNATURE-----"
 // defaultBranchFallback is used when the caller names no default branch.
 const defaultBranchFallback = "master"
 
+// sha1ObjectFormat is the only hash algorithm whose gpgsig header spelling this
+// package produces.
+const sha1ObjectFormat = "sha1"
+
 // Signer is the slice of the signing-service SDK this package needs.
 // *client.Client satisfies it.
 type Signer interface {
@@ -129,6 +133,21 @@ func Run(ctx context.Context, signer Signer, opts Options) (*Result, error) {
 		return nil, err
 	}
 	s.result.Branch = branch
+
+	// git names the signature header after the repository's hash algorithm:
+	// gpgsig for sha1, gpgsig-sha256 for sha256. This package reads and writes
+	// the sha1 spelling only, so on a sha256 repository it would strip no
+	// existing signature, write a header git never reads, and die at the
+	// post-signing verification with an empty detail. Refuse while the cause
+	// is still visible.
+	format, err := s.repo.objectFormat(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if format != sha1ObjectFormat {
+		return nil, fmt.Errorf("this repository uses the %s object format, whose signature header is "+
+			"gpgsig-%s; sign-commit writes the sha1 gpgsig header only", format, format)
+	}
 
 	armored, err := signer.PublicKey(ctx, opts.KeyID)
 	if err != nil {
