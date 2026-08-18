@@ -268,10 +268,19 @@ app.openapi(signRoute, async (c) => {
 		// past its ceiling, which is the flooding this tier exists to stop.
 		const scopeRowRetryAfter = await resolveRowCeiling(rowLimitPromise, requestId);
 		if (scopeRowRetryAfter !== undefined) {
-			logger.warn("Trusted row hit its signing ceiling", {
+			// Named apart from the signing path's ceiling refusal, and carrying the
+			// denial's own fields: this branch returns before the D1 write, so the
+			// scope violation leaves no audit row. Refusing here without recording
+			// what was refused would let anything able to hold the row at its
+			// ceiling silence the highest-signal event the service produces — the
+			// same reasoning as the limiter-unavailable branch below.
+			logger.warn("Key scope denied while the trusted row was at its signing ceiling", {
 				requestId,
 				subjectPolicy: c.get("subjectPolicyName"),
 				subjectPolicyId,
+				issuer: claims.iss,
+				subject: claims.sub,
+				keyId: keyIdParam,
 			});
 			return c.json(
 				{

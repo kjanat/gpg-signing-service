@@ -436,6 +436,8 @@ describe("Sign Route", () => {
 				}),
 			} as unknown as DurableObjectNamespace;
 
+			const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
 			const response = await makeRequest(
 				"/sign?keyId=BBBBBBBBBBBBBBBB",
 				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
@@ -447,6 +449,20 @@ describe("Sign Route", () => {
 
 			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
 			expect(events.some((event) => event.errorCode === "KEY_NOT_ALLOWED")).toBe(false);
+
+			// Refusing before the write is correct; refusing *silently* is not.
+			// Anything able to hold the row at its ceiling would otherwise erase the
+			// service's highest-signal event, and the 429 alone does not say a scope
+			// violation happened, let alone against which key.
+			expect(warnSpy).toHaveBeenCalledWith(
+				"Key scope denied while the trusted row was at its signing ceiling",
+				expect.objectContaining({
+					keyId: "BBBBBBBBBBBBBBBB",
+					subject: "repo:rowceiling/svc:ref:refs/heads/main",
+					subjectPolicy: "ci/row-ceiling",
+				}),
+			);
+			warnSpy.mockRestore();
 		});
 
 		it("survives a non-Error rejection from the limiter", async () => {
