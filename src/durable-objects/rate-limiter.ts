@@ -222,10 +222,20 @@ export class RateLimiter implements DurableObject {
 	 *
 	 * That equivalence holds unconditionally only for buckets at the default
 	 * ceiling. A reaped wide bucket loses its stored capacity, and a caller that
-	 * names no limit — `/check` — would then be answered against the default
-	 * rather than the ceiling the bucket was created with. Wide buckets are
-	 * therefore left alone: there is one per trusted row, so they are not the
-	 * growth this exists to bound, and skipping them costs nothing.
+	 * names no limit would then be answered against the default rather than the
+	 * ceiling the bucket was created with. Wide buckets are therefore left alone:
+	 * there is one per trusted row, so they are not the growth this exists to
+	 * bound.
+	 *
+	 * To be clear about what that buys and costs. `/check` is the only endpoint
+	 * that names no limit, and nothing in `src/` calls it — so the divergence is
+	 * unobservable today, and the skip is defending the invariant rather than a
+	 * live consumer. The price is paid unconditionally: an immortal bucket class
+	 * means the re-arm below always finds something, so a limiter that has served
+	 * one trusted row wakes every `sweepIntervalMs` forever. That is one `list` of
+	 * a single key per five minutes, and it is the deliberate trade — an argument
+	 * that stops holding the moment somebody adds a `/check` caller is not one
+	 * worth resting a limiter's correctness on.
 	 *
 	 * One page per alarm, resumed from a persisted cursor, so a pass covers the
 	 * whole prefix rather than the first `sweepBatch` keys of it.
@@ -273,7 +283,8 @@ export class RateLimiter implements DurableObject {
 		// of this page, since a pass can end on a page that was entirely stale
 		// while live buckets sit in the pages before it. An object with nothing
 		// left stops waking itself, and `scheduleSweep` re-arms it on the next
-		// consume.
+		// consume. Note that a wide bucket is never reaped, so in practice only the
+		// admin limiter and an unused signing limiter ever reach that quiescence.
 		const remaining = await this.state.storage.list<TokenBucket>({ prefix: "bucket:", limit: 1 });
 		if (remaining.size > 0) {
 			await this.state.storage.setAlarm(now + this.sweepIntervalMs);
