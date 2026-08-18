@@ -302,8 +302,11 @@ describe("Sign Route", () => {
 			}
 
 			// Per-caller buckets differ per ref — that is the tier being bounded.
-			const perCaller = metered.filter((entry) => entry.startsWith(issuer));
-			expect(new Set(perCaller).size).toBe(2);
+			// Asserted by exact identity rather than by an issuer prefix match: a
+			// `startsWith` against a URL also accepts `https://iss.example.evil.test`,
+			// so it is the wrong shape of check to write even where the inputs are ours.
+			expect(metered).toContain(`${issuer}:repo:user/repo:ref:refs/heads/main|default`);
+			expect(metered).toContain(`${issuer}:repo:user/repo:ref:refs/heads/anything-i-like|default`);
 
 			// The row ceiling is one bucket for both, at the wider limit.
 			const perRow = metered.filter((entry) => entry.startsWith("oidc-subject-row:"));
