@@ -4,6 +4,7 @@ import * as jose from "jose";
 import * as openpgp from "openpgp";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "#gpg-signing-service";
+import type { RateLimitResult } from "#types";
 import { logAuditEvent } from "#utils/audit";
 import { logger } from "#utils/logger";
 import { insertOIDCSubject } from "#utils/oidc-subjects";
@@ -33,11 +34,22 @@ async function makeRequest(path: string, options: RequestInit = {}, envOverrides
 	return response;
 }
 
+/**
+ * Answer the way the real Durable Object answers: a denied verdict rides on a
+ * 429, not a 200. A stub that returned 200 for `allowed: false` tested a shape
+ * the limiter never produces, which is how a route that read every 429 as an
+ * outage passed a suite full of rate-limit assertions.
+ */
+function limiterResponse(body: unknown): Response {
+	const denied = typeof body === "object" && body !== null && (body as RateLimitResult).allowed === false;
+	return denied ? Response.json(body, { status: 429 }) : Response.json(body);
+}
+
 /** A RATE_LIMITER binding whose every call answers with `body`. */
 function stubRateLimiter(body: unknown): DurableObjectNamespace {
 	return {
 		idFromName: () => ({}) as DurableObjectId,
-		get: () => ({ fetch: async () => Response.json(body) }),
+		get: () => ({ fetch: async () => limiterResponse(body) }),
 	} as unknown as DurableObjectNamespace;
 }
 
@@ -328,7 +340,7 @@ describe("Sign Route", () => {
 					fetch: async (request: Request) => {
 						const identity = new URL(request.url).searchParams.get("identity") ?? "";
 						const allowed = !identity.startsWith("oidc-subject-row:");
-						return Response.json({ allowed, remaining: allowed ? 99 : 0, resetAt: Date.now() + 30_000 });
+						return limiterResponse({ allowed, remaining: allowed ? 99 : 0, resetAt: Date.now() + 30_000 });
 					},
 				}),
 			} as unknown as DurableObjectNamespace;
@@ -431,7 +443,7 @@ describe("Sign Route", () => {
 					fetch: async (request: Request) => {
 						const identity = new URL(request.url).searchParams.get("identity") ?? "";
 						const allowed = !identity.startsWith("oidc-subject-row:");
-						return Response.json({ allowed, remaining: allowed ? 99 : 0, resetAt: Date.now() + 30_000 });
+						return limiterResponse({ allowed, remaining: allowed ? 99 : 0, resetAt: Date.now() + 30_000 });
 					},
 				}),
 			} as unknown as DurableObjectNamespace;

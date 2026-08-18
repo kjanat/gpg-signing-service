@@ -69,7 +69,12 @@ async function resolveRateLimit(pending: Promise<Response>, requestId: string): 
 		return { kind: "unavailable" };
 	}
 
-	if (!response.ok) {
+	// A denied consume is a *verdict*, and the Durable Object delivers it as a
+	// 429 with the verdict in the body — so `!response.ok` alone reads the one
+	// answer this function exists to detect as an outage. For the row ceiling,
+	// whose outage path is deliberately non-fatal, that failed open: the tier
+	// never refused anything.
+	if (!response.ok && response.status !== HTTP.TooManyRequests) {
 		logger.error("Rate limiter failed", { status: response.status, requestId });
 		return { kind: "unavailable" };
 	}
@@ -363,8 +368,9 @@ app.openapi(signRoute, async (c) => {
 			);
 		}
 
-		// Process rate limit
-		if (!rateLimitResponse.ok) {
+		// Process rate limit. A 429 carries the verdict, not a failure — treating
+		// it as one turned every genuine per-caller refusal into a 503.
+		if (!rateLimitResponse.ok && rateLimitResponse.status !== HTTP.TooManyRequests) {
 			logger.error("Rate limiter failed", {
 				status: rateLimitResponse.status,
 				requestId,
