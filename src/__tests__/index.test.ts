@@ -191,6 +191,33 @@ describe("API Documentation Routes", () => {
 		}
 	});
 
+	it("should declare a security requirement on every route mounted behind auth", async () => {
+		const ctx = createExecutionContext();
+		const response = await app.fetch(new Request("http://localhost/doc"), env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		const spec = (await response.json()) as {
+			paths: Record<string, Record<string, { security?: Record<string, unknown>[] }>>;
+		};
+
+		// The 401 assertion above is conditioned on `security`, which is written by
+		// hand in each createRoute call — so a route that omits it declares no 401
+		// either and both checks stay silent about it. Auth is not per-route: index
+		// mounts /sign behind callerAuth and everything under /admin behind
+		// adminAuth, which is the list the document has to agree with.
+		const behindAuth = Object.entries(spec.paths).filter(([path]) => path === "/sign" || path.startsWith("/admin"));
+		expect(behindAuth.length).toBeGreaterThan(0);
+
+		for (const [path, methods] of behindAuth) {
+			for (const [method, operation] of Object.entries(methods)) {
+				expect(
+					(operation.security ?? []).length,
+					`${method.toUpperCase()} ${path} is behind auth but declares no security requirement`,
+				).toBeGreaterThan(0);
+			}
+		}
+	});
+
 	it("should include security schemes when generating a document directly", () => {
 		const spec = app.getOpenAPIDocument(openApiConfig);
 		expect(Object.keys(spec.components?.securitySchemes ?? {})).toEqual(
