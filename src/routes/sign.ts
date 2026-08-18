@@ -13,7 +13,7 @@ import type { ErrorCode } from "#schemas/errors";
 import type { AnyStoredKey } from "#schemas/keys";
 import { AnyStoredKeySchema, isX509Key } from "#schemas/keys";
 import type { Identity, RateLimitResult, ValidatedOIDCClaims } from "#types";
-import { createKeyId, HEADERS, HTTP, isKeyIdShaped, TIME } from "#types";
+import { createIdentity, createKeyId, HEADERS, HTTP, isKeyIdShaped, TIME } from "#types";
 import { logAuditEvent } from "#utils/audit";
 import { fetchKeyStorage, fetchRateLimiter } from "#utils/durable-objects";
 import { scheduleBackgroundTask } from "#utils/execution";
@@ -23,8 +23,45 @@ import { signCommitDataX509 } from "#utils/x509";
 
 const app = createOpenAPIApp();
 
+/**
+ * Rate-limiter namespace for the per-row signing ceiling. Not an issuer, so it
+ * cannot collide with the `<iss>:<sub>` buckets — a non-URL issuer cannot
+ * authenticate, since JWKS discovery runs the issuer through `validateUrl`.
+ */
+const SUBJECT_ROW_METER = "oidc-subject-row";
+
+/**
+ * Signatures per minute per trusted row, across every subject it covers.
+ *
+ * Ten times the per-caller budget: high enough that a busy org spread over many
+ * repositories and refs never meets it, low enough that one row cannot be
+ * multiplied into unbounded signing by minting subjects. Tune against real
+ * traffic rather than treating this number as load-bearing.
+ */
+const SUBJECT_ROW_LIMIT = 1000;
+
 /** Outcome of consulting the rate limiter, with the failure modes separated. */
 type RateLimitDecision = { kind: "ok" } | { kind: "limited"; retryAfter: number } | { kind: "unavailable" };
+
+/**
+ * A denial's `resetAt` as whole seconds to wait, floored at one.
+ *
+ * `resetAt` on a denial is when the bucket next holds a token, and refill is
+ * proportional to capacity — 60ms on the 1000-wide row bucket, 600ms on the
+ * default. Both are shorter than a Worker-to-Durable-Object round trip can be,
+ * so the naive `ceil((resetAt - now) / 1000)` reaches zero or below by the time
+ * the answer is read. `RateLimitErrorSchema` declares `retryAfter` positive, and
+ * the Go client only honours it when it is (`retry.go:57`), so an underflowed
+ * hint is both off-spec and silently discarded. The limiter's own `Retry-After`
+ * header already floors at one; this is the same floor on the field callers
+ * actually receive, since that header never leaves the Durable Object.
+ *
+ * @param resetAt - The denial's reset timestamp, in epoch milliseconds
+ * @returns Whole seconds to wait, never below one
+ */
+function retryAfterSeconds(resetAt: number): number {
+	return Math.max(1, Math.ceil((resetAt - Date.now()) / TIME.SECOND));
+}
 
 /**
  * Resolve an in-flight rate limiter call into a decision.
@@ -52,16 +89,47 @@ async function resolveRateLimit(pending: Promise<Response>, requestId: string): 
 		return { kind: "unavailable" };
 	}
 
-	if (!response.ok) {
+	// A denied consume is a *verdict*, and the Durable Object delivers it as a
+	// 429 with the verdict in the body — so `!response.ok` alone reads the one
+	// answer this function exists to detect as an outage. For the row ceiling,
+	// whose outage path is deliberately non-fatal, that failed open: the tier
+	// never refused anything.
+	if (!response.ok && response.status !== HTTP.TooManyRequests) {
 		logger.error("Rate limiter failed", { status: response.status, requestId });
 		return { kind: "unavailable" };
 	}
 
 	const rateLimit = (await response.json()) as RateLimitResult;
 	if (!rateLimit.allowed) {
-		return { kind: "limited", retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / 1000) };
+		return { kind: "limited", retryAfter: retryAfterSeconds(rateLimit.resetAt) };
 	}
 	return { kind: "ok" };
+}
+
+/**
+ * Resolve the per-row ceiling, if this caller has one, into a retry delay.
+ *
+ * Both refusal paths consult it: the signing path, and the key-scope denial,
+ * whose D1 write is otherwise bounded only by the per-caller bucket — and that
+ * bucket is keyed on `sub`, which is the multiplication this tier exists to
+ * stop. Only one of them runs per request, so the response is read once.
+ *
+ * An outage is deliberately not fatal here: the per-caller tier has already
+ * answered, and failing closed twice would turn one outage into two.
+ *
+ * @param pending - An already-started row-ceiling `fetchRateLimiter` call
+ * @param requestId - For correlating the refusal in logs
+ * @returns Seconds to wait if the row is over its ceiling, else `undefined`
+ */
+async function resolveRowCeiling(
+	pending: Promise<Response> | undefined,
+	requestId: string,
+): Promise<number | undefined> {
+	if (!pending) {
+		return undefined;
+	}
+	const decision = await resolveRateLimit(pending, requestId);
+	return decision.kind === "limited" ? decision.retryAfter : undefined;
 }
 
 const signRoute = createRoute({
@@ -180,6 +248,28 @@ app.openapi(signRoute, async (c) => {
 	// not consume it for the real consumers.
 	rateLimitPromise.catch(() => {});
 
+	// Second tier. The bucket above is keyed on `<iss>:<sub>`, and GitHub puts the
+	// ref in `sub`, so a caller who can push branches mints a fresh budget per
+	// branch — the per-caller cap does not bound the trusted *row*. This one is
+	// keyed on the row id, which is server-side and unforgeable, with a ceiling
+	// well above the per-caller budget so no single workflow's behaviour changes:
+	// it only stops one row from being multiplied without limit.
+	//
+	// Deliberately *not* started in parallel with the first tier. A denied bucket
+	// costs itself nothing — `consumeToken` returns before decrementing — so a
+	// request the per-caller tier already refused would still spend a row token.
+	// One branch looping at 1000 req/min would then hold the row at its ceiling
+	// on traffic that was never signed, refusing every sibling branch under the
+	// same trusted row; and being refused is exactly what provokes a client to
+	// retry. Both buckets live in one single-threaded Durable Object, so firing
+	// them together only ever overlapped the wire time, never the work.
+	//
+	// Absent on the service-token path, which is already metered per credential.
+	const subjectPolicyId = c.get("subjectPolicyId");
+	const consumeRowToken = subjectPolicyId
+		? () => fetchRateLimiter(c.env, createIdentity(SUBJECT_ROW_METER, subjectPolicyId), SUBJECT_ROW_LIMIT)
+		: undefined;
+
 	// Both auth paths may carry a key allowlist; enforce it before any signing.
 	const allowedKeyIds = c.get("allowedKeyIds");
 	if (allowedKeyIds && !allowedKeyIds.includes(keyIdParam)) {
@@ -205,6 +295,39 @@ app.openapi(signRoute, async (c) => {
 		}
 
 		if (decision.kind === "ok") {
+			// The row ceiling governs this branch too. Without it the per-caller
+			// bucket is the only bound on the D1 write below, and that bucket is
+			// keyed on `sub` — so a row that can mint subjects could still flood
+			// `audit_logs` past its ceiling, which is the flooding this tier exists
+			// to stop. Consulted only once the first tier allowed: what it bounds is
+			// the write, and a caller the first tier refused writes nothing.
+			const scopeRowRetryAfter = await resolveRowCeiling(consumeRowToken?.(), requestId);
+			if (scopeRowRetryAfter !== undefined) {
+				// Named apart from the signing path's ceiling refusal, and carrying
+				// the denial's own fields: this branch returns before the D1 write, so
+				// the scope violation leaves no audit row. Refusing here without
+				// recording what was refused would let anything able to hold the row
+				// at its ceiling silence the highest-signal event the service
+				// produces — the same reasoning as the limiter-unavailable branch
+				// below.
+				logger.warn("Key scope denied while the trusted row was at its signing ceiling", {
+					requestId,
+					subjectPolicy: c.get("subjectPolicyName"),
+					subjectPolicyId,
+					issuer: claims.iss,
+					subject: claims.sub,
+					keyId: keyIdParam,
+				});
+				return c.json(
+					{
+						error: "Rate limit exceeded",
+						code: "RATE_LIMITED" as const satisfies ErrorCode,
+						retryAfter: scopeRowRetryAfter,
+					},
+					HTTP.TooManyRequests,
+				);
+			}
+
 			await scheduleBackgroundTask(
 				c,
 				requestId,
@@ -255,8 +378,9 @@ app.openapi(signRoute, async (c) => {
 			fetchKeyStorage(c.env, `/get-key?keyId=${encodeURIComponent(keyIdParam)}`),
 		]);
 
-		// Process rate limit
-		if (!rateLimitResponse.ok) {
+		// Process rate limit. A 429 carries the verdict, not a failure — treating
+		// it as one turned every genuine per-caller refusal into a 503.
+		if (!rateLimitResponse.ok && rateLimitResponse.status !== HTTP.TooManyRequests) {
 			logger.error("Rate limiter failed", {
 				status: rateLimitResponse.status,
 				requestId,
@@ -279,7 +403,28 @@ app.openapi(signRoute, async (c) => {
 				{
 					error: "Rate limit exceeded",
 					code: "RATE_LIMITED" as const satisfies ErrorCode,
-					retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / 1000),
+					retryAfter: retryAfterSeconds(rateLimit.resetAt),
+				},
+				HTTP.TooManyRequests,
+			);
+		}
+
+		// The row ceiling, consulted only now that the per-caller tier has allowed.
+		// Ordered this way for two reasons: the caller is told which budget it
+		// actually exceeded — its own, not its neighbours' — and a refused request
+		// no longer spends a token from the bucket its siblings share.
+		const rowRetryAfter = await resolveRowCeiling(consumeRowToken?.(), requestId);
+		if (rowRetryAfter !== undefined) {
+			logger.warn("Trusted row hit its signing ceiling", {
+				requestId,
+				subjectPolicy: c.get("subjectPolicyName"),
+				subjectPolicyId,
+			});
+			return c.json(
+				{
+					error: "Rate limit exceeded",
+					code: "RATE_LIMITED" as const satisfies ErrorCode,
+					retryAfter: rowRetryAfter,
 				},
 				HTTP.TooManyRequests,
 			);

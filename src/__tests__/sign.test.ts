@@ -4,6 +4,7 @@ import * as jose from "jose";
 import * as openpgp from "openpgp";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "#gpg-signing-service";
+import type { RateLimitResult } from "#types";
 import { logAuditEvent } from "#utils/audit";
 import { logger } from "#utils/logger";
 import { insertOIDCSubject } from "#utils/oidc-subjects";
@@ -33,11 +34,22 @@ async function makeRequest(path: string, options: RequestInit = {}, envOverrides
 	return response;
 }
 
+/**
+ * Answer the way the real Durable Object answers: a denied verdict rides on a
+ * 429, not a 200. A stub that returned 200 for `allowed: false` tested a shape
+ * the limiter never produces, which is how a route that read every 429 as an
+ * outage passed a suite full of rate-limit assertions.
+ */
+function limiterResponse(body: unknown): Response {
+	const denied = typeof body === "object" && body !== null && (body as RateLimitResult).allowed === false;
+	return denied ? Response.json(body, { status: 429 }) : Response.json(body);
+}
+
 /** A RATE_LIMITER binding whose every call answers with `body`. */
 function stubRateLimiter(body: unknown): DurableObjectNamespace {
 	return {
 		idFromName: () => ({}) as DurableObjectId,
-		get: () => ({ fetch: async () => Response.json(body) }),
+		get: () => ({ fetch: async () => limiterResponse(body) }),
 	} as unknown as DurableObjectNamespace;
 }
 
@@ -272,6 +284,136 @@ describe("Sign Route", () => {
 			expect(signed?.requestId).toBe(echoed);
 		});
 
+		it("meters signing per trusted row as well as per subject", async () => {
+			// The per-caller bucket is keyed on `<iss>:<sub>`, and GitHub puts the ref
+			// in `sub`, so branches multiply budgets. The second tier is keyed on the
+			// row id, which the caller cannot vary.
+			await setupJWKSMock();
+			await uploadTestKey("A1B2C3D4E5F67890");
+
+			const metered: string[] = [];
+			const recordingLimiter = {
+				idFromName: () => ({}) as DurableObjectId,
+				get: () => ({
+					fetch: async (request: Request) => {
+						const params = new URL(request.url).searchParams;
+						metered.push(`${params.get("identity")}|${params.get("limit") ?? "default"}`);
+						return Response.json({ allowed: true, remaining: 99, resetAt: Date.now() + 60_000 });
+					},
+				}),
+			} as unknown as DurableObjectNamespace;
+
+			for (const ref of ["refs/heads/main", "refs/heads/anything-i-like"]) {
+				const token = await createToken({ sub: `repo:user/repo:ref:${ref}` });
+				const response = await makeRequest(
+					"/sign?keyId=A1B2C3D4E5F67890",
+					{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+					{ RATE_LIMITER: recordingLimiter },
+				);
+				expect(response.status).toBe(200);
+			}
+
+			// Per-caller buckets differ per ref — that is the tier being bounded.
+			// Asserted by exact identity rather than by an issuer prefix match: a
+			// `startsWith` against a URL also accepts `https://iss.example.evil.test`,
+			// so it is the wrong shape of check to write even where the inputs are ours.
+			expect(metered).toContain(`${issuer}:repo:user/repo:ref:refs/heads/main|default`);
+			expect(metered).toContain(`${issuer}:repo:user/repo:ref:refs/heads/anything-i-like|default`);
+
+			// The row ceiling is one bucket for both, at the wider limit.
+			const perRow = metered.filter((entry) => entry.startsWith("oidc-subject-row:"));
+			expect(perRow).toHaveLength(2);
+			expect(new Set(perRow).size).toBe(1);
+			expect(perRow[0]).toMatch(/\|1000$/);
+			expect(perRow.join(" ")).not.toContain("refs/heads");
+		});
+
+		it("spends no row token on a request its own bucket already refused", async () => {
+			// A denied bucket costs itself nothing, so firing both tiers together let
+			// refused traffic drain the bucket every sibling branch shares — and being
+			// refused is what provokes the retry that refuses it again. One branch
+			// looping could hold the whole row at its ceiling without signing once.
+			await setupJWKSMock();
+			await uploadTestKey("A1B2C3D4E5F67890");
+			const token = await createToken();
+
+			const metered: string[] = [];
+			const perCallerExhausted = {
+				idFromName: () => ({}) as DurableObjectId,
+				get: () => ({
+					fetch: async (request: Request) => {
+						const identity = new URL(request.url).searchParams.get("identity") ?? "";
+						metered.push(identity);
+						const allowed = identity.startsWith("oidc-subject-row:");
+						return limiterResponse({ allowed, remaining: allowed ? 999 : 0, resetAt: Date.now() + 30_000 });
+					},
+				}),
+			} as unknown as DurableObjectNamespace;
+
+			const response = await makeRequest(
+				"/sign?keyId=A1B2C3D4E5F67890",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{ RATE_LIMITER: perCallerExhausted },
+			);
+
+			expect(response.status).toBe(429);
+			expect(metered.filter((identity) => identity.startsWith("oidc-subject-row:"))).toHaveLength(0);
+		});
+
+		it("never hands back a retry hint of zero, however close the token is", async () => {
+			// A denial's `resetAt` is when the bucket next holds a token, and refill is
+			// proportional to capacity: 60ms on the 1000-wide row bucket, 600ms on the
+			// default. Both are shorter than a Worker-to-Durable-Object round trip can
+			// be, so the bare `ceil((resetAt - now) / 1000)` reaches zero or below by
+			// the time the answer is read. `RateLimitErrorSchema` declares `retryAfter`
+			// positive and the Go client only honours a positive hint, so an
+			// underflowed one is both off-spec and silently dropped for generic
+			// backoff — which is the client retrying faster than it was told to.
+			await setupJWKSMock();
+			await uploadTestKey("A1B2C3D4E5F67890");
+			const token = await createToken();
+
+			// Already elapsed: the worst case, a round trip longer than the debt.
+			const response = await makeRequest(
+				"/sign?keyId=A1B2C3D4E5F67890",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{ RATE_LIMITER: stubRateLimiter({ allowed: false, remaining: 0, resetAt: Date.now() - 40 }) },
+			);
+
+			expect(response.status).toBe(429);
+			const body = await parseJson<{ code: string; retryAfter: number }>(response);
+			expect(body.code).toBe("RATE_LIMITED");
+			expect(body.retryAfter).toBeGreaterThan(0);
+			expect(Number.isInteger(body.retryAfter)).toBe(true);
+		});
+
+		it("refuses with 429 once a trusted row hits its ceiling, even under budget per caller", async () => {
+			await setupJWKSMock();
+			await uploadTestKey("A1B2C3D4E5F67890");
+			const token = await createToken();
+
+			// Per-caller bucket allows; the row bucket does not.
+			const tieredLimiter = {
+				idFromName: () => ({}) as DurableObjectId,
+				get: () => ({
+					fetch: async (request: Request) => {
+						const identity = new URL(request.url).searchParams.get("identity") ?? "";
+						const allowed = !identity.startsWith("oidc-subject-row:");
+						return limiterResponse({ allowed, remaining: allowed ? 99 : 0, resetAt: Date.now() + 30_000 });
+					},
+				}),
+			} as unknown as DurableObjectNamespace;
+
+			const response = await makeRequest(
+				"/sign?keyId=A1B2C3D4E5F67890",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{ RATE_LIMITER: tieredLimiter },
+			);
+
+			expect(response.status).toBe(429);
+			expect(await response.json()).toMatchObject({ code: "RATE_LIMITED" });
+		});
+
 		it("audits a trusted subject reaching outside its key scope", async () => {
 			// The highest-signal event the service can produce: the credential is
 			// valid and the row is live, but the grant does not cover the key. If
@@ -336,6 +478,62 @@ describe("Sign Route", () => {
 
 			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
 			expect(events.some((event) => event.errorCode === "KEY_NOT_ALLOWED")).toBe(false);
+		});
+
+		it("refuses the scope denial once the trusted row is at its ceiling", async () => {
+			// The denial writes to D1, and the per-caller bucket is keyed on `sub` —
+			// so if the row ceiling did not govern this branch, a row that can mint
+			// subjects would still flood `audit_logs` past it. Same multiplication
+			// the second tier exists to stop, on the path that writes.
+			await insertOIDCSubject(env.AUDIT_DB, {
+				name: "ci/row-ceiling",
+				issuer,
+				subjectPrefix: "repo:rowceiling/svc",
+				keyIds: ["AAAAAAAAAAAAAAAA"],
+				expiresAt: null,
+			});
+			await setupJWKSMock();
+			const token = await createToken({ sub: "repo:rowceiling/svc:ref:refs/heads/main" });
+
+			// Per-caller bucket allows; the row bucket does not.
+			const tieredLimiter = {
+				idFromName: () => ({}) as DurableObjectId,
+				get: () => ({
+					fetch: async (request: Request) => {
+						const identity = new URL(request.url).searchParams.get("identity") ?? "";
+						const allowed = !identity.startsWith("oidc-subject-row:");
+						return limiterResponse({ allowed, remaining: allowed ? 99 : 0, resetAt: Date.now() + 30_000 });
+					},
+				}),
+			} as unknown as DurableObjectNamespace;
+
+			const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+			const response = await makeRequest(
+				"/sign?keyId=BBBBBBBBBBBBBBBB",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{ RATE_LIMITER: tieredLimiter },
+			);
+
+			expect(response.status).toBe(429);
+			expect(await response.json()).toMatchObject({ code: "RATE_LIMITED" });
+
+			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
+			expect(events.some((event) => event.errorCode === "KEY_NOT_ALLOWED")).toBe(false);
+
+			// Refusing before the write is correct; refusing *silently* is not.
+			// Anything able to hold the row at its ceiling would otherwise erase the
+			// service's highest-signal event, and the 429 alone does not say a scope
+			// violation happened, let alone against which key.
+			expect(warnSpy).toHaveBeenCalledWith(
+				"Key scope denied while the trusted row was at its signing ceiling",
+				expect.objectContaining({
+					keyId: "BBBBBBBBBBBBBBBB",
+					subject: "repo:rowceiling/svc:ref:refs/heads/main",
+					subjectPolicy: "ci/row-ceiling",
+				}),
+			);
+			warnSpy.mockRestore();
 		});
 
 		it("survives a non-Error rejection from the limiter", async () => {
@@ -533,14 +731,10 @@ describe("Sign Route", () => {
 			const originalGet = env.RATE_LIMITER.get;
 			env.RATE_LIMITER.get = () =>
 				({
-					fetch: async () =>
-						new Response(
-							JSON.stringify({
-								allowed: false,
-								remaining: 0,
-								resetAt: Date.now() + 60000,
-							}),
-						),
+					// Through `limiterResponse`, so this denial rides a 429 the way the
+					// real object's does. Hand-rolling a 200 here is the shape that let
+					// a route reading every 429 as an outage pass this assertion.
+					fetch: async () => limiterResponse({ allowed: false, remaining: 0, resetAt: Date.now() + 60000 }),
 				}) as unknown as DurableObjectStub;
 
 			try {

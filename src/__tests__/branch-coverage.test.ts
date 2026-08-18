@@ -51,6 +51,7 @@ vi.mock("#middleware/oidc", async (importOriginal) => {
 // Minimal in-memory DurableObjectState mock
 function createState(): DurableObjectState {
 	const store = new Map<string, any>();
+	let alarm: number | null = null;
 	return {
 		storage: {
 			async get(key: string) {
@@ -59,17 +60,32 @@ function createState(): DurableObjectState {
 			async put(key: string, value: any) {
 				store.set(key, value);
 			},
-			async delete(key: string) {
-				const existed = store.has(key);
-				store.delete(key);
-				return existed;
+			async delete(key: string | string[]) {
+				const keys = Array.isArray(key) ? key : [key];
+				let deleted = 0;
+				for (const k of keys) {
+					if (store.delete(k)) deleted += 1;
+				}
+				return Array.isArray(key) ? deleted : deleted > 0;
 			},
-			async list({ prefix }: { prefix: string }) {
+			async list({ prefix, limit }: { prefix: string; limit?: number }) {
 				const filtered = new Map<string, any>();
 				for (const [k, v] of store.entries()) {
+					if (limit !== undefined && filtered.size >= limit) break;
 					if (k.startsWith(prefix)) filtered.set(k, v);
 				}
 				return filtered;
+			},
+			// The limiter arms an alarm to reap abandoned buckets; without these the
+			// consume path throws and every case here reports as a 500.
+			async getAlarm() {
+				return alarm;
+			},
+			async setAlarm(scheduled: number) {
+				alarm = scheduled;
+			},
+			async deleteAlarm() {
+				alarm = null;
 			},
 		},
 	} as unknown as DurableObjectState;
@@ -190,13 +206,14 @@ describe("Branch Coverage Helpers", () => {
 
 	describe("Middleware branches", () => {
 		it("fails admin rate limit when allowance is false", async () => {
-			const denyResponse = new Response(
-				JSON.stringify({
-					allowed: false,
-					resetAt: Date.now() + 10_000,
-					remaining: 0,
-				}),
-				{ status: 200, headers: { "Content-Type": "application/json" } },
+			// 429, the way the real Durable Object answers a denial. A 200 here is the
+			// shape the limiter never produces, and it is what let the middleware read
+			// every 429 as an outage while this assertion still passed.
+			const denyResponse = Response.json(
+				{ allowed: false, resetAt: Date.now() + 10_000, remaining: 0 },
+				{
+					status: 429,
+				},
 			);
 
 			const customEnv = {
@@ -296,6 +313,40 @@ describe("Branch Coverage Helpers", () => {
 			};
 			await import("#middleware/oidc").then(({ oidcAuth }) => oidcAuth(context as any, () => Promise.resolve()));
 			expect(json).toHaveBeenCalledWith(expect.objectContaining({ code: "AUTH_MISSING" }), 401);
+		});
+
+		it("returns the admin limiter's 429 as a verdict rather than an outage", async () => {
+			// The real Durable Object answers a denied consume with a 429 carrying
+			// the verdict. Reading that as a failure answered 503 with no
+			// `retryAfter` and made the `allowed` branch unreachable.
+			const customEnv = {
+				...env,
+				RATE_LIMITER: {
+					idFromName: () => ({}) as any,
+					get: () => ({
+						fetch: () =>
+							Promise.resolve(Response.json({ allowed: false, resetAt: Date.now() + 60_000 }, { status: 429 })),
+					}),
+				},
+			};
+
+			const json = vi.fn();
+			const context = {
+				req: {
+					header: (name: string) => (name === "Authorization" ? "Bearer admin" : "1.2.3.4"),
+				},
+				env: customEnv,
+				json,
+			};
+
+			await import("#middleware/security").then(({ adminRateLimit }) =>
+				adminRateLimit(context as any, () => Promise.resolve()),
+			);
+
+			expect(json).toHaveBeenCalledWith(
+				expect.objectContaining({ code: "RATE_LIMITED", retryAfter: expect.any(Number) }),
+				429,
+			);
 		});
 
 		it("fails closed when admin rate limiter fails", async () => {
