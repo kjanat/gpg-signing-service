@@ -715,4 +715,5 @@ python3 python/manage_keys.py rotate \
 4. Monitor audit logs for operations
 5. Implement error handling as needed
 
-For more details, see the main `API.md` and `openapi.yaml` files.
+For more details, see the main `API.md` and the generated
+[`client/openapi.json`](../client/openapi.json) contract.

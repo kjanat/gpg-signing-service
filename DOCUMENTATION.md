@@ -1,7 +1,7 @@
 # API Documentation Summary
 
 > [!WARNING]
-> This generated summary refers to removed root-level OpenAPI files. Start with
+> This is a historical summary and may not track the current API. Start with
 > the current [documentation index](docs/README.md) and generated
 > [`client/openapi.json`](client/openapi.json).
 
@@ -12,44 +12,43 @@ Service:
 
 ### Files
 
-1. **openapi.yaml** - OpenAPI 3.1 specification in YAML format
+1. **`client/openapi.json`** - generated OpenAPI 3.0 specification
    - Machine-readable API contract
    - Compatible with code generators, documentation tools, and testing
      frameworks
    - Includes all endpoints, parameters, request/response schemas
    - Security schemes and error codes defined
+   - Served live at `GET /doc`; regenerate with `task gen`
+   - Pinned to 3.0.0 because `oapi-codegen` does not support 3.1.x yet
+     ([oapi-codegen#373](https://github.com/oapi-codegen/oapi-codegen/issues/373))
 
-2. **openapi.json** - Same specification in JSON format
-   - Generated from openapi.yaml
-   - Easier to parse programmatically
-   - Use with API tools that prefer JSON
-
-3. **API.md** - Developer-friendly API documentation
+2. **API.md** - Developer-friendly API documentation
    - Quick start examples
    - Authentication flows for GitHub Actions and GitLab CI
    - Endpoint documentation with examples
    - Error reference and rate limiting explanation
    - Integration guides and code samples
 
-4. **DOCUMENTATION.md** (this file) - Overview and usage guide
+3. **DOCUMENTATION.md** (this file) - Overview and usage guide
 
 ## Quick Links
 
 ### For Developers
 
 - Start with **API.md** for quick start and examples
-- Reference **openapi.yaml** for detailed specs
+- Reference **`client/openapi.json`** for detailed specs
 - Use integration guides for GitHub Actions or GitLab CI
 
 ### For API Consumers
 
-- Import openapi.yaml into Swagger UI for interactive testing
+- Use the deployed Swagger UI at <https://gpg.kajkowalski.nl/ui>, or import
+  `client/openapi.json` into your own
 - Generate client SDKs in your preferred language
 - Use with Postman, Insomnia, or other API clients
 
 ### For DevOps/Tools
 
-- Use openapi.json with code generation tools
+- Use `client/openapi.json` with code generation tools
 - Reference error codes in monitoring/alerting
 - Query audit logs via GET /admin/audit endpoint
 
@@ -96,18 +95,18 @@ All responses include:
 
 Host the specification with Swagger UI:
 
-```bash
-# Using npm
-bunx swagger-ui-dist --config src/swagger-initializer.js
+The service already deploys Swagger UI at <https://gpg.kajkowalski.nl/ui>. To
+host the checked-in contract yourself:
 
+```bash
 # Using Docker
 docker run -p 8080:8080 \
-  -v $(pwd)/openapi.yaml:/openapi.yaml:ro \
-  -e SWAGGER_JSON=/openapi.yaml \
+  -v $(pwd)/client/openapi.json:/openapi.json:ro \
+  -e SWAGGER_JSON=/openapi.json \
   swaggerapi/swagger-ui
 
 # Using custom HTML
-# Create index.html that loads openapi.yaml with SwaggerUI
+# Create index.html that loads client/openapi.json with SwaggerUI
 ```
 
 ### Postman
@@ -115,7 +114,7 @@ docker run -p 8080:8080 \
 1. File → Import → Enter:
 
    ```text
-   https://gpg.kajkowalski.nl/openapi.yaml
+   https://gpg.kajkowalski.nl/doc
    ```
 
 2. Create environment variables for authentication tokens
@@ -124,7 +123,7 @@ docker run -p 8080:8080 \
 ### ReDoc (Beautiful Documentation)
 
 ```bash
-bunx @redocly/cli build-docs openapi.yaml
+bunx @redocly/cli build-docs client/openapi.json
 ```
 
 or
@@ -142,7 +141,7 @@ or
     </style>
   </head>
   <body>
-    <redoc spec-url="./openapi.yaml"></redoc>
+    <redoc spec-url="https://gpg.kajkowalski.nl/doc"></redoc>
     <script src="https://cdn.jsdelivr.net/npm/redoc@2/bundles/redoc.standalone.js"></script>
   </body>
 </html>
@@ -155,19 +154,19 @@ Generate client libraries in multiple languages:
 ```bash
 # Using openapi-generator-cli
 bunx @openapitools/openapi-generator-cli generate \
-  -i openapi.yaml \
+  -i client/openapi.json \
   -g python \
   -o ./python-client
 
 # JavaScript/TypeScript
 bunx @openapitools/openapi-generator-cli generate \
-  -i openapi.yaml \
+  -i client/openapi.json \
   -g typescript-fetch \
   -o ./typescript-client
 
 # Go
 bunx @openapitools/openapi-generator-cli generate \
-  -i openapi.yaml \
+  -i client/openapi.json \
   -g go \
   -o ./go-client
 ```
@@ -420,7 +419,7 @@ Breaking changes will result in new version. Current approach:
 ## Support Resources
 
 - **Documentation**: See `API.md` for detailed examples
-- **OpenAPI Spec**: Import `openapi.yaml` into API tools
+- **OpenAPI Spec**: Import `client/openapi.json` into API tools
 - **Repository**: https://github.com/kjanat/gpg-signing-service
 - **Issues**: https://github.com/kjanat/gpg-signing-service/issues
 - **Security**: GitHub security advisory process
