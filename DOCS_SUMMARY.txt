@@ -2,6 +2,10 @@
   GPG SIGNING SERVICE - API DOCUMENTATION PACKAGE
 ================================================================================
 
+WARNING: This is a historical summary of the original documentation package.
+Use the current documentation index (docs/README.md) and the generated
+contract (client/openapi.json, served at GET /doc).
+
 GENERATED: 2024-01-15
 VERSION: 1.0.0
 LOCATION: /home/kjanat/projects/gpg-signing-service/

@@ -1,7 +1,7 @@
 # API Documentation Summary
 
 > [!WARNING]
-> This generated summary refers to removed root-level OpenAPI files. Start with
+> This is a historical summary and may not track the current API. Start with
 > the current [documentation index](docs/README.md) and generated
 > [`client/openapi.json`](client/openapi.json).
 

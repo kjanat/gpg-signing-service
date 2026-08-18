@@ -1,7 +1,7 @@
 # API Documentation Index
 
 > [!WARNING]
-> This historical index refers to generated files that are no longer present.
+> This is a historical index and may not track the current API.
 > Use the current [documentation index](docs/README.md) and generated
 > [`client/openapi.json`](client/openapi.json).
 
