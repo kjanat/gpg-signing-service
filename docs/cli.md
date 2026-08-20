@@ -182,8 +182,12 @@ scrape the progress text:
   "result": {
     "branch": "feature",
     "base": "8ab30c91",
+    "head": "4e6dcb8207f1a3c5d9e2b4f60817a9c3e5d7f901",
+    "tip": "4e6dcb8207f1a3c5d9e2b4f60817a9c3e5d7f901",
     "commitsScanned": 2,
-    "refUpdated": false
+    "commitsSigned": 0,
+    "refUpdated": false,
+    "pushed": false
   },
   "resign": {
     "stale": 2,
@@ -196,6 +200,10 @@ scrape the progress text:
 ```
 
 `resign` is present only when the run was blocked by an already-signed commit.
+Every `result` field above is always present. `tip` is the commit `HEAD` would
+be moved to, so on any run that did not get that far it still holds `head`;
+`refUpdated` is what says whether the ref actually moved. `pushed` is always
+`false` — the command has no push path.
 
 ### Upload a PGP key
 

@@ -1,6 +1,9 @@
 package gitsign
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // reportEmptyRange explains a base..HEAD that selected no commits. Each cause
 // has a different remedy, and "nothing happened" on its own sends the operator
@@ -69,12 +72,32 @@ func (s *session) reportDropped() {
 // header is left alone. Nothing is corrupt — git fsck stays clean — but
 // "git log --show-signature" on the rewritten merge describes a merged tag that
 // matches none of its parents.
-func (s *session) reportStaleMergetag(raw []byte, commit string) {
+// A merge is rewritten as soon as any one parent moves, and the embedded tag
+// names one specific parent, so moved is consulted rather than assumed: a merge
+// whose first parent moved while the tagged one stayed put carries a mergetag
+// that is still accurate, and saying otherwise sends the operator looking for
+// damage that is not there.
+func (s *session) reportStaleMergetag(raw []byte, commit string, moved map[string]bool) {
 	merge, err := decodeCommit(raw)
 	if err != nil || merge.MergeTag == "" {
 		return
 	}
-	s.warn("the merge %s carries a mergetag naming the pre-rewrite commit; its embedded tag is signed "+
-		"by its tagger, so it cannot be repointed at the rewritten parent and now matches no parent.",
-		short(commit))
+
+	// An octopus merge of several signed tags concatenates their bodies into
+	// the one field, so every moved parent is checked against it rather than
+	// only the first "object" line.
+	var stale []string
+	for parent := range moved {
+		if strings.Contains(merge.MergeTag, "object "+parent) {
+			stale = append(stale, short(parent))
+		}
+	}
+	if len(stale) == 0 {
+		return
+	}
+	slices.Sort(stale)
+
+	s.warn("the merge %s carries a mergetag naming %s, which this run rewrote; the embedded tag is "+
+		"signed by its tagger, so it cannot be repointed at the rewritten parent and now matches no parent.",
+		short(commit), strings.Join(stale, ", "))
 }

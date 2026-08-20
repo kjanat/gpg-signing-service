@@ -5,14 +5,12 @@ import (
 	"testing"
 )
 
-// A mergetag embeds a signed tag object naming the commit it merged. When that
-// commit is rewritten the header keeps the old SHA, and nothing else in the run
-// would tell the operator.
-func TestReportStaleMergetagWarnsOnce(t *testing.T) {
-	var out strings.Builder
-	s := &session{opts: Options{Out: &out}, result: &Result{}}
+// commitSHA stands in for the merge being rewritten.
+const commitSHA = "3333333333333333333333333333333333333333"
 
-	merge := rawCommit([]string{
+// mergeWithTag is a merge commit whose mergetag names its second parent.
+func mergeWithTag() []byte {
+	return rawCommit([]string{
 		"tree " + treeSHA,
 		"parent " + parentOne,
 		"parent " + parentTwo,
@@ -25,14 +23,38 @@ func TestReportStaleMergetagWarnsOnce(t *testing.T) {
 		" ",
 		" tag message",
 	}, "merge\n")
+}
 
-	s.reportStaleMergetag(merge, parentOne)
+// A mergetag embeds a signed tag object naming the commit it merged. When that
+// commit is rewritten the header keeps the old SHA, and nothing else in the run
+// would tell the operator.
+func TestReportStaleMergetagWarnsOnce(t *testing.T) {
+	var out strings.Builder
+	s := &session{opts: Options{Out: &out}, result: &Result{}}
+
+	s.reportStaleMergetag(mergeWithTag(), commitSHA, map[string]bool{parentTwo: true})
 
 	if len(s.result.Warnings) != 1 {
 		t.Fatalf("expected one warning, got %v", s.result.Warnings)
 	}
-	if !strings.Contains(out.String(), "mergetag naming the pre-rewrite commit") {
-		t.Errorf("expected the warning to name the cause, got %q", out.String())
+	if !strings.Contains(out.String(), "mergetag naming "+short(parentTwo)) {
+		t.Errorf("expected the warning to name the rewritten parent, got %q", out.String())
+	}
+}
+
+// A merge is rewritten as soon as any one parent moves, but the embedded tag
+// names one specific parent. Warning that the tag "matches no parent" when the
+// tagged parent never moved sends the operator hunting for damage that is not
+// there.
+func TestReportStaleMergetagIgnoresAnUntaggedParent(t *testing.T) {
+	var out strings.Builder
+	s := &session{opts: Options{Out: &out}, result: &Result{}}
+
+	s.reportStaleMergetag(mergeWithTag(), commitSHA, map[string]bool{parentOne: true})
+
+	if len(s.result.Warnings) != 0 || out.String() != "" {
+		t.Errorf("the tagged parent did not move, so the mergetag is still accurate; got %v and %q",
+			s.result.Warnings, out.String())
 	}
 }
 
@@ -41,7 +63,8 @@ func TestReportStaleMergetagIsSilentWithoutOne(t *testing.T) {
 	var out strings.Builder
 	s := &session{opts: Options{Out: &out}, result: &Result{}}
 
-	s.reportStaleMergetag(rawCommit([]string{"tree " + treeSHA, "parent " + parentOne, testAuthor}, "plain\n"), parentOne)
+	plain := rawCommit([]string{"tree " + treeSHA, "parent " + parentOne, testAuthor}, "plain\n")
+	s.reportStaleMergetag(plain, commitSHA, map[string]bool{parentOne: true})
 
 	if len(s.result.Warnings) != 0 || out.String() != "" {
 		t.Errorf("expected no warning, got %v and %q", s.result.Warnings, out.String())

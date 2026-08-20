@@ -192,16 +192,16 @@ func (s *session) rebuild(ctx context.Context, w *workset, commit string, rewrit
 	// Merge commits carry several parents, and each one is remapped
 	// independently: only some of a merge's ancestry may have been rewritten.
 	remapped := make([]string, len(parents))
-	moved := false
+	moved := make(map[string]bool)
 	for index, parent := range parents {
 		remapped[index] = parent
 		if replacement, ok := rewritten[parent]; ok {
 			remapped[index] = replacement
-			moved = true
+			moved[parent] = true
 		}
 	}
-	if moved {
-		s.reportStaleMergetag(w.raw[commit], commit)
+	if len(moved) > 0 {
+		s.reportStaleMergetag(w.raw[commit], commit, moved)
 	}
 
 	payload, err := unsignedObject(w.raw[commit], remapped)
