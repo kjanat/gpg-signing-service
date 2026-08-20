@@ -158,7 +158,7 @@ The command refuses to rewrite commits that already carry a signature. It
 prints what it would do to each and exits non-zero:
 
 ```text
-  would drop the signature on a10ce7bb (signed by a key this service does not carry)
+  would re-sign a10ce7bb (signed by a key this service does not carry)
 Error: signing 2 commit(s) would rewrite 1 already-signed commit(s) below the tip; move the base forward or re-run with --allow-resign (dispatch with allow_resign from CI)
 ```
 
