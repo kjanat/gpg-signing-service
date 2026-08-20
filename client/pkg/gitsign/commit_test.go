@@ -232,3 +232,139 @@ func TestWithSignatureRoundTrips(t *testing.T) {
 		t.Errorf("expected:\n%q\ngot:\n%q", payload, stripped)
 	}
 }
+
+// Moving a parent must not disturb any other byte. go-git re-encodes from
+// struct fields the moment a decoded commit is mutated, and its encoder
+// canonicalizes ident lines, drops an explicit "encoding UTF-8" header and
+// reorders unknown headers. Every row below is an object git itself reads
+// unchanged, so a round trip that swaps the parent back has to reproduce it.
+func TestUnsignedObjectPreservesEveryOtherByte(t *testing.T) {
+	tests := []struct {
+		name   string
+		header []string
+	}{
+		{
+			name:   "canonical ident",
+			header: []string{"tree " + treeSHA, "parent " + parentOne, testAuthor, strings.Replace(testAuthor, "author", "committer", 1)},
+		},
+		{
+			name: "no space before the date",
+			header: []string{
+				"tree " + treeSHA, "parent " + parentOne,
+				"author A U Thor <author@example.test>1700000000 +0000",
+				"committer A U Thor <author@example.test>1700000000 +0000",
+			},
+		},
+		{
+			name: "no space before the email",
+			header: []string{
+				"tree " + treeSHA, "parent " + parentOne,
+				"author A U Thor<author@example.test> 1700000000 +0000",
+				"committer A U Thor<author@example.test> 1700000000 +0000",
+			},
+		},
+		{
+			name: "no timezone",
+			header: []string{
+				"tree " + treeSHA, "parent " + parentOne,
+				"author A U Thor <author@example.test> 1700000000",
+				"committer A U Thor <author@example.test> 1700000000",
+			},
+		},
+		{
+			name: "zero-padded timestamp",
+			header: []string{
+				"tree " + treeSHA, "parent " + parentOne,
+				"author A U Thor <author@example.test> 0001700000000 +0000",
+				"committer A U Thor <author@example.test> 0001700000000 +0000",
+			},
+		},
+		{
+			name: "explicit UTF-8 encoding",
+			header: []string{
+				"tree " + treeSHA, "parent " + parentOne, testAuthor,
+				strings.Replace(testAuthor, "author", "committer", 1), "encoding UTF-8",
+			},
+		},
+		{
+			name: "unknown header before encoding",
+			header: []string{
+				"tree " + treeSHA, "parent " + parentOne, testAuthor,
+				strings.Replace(testAuthor, "author", "committer", 1), "custom value", "encoding ISO-8859-1",
+			},
+		},
+		{
+			name: "mergetag with continuations",
+			header: []string{
+				"tree " + treeSHA, "parent " + parentOne, "parent " + parentTwo, testAuthor,
+				strings.Replace(testAuthor, "author", "committer", 1),
+				"mergetag object " + parentTwo, " type commit", " tag v1",
+				" tagger T <t@example.test> 1700000000 +0000", " ", " tag message",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := rawCommit(tt.header, "subject\n\nbody\n")
+
+			parents, err := parentsOf(original)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			moved := append([]string{newParent}, parents[1:]...)
+
+			payload, err := unsignedObject(original, moved)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			restored, err := unsignedObject(payload, parents)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if string(restored) != string(original) {
+				t.Errorf("a round trip through a moved parent changed the object:\n want %q\n  got %q",
+					original, restored)
+			}
+		})
+	}
+}
+
+// A reparented commit's ident has to survive verbatim even when go-git's own
+// decoder misreads it, because git is what reads the object afterwards.
+func TestUnsignedObjectKeepsAnIdentGoGitMisreads(t *testing.T) {
+	raw := rawCommit([]string{
+		"tree " + treeSHA,
+		"parent " + parentOne,
+		"author A U Thor <author@example.test>1700000000 +0000",
+		"committer A U Thor <author@example.test>1700000000 +0000",
+	}, "subject\n")
+
+	payload, err := unsignedObject(raw, []string{newParent})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(string(payload), "<author@example.test>1700000000 +0000") {
+		t.Errorf("the author date was rewritten: %q", payload)
+	}
+	if strings.Contains(string(payload), "700000000 +0000\n") &&
+		!strings.Contains(string(payload), "1700000000 +0000\n") {
+		t.Errorf("the leading digit of the timestamp was eaten: %q", payload)
+	}
+}
+
+// A root commit that gains a parent still has to put it where git requires,
+// straight after the tree line.
+func TestUnsignedObjectPlacesParentsOnARootCommit(t *testing.T) {
+	raw := rawCommit([]string{"tree " + treeSHA, testAuthor}, "subject\n")
+
+	payload, err := unsignedObject(raw, []string{newParent})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "tree " + treeSHA + "\nparent " + newParent + "\n"
+	if !strings.HasPrefix(string(payload), want) {
+		t.Errorf("expected the parent straight after the tree, got %q", payload)
+	}
+}

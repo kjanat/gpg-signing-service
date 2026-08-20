@@ -87,23 +87,73 @@ func committerEmail(raw []byte) (string, error) {
 // given parents in place of the originals. The result is the payload a
 // signature is computed over.
 //
-// When the parents are unchanged this returns the original bytes with the
-// signature headers stripped verbatim, which is what git itself signs. Only a
-// commit whose parents actually moved is re-encoded from its fields, and that
-// one is being given a new SHA regardless.
+// The signature headers are stripped by go-git, but the parents are moved here
+// rather than by mutating ParentHashes and re-encoding. EncodeWithoutSignature
+// only reproduces the source bytes while the decoded fields still match the
+// object it came from; any mutation sends it down the struct encoder, which
+// canonicalizes author and committer lines that git itself accepts unchanged.
+// An ident with no space before the date is the sharp case: go-git reads
+// "<a@x>1700000000" as 700000000, so a re-encode would move the commit from
+// November 2023 to March 1992. Moving the parent lines by hand keeps every
+// other byte exactly as git wrote it.
 func unsignedObject(raw []byte, parents []string) ([]byte, error) {
 	commit, err := decodeCommit(raw)
 	if err != nil {
 		return nil, err
 	}
 
-	hashes := make([]plumbing.Hash, 0, len(parents))
-	for _, parent := range parents {
-		hashes = append(hashes, plumbing.NewHash(parent))
+	stripped, err := encodeObject(commit.EncodeWithoutSignature)
+	if err != nil {
+		return nil, err
 	}
-	commit.ParentHashes = hashes
+	return replaceParents(stripped, parents), nil
+}
 
-	return encodeObject(commit.EncodeWithoutSignature)
+// parentPrefix and treePrefix start the two header lines whose order git
+// requires: tree first, then every parent, then author and committer.
+var (
+	parentPrefix = []byte("parent ")
+	treePrefix   = []byte("tree ")
+)
+
+// replaceParents swaps a commit payload's parent lines for the given ones and
+// leaves every other byte alone.
+//
+// Only header lines are considered: the payload is cut at the blank line that
+// closes the header block, and a mergetag's continuation lines are indented by
+// one space, so nothing inside one can be mistaken for a parent.
+func replaceParents(payload []byte, parents []string) []byte {
+	head, message, _ := bytes.Cut(payload, headerSeparator)
+	lines := bytes.Split(head, []byte("\n"))
+
+	kept := make([][]byte, 0, len(lines))
+	insert, afterTree := -1, 0
+	for _, line := range lines {
+		if bytes.HasPrefix(line, parentPrefix) {
+			if insert < 0 {
+				insert = len(kept)
+			}
+			continue
+		}
+		kept = append(kept, line)
+		if bytes.HasPrefix(line, treePrefix) && afterTree == 0 {
+			afterTree = len(kept)
+		}
+	}
+	// A commit with no parent lines to replace still has to put any new ones
+	// straight after the tree line.
+	if insert < 0 {
+		insert = afterTree
+	}
+
+	out := make([][]byte, 0, len(kept)+len(parents))
+	out = append(out, kept[:insert]...)
+	for _, parent := range parents {
+		out = append(out, append(append([]byte{}, parentPrefix...), parent...))
+	}
+	out = append(out, kept[insert:]...)
+
+	return assemble(out, message)
 }
 
 // withSignature appends the armored signature to the payload's headers in

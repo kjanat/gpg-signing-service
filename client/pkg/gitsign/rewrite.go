@@ -161,10 +161,16 @@ func (s *session) rewrite(ctx context.Context, w *workset, commits []string, bas
 	if replacement, ok := rewritten[head]; ok {
 		tip = replacement
 	}
-	if good, _ := s.verifyWritten(ctx, tip); !good {
-		s.warn("Signed %d commit(s), but the tip %s still carries no signature this key can verify; "+
-			"it was committed by an identity the key does not carry — re-run with --sign-others "+
-			"(dispatch with sign_others from CI) to include it.", s.result.Signed, short(tip))
+	if good, detail := s.verifyWritten(ctx, tip); !good {
+		// The cause decides the advice. A tip left unsigned is the one the
+		// operator can fix with a flag; a mismatch or an expired key is not.
+		remedy := ""
+		if detail == reasonUnsigned {
+			remedy = " — its committer is an identity the key does not carry, so re-run with " +
+				"--sign-others (dispatch with sign_others from CI) to include it"
+		}
+		s.warn("Signed %d commit(s), but the tip %s carries no signature this key can verify (%s)%s.",
+			s.result.Signed, short(tip), detail, remedy)
 	}
 
 	if err := s.repo.updateRef(ctx, tip, head); err != nil {
@@ -186,11 +192,16 @@ func (s *session) rebuild(ctx context.Context, w *workset, commit string, rewrit
 	// Merge commits carry several parents, and each one is remapped
 	// independently: only some of a merge's ancestry may have been rewritten.
 	remapped := make([]string, len(parents))
+	moved := false
 	for index, parent := range parents {
 		remapped[index] = parent
 		if replacement, ok := rewritten[parent]; ok {
 			remapped[index] = replacement
+			moved = true
 		}
+	}
+	if moved {
+		s.reportStaleMergetag(w.raw[commit], commit)
 	}
 
 	payload, err := unsignedObject(w.raw[commit], remapped)

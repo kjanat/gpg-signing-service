@@ -59,3 +59,22 @@ func (s *session) reportDropped() {
 		"--sign-others (dispatch with sign_others from CI) to sign them instead.",
 		len(dropped), strings.Join(dropped, ", "))
 }
+
+// reportStaleMergetag warns that a merge commit's mergetag header now names a
+// commit that no longer exists under that SHA.
+//
+// A mergetag embeds the whole tag object, including its own signature over its
+// own "object <sha>" line. Repointing it at the rewritten commit would break
+// the tagger's signature, and this run has no key to re-make it with, so the
+// header is left alone. Nothing is corrupt — git fsck stays clean — but
+// "git log --show-signature" on the rewritten merge describes a merged tag that
+// matches none of its parents.
+func (s *session) reportStaleMergetag(raw []byte, commit string) {
+	merge, err := decodeCommit(raw)
+	if err != nil || merge.MergeTag == "" {
+		return
+	}
+	s.warn("the merge %s carries a mergetag naming the pre-rewrite commit; its embedded tag is signed "+
+		"by its tagger, so it cannot be repointed at the rewritten parent and now matches no parent.",
+		short(commit))
+}
