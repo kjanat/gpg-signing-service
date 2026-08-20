@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -175,5 +176,60 @@ func TestSuccessBodiesAreNotBuffered(t *testing.T) {
 	}
 	if key != armored {
 		t.Errorf("body altered in transit: %q", key)
+	}
+}
+
+// TestOversizedErrorBodyIsDroppedNotBuffered pins the ceiling on the error-body
+// read.
+//
+// errorBodyTransport buffers the body so a broken one can be caught before the
+// generated parser dies on it, and the parser then reads the same bytes back
+// out — so an unbounded read here lets the peer pick the client's allocation,
+// twice over. A body past the ceiling carries nothing a caller can act on that
+// the status code does not, so it is dropped and the status survives alone.
+func TestOversizedErrorBodyIsDroppedNotBuffered(t *testing.T) {
+	// A well-formed envelope, padded past the ceiling. Well-formed on purpose:
+	// the ceiling has to bite before decodability is consulted, or the size of
+	// the allocation is still the peer's to choose.
+	padding := strings.Repeat("A", maxErrorBodyBytes)
+	body := `{"error":"` + padding + `","code":"AUTH_INVALID"}`
+	if len(body) <= maxErrorBodyBytes {
+		t.Fatalf("test body is not oversized: %d bytes", len(body))
+	}
+
+	client := unauthorizedStub(t, body, nil)
+
+	_, err := client.ListKeys(context.Background())
+	if !errors.Is(err, ErrUnexpectedStatus) {
+		t.Fatalf("expected the sentinel, got %T (%v)", err, err)
+	}
+	if got := err.Error(); got != "unexpected status code: 401" {
+		t.Errorf("status lost from the message: %q", got)
+	}
+	// The point of the ceiling: the padding must not have reached an AuthError.
+	if strings.Contains(err.Error(), padding[:64]) {
+		t.Error("the oversized body was surfaced to the caller after all")
+	}
+}
+
+// TestErrorBodyAtTheCeilingStillDecodes is the other side of the boundary: a
+// body that fits must be reported in full, so the ceiling cannot quietly become
+// a truncation that costs callers their message.
+func TestErrorBodyAtTheCeilingStillDecodes(t *testing.T) {
+	message := strings.Repeat("B", maxErrorBodyBytes-len(`{"error":"","code":"AUTH_INVALID"}`))
+	body := `{"error":"` + message + `","code":"AUTH_INVALID"}`
+	if len(body) != maxErrorBodyBytes {
+		t.Fatalf("test body is not exactly at the ceiling: %d bytes", len(body))
+	}
+
+	client := unauthorizedStub(t, body, nil)
+
+	_, err := client.ListKeys(context.Background())
+	var authErr *AuthError
+	if !errors.As(err, &authErr) {
+		t.Fatalf("expected an *AuthError, got %T (%v)", err, err)
+	}
+	if authErr.Message != message {
+		t.Errorf("message truncated: got %d bytes, want %d", len(authErr.Message), len(message))
 	}
 }

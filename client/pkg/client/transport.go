@@ -55,6 +55,23 @@ type errorBodyTransport struct {
 // this one says what happened.
 const contentTypeUndecodable = "application/octet-stream"
 
+// maxErrorBodyBytes bounds what this transport will hold for one error
+// response.
+//
+// Reading an error body here is what lets a broken one be caught before the
+// generated parser dies on it, but io.ReadAll with no ceiling lets the peer
+// choose the client's allocation — and on this path the body is held twice,
+// once here and once in the `bodyBytes` the parser reads back out. A 4 GiB
+// "401" is not a credential problem the caller can act on; it is a way to take
+// the process down.
+//
+// The envelope this bounds is four short fields. A megabyte is already three
+// orders of magnitude more than the largest one the service emits (a 400
+// carrying a Zod `issues` array), so nothing real is truncated, and a body that
+// does exceed it is dropped rather than kept: the status is the only part of
+// such a response worth reporting.
+const maxErrorBodyBytes = 1 << 20
+
 func (t *errorBodyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := t.base.RoundTrip(req)
 	if err != nil || resp == nil {
@@ -71,10 +88,21 @@ func (t *errorBodyTransport) RoundTrip(req *http.Request) (*http.Response, error
 		return resp, nil
 	}
 
-	body, readErr := io.ReadAll(resp.Body)
+	// One byte past the ceiling, so an oversized body is detected rather than
+	// silently truncated into something that might still decode.
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes+1))
 	_ = resp.Body.Close()
 	if readErr != nil {
 		return nil, readErr
+	}
+	if len(body) > maxErrorBodyBytes {
+		// Deliberately not drained first: draining is what would make the
+		// connection reusable, and paying an unbounded read for one pooled
+		// connection is the trade this ceiling exists to refuse.
+		resp.Body = http.NoBody
+		resp.ContentLength = 0
+		resp.Header.Set("Content-Type", contentTypeUndecodable)
+		return resp, nil
 	}
 	// Put it back regardless: the generated code reads it again, and so does
 	// newStatusError via resp.Body on the fallback path.
