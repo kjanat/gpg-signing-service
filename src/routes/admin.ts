@@ -1,5 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { createOpenAPIApp } from "#lib/openapi";
+import { createOpenAPIApp, unauthorizedResponse } from "#lib/openapi";
 import {
 	AuditLogsResponseSchema,
 	AuditQuerySchema,
@@ -47,10 +47,7 @@ const uploadKeyRoute = createRoute({
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Invalid request",
 		},
-		[HTTP.Unauthorized]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Missing or invalid admin token",
-		},
+		[HTTP.Unauthorized]: unauthorizedResponse("Missing or invalid admin token"),
 		[HTTP.InternalServerError]: {
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Internal server error",
@@ -181,10 +178,7 @@ const uploadX509KeyRoute = createRoute({
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Invalid request",
 		},
-		[HTTP.Unauthorized]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Missing or invalid admin token",
-		},
+		[HTTP.Unauthorized]: unauthorizedResponse("Missing or invalid admin token"),
 		[HTTP.InternalServerError]: {
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Internal server error",
@@ -292,10 +286,7 @@ const listKeysRoute = createRoute({
 			content: { "application/json": { schema: KeyListResponseSchema } },
 			description: "List of keys",
 		},
-		[HTTP.Unauthorized]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Missing or invalid admin token",
-		},
+		[HTTP.Unauthorized]: unauthorizedResponse("Missing or invalid admin token"),
 		[HTTP.InternalServerError]: {
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Internal server error",
@@ -353,10 +344,7 @@ const getPublicKeyRoute = createRoute({
 			},
 			description: "Public key (PGP armored) or X.509 certificate (PEM)",
 		},
-		[HTTP.Unauthorized]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Missing or invalid admin token",
-		},
+		[HTTP.Unauthorized]: unauthorizedResponse("Missing or invalid admin token"),
 		[HTTP.NotFound]: {
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Key not found",
@@ -428,10 +416,7 @@ const deleteKeyRoute = createRoute({
 			content: { "application/json": { schema: KeyDeletionResponseSchema } },
 			description: "Key deleted",
 		},
-		[HTTP.Unauthorized]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Missing or invalid admin token",
-		},
+		[HTTP.Unauthorized]: unauthorizedResponse("Missing or invalid admin token"),
 		[HTTP.InternalServerError]: {
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Internal server error",
@@ -523,10 +508,7 @@ const getAuditLogsRoute = createRoute({
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Invalid request",
 		},
-		[HTTP.Unauthorized]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Missing or invalid admin token",
-		},
+		[HTTP.Unauthorized]: unauthorizedResponse("Missing or invalid admin token"),
 		[HTTP.InternalServerError]: {
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Internal server error",

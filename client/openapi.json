@@ -905,6 +905,15 @@
           },
           "401": {
             "description": "Missing, invalid, or untrusted signing credential",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Authentication scheme the caller must present.",
+                "schema": {
+                  "type": "string",
+                  "example": "Bearer realm=\"gpg-signing-service\""
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1008,6 +1017,15 @@
           },
           "401": {
             "description": "Missing or invalid admin token",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Authentication scheme the caller must present.",
+                "schema": {
+                  "type": "string",
+                  "example": "Bearer realm=\"gpg-signing-service\""
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1049,6 +1067,15 @@
           },
           "401": {
             "description": "Missing or invalid admin token",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Authentication scheme the caller must present.",
+                "schema": {
+                  "type": "string",
+                  "example": "Bearer realm=\"gpg-signing-service\""
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1112,6 +1139,15 @@
           },
           "401": {
             "description": "Missing or invalid admin token",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Authentication scheme the caller must present.",
+                "schema": {
+                  "type": "string",
+                  "example": "Bearer realm=\"gpg-signing-service\""
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1171,6 +1207,15 @@
           },
           "401": {
             "description": "Missing or invalid admin token",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Authentication scheme the caller must present.",
+                "schema": {
+                  "type": "string",
+                  "example": "Bearer realm=\"gpg-signing-service\""
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1235,6 +1280,15 @@
           },
           "401": {
             "description": "Missing or invalid admin token",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Authentication scheme the caller must present.",
+                "schema": {
+                  "type": "string",
+                  "example": "Bearer realm=\"gpg-signing-service\""
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1348,6 +1402,15 @@
           },
           "401": {
             "description": "Missing or invalid admin token",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Authentication scheme the caller must present.",
+                "schema": {
+                  "type": "string",
+                  "example": "Bearer realm=\"gpg-signing-service\""
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1411,6 +1474,15 @@
           },
           "401": {
             "description": "Missing or invalid admin token",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Authentication scheme the caller must present.",
+                "schema": {
+                  "type": "string",
+                  "example": "Bearer realm=\"gpg-signing-service\""
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1462,6 +1534,15 @@
           },
           "401": {
             "description": "Missing or invalid admin token",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Authentication scheme the caller must present.",
+                "schema": {
+                  "type": "string",
+                  "example": "Bearer realm=\"gpg-signing-service\""
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1516,6 +1597,15 @@
           },
           "401": {
             "description": "Missing or invalid admin token",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Authentication scheme the caller must present.",
+                "schema": {
+                  "type": "string",
+                  "example": "Bearer realm=\"gpg-signing-service\""
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1589,6 +1679,15 @@
           },
           "401": {
             "description": "Missing or invalid admin token",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Authentication scheme the caller must present.",
+                "schema": {
+                  "type": "string",
+                  "example": "Bearer realm=\"gpg-signing-service\""
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1640,6 +1739,15 @@
           },
           "401": {
             "description": "Missing or invalid admin token",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Authentication scheme the caller must present.",
+                "schema": {
+                  "type": "string",
+                  "example": "Bearer realm=\"gpg-signing-service\""
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {
@@ -1694,6 +1802,15 @@
           },
           "401": {
             "description": "Missing or invalid admin token",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Authentication scheme the caller must present.",
+                "schema": {
+                  "type": "string",
+                  "example": "Bearer realm=\"gpg-signing-service\""
+                }
+              }
+            },
             "content": {
               "application/json": {
                 "schema": {

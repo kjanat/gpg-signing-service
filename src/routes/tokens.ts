@@ -1,5 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { createOpenAPIApp } from "#lib/openapi";
+import { createOpenAPIApp, unauthorizedResponse } from "#lib/openapi";
 import {
 	ErrorResponseSchema,
 	TokenCreatedResponseSchema,
@@ -39,10 +39,7 @@ const createTokenRoute = createRoute({
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Invalid request",
 		},
-		[HTTP.Unauthorized]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Missing or invalid admin token",
-		},
+		[HTTP.Unauthorized]: unauthorizedResponse("Missing or invalid admin token"),
 		[HTTP.Conflict]: {
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Token name already exists",
@@ -131,10 +128,7 @@ const listTokensRoute = createRoute({
 			content: { "application/json": { schema: TokenListResponseSchema } },
 			description: "Tokens",
 		},
-		[HTTP.Unauthorized]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Missing or invalid admin token",
-		},
+		[HTTP.Unauthorized]: unauthorizedResponse("Missing or invalid admin token"),
 		[HTTP.InternalServerError]: {
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Internal server error",
@@ -175,10 +169,7 @@ const revokeTokenRoute = createRoute({
 			content: { "application/json": { schema: TokenRevokeResponseSchema } },
 			description: "Token revoked",
 		},
-		[HTTP.Unauthorized]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Missing or invalid admin token",
-		},
+		[HTTP.Unauthorized]: unauthorizedResponse("Missing or invalid admin token"),
 		[HTTP.NotFound]: {
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Token not found or already revoked",

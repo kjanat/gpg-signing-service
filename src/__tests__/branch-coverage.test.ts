@@ -275,10 +275,12 @@ describe("Branch Coverage Helpers", () => {
 
 		it("handles missing token after Bearer prefix", async () => {
 			const json = vi.fn();
+			const header = vi.fn();
 			const context = {
 				req: { header: () => "Bearer " },
 				env,
 				json,
+				header,
 				get: vi.fn(),
 				set: vi.fn(),
 			};
@@ -286,6 +288,9 @@ describe("Branch Coverage Helpers", () => {
 			await import("#middleware/oidc").then(({ oidcAuth }) => oidcAuth(context as any, () => Promise.resolve()));
 
 			expect(json).toHaveBeenCalledWith({ error: "Missing token", code: "AUTH_MISSING" }, 401);
+			// RFC 9110 §11.6.1: a 401 without a challenge tells the caller it was
+			// refused but not what to present next.
+			expect(header).toHaveBeenCalledWith("WWW-Authenticate", 'Bearer realm="gpg-signing-service"');
 		});
 
 		it("maps jose JWKS error to friendly message", async () => {
@@ -306,6 +311,7 @@ describe("Branch Coverage Helpers", () => {
 			const context = {
 				req: { header: () => "Basic user:pass" },
 				json,
+				header: vi.fn(),
 				// The middleware reads the published request id and republishes it
 				// before looking at the Authorization header, so the stub needs both.
 				get: vi.fn(),

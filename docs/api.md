@@ -82,8 +82,9 @@ Errors are JSON and normally include:
 }
 ```
 
-Validation errors can also include an `issues` array. Not every early
-authentication or validation response includes a request ID.
+Validation errors can also include an `issues` array. Every `401` carries a
+`requestId` and a `WWW-Authenticate: Bearer` challenge; some validation
+responses emitted before the request id is published do not.
 
 Common status codes:
 

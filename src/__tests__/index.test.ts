@@ -165,7 +165,13 @@ describe("API Documentation Routes", () => {
 					string,
 					{
 						security?: Record<string, unknown>[];
-						responses: Record<string, { content?: Record<string, { schema?: { $ref?: string } }> }>;
+						responses: Record<
+							string,
+							{
+								content?: Record<string, { schema?: { $ref?: string } }>;
+								headers?: Record<string, unknown>;
+							}
+						>;
 					}
 				>
 			>;
@@ -188,6 +194,10 @@ describe("API Documentation Routes", () => {
 			expect(unauthorized?.content?.["application/json"]?.schema?.$ref, `${id} 401 schema`).toBe(
 				"#/components/schemas/ErrorResponse",
 			);
+			// RFC 9110 §11.6.1 requires the challenge on a 401. It is part of the
+			// contract the moment the status is, and a caller reading the document
+			// to build a credential helper has no other way to learn the scheme.
+			expect(Object.keys(unauthorized?.headers ?? {}), `${id} 401 headers`).toContain("WWW-Authenticate");
 		}
 	});
 
