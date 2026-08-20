@@ -24,8 +24,8 @@ func rawCommit(header []string, message string) []byte {
 
 // signatureHeaderLines renders an armored signature the way git writes it into
 // a commit header: the first armor line on the header itself, every later line
-// indented by one space. key is the header name, which git spells gpgsig in a
-// sha1 repository and gpgsig-sha256 in a sha256 one.
+// indented by one space. key is the header name: gpgsig for sha1, gpgsig-sha256
+// for sha256, and both on the same commit in hash-algorithm compatibility mode.
 func signatureHeaderLines(key string) []string {
 	return []string{
 		key + " -----BEGIN PGP SIGNATURE-----",
@@ -202,22 +202,40 @@ func TestUnsignedObjectRemapsEveryMergeParent(t *testing.T) {
 	}
 }
 
+// Every signature spelling has to go, and a payload git will not reproduce is
+// worse than a missed one: git strips gpgsig and gpgsig-sha256 both before it
+// checks a signature, so leaving either behind signs bytes that verify nowhere.
+// A commit carries both headers in hash-algorithm compatibility mode, which
+// git rev-parse --show-object-format still reports as sha1.
 func TestUnsignedObjectDropsSignatureAndContinuations(t *testing.T) {
-	raw := rawCommit(append(
-		[]string{"tree " + treeSHA, testAuthor},
-		signatureHeaderLines("gpgsig")...,
-	), "message\n")
+	tests := []struct {
+		name    string
+		headers []string
+	}{
+		{"sha1", signatureHeaderLines("gpgsig")},
+		{"sha256", signatureHeaderLines("gpgsig-sha256")},
+		{"both", append(signatureHeaderLines("gpgsig"), signatureHeaderLines("gpgsig-sha256")...)},
+	}
 
-	stripped, err := unsignedObject(raw, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	got := string(stripped)
-	if strings.Contains(got, "gpgsig") || strings.Contains(got, "AAAA") {
-		t.Errorf("expected the signature and its continuations to be gone, got:\n%q", got)
-	}
-	if got != "tree "+treeSHA+"\n"+testAuthor+"\n\nmessage\n" {
-		t.Errorf("unexpected object:\n%q", got)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw := rawCommit(append(
+				[]string{"tree " + treeSHA, testAuthor},
+				test.headers...,
+			), "message\n")
+
+			stripped, err := unsignedObject(raw, nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			got := string(stripped)
+			if strings.Contains(got, "gpgsig") || strings.Contains(got, "AAAA") {
+				t.Errorf("expected the signature and its continuations to be gone, got:\n%q", got)
+			}
+			if got != "tree "+treeSHA+"\n"+testAuthor+"\n\nmessage\n" {
+				t.Errorf("unexpected object:\n%q", got)
+			}
+		})
 	}
 }
 
