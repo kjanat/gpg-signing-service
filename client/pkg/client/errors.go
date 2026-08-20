@@ -11,7 +11,17 @@ import (
 )
 
 // Error codes returned by the service in the `code` field of an error response.
+//
+// AuthError.Code carries one of the two AUTH_ values on every 401 the document
+// declares, and the pair is the whole reason the code is surfaced rather than
+// the prose: AUTH_MISSING means no usable credential was presented and retrying
+// with the same configuration cannot help, while AUTH_INVALID means one was
+// presented and refused — a rotated admin token, an unlisted issuer, a subject
+// holding no trusted row. Exported so callers branch on these rather than on
+// string literals the service is free to reword.
 const (
+	ErrCodeAuthMissing    = "AUTH_MISSING"
+	ErrCodeAuthInvalid    = "AUTH_INVALID"
 	ErrCodeDegraded       = "SERVICE_DEGRADED"
 	ErrCodeKeyNotFound    = "KEY_NOT_FOUND"
 	ErrCodeKeyNotAllowed  = "KEY_NOT_ALLOWED"
