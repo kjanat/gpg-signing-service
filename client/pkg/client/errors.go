@@ -130,6 +130,24 @@ func IsServiceError(err error) bool {
 	return errors.As(err, &se) && se.StatusCode >= 500
 }
 
+// headerRequestID is the response header the service echoes its request id on.
+const headerRequestID = "X-Request-ID"
+
+// requestIDFrom returns the id the caller should quote when asking what
+// happened, preferring the envelope's field and falling back to the header.
+//
+// Both carry the same value: requestIdMiddleware derives one id per request,
+// hands it to the handlers and echoes it on the way out. The fallback is not
+// redundancy for its own sake — it covers a service older than the release that
+// started putting the id in error bodies, and every response body this client
+// cannot parse into a typed envelope at all.
+func requestIDFrom(envelope string, header http.Header) string {
+	if envelope != "" {
+		return envelope
+	}
+	return header.Get(headerRequestID)
+}
+
 // newAuthErrorFromResponse turns the service's 401 envelope into an AuthError.
 //
 // The document declares a 401 on every operation that requires a credential, so
@@ -137,24 +155,33 @@ func IsServiceError(err error) bool {
 // document does not cover (an unauthenticated endpoint behind a proxy that
 // challenges, say).
 //
-// A body that decodes but carries no message — `{}`, or `null` — says nothing
-// the status code did not, and an `AuthError` built from it prints as a bare
-// "authentication failed: ". parseAPIErrorBody rejects that same body on the
-// fallback path, so this returns the same sentinel rather than letting the two
-// paths disagree about what a usable envelope is.
-func newAuthErrorFromResponse(body *api.ErrorResponse) error {
-	if body == nil || body.Error == "" {
+// Two bodies decode but are not usable envelopes, and both fall back to the
+// sentinel rather than becoming a threadbare AuthError:
+//
+//   - No message — `{}`, or `null`. It says nothing the status code did not,
+//     and an AuthError built from it prints as a bare "authentication failed:".
+//   - No code. ErrorResponse declares `code` required, and the whole reason
+//     this client reads the field is that callers are told to branch on it
+//     instead of on prose the service may reword. An AuthError with an empty
+//     Code cannot be branched on, so it is not one.
+//
+// parseAPIErrorBody applies the same two rules on the fallback path. Neither
+// this service nor the document can produce such a body; an intermediary can,
+// and the two paths must not disagree about what a usable envelope is.
+func newAuthErrorFromResponse(body *api.ErrorResponse, header http.Header) error {
+	if body == nil || body.Error == "" || body.Code == "" {
 		return newUnexpectedStatusError(http.StatusUnauthorized)
 	}
 
-	authErr := &AuthError{
-		Code:    string(body.Code),
-		Message: body.Error,
-	}
+	envelopeID := ""
 	if body.RequestId != nil {
-		authErr.RequestID = body.RequestId.String()
+		envelopeID = body.RequestId.String()
 	}
-	return authErr
+	return &AuthError{
+		Code:      string(body.Code),
+		Message:   body.Error,
+		RequestID: requestIDFrom(envelopeID, header),
+	}
 }
 
 func newUnexpectedStatusError(code int) error {
@@ -184,17 +211,19 @@ type apiErrorBody struct {
 // 502, a gateway's 401 challenge — so the envelope is parsed by hand. Falls
 // back to the bare sentinel when the body is not a usable error envelope, which
 // keeps text responses and empty bodies behaving as before.
-func newStatusError(statusCode int, body []byte) error {
+func newStatusError(statusCode int, body []byte, header http.Header) error {
 	parsed, ok := parseAPIErrorBody(body)
 	if !ok {
 		return newUnexpectedStatusError(statusCode)
 	}
 
+	requestID := requestIDFrom(parsed.RequestID, header)
+
 	if statusCode == http.StatusUnauthorized {
 		return &AuthError{
 			Code:      parsed.Code,
 			Message:   parsed.Error,
-			RequestID: parsed.RequestID,
+			RequestID: requestID,
 		}
 	}
 
@@ -202,19 +231,21 @@ func newStatusError(statusCode int, body []byte) error {
 		Code:       parsed.Code,
 		Message:    parsed.Error,
 		StatusCode: statusCode,
-		RequestID:  parsed.RequestID,
+		RequestID:  requestID,
 	}
 }
 
-// parseAPIErrorBody reports whether body is an error envelope carrying a
-// message. A body without `error` says nothing the status code did not, so it
-// is treated as unparseable rather than surfaced as an empty message.
+// parseAPIErrorBody reports whether body is an error envelope a caller can act
+// on: a message to show and a code to branch on. A body missing either says
+// nothing the status code did not, so it is treated as unparseable rather than
+// surfaced as an error with empty fields — the same two rules
+// newAuthErrorFromResponse applies on the typed path.
 func parseAPIErrorBody(body []byte) (apiErrorBody, bool) {
 	var parsed apiErrorBody
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return apiErrorBody{}, false
 	}
-	if parsed.Error == "" {
+	if parsed.Error == "" || parsed.Code == "" {
 		return apiErrorBody{}, false
 	}
 	return parsed, true

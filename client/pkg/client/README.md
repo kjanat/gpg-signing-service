@@ -189,8 +189,18 @@ typed response; anything the document does not describe is read from the error
 envelope directly. A `401` on `Sign` therefore reads
 `authentication failed: AUTH_INVALID: Subject is not trusted for signing`
 rather than a bare status number — that particular message means the credential
-verified but no trusted subject covers it. Only a response with no usable error
-body falls back to `ErrUnexpectedStatus`.
+verified but no trusted subject covers it.
+
+`RequestID` is the id to quote when asking what happened: it is the key of the
+`audit_logs` row the refused request wrote. It is taken from the body's
+`requestId`, or from the `X-Request-ID` response header when the body has none.
+
+`ErrUnexpectedStatus` is what remains: a response whose body is not a usable
+error envelope. That means no `error` message, no `code` to branch on, or a
+body that will not decode at all — an HTML challenge page from a proxy
+labelled `application/json`, say. Such a body is detected before the generated
+parser reaches it, so it reports as `unexpected status code: 401` rather than
+as a JSON decoding error with no status in it.
 
 #### Helper Functions
 

@@ -592,7 +592,7 @@ func TestAdminMethodsSurfaceUnauthorized(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
 				_ = json.NewEncoder(w).Encode(map[string]string{
-					fieldError:     "Invalid admin token",
+					fieldError:     testMsgBadAdmin,
 					fieldCode:      testCodeAuthInvalid,
 					fieldRequestID: testRequestID,
 				})
@@ -609,7 +609,7 @@ func TestAdminMethodsSurfaceUnauthorized(t *testing.T) {
 			if errors.Is(err, ErrUnexpectedStatus) {
 				t.Error("a 401 carrying an error body must not report as an unexpected status")
 			}
-			if authErr.Message != "Invalid admin token" {
+			if authErr.Message != testMsgBadAdmin {
 				t.Errorf("server message was discarded: %q", authErr.Message)
 			}
 			if authErr.Code != testCodeAuthInvalid {
