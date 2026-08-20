@@ -307,7 +307,7 @@ func TestRunRejectsNegativeScanLimit(t *testing.T) {
 	dir, svc := serviceFixture(t)
 
 	_, _, err := runEngine(t, dir, svc.api, Options{ScanLimit: -1})
-	if err == nil || !strings.Contains(err.Error(), "positive integer") {
+	if err == nil || !strings.Contains(err.Error(), "must not be negative") {
 		t.Fatalf("expected a validation error, got %v", err)
 	}
 }

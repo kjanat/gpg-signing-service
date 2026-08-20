@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"strconv"
 	"time"
 
 	"github.com/kjanat/gpg-signing-service/client/pkg/client"
@@ -90,11 +89,11 @@ type Options struct {
 // already carry a signature.
 type ResignError struct {
 	// Stale is how many commits the run would have rewritten in total.
-	Stale int
+	Stale int `json:"stale"`
 	// Resign lists the already-signed commits among them.
-	Resign []string
+	Resign []string `json:"commits"`
 	// Report is the per-commit explanation, one line each.
-	Report []string
+	Report []string `json:"report"`
 }
 
 func (e *ResignError) Error() string {
@@ -112,7 +111,7 @@ func (e *ResignError) Error() string {
 // means a force push, and that decision belongs to the operator.
 func Run(ctx context.Context, signer Signer, opts Options) (*Result, error) {
 	if opts.ScanLimit < 0 {
-		return nil, fmt.Errorf("scan-limit must be a positive integer, got %d", opts.ScanLimit)
+		return nil, fmt.Errorf("scan-limit must not be negative (0 means unbounded), got %d", opts.ScanLimit)
 	}
 	if opts.DefaultBranch == "" {
 		opts.DefaultBranch = defaultBranchFallback
@@ -197,13 +196,13 @@ func (s *session) run(ctx context.Context) error {
 	s.result.Head = head
 	s.result.Tip = head
 
-	base, err := s.resolveBase(ctx)
+	base, err := s.resolveBase(ctx, head)
 	if err != nil {
 		return err
 	}
 	s.result.Base = base
 
-	commits, err := s.repo.revList(ctx, base)
+	commits, err := s.repo.revList(ctx, base, head)
 	if err != nil {
 		return err
 	}
@@ -236,11 +235,11 @@ func short(sha string) string {
 }
 
 // resolveBase decides the exclusive lower bound of the range.
-func (s *session) resolveBase(ctx context.Context) (string, error) {
+func (s *session) resolveBase(ctx context.Context, head string) (string, error) {
 	branch := s.result.Branch
 
 	if s.opts.Base == "" && branch == s.opts.DefaultBranch {
-		return s.lastSigned(ctx)
+		return s.lastSigned(ctx, head)
 	}
 
 	if s.opts.ScanLimit > 0 {
@@ -260,35 +259,33 @@ func (s *session) resolveBase(ctx context.Context) (string, error) {
 	return s.repo.mergeBase(ctx, "origin/"+s.opts.DefaultBranch)
 }
 
-// lastSigned walks back from HEAD for the newest commit this key already
+// lastSigned walks back from head for the newest commit this key already
 // verifies, which is where the branch was last left in a good state.
-func (s *session) lastSigned(ctx context.Context) (string, error) {
-	args := []string{"rev-list"}
-	if s.opts.ScanLimit > 0 {
-		args = append(args, "--max-count="+strconv.Itoa(s.opts.ScanLimit))
-	}
-	args = append(args, detachedHead)
-
-	revisions, err := s.repo.git(ctx, args...)
-	if err != nil {
-		return "", err
-	}
-	objects, err := s.repo.catFileBatch(ctx, revisions)
-	if err != nil {
-		return "", err
-	}
-
-	for _, object := range objects {
+//
+// The walk is streamed and abandoned at the first hit: with no scan limit it
+// covers all of reachable history, and the answer is usually in the first
+// record.
+func (s *session) lastSigned(ctx context.Context, head string) (string, error) {
+	found := ""
+	err := s.repo.scanCommits(ctx, head, s.opts.ScanLimit, func(object batchObject) (bool, error) {
 		signed, err := isSigned(object.raw)
 		if err != nil {
-			return "", err
+			return false, err
 		}
 		if !signed {
-			continue
+			return false, nil
 		}
 		if good, _ := s.key.verify(object.raw); good {
-			return object.sha, nil
+			found = object.sha
+			return true, nil
 		}
+		return false, nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if found != "" {
+		return found, nil
 	}
 
 	scope := detachedHead

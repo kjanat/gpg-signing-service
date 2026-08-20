@@ -1,10 +1,12 @@
 package gitsign
 
 import (
-	"bytes"
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os/exec"
 	"strconv"
 	"strings"
 )
@@ -21,6 +23,12 @@ type repo struct {
 // git runs a git subcommand and returns its stdout.
 func (r *repo) git(ctx context.Context, args ...string) ([]byte, error) {
 	return run(ctx, command{program: gitProgram, args: args, dir: r.dir})
+}
+
+// cmd builds an unstarted git subprocess, for the streaming scan that cannot
+// use the buffered helpers.
+func (r *repo) cmd(ctx context.Context, args ...string) *exec.Cmd {
+	return newCmd(ctx, command{program: gitProgram, args: args, dir: r.dir})
 }
 
 // gitStdin runs a git subcommand with the given bytes on stdin.
@@ -66,9 +74,11 @@ func (r *repo) mergeBase(ctx context.Context, ref string) (string, error) {
 	return r.gitLine(ctx, "merge-base", detachedHead, ref)
 }
 
-// revList returns the commits in base..HEAD, parents before children.
-func (r *repo) revList(ctx context.Context, base string) ([]string, error) {
-	out, err := r.git(ctx, "rev-list", "--reverse", "--topo-order", base+".."+detachedHead)
+// revList returns the commits in base..head, parents before children. The
+// upper bound is the commit the run captured rather than HEAD, so the range
+// and the ref the update is guarded against are provably the same object.
+func (r *repo) revList(ctx context.Context, base, head string) ([]string, error) {
+	out, err := r.git(ctx, "rev-list", "--reverse", "--topo-order", base+".."+head)
 	if err != nil {
 		return nil, err
 	}
@@ -109,37 +119,115 @@ type batchObject struct {
 	raw []byte
 }
 
-// catFileBatch streams the given revisions through a single git process. The
-// scan for the last signed commit can walk an entire branch, and one
-// subprocess per commit would dominate its runtime.
-func (r *repo) catFileBatch(ctx context.Context, revisions []byte) ([]batchObject, error) {
-	out, err := r.gitStdin(ctx, revisions, "cat-file", "--batch")
+// scanCommits streams "rev-list <head> | cat-file --batch" and hands each
+// commit to visit, newest first. visit returning true stops the scan.
+//
+// The two processes are piped into each other and the records are parsed as
+// they arrive, because the unbounded scan for the last signed commit walks all
+// of reachable history: buffering it would cost hundreds of megabytes to answer
+// a question the first record usually settles. One batch process rather than one
+// per commit is what keeps the walk itself cheap.
+func (r *repo) scanCommits(ctx context.Context, head string, limit int, visit func(batchObject) (bool, error)) error {
+	// Stopping early leaves both processes mid-stream; cancelling is what
+	// reaps them, and it also makes their exit status meaningless from there
+	// on, which is why a satisfied scan ignores it.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	args := []string{"rev-list"}
+	if limit > 0 {
+		args = append(args, "--max-count="+strconv.Itoa(limit))
+	}
+	args = append(args, head)
+
+	revisions := r.cmd(ctx, args...)
+	batch := r.cmd(ctx, "cat-file", "--batch")
+
+	feed, err := revisions.StdoutPipe()
 	if err != nil {
-		return nil, err
+		return err
+	}
+	batch.Stdin = feed
+
+	objects, err := batch.StdoutPipe()
+	if err != nil {
+		return err
 	}
 
-	var objects []batchObject
-	for offset := 0; offset < len(out); {
-		end := bytes.IndexByte(out[offset:], '\n')
-		if end < 0 {
-			return nil, errors.New("git cat-file --batch: truncated record header")
+	var revStderr, batchStderr strings.Builder
+	revisions.Stderr = &revStderr
+	batch.Stderr = &batchStderr
+
+	if err := batch.Start(); err != nil {
+		return &CommandError{Program: gitProgram, Args: batch.Args[1:], Err: err}
+	}
+	if err := revisions.Start(); err != nil {
+		cancel()
+		_ = batch.Wait()
+		return &CommandError{Program: gitProgram, Args: args, Err: err}
+	}
+
+	stopped, scanErr := readBatch(objects, visit)
+	if stopped || scanErr != nil {
+		cancel()
+		_ = batch.Wait()
+		_ = revisions.Wait()
+		return scanErr
+	}
+
+	if err := batch.Wait(); err != nil {
+		return &CommandError{Program: gitProgram, Args: batch.Args[1:], Stderr: strings.TrimSpace(batchStderr.String()), Err: err}
+	}
+	if err := revisions.Wait(); err != nil {
+		return &CommandError{Program: gitProgram, Args: args, Stderr: strings.TrimSpace(revStderr.String()), Err: err}
+	}
+	return nil
+}
+
+// readBatch parses "git cat-file --batch" output record by record. It reports
+// whether visit asked to stop.
+func readBatch(source io.Reader, visit func(batchObject) (bool, error)) (bool, error) {
+	reader := bufio.NewReader(source)
+	for {
+		header, err := reader.ReadString('\n')
+		if err != nil {
+			if errors.Is(err, io.EOF) && strings.TrimSpace(header) == "" {
+				return false, nil
+			}
+			if !errors.Is(err, io.EOF) {
+				return false, err
+			}
 		}
-		fields := strings.Fields(string(out[offset : offset+end]))
+
+		fields := strings.Fields(header)
+		// git answers an unresolvable name with "<name> missing", which is a
+		// missing object rather than a parser disagreement.
+		if len(fields) == 2 && fields[1] == "missing" {
+			return false, fmt.Errorf("git cat-file --batch: %s is not in the object store", fields[0])
+		}
 		if len(fields) != 3 {
-			return nil, fmt.Errorf("git cat-file --batch: unexpected header %q", out[offset:offset+end])
+			return false, fmt.Errorf("git cat-file --batch: unexpected header %q", strings.TrimSuffix(header, "\n"))
 		}
 		size, err := strconv.Atoi(fields[2])
 		if err != nil {
-			return nil, fmt.Errorf("git cat-file --batch: unreadable size %q: %w", fields[2], err)
+			return false, fmt.Errorf("git cat-file --batch: unreadable size %q: %w", fields[2], err)
 		}
 
-		offset += end + 1
-		if offset+size > len(out) {
-			return nil, errors.New("git cat-file --batch: truncated object body")
+		raw := make([]byte, size)
+		if _, err := io.ReadFull(reader, raw); err != nil {
+			return false, fmt.Errorf("git cat-file --batch: truncated object body for %s: %w", fields[0], err)
 		}
-		objects = append(objects, batchObject{sha: fields[0], raw: out[offset : offset+size]})
 		// One trailing newline git adds after each body.
-		offset += size + 1
+		if _, err := reader.Discard(1); err != nil && !errors.Is(err, io.EOF) {
+			return false, err
+		}
+
+		stop, err := visit(batchObject{sha: fields[0], raw: raw})
+		if err != nil {
+			return false, err
+		}
+		if stop {
+			return true, nil
+		}
 	}
-	return objects, nil
 }

@@ -72,9 +72,10 @@ func withoutRepoEnv(environ []string) []string {
 	return kept
 }
 
-// capture runs the command and returns stdout and stderr regardless of exit
-// status. Callers that only care about success should use run instead.
-func capture(ctx context.Context, c command) (stdout, stderr []byte, err error) {
+// newCmd builds a subprocess with this package's repository selection applied.
+// Every invocation goes through here so that a named working tree wins over the
+// ambient environment in exactly one place.
+func newCmd(ctx context.Context, c command) *exec.Cmd {
 	// #nosec G204 -- the program is a fixed literal and the arguments are
 	// built from constant git verbs plus revisions this package read back out
 	// of the repository itself.
@@ -86,6 +87,13 @@ func capture(ctx context.Context, c command) (stdout, stderr []byte, err error) 
 	if c.stdin != nil {
 		cmd.Stdin = bytes.NewReader(c.stdin)
 	}
+	return cmd
+}
+
+// capture runs the command and returns stdout and stderr regardless of exit
+// status. Callers that only care about success should use run instead.
+func capture(ctx context.Context, c command) (stdout, stderr []byte, err error) {
+	cmd := newCmd(ctx, c)
 
 	var out, errOut bytes.Buffer
 	cmd.Stdout = &out
