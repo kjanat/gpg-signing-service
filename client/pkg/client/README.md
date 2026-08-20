@@ -187,13 +187,20 @@ when the body carries them. The OpenAPI document declares a `401` on every
 operation that takes a credential, so the code and message are decoded from the
 typed response; anything the document does not describe is read from the error
 envelope directly. A `401` on `Sign` therefore reads
-`authentication failed: AUTH_INVALID: Subject is not trusted for signing`
+
+```text
+authentication failed: AUTH_INVALID: Subject is not trusted for signing (request 0e2a8f3c-6b41-4d7e-9a55-1c8d0f6b2e77)
+```
+
 rather than a bare status number — that particular message means the credential
 verified but no trusted subject covers it.
 
-`RequestID` is the id to quote when asking what happened: it is the key of the
-`audit_logs` row the refused request wrote. It is taken from the body's
-`requestId`, or from the `X-Request-ID` response header when the body has none.
+`RequestID` is the id in the parenthesis, and the id to quote when asking what
+happened: it is the key of the `audit_logs` row the refused request wrote. It is
+taken from the body's `requestId`, or from the `X-Request-ID` response header
+when the body has none. Every `401` this service emits carries it, so the
+parenthesis is part of the message in practice; `AuthError.Error()` omits it
+only for a locally constructed error or a peer that published neither.
 
 `ErrUnexpectedStatus` is what remains: a response whose body is not a usable
 error envelope. That means no `error` message, no `code` to branch on, or a

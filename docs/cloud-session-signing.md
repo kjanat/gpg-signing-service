@@ -146,13 +146,18 @@ live service —
 ```console
 $ git commit -m "test"
 error: gpg failed to sign the data:
-Error: signing failed: authentication failed: AUTH_INVALID: Invalid service token
+Error: signing failed: authentication failed: AUTH_INVALID: Invalid service token (request 0e2a8f3c-6b41-4d7e-9a55-1c8d0f6b2e77)
 fatal: failed to write commit object
 ```
 
 The service's own `code` and message come through — `AUTH_INVALID` with
 `Subject is not trusted for signing` is the OIDC equivalent, and means the
 credential was accepted but its subject holds no trusted row.
+
+The trailing id is this request's, echoed in `X-Request-ID` and stored as
+`audit_logs.request_id` — quote it when asking an operator what the service
+recorded. `GET /admin/audit` returns the field on every entry but does not filter
+on it, so finding the row means paging the log and matching the id.
 
 — and no commit object is written, so a failed signature can never masquerade as
 an unsigned commit that slipped through.
