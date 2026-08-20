@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // workset holds the per-commit facts the rewrite decisions are made from.
@@ -82,6 +83,46 @@ func (s *session) classify(ctx context.Context, commits []string) (*workset, err
 	}
 
 	return w, nil
+}
+
+// refuseUnsignable stops a run whose payload the signing service cannot sign
+// byte-for-byte.
+//
+// The service reads the request body as text: routes/sign.ts calls
+// c.req.text(), which is a UTF-8 decode with U+FFFD replacement, and hands the
+// resulting string to openpgp.createMessage({text}), which re-encodes it. Any
+// byte that is not valid UTF-8 therefore comes back signed as U+FFFD, so the
+// signature covers different bytes than the commit does. git records a commit
+// message verbatim and labels its charset with an "encoding" header, so a
+// repository with i18n.commitEncoding set to a legacy charset — or an author
+// name written in one — produces exactly that.
+//
+// verifyWritten already catches the result, but only after the walk has paid
+// for a signature per commit and written objects it then abandons, and it
+// reports "the signature does not match the commit", which points at the
+// rewrite rather than at the encoding. Refusing up front costs nothing and
+// names the cause.
+func (s *session) refuseUnsignable(w *workset, commits []string) error {
+	var offenders []string
+	for _, commit := range commits {
+		// Only commits this run would send to the service matter; a reparented
+		// or stripped commit is rebuilt locally and never signed.
+		if !w.stale[commit] || !w.ours[commit] {
+			continue
+		}
+		if !utf8.Valid(w.raw[commit]) {
+			offenders = append(offenders, short(commit))
+		}
+	}
+	if len(offenders) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf("%d commit(s) hold bytes that are not valid UTF-8 (%s); the signing service "+
+		"reads the payload as text, so it would sign a replacement character in their place and the "+
+		"signature would not match the commit — re-encode them (git filter-branch --msg-filter, or "+
+		"git rebase with the identities corrected) before signing",
+		len(offenders), strings.Join(offenders, ", "))
 }
 
 // guard refuses a run that would rewrite commits already carrying a signature,

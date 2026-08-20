@@ -246,6 +246,11 @@ gpg-sign --json admin audit \
   rewritten. The embedded tag is signed by its own tagger, so it cannot be
   repointed; the run warns, and `git log --show-signature` on that merge then
   describes a merged tag matching none of its parents.
+- `sign-commit` refuses a commit whose object bytes are not valid UTF-8. The
+  service reads the payload as text, so a message or identity written in a
+  legacy charset — what git's `encoding` header records — would be signed with
+  a replacement character in place of those bytes and the signature would not
+  match the commit. Re-encode such commits before signing.
 - `sign-commit` refuses to move `HEAD` if the branch changed while it was
   signing. The rewritten objects are left unreferenced and the branch is
   untouched; re-run once the branch is settled.

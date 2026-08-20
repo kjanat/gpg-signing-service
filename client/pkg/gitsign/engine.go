@@ -220,6 +220,9 @@ func (s *session) run(ctx context.Context) error {
 		s.reportNothingStale(work, base)
 		return nil
 	}
+	if err := s.refuseUnsignable(work, commits); err != nil {
+		return err
+	}
 	if err := s.guard(work, commits); err != nil {
 		return err
 	}

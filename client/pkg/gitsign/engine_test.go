@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/kjanat/gpg-signing-service/client/pkg/client"
 )
@@ -475,4 +476,54 @@ func TestWithoutRepoEnvKeepsEverythingElse(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("expected %v, got %v", want, got)
 	}
+}
+
+// TestRunRefusesACommitTheServiceCannotSignByteForByte covers the payload the
+// service would mangle. routes/sign.ts reads the body with c.req.text(), a
+// UTF-8 decode with replacement, so a commit holding legacy-charset bytes —
+// which git stores verbatim and labels with an "encoding" header — comes back
+// signed over U+FFFD. The old behaviour spent a signing call per commit and
+// wrote objects before verifyWritten noticed, and then blamed the rewrite.
+func TestRunRefusesACommitTheServiceCannotSignByteForByte(t *testing.T) {
+	dir, f := serviceFixture(t)
+	base := head(t, dir)
+
+	git(t, dir, nil, "config", "i18n.commitEncoding", "ISO-8859-1")
+	git(t, dir, identity(serviceEmail), "commit", "--allow-empty", "-m", "caf\xe9 na\xefve")
+
+	raw := gitRaw(t, dir, nil, "cat-file", "commit", "HEAD")
+	if utf8.Valid(raw) {
+		t.Fatalf("fixture is valid UTF-8, so it exercises nothing")
+	}
+
+	_, _, err := runEngine(t, dir, f.api, Options{Base: base})
+	if err == nil {
+		t.Fatal("expected the run to refuse a commit the service cannot sign byte-for-byte")
+	}
+	if !strings.Contains(err.Error(), "not valid UTF-8") {
+		t.Fatalf("the refusal does not name the cause: %v", err)
+	}
+	if got := head(t, dir); got != git(t, dir, nil, "rev-parse", "HEAD") {
+		t.Fatal("HEAD moved")
+	}
+}
+
+// A commit the run would only reparent is rebuilt locally and never sent to the
+// service, so its bytes are not the service's problem.
+func TestRunSignsAroundANonUTF8CommitItNeverSends(t *testing.T) {
+	dir, f := serviceFixture(t)
+	base := head(t, dir)
+
+	git(t, dir, nil, "config", "i18n.commitEncoding", "ISO-8859-1")
+	git(t, dir, identity(foreignEmail), "commit", "--allow-empty", "-m", "caf\xe9")
+	commit(t, dir, "mine", serviceEmail)
+
+	result, out, err := runEngine(t, dir, f.api, Options{Base: base})
+	if err != nil {
+		t.Fatalf("unexpected refusal: %v\n%s", err, out)
+	}
+	if !result.RefUpdated {
+		t.Fatalf("HEAD was not moved\n%s", out)
+	}
+	assertVerifies(t, dir, f, result.Tip)
 }
