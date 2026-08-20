@@ -22,6 +22,19 @@ func rawCommit(header []string, message string) []byte {
 	return []byte(strings.Join(header, "\n") + "\n\n" + message)
 }
 
+// signatureHeaderLines renders an armored signature the way git writes it into
+// a commit header: the first armor line on the header itself, every later line
+// indented by one space. key is the header name, which git spells gpgsig in a
+// sha1 repository and gpgsig-sha256 in a sha256 one.
+func signatureHeaderLines(key string) []string {
+	return []string{
+		key + " -----BEGIN PGP SIGNATURE-----",
+		" ",
+		" AAAA",
+		" -----END PGP SIGNATURE-----",
+	}
+}
+
 // mergeTagHeaderLines renders an embedded tag object the way git writes it into
 // a merge commit header: "mergetag object <sha>" on the header line itself,
 // every later line of the tag indented by one space. object names the parent
@@ -81,14 +94,10 @@ func TestParentsOf(t *testing.T) {
 
 func TestIsSigned(t *testing.T) {
 	unsigned := rawCommit([]string{"tree " + treeSHA, testAuthor}, "message\n")
-	signed := rawCommit([]string{
-		"tree " + treeSHA,
-		testAuthor,
-		"gpgsig -----BEGIN PGP SIGNATURE-----",
-		" ",
-		" AAAA",
-		" -----END PGP SIGNATURE-----",
-	}, "message\n")
+	signed := rawCommit(append(
+		[]string{"tree " + treeSHA, testAuthor},
+		signatureHeaderLines("gpgsig")...,
+	), "message\n")
 
 	if got, err := isSigned(unsigned); err != nil || got {
 		t.Errorf("expected unsigned commit to report false, got %v (err %v)", got, err)
@@ -100,14 +109,10 @@ func TestIsSigned(t *testing.T) {
 	// go-git v6 decodes gpgsig and gpgsig-sha256 into separate fields. A
 	// commit carrying only the sha256 spelling is still signed, and treating
 	// it as unsigned would sign over a signature already there.
-	sha256Signed := rawCommit([]string{
-		"tree " + treeSHA,
-		testAuthor,
-		"gpgsig-sha256 -----BEGIN PGP SIGNATURE-----",
-		" ",
-		" AAAA",
-		" -----END PGP SIGNATURE-----",
-	}, "message\n")
+	sha256Signed := rawCommit(append(
+		[]string{"tree " + treeSHA, testAuthor},
+		signatureHeaderLines("gpgsig-sha256")...,
+	), "message\n")
 	if got, err := isSigned(sha256Signed); err != nil || !got {
 		t.Errorf("expected a gpgsig-sha256 commit to report true, got %v (err %v)", got, err)
 	}
@@ -198,14 +203,10 @@ func TestUnsignedObjectRemapsEveryMergeParent(t *testing.T) {
 }
 
 func TestUnsignedObjectDropsSignatureAndContinuations(t *testing.T) {
-	raw := rawCommit([]string{
-		"tree " + treeSHA,
-		testAuthor,
-		"gpgsig -----BEGIN PGP SIGNATURE-----",
-		" ",
-		" AAAA",
-		" -----END PGP SIGNATURE-----",
-	}, "message\n")
+	raw := rawCommit(append(
+		[]string{"tree " + treeSHA, testAuthor},
+		signatureHeaderLines("gpgsig")...,
+	), "message\n")
 
 	stripped, err := unsignedObject(raw, nil)
 	if err != nil {
