@@ -6,8 +6,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
 // headerSeparator is the blank line between a commit's headers and its
@@ -65,12 +65,38 @@ func parentsOf(raw []byte) ([]string, error) {
 // isSigned reports whether the commit already carries a signature header. It
 // says nothing about whether that signature verifies, or even whether it is
 // PGP: git writes an SSH signature into the same header.
+//
+// Both spellings count. go-git v6 splits gpgsig and gpgsig-sha256 into two
+// fields where v5 folded them into one, and a commit carrying only the sha256
+// header is still a signed commit.
 func isSigned(raw []byte) (bool, error) {
 	commit, err := decodeCommit(raw)
 	if err != nil {
 		return false, err
 	}
-	return commit.PGPSignature != "", nil
+	return commit.Signature != "" || commit.SignatureSHA256 != "", nil
+}
+
+// mergeTagHeader is the header a merge commit carries the merged tag object
+// in. go-git v6 models it as an ordinary extra header rather than a field of
+// its own.
+const mergeTagHeader = "mergetag"
+
+// mergeTags returns the body of every merged tag object the commit embeds,
+// each one beginning with its own "object <sha>" line.
+//
+// An octopus merge of several signed tags writes one mergetag header per tag.
+// v5 concatenated their bodies into a single Commit.MergeTag string, where the
+// second tag's "object" line was indistinguishable from a line of the first
+// tag's message; v6 keeps them apart, so they are returned apart.
+func mergeTags(commit *object.Commit) []string {
+	var tags []string
+	for _, header := range commit.ExtraHeaders {
+		if header.Key == mergeTagHeader {
+			tags = append(tags, header.Value)
+		}
+	}
+	return tags
 }
 
 // committerEmail returns the lowercased address from the committer header, or
@@ -92,10 +118,16 @@ func committerEmail(raw []byte) (string, error) {
 // only reproduces the source bytes while the decoded fields still match the
 // object it came from; any mutation sends it down the struct encoder, which
 // canonicalizes author and committer lines that git itself accepts unchanged.
-// An ident with no space before the date is the sharp case: go-git reads
-// "<a@x>1700000000" as 700000000, so a re-encode would move the commit from
-// November 2023 to March 1992. Moving the parent lines by hand keeps every
+// An ident with no space before the date is the sharp case: released go-git
+// reads "<a@x>1700000000" as 700000000, so a re-encode would move the commit
+// from November 2023 to March 1992. Moving the parent lines by hand keeps every
 // other byte exactly as git wrote it.
+//
+// go-git/go-git#2328 makes the struct encoder faithful for every shape this
+// package's tests cover, and go.mod pins it. The byte path stays anyway: a
+// replace directive applies only to the main module, so anything importing
+// this package as a library builds against released go-git, where the struct
+// encoder is still lossy.
 func unsignedObject(raw []byte, parents []string) ([]byte, error) {
 	commit, err := decodeCommit(raw)
 	if err != nil {

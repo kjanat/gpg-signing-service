@@ -135,10 +135,10 @@ func Run(ctx context.Context, signer Signer, opts Options) (*Result, error) {
 
 	// git names the signature header after the repository's hash algorithm:
 	// gpgsig for sha1, gpgsig-sha256 for sha256. This package writes the sha1
-	// spelling only, and go-git's object decoder is compiled for 20-byte
-	// hashes, so a sha256 repository's tree and parent lines do not survive a
-	// round trip either. Refuse while the cause is still visible rather than
-	// failing somewhere downstream of a written object.
+	// spelling only, and go-git decodes a standalone object as sha1, so a
+	// sha256 repository's tree and parent lines do not even parse. Refuse while
+	// the cause is still visible rather than failing somewhere downstream of a
+	// written object.
 	format, err := s.repo.objectFormat(ctx)
 	if err != nil {
 		return nil, err

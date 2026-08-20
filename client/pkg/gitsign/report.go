@@ -79,16 +79,24 @@ func (s *session) reportDropped() {
 // damage that is not there.
 func (s *session) reportStaleMergetag(raw []byte, commit string, moved map[string]bool) {
 	merge, err := decodeCommit(raw)
-	if err != nil || merge.MergeTag == "" {
+	if err != nil {
+		return
+	}
+	tags := mergeTags(merge)
+	if len(tags) == 0 {
 		return
 	}
 
-	// An octopus merge of several signed tags concatenates their bodies into
-	// the one field, so every moved parent is checked against it rather than
-	// only the first "object" line.
+	// An octopus merge embeds one tag per merged tag object, so every moved
+	// parent is checked against every embedded tag rather than the first one
+	// alone. Only the leading line of a tag body is its "object" line; a match
+	// anywhere else in the body would be the tag message quoting a SHA, which
+	// this run did not rewrite.
 	var stale []string
 	for parent := range moved {
-		if strings.Contains(merge.MergeTag, "object "+parent) {
+		if slices.ContainsFunc(tags, func(tag string) bool {
+			return strings.HasPrefix(tag, "object "+parent)
+		}) {
 			stale = append(stale, short(parent))
 		}
 	}

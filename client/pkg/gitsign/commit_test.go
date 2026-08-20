@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
 const (
@@ -20,6 +20,22 @@ const (
 // rawCommit builds a commit object out of header lines and a message.
 func rawCommit(header []string, message string) []byte {
 	return []byte(strings.Join(header, "\n") + "\n\n" + message)
+}
+
+// mergeTagHeaderLines renders an embedded tag object the way git writes it into
+// a merge commit header: "mergetag object <sha>" on the header line itself,
+// every later line of the tag indented by one space. object names the parent
+// the tag points at, and tag its name, so a merge carrying several of them
+// stays distinguishable.
+func mergeTagHeaderLines(object, tag string) []string {
+	return []string{
+		"mergetag object " + object,
+		" type commit",
+		" tag " + tag,
+		" tagger T <t@example.test> 1700000000 +0000",
+		" ",
+		" tag message",
+	}
 }
 
 func TestParentsOf(t *testing.T) {
@@ -79,6 +95,21 @@ func TestIsSigned(t *testing.T) {
 	}
 	if got, err := isSigned(signed); err != nil || !got {
 		t.Errorf("expected signed commit to report true, got %v (err %v)", got, err)
+	}
+
+	// go-git v6 decodes gpgsig and gpgsig-sha256 into separate fields. A
+	// commit carrying only the sha256 spelling is still signed, and treating
+	// it as unsigned would sign over a signature already there.
+	sha256Signed := rawCommit([]string{
+		"tree " + treeSHA,
+		testAuthor,
+		"gpgsig-sha256 -----BEGIN PGP SIGNATURE-----",
+		" ",
+		" AAAA",
+		" -----END PGP SIGNATURE-----",
+	}, "message\n")
+	if got, err := isSigned(sha256Signed); err != nil || !got {
+		t.Errorf("expected a gpgsig-sha256 commit to report true, got %v (err %v)", got, err)
 	}
 }
 
@@ -295,12 +326,10 @@ func TestUnsignedObjectPreservesEveryOtherByte(t *testing.T) {
 		},
 		{
 			name: "mergetag with continuations",
-			header: []string{
+			header: append([]string{
 				"tree " + treeSHA, "parent " + parentOne, "parent " + parentTwo, testAuthor,
 				strings.Replace(testAuthor, "author", "committer", 1),
-				"mergetag object " + parentTwo, " type commit", " tag v1",
-				" tagger T <t@example.test> 1700000000 +0000", " ", " tag message",
-			},
+			}, mergeTagHeaderLines(parentTwo, "v1")...),
 		},
 	}
 

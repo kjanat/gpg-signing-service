@@ -8,7 +8,7 @@ import (
 
 	"github.com/ProtonMail/go-crypto/openpgp"
 	pgperrors "github.com/ProtonMail/go-crypto/openpgp/errors"
-	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
 // The explanations verify hands back. They are named so the tests assert on
@@ -85,7 +85,7 @@ func (k *signingKey) verify(raw []byte) (bool, string) {
 	if err != nil {
 		return false, err.Error()
 	}
-	if commit.PGPSignature == "" {
+	if commit.Signature == "" {
 		return false, reasonUnsigned
 	}
 	if _, err := commit.Verify(k.armored); err != nil {

@@ -10,19 +10,19 @@ const commitSHA = "3333333333333333333333333333333333333333"
 
 // mergeWithTag is a merge commit whose mergetag names its second parent.
 func mergeWithTag() []byte {
-	return rawCommit([]string{
+	return rawCommit(append(mergeHeader(), mergeTagHeaderLines(parentTwo, "v1")...), "merge\n")
+}
+
+// mergeHeader is the part of a merge commit's header that comes before any
+// mergetag: the tree, both parents, and the idents.
+func mergeHeader() []string {
+	return []string{
 		"tree " + treeSHA,
 		"parent " + parentOne,
 		"parent " + parentTwo,
 		testAuthor,
 		strings.Replace(testAuthor, "author", "committer", 1),
-		"mergetag object " + parentTwo,
-		" type commit",
-		" tag v1",
-		" tagger T <t@example.test> 1700000000 +0000",
-		" ",
-		" tag message",
-	}, "merge\n")
+	}
 }
 
 // A mergetag embeds a signed tag object naming the commit it merged. When that
@@ -55,6 +55,30 @@ func TestReportStaleMergetagIgnoresAnUntaggedParent(t *testing.T) {
 	if len(s.result.Warnings) != 0 || out.String() != "" {
 		t.Errorf("the tagged parent did not move, so the mergetag is still accurate; got %v and %q",
 			s.result.Warnings, out.String())
+	}
+}
+
+// octopusWithTags is a merge of two signed tags, each embedded under its own
+// mergetag header the way git writes an octopus merge.
+func octopusWithTags() []byte {
+	header := append(mergeHeader(), mergeTagHeaderLines(parentOne, "v1")...)
+	return rawCommit(append(header, mergeTagHeaderLines(parentTwo, "v2")...), "octopus\n")
+}
+
+// go-git v6 gives every mergetag header its own ExtraHeader entry, where v5
+// folded them into a single field. Checking only the first tag would leave an
+// octopus merge's later tags unreported, so each embedded tag is consulted.
+func TestReportStaleMergetagCoversEveryEmbeddedTag(t *testing.T) {
+	var out strings.Builder
+	s := &session{opts: Options{Out: &out}, result: &Result{}}
+
+	s.reportStaleMergetag(octopusWithTags(), commitSHA, map[string]bool{parentTwo: true})
+
+	if len(s.result.Warnings) != 1 {
+		t.Fatalf("expected one warning, got %v", s.result.Warnings)
+	}
+	if !strings.Contains(out.String(), "mergetag naming "+short(parentTwo)) {
+		t.Errorf("expected the second embedded tag to be reported, got %q", out.String())
 	}
 }
 
