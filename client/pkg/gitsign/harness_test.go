@@ -124,6 +124,15 @@ func readAll(r *http.Request) ([]byte, error) {
 	return buf.Bytes(), err
 }
 
+// gitSucceeds reports whether a git command works in the fixture, for the
+// optional repository features not every git build carries.
+func gitSucceeds(dir string, args ...string) bool {
+	// #nosec G204 -- test fixture; the arguments come from this file's callers.
+	cmd := exec.Command(gitProgram, args...)
+	cmd.Dir = dir
+	return cmd.Run() == nil
+}
+
 // git runs a git command in the test repository.
 func git(t *testing.T, dir string, env []string, args ...string) string {
 	t.Helper()
@@ -161,16 +170,34 @@ func gitRaw(t *testing.T, dir string, stdin []byte, args ...string) []byte {
 	return stdout.Bytes()
 }
 
-// initRepo creates an empty repository on master with one root commit.
+// initRepo creates an empty sha1 repository on master with one root commit.
 func initRepo(t *testing.T) string {
+	t.Helper()
+	return initRepoFormat(t, formatSHA1)
+}
+
+// initRepoFormat is initRepo for a chosen hash algorithm, so the sha256 path
+// runs against a repository git built rather than a hand-written object.
+func initRepoFormat(t *testing.T, format objectFormat) string {
 	t.Helper()
 
 	dir := t.TempDir()
-	git(t, dir, nil, "init", "--initial-branch=master")
+	git(t, dir, nil, "init", "--initial-branch=master", "--object-format="+string(format))
 	// Ambient config must not decide whether the fixtures are signed.
 	git(t, dir, nil, "config", "commit.gpgsign", "false")
 	commit(t, dir, "root", serviceEmail)
 	return dir
+}
+
+// repoFormat asks git for the fixture's hash algorithm the same way a run does.
+func repoFormat(t *testing.T, dir string) objectFormat {
+	t.Helper()
+
+	format, err := parseObjectFormat(git(t, dir, nil, "rev-parse", "--show-object-format"))
+	if err != nil {
+		t.Fatalf("could not read the fixture's object format: %v", err)
+	}
+	return format
 }
 
 // identity returns the environment that pins a commit's author and committer.
@@ -210,7 +237,7 @@ func commitSignedBy(t *testing.T, dir, message, email string, entity *openpgp.En
 		t.Fatalf("could not rebuild the fixture commit: %v", err)
 	}
 
-	signed := withSignature(payload, []byte(strings.Trim(detachSign(t, entity, payload), "\n")))
+	signed := withSignature(payload, []byte(strings.Trim(detachSign(t, entity, payload), "\n")), repoFormat(t, dir))
 	newSHA := gitRaw(t, dir, signed, "hash-object", "-t", "commit", "-w", "--stdin")
 	git(t, dir, nil, "update-ref", "HEAD", strings.TrimSpace(string(newSHA)), sha)
 }
@@ -269,7 +296,7 @@ func assertVerifies(t *testing.T, dir string, f *fixture, sha string) {
 	if err != nil {
 		t.Fatalf("could not read the service key: %v", err)
 	}
-	if good, detail := key.verify(gitRaw(t, dir, nil, "cat-file", "commit", sha)); !good {
+	if good, detail := key.verify(gitRaw(t, dir, nil, "cat-file", "commit", sha), repoFormat(t, dir)); !good {
 		t.Errorf("%s does not verify against the service key: %s", short(sha), detail)
 	}
 }

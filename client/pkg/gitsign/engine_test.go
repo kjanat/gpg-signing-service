@@ -361,32 +361,79 @@ func TestRunResolvesBaseFromTheMergeBase(t *testing.T) {
 	assertVerifies(t, dir, svc, result.Tip)
 }
 
-// git names the signature header after the repository's hash algorithm. Left
-// alone, a sha256 repository fails at the post-signing verification with an
-// empty detail, long after the cause is visible.
-func TestRunRefusesASHA256Repository(t *testing.T) {
+// git names the signature header after the repository's hash algorithm, and a
+// sha256 repository is signed under gpgsig-sha256 rather than refused. The
+// whole path runs on 64-hex objects here: decode, move a parent, embed a
+// signature, read it back.
+func TestRunSignsASHA256Repository(t *testing.T) {
+	requireGit(t)
+
+	entity := newEntity(t, serviceName, serviceEmail)
+	svc := &fixture{entity: entity, api: newService(t, entity)}
+
+	dir := initRepoFormat(t, formatSHA256)
+	base := head(t, dir)
+	commit(t, dir, "first", serviceEmail)
+	// A second commit makes the run move a parent, which is the step that has
+	// to carry a 64-hex SHA rather than assume a 40-hex one.
+	commit(t, dir, "second", serviceEmail)
+
+	result, out, err := runEngine(t, dir, svc.api, Options{Base: base})
+	if err != nil {
+		t.Fatalf("unexpected error: %v\n%s", err, out)
+	}
+	if result.Signed != 2 || result.Scanned != 2 {
+		t.Fatalf("expected 2 of 2 signed, got %d of %d", result.Signed, result.Scanned)
+	}
+	if len(result.Tip) != sha256HexLength {
+		t.Errorf("expected a sha256 tip, got %q", result.Tip)
+	}
+
+	raw := string(gitRaw(t, dir, nil, "cat-file", "commit", result.Tip))
+	if !strings.Contains(raw, "\n"+sha256SignatureHeader+" ") {
+		t.Errorf("expected the %s header, got:\n%s", sha256SignatureHeader, raw)
+	}
+	// The sha1 spelling is the one git would ignore here, so writing it would
+	// leave a commit that reads as unsigned.
+	if strings.Contains(raw, "\n"+sha1SignatureHeader+" ") {
+		t.Errorf("expected no %s header in a sha256 repository, got:\n%s", sha1SignatureHeader, raw)
+	}
+	assertVerifies(t, dir, svc, result.Tip)
+}
+
+// In hash-algorithm compatibility mode git signs each commit once per format,
+// and a rewrite can only put back the signature it asked the service for. The
+// run continues — the header it writes is the one git checks here — but the
+// operator is told a signature went missing rather than finding out later.
+func TestRunWarnsInHashCompatibilityMode(t *testing.T) {
 	requireGit(t)
 
 	entity := newEntity(t, serviceName, serviceEmail)
 	svc := &fixture{entity: entity, api: newService(t, entity)}
 
 	dir := t.TempDir()
-	git(t, dir, nil, "init", "--initial-branch=master", "--object-format=sha256")
+	git(t, dir, nil, "init", "--initial-branch=master")
+	git(t, dir, nil, "config", "core.repositoryformatversion", "1")
+	git(t, dir, nil, "config", "extensions.compatObjectFormat", "sha256")
+	if !gitSucceeds(dir, "rev-parse", "--show-object-format") {
+		t.Skip("this git build does not support extensions.compatObjectFormat")
+	}
 	git(t, dir, nil, "config", "commit.gpgsign", "false")
 	commit(t, dir, "root", serviceEmail)
 	base := head(t, dir)
 	commit(t, dir, "first", serviceEmail)
 
-	_, _, err := runEngine(t, dir, svc.api, Options{Base: base})
-	if err == nil {
-		t.Fatal("expected a sha256 repository to be refused")
+	result, out, err := runEngine(t, dir, svc.api, Options{Base: base})
+	if err != nil {
+		t.Fatalf("unexpected error: %v\n%s", err, out)
 	}
-	if !strings.Contains(err.Error(), "sha256") || !strings.Contains(err.Error(), "gpgsig-sha256") {
-		t.Errorf("expected the error to name the object format and the header it needs, got: %v", err)
+	if result.Signed != 1 {
+		t.Fatalf("expected the run to sign the commit anyway, got %d signed", result.Signed)
 	}
-	if got := head(t, dir); got == "" {
-		t.Error("expected HEAD to be untouched")
+	if !strings.Contains(strings.Join(result.Warnings, "\n"), "extensions.compatObjectFormat") {
+		t.Errorf("expected a warning naming the compat mode, got %v", result.Warnings)
 	}
+	assertVerifies(t, dir, svc, result.Tip)
 }
 
 // movingSigner commits to the branch the first time it is asked for a

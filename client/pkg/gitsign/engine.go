@@ -17,10 +17,6 @@ const pgpArmorMarker = "-----BEGIN PGP SIGNATURE-----"
 // defaultBranchFallback is used when the caller names no default branch.
 const defaultBranchFallback = "master"
 
-// sha1ObjectFormat is the only hash algorithm whose gpgsig header spelling this
-// package produces.
-const sha1ObjectFormat = "sha1"
-
 // Signer is the slice of the signing-service SDK this package needs.
 // *client.Client satisfies it.
 type Signer interface {
@@ -134,18 +130,19 @@ func Run(ctx context.Context, signer Signer, opts Options) (*Result, error) {
 	s.result.Branch = branch
 
 	// git names the signature header after the repository's hash algorithm:
-	// gpgsig for sha1, gpgsig-sha256 for sha256. This package writes the sha1
-	// spelling only, and go-git decodes a standalone object as sha1, so a
-	// sha256 repository's tree and parent lines do not even parse. Refuse while
-	// the cause is still visible rather than failing somewhere downstream of a
-	// written object.
-	format, err := s.repo.objectFormat(ctx)
+	// gpgsig for sha1, gpgsig-sha256 for sha256. The run reads and writes the
+	// spelling this repository uses, so the format has to be settled before
+	// anything is signed or verified.
+	name, err := s.repo.objectFormat(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if format != sha1ObjectFormat {
-		return nil, fmt.Errorf("this repository uses the %s object format, whose signature header is "+
-			"gpgsig-%s; sign-commit writes the sha1 gpgsig header only", format, format)
+	s.format, err = parseObjectFormat(name)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.reportCompatObjectFormat(ctx); err != nil {
+		return nil, err
 	}
 
 	armored, err := signer.PublicKey(ctx, opts.KeyID)
@@ -173,6 +170,7 @@ type session struct {
 	signer     Signer
 	opts       Options
 	key        *signingKey
+	format     objectFormat
 	identities map[string]bool
 	result     *Result
 }
@@ -278,7 +276,7 @@ func (s *session) lastSigned(ctx context.Context, head string) (string, error) {
 		if !signed {
 			return false, nil
 		}
-		if good, _ := s.key.verify(object.raw); good {
+		if good, _ := s.key.verify(object.raw, s.format); good {
 			found = object.sha
 			return true, nil
 		}

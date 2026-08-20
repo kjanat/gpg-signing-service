@@ -56,7 +56,7 @@ func (s *session) classify(ctx context.Context, commits []string) (*workset, err
 		w.signed[commit] = signed
 
 		if w.ours[commit] && signed {
-			good, detail := s.key.verify(raw)
+			good, detail := s.key.verify(raw, s.format)
 			w.verified[commit] = good
 			w.detail[commit] = detail
 			w.checked[commit] = true
@@ -262,7 +262,7 @@ func (s *session) rebuild(ctx context.Context, w *workset, commit string, rewrit
 	if err != nil {
 		return nil, "", err
 	}
-	return withSignature(payload, signature), MarkSigned, nil
+	return withSignature(payload, signature, s.format), MarkSigned, nil
 }
 
 // requestSignature asks the service to sign the rebuilt commit bytes.
@@ -285,5 +285,5 @@ func (s *session) verifyWritten(ctx context.Context, sha string) (bool, string) 
 	if err != nil {
 		return false, err.Error()
 	}
-	return s.key.verify(raw)
+	return s.key.verify(raw, s.format)
 }

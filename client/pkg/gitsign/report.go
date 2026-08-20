@@ -1,6 +1,7 @@
 package gitsign
 
 import (
+	"context"
 	"slices"
 	"strings"
 )
@@ -108,4 +109,32 @@ func (s *session) reportStaleMergetag(raw []byte, commit string, moved map[strin
 	s.warn("the merge %s carries a mergetag naming %s, which this run rewrote; the embedded tag is "+
 		"signed by its tagger, so it cannot be repointed at the rewritten parent and now matches no parent.",
 		short(commit), strings.Join(stale, ", "))
+}
+
+// reportCompatObjectFormat warns that a rewrite in hash-algorithm
+// compatibility mode comes out with one signature where git wrote two.
+//
+// A compat repository stores its objects under one hash algorithm and mirrors
+// them under the other, and git signs such a commit twice: once over the
+// stored object, once over its mirror. This run rebuilds the stored object and
+// asks the service to sign that, so only one header can be put back. Nothing
+// is left inconsistent — the rewrite strips both spellings, so the signature
+// that remains covers exactly the bytes git reconstructs — but a commit that
+// carried two attestations comes out carrying one, and that is the operator's
+// call to make rather than this run's to make quietly.
+func (s *session) reportCompatObjectFormat(ctx context.Context) error {
+	compat, err := s.repo.compatObjectFormat(ctx)
+	if err != nil {
+		return err
+	}
+	if compat == "" {
+		return nil
+	}
+
+	s.warn("this repository stores %s objects and mirrors them under %s (extensions.compatObjectFormat), "+
+		"so git signs each commit once per format. A rewritten commit gets a fresh %s signature and loses "+
+		"the %s one: recreating that means signing the mirrored object this run never builds. git checks "+
+		"the %s signature here, so nothing reads as unsigned.",
+		s.format, compat, s.format, compat, s.format)
+	return nil
 }

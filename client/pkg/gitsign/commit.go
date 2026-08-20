@@ -14,6 +14,61 @@ import (
 // message.
 var headerSeparator = []byte("\n\n")
 
+// The two spellings git stores a commit signature under, one per object
+// format. Which one a repository uses is not a preference: git strips and
+// verifies the spelling that matches its own hash algorithm and ignores the
+// other, so writing the wrong one produces a commit git reports as unsigned.
+const (
+	sha1SignatureHeader   = "gpgsig"
+	sha256SignatureHeader = "gpgsig-sha256"
+)
+
+// objectFormat is a repository's hash algorithm, as "git rev-parse
+// --show-object-format" reports it.
+//
+// It decides the signature header spelling and nothing else here. Every other
+// difference between the formats is a hex digest length, and the paths that
+// move parents and embed signatures work on bytes they never measure.
+type objectFormat string
+
+const (
+	formatSHA1   objectFormat = "sha1"
+	formatSHA256 objectFormat = "sha256"
+)
+
+// parseObjectFormat maps what git reported onto the formats this package can
+// sign. An unrecognized one is refused rather than guessed at: a format git
+// grows later spells its header some other way, and defaulting to gpgsig would
+// write a signature that repository reads as absent.
+func parseObjectFormat(name string) (objectFormat, error) {
+	switch format := objectFormat(name); format {
+	case formatSHA1, formatSHA256:
+		return format, nil
+	default:
+		return "", fmt.Errorf("this repository uses the %q object format; sign-commit knows the signature "+
+			"header spelling for %s and %s only", name, formatSHA1, formatSHA256)
+	}
+}
+
+// signatureHeader is the header git stores a signature under in this format.
+func (f objectFormat) signatureHeader() string {
+	if f == formatSHA256 {
+		return sha256SignatureHeader
+	}
+	return sha1SignatureHeader
+}
+
+// signatureOf returns the armored block git checks a commit in this format
+// against. The other spelling is not a fallback: in hash-algorithm
+// compatibility mode a commit carries both, over different payloads, and the
+// one that does not match the repository's format would never verify here.
+func (f objectFormat) signatureOf(commit *object.Commit) string {
+	if f == formatSHA256 {
+		return commit.SignatureSHA256
+	}
+	return commit.Signature
+}
+
 // decodeCommit parses a raw commit object.
 //
 // go-git's decoder is used rather than a hand-rolled one because it already
@@ -66,9 +121,9 @@ func parentsOf(raw []byte) ([]string, error) {
 // says nothing about whether that signature verifies, or even whether it is
 // PGP: git writes an SSH signature into the same header.
 //
-// Both spellings count. go-git v6 splits gpgsig and gpgsig-sha256 into two
-// fields where v5 folded them into one, and a commit carrying only the sha256
-// header is still a signed commit.
+// Both spellings count, and the repository's own format is deliberately not
+// consulted: the question here is whether an attestation is present at all,
+// and rewriting a commit destroys one written under either header.
 func isSigned(raw []byte) (bool, error) {
 	commit, err := decodeCommit(raw)
 	if err != nil {
@@ -124,10 +179,12 @@ func committerEmail(raw []byte) (string, error) {
 // other byte exactly as git wrote it.
 //
 // go-git/go-git#2328 makes the struct encoder faithful for every shape this
-// package's tests cover, and go.mod pins it. The byte path stays anyway: a
-// replace directive applies only to the main module, so anything importing
-// this package as a library builds against released go-git, where the struct
-// encoder is still lossy.
+// package's tests cover, and go.mod pins it;
+// TestPinnedStructEncoderKeepsAnIdentVerbatim drives that encoder directly, so
+// the pin cannot fall out of the build without a red test. The byte path stays
+// anyway: a replace directive applies only to the main module, so anything
+// importing this package as a library builds against released go-git, where
+// the struct encoder is still lossy.
 func unsignedObject(raw []byte, parents []string) ([]byte, error) {
 	commit, err := decodeCommit(raw)
 	if err != nil {
@@ -189,21 +246,23 @@ func replaceParents(payload []byte, parents []string) []byte {
 }
 
 // withSignature appends the armored signature to the payload's headers in
-// git's multi-line header form: the first armor line on the gpgsig header
-// itself, every later line indented by one space.
+// git's multi-line header form: the first armor line on the signature header
+// itself, every later line indented by one space. The header is named after
+// the repository's object format, because that is the spelling git will strip
+// before it checks the signature.
 //
 // This is a byte-level append rather than a re-encode on purpose. The service
 // signed exactly these payload bytes, so stripping the header again has to
 // return exactly these payload bytes; round-tripping through the commit struct
 // would risk normalizing something the signature covers.
-func withSignature(payload, signature []byte) []byte {
+func withSignature(payload, signature []byte, format objectFormat) []byte {
 	armor := bytes.Split(bytes.Trim(signature, "\n"), []byte("\n"))
 	head, message, _ := bytes.Cut(payload, headerSeparator)
 
 	lines := bytes.Split(head, []byte("\n"))
 	out := make([][]byte, 0, len(lines)+len(armor))
 	out = append(out, lines...)
-	out = append(out, append([]byte("gpgsig "), armor[0]...))
+	out = append(out, append([]byte(format.signatureHeader()+" "), armor[0]...))
 	for _, line := range armor[1:] {
 		out = append(out, append([]byte(" "), line...))
 	}

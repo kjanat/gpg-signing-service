@@ -108,9 +108,21 @@ func (r *repo) updateRef(ctx context.Context, sha, old string) error {
 	return err
 }
 
-// objectFormat returns the repository's hash algorithm, "sha1" or "sha256".
+// objectFormat returns the repository's hash algorithm as git names it,
+// "sha1" or "sha256".
 func (r *repo) objectFormat(ctx context.Context) (string, error) {
 	return r.gitLine(ctx, "rev-parse", "--show-object-format")
+}
+
+// compatObjectFormat returns the second hash algorithm the repository mirrors
+// its objects under, or the empty string when it mirrors none.
+//
+// A repository in hash-algorithm compatibility mode stores objects under one
+// format and keeps a mapping to the other, and git signs a commit under both
+// headers. --default keeps an unset key from exiting non-zero, so "no compat
+// format" and "git failed" stay distinguishable.
+func (r *repo) compatObjectFormat(ctx context.Context) (string, error) {
+	return r.gitLine(ctx, "config", "--get", "--default", "", "extensions.compatObjectFormat")
 }
 
 // batchObject is one record from "git cat-file --batch".

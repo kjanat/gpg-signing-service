@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
@@ -15,6 +16,9 @@ const (
 	newParent  = "9999999999999999999999999999999999999999"
 	testArmor  = "-----BEGIN PGP SIGNATURE-----\n\nAAAA\nBBBB\n-----END PGP SIGNATURE-----"
 	testAuthor = "author A U Thor <author@example.test> 1700000000 +0000"
+	// sha256HexLength is how long a sha256 object name prints, which is how the
+	// engine tests tell the two formats apart without re-asking git.
+	sha256HexLength = 64
 )
 
 // rawCommit builds a commit object out of header lines and a message.
@@ -106,15 +110,50 @@ func TestIsSigned(t *testing.T) {
 		t.Errorf("expected signed commit to report true, got %v (err %v)", got, err)
 	}
 
-	// go-git v6 decodes gpgsig and gpgsig-sha256 into separate fields. A
-	// commit carrying only the sha256 spelling is still signed, and treating
-	// it as unsigned would sign over a signature already there.
+	// go-git v6 decodes gpgsig and gpgsig-sha256 into separate fields, and v5
+	// discarded the sha256 spelling outright. A commit carrying only that
+	// header is still signed, and treating it as unsigned would sign over an
+	// attestation already there.
 	sha256Signed := rawCommit(append(
 		[]string{"tree " + treeSHA, testAuthor},
 		signatureHeaderLines("gpgsig-sha256")...,
 	), "message\n")
 	if got, err := isSigned(sha256Signed); err != nil || !got {
 		t.Errorf("expected a gpgsig-sha256 commit to report true, got %v (err %v)", got, err)
+	}
+}
+
+// A format this package does not know spells its signature header some other
+// way, so guessing gpgsig would write a signature that repository reads as
+// absent. Refusing keeps the cause visible instead.
+func TestParseObjectFormat(t *testing.T) {
+	tests := []struct {
+		name    string
+		want    objectFormat
+		refused bool
+	}{
+		{name: "sha1", want: formatSHA1},
+		{name: "sha256", want: formatSHA256},
+		{name: "sha3", refused: true},
+		{name: "", refused: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseObjectFormat(tt.name)
+			if tt.refused {
+				if err == nil {
+					t.Fatalf("expected %q to be refused, got %q", tt.name, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("expected %q, got %q", tt.want, got)
+			}
+		})
 	}
 }
 
@@ -254,19 +293,36 @@ func TestUnsignedObjectKeepsMultiParagraphMessage(t *testing.T) {
 	}
 }
 
+// The header is named after the repository's hash algorithm, and git checks
+// that spelling alone: the sha1 header in a sha256 repository is a signature
+// git never looks at, so the commit reads as unsigned.
 func TestWithSignatureIndentsContinuations(t *testing.T) {
 	payload := rawCommit([]string{"tree " + treeSHA, testAuthor}, "message\n")
 
-	got := string(withSignature(payload, []byte(testArmor)))
-	want := "tree " + treeSHA + "\n" + testAuthor +
-		"\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n AAAA\n BBBB\n -----END PGP SIGNATURE-----\n\nmessage\n"
-	if got != want {
-		t.Errorf("expected:\n%q\ngot:\n%q", want, got)
+	tests := []struct {
+		format objectFormat
+		header string
+	}{
+		{format: formatSHA1, header: sha1SignatureHeader},
+		{format: formatSHA256, header: sha256SignatureHeader},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.format), func(t *testing.T) {
+			got := string(withSignature(payload, []byte(testArmor), tt.format))
+			want := "tree " + treeSHA + "\n" + testAuthor + "\n" + tt.header +
+				" -----BEGIN PGP SIGNATURE-----\n \n AAAA\n BBBB\n -----END PGP SIGNATURE-----\n\nmessage\n"
+			if got != want {
+				t.Errorf("expected:\n%q\ngot:\n%q", want, got)
+			}
+		})
 	}
 }
 
 // Embedding a signature and stripping it again must be a round trip, or the
-// bytes the service signed are not the bytes git will verify.
+// bytes the service signed are not the bytes git will verify. Both spellings
+// have to round-trip: the strip is spelling-blind on purpose, since git also
+// removes both before it checks either.
 func TestWithSignatureRoundTrips(t *testing.T) {
 	payload := rawCommit([]string{
 		"tree " + treeSHA,
@@ -274,12 +330,56 @@ func TestWithSignatureRoundTrips(t *testing.T) {
 		testAuthor,
 	}, "message\n")
 
-	stripped, err := unsignedObject(withSignature(payload, []byte(testArmor)), []string{parentOne})
+	for _, format := range []objectFormat{formatSHA1, formatSHA256} {
+		t.Run(string(format), func(t *testing.T) {
+			stripped, err := unsignedObject(withSignature(payload, []byte(testArmor), format), []string{parentOne})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if string(stripped) != string(payload) {
+				t.Errorf("expected:\n%q\ngot:\n%q", payload, stripped)
+			}
+		})
+	}
+}
+
+// The pin in go.mod is the subject here, not this package's own paths. Parents
+// are moved at the byte level precisely so a rewrite never reaches go-git's
+// struct encoder, which means nothing else in this suite would notice the
+// replace directive falling out of the build — and released go-git reads
+// "<author@example.test>1700000000" as the year 1992, then writes that back.
+// Mutating ParentHashes is what forces the struct path here.
+func TestPinnedStructEncoderKeepsAnIdentVerbatim(t *testing.T) {
+	ident := "A U Thor <author@example.test>1700000000 +0000"
+	raw := rawCommit([]string{
+		"tree " + treeSHA,
+		"parent " + parentOne,
+		"author " + ident,
+		"committer " + ident,
+	}, "subject\n")
+
+	commit, err := decodeCommit(raw)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if string(stripped) != string(payload) {
-		t.Errorf("expected:\n%q\ngot:\n%q", payload, stripped)
+	moved, ok := plumbing.FromHex(newParent)
+	if !ok {
+		t.Fatalf("could not read the replacement parent %s", newParent)
+	}
+	commit.ParentHashes = []plumbing.Hash{moved}
+
+	encoded, err := encodeObject(commit.EncodeWithoutSignature)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := string(encoded)
+	if !strings.Contains(got, "parent "+newParent) {
+		t.Fatalf("expected the moved parent, got:\n%q", got)
+	}
+	if !strings.Contains(got, "author "+ident) || !strings.Contains(got, "committer "+ident) {
+		t.Errorf("go-git's struct encoder rewrote the ident, which means go.mod's replace directive is "+
+			"not in this build:\n%q", got)
 	}
 }
 

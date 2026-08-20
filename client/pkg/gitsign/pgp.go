@@ -1,6 +1,7 @@
 package gitsign
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"strings"
@@ -8,13 +9,13 @@ import (
 
 	"github.com/ProtonMail/go-crypto/openpgp"
 	pgperrors "github.com/ProtonMail/go-crypto/openpgp/errors"
-	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
 // The explanations verify hands back. They are named so the tests assert on
 // the same strings the operator reads.
 const (
 	reasonUnsigned     = "the commit carries no signature"
+	reasonWrongHeader  = "the only signature is under the header for the other object format"
 	reasonRevokedKey   = "the signing key was revoked"
 	reasonExpiredKey   = "the signing key has expired"
 	reasonExpiredSig   = "the signature has expired"
@@ -29,8 +30,6 @@ const (
 // the question is not "does some key the operator trusts cover this commit",
 // it is "does *this service's* key cover it".
 type signingKey struct {
-	// armored is kept because go-git's Commit.Verify takes the armored form.
-	armored  string
 	entities openpgp.EntityList
 }
 
@@ -43,7 +42,7 @@ func newSigningKey(armored string) (*signingKey, error) {
 	if len(entities) == 0 {
 		return nil, errors.New("the signing key carries no OpenPGP key")
 	}
-	return &signingKey{armored: armored, entities: entities}, nil
+	return &signingKey{entities: entities}, nil
 }
 
 // identities returns the lowercased e-mail addresses the key still claims. A
@@ -79,19 +78,75 @@ func (k *signingKey) identities(now time.Time) (map[string]bool, error) {
 }
 
 // verify reports whether the raw commit object carries a signature this key
-// accepts, alongside an explanation when it does not.
-func (k *signingKey) verify(raw []byte) (bool, string) {
+// accepts, alongside an explanation when it does not. format selects the
+// header spelling, which is the one git itself would check.
+//
+// The check is done here rather than through go-git's Commit.Verify for two
+// reasons. Verify reads the gpgsig field alone, so it cannot see a sha256
+// repository's signature at all; and it re-parses the armored keyring on every
+// call, while the scan for the last signed commit calls this once per commit
+// over all of reachable history.
+func (k *signingKey) verify(raw []byte, format objectFormat) (bool, string) {
 	commit, err := decodeCommit(raw)
 	if err != nil {
 		return false, err.Error()
 	}
-	if commit.Signature == "" {
+	signature := format.signatureOf(commit)
+	if signature == "" {
+		// A signature under the other spelling is not a fallback, but it is a
+		// different story from an unsigned commit, and the two have different
+		// remedies: an unsigned tip is what --sign-others fixes, while this is
+		// a signature written for a repository this one is not.
+		if commit.Signature != "" || commit.SignatureSHA256 != "" {
+			return false, reasonWrongHeader
+		}
 		return false, reasonUnsigned
 	}
-	if _, err := commit.Verify(k.armored); err != nil {
+	// git stops at the first status line of a second signature rather than
+	// picking a winner, so a commit with more than one block has no single
+	// signer to report and is refused here too.
+	if signatureBlocks(signature) > 1 {
+		return false, reasonMultipleSigs
+	}
+
+	// The payload is the object with every signature header stripped, which is
+	// what the service signed and what git reconstructs before verifying.
+	payload, err := encodeObject(commit.EncodeWithoutSignature)
+	if err != nil {
+		return false, err.Error()
+	}
+	if _, err := openpgp.CheckArmoredDetachedSignature(
+		k.entities, bytes.NewReader(payload), strings.NewReader(signature), nil,
+	); err != nil {
 		return false, verifyReason(err)
 	}
 	return true, ""
+}
+
+// signatureBeginnings are the armor lines git reads as the start of a
+// signature. Only the OpenPGP ones are blocks this package can verify, but all
+// four are counted: a commit carrying a PGP block and an SSH block is one git
+// refuses, and reading it as singly signed here would leave a signature git
+// does not honor in place.
+var signatureBeginnings = []string{
+	"-----BEGIN PGP SIGNATURE-----",
+	"-----BEGIN PGP MESSAGE-----",
+	"-----BEGIN SIGNED MESSAGE-----",
+	"-----BEGIN SSH SIGNATURE-----",
+}
+
+// signatureBlocks counts the armored blocks a signature header carries.
+func signatureBlocks(signature string) int {
+	blocks := 0
+	for line := range strings.SplitSeq(signature, "\n") {
+		for _, beginning := range signatureBeginnings {
+			if strings.HasPrefix(line, beginning) {
+				blocks++
+				break
+			}
+		}
+	}
+	return blocks
 }
 
 // verifyReason turns a verification failure into an explanation an operator
@@ -109,8 +164,6 @@ func verifyReason(err error) string {
 		return reasonExpiredSig
 	case errors.Is(err, pgperrors.ErrUnknownIssuer):
 		return reasonUnknownKey
-	case errors.Is(err, object.ErrMultipleSignatures):
-		return reasonMultipleSigs
 	}
 
 	// A wrong signature over the right key is reported as a typed

@@ -9,7 +9,6 @@ import (
 	"github.com/ProtonMail/go-crypto/openpgp"
 	pgperrors "github.com/ProtonMail/go-crypto/openpgp/errors"
 	"github.com/ProtonMail/go-crypto/openpgp/packet"
-	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
 // now is the instant the identity tests are evaluated at. Every fixture below
@@ -19,7 +18,7 @@ var now = time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
 // testKey wraps a freshly generated entity as the engine would see it.
 func testKey(t *testing.T, entity *openpgp.Entity) *signingKey {
 	t.Helper()
-	return &signingKey{armored: exportKey(t, entity), entities: openpgp.EntityList{entity}}
+	return &signingKey{entities: openpgp.EntityList{entity}}
 }
 
 // backdatedEntity generates a key stamped a day before now, so the identity
@@ -101,7 +100,7 @@ func TestVerifyReportsAnUnsignedCommit(t *testing.T) {
 	key := testKey(t, newEntity(t, serviceName, serviceEmail))
 	raw := rawCommit([]string{"tree " + treeSHA, testAuthor}, "message\n")
 
-	good, detail := key.verify(raw)
+	good, detail := key.verify(raw, formatSHA1)
 	if good || detail != reasonUnsigned {
 		t.Errorf("expected an unsigned commit to be reported as such, got %v %q", good, detail)
 	}
@@ -114,9 +113,9 @@ func TestVerifyRejectsAForeignSignature(t *testing.T) {
 	foreign := newEntity(t, foreignName, foreignEmail)
 
 	payload := rawCommit([]string{"tree " + treeSHA, testAuthor}, "message\n")
-	signed := withSignature(payload, []byte(strings.Trim(detachSign(t, foreign, payload), "\n")))
+	signed := withSignature(payload, []byte(strings.Trim(detachSign(t, foreign, payload), "\n")), formatSHA1)
 
-	good, detail := testKey(t, service).verify(signed)
+	good, detail := testKey(t, service).verify(signed, formatSHA1)
 	if good {
 		t.Fatal("expected a foreign signature to be refused")
 	}
@@ -130,10 +129,10 @@ func TestVerifyRejectsAForeignSignature(t *testing.T) {
 func TestVerifyRejectsATamperedCommit(t *testing.T) {
 	entity := newEntity(t, serviceName, serviceEmail)
 	payload := rawCommit([]string{"tree " + treeSHA, testAuthor}, "message\n")
-	signed := withSignature(payload, []byte(strings.Trim(detachSign(t, entity, payload), "\n")))
+	signed := withSignature(payload, []byte(strings.Trim(detachSign(t, entity, payload), "\n")), formatSHA1)
 
 	tampered := strings.Replace(string(signed), "message\n", "tampered\n", 1)
-	good, detail := testKey(t, entity).verify([]byte(tampered))
+	good, detail := testKey(t, entity).verify([]byte(tampered), formatSHA1)
 	if good {
 		t.Fatal("expected a tampered commit to be refused")
 	}
@@ -145,10 +144,78 @@ func TestVerifyRejectsATamperedCommit(t *testing.T) {
 func TestVerifyAcceptsTheKeysOwnSignature(t *testing.T) {
 	entity := newEntity(t, serviceName, serviceEmail)
 	payload := rawCommit([]string{"tree " + treeSHA, testAuthor}, "message\n")
-	signed := withSignature(payload, []byte(strings.Trim(detachSign(t, entity, payload), "\n")))
+	signed := withSignature(payload, []byte(strings.Trim(detachSign(t, entity, payload), "\n")), formatSHA1)
 
-	if good, detail := testKey(t, entity).verify(signed); !good {
+	if good, detail := testKey(t, entity).verify(signed, formatSHA1); !good {
 		t.Errorf("expected the key's own signature to verify, got %q", detail)
+	}
+}
+
+// The header spelling is not bookkeeping: git strips and checks the one that
+// matches the repository's hash algorithm and ignores the other, so a commit
+// signed for a sha256 repository must verify under sha256 and read as unsigned
+// under sha1 — the second is what makes a run re-sign it rather than trust a
+// signature git would not honor.
+func TestVerifyReadsTheHeaderForTheObjectFormat(t *testing.T) {
+	entity := newEntity(t, serviceName, serviceEmail)
+	payload := rawCommit([]string{"tree " + treeSHA, testAuthor}, "message\n")
+	signed := withSignature(payload, []byte(strings.Trim(detachSign(t, entity, payload), "\n")), formatSHA256)
+
+	if good, detail := testKey(t, entity).verify(signed, formatSHA256); !good {
+		t.Errorf("expected a gpgsig-sha256 signature to verify under sha256, got %q", detail)
+	}
+	// Not reasonUnsigned: the run's advice for an unsigned tip is --sign-others,
+	// which fixes nothing here, and a commit signed under the other spelling is
+	// not the same finding as one nobody ever signed.
+	if good, detail := testKey(t, entity).verify(signed, formatSHA1); good || detail != reasonWrongHeader {
+		t.Errorf("expected the wrong-header explanation, got %v %q", good, detail)
+	}
+}
+
+// git bails at the second signature rather than picking a winner, so a commit
+// carrying two blocks has no single signer to report and is refused here too.
+func TestVerifyRejectsMoreThanOneSignatureBlock(t *testing.T) {
+	entity := newEntity(t, serviceName, serviceEmail)
+	payload := rawCommit([]string{"tree " + treeSHA, testAuthor}, "message\n")
+
+	block := strings.Trim(detachSign(t, entity, payload), "\n")
+	signed := withSignature(payload, []byte(block+"\n"+block), formatSHA1)
+
+	if good, detail := testKey(t, entity).verify(signed, formatSHA1); good || detail != reasonMultipleSigs {
+		t.Errorf("expected the multiple-signature explanation, got %v %q", good, detail)
+	}
+}
+
+// Only the OpenPGP spellings can be verified here, but every armor git reads as
+// a signature has to be counted, or a PGP block paired with an SSH one reads as
+// singly signed.
+func TestSignatureBlocksCountsEveryArmorGitReads(t *testing.T) {
+	tests := []struct {
+		name      string
+		signature string
+		want      int
+	}{
+		{name: "none", signature: "", want: 0},
+		{name: "one pgp block", signature: testArmor, want: 1},
+		{name: "two pgp blocks", signature: testArmor + "\n" + testArmor, want: 2},
+		{
+			name:      "pgp and ssh",
+			signature: testArmor + "\n-----BEGIN SSH SIGNATURE-----\nAAAA\n-----END SSH SIGNATURE-----",
+			want:      2,
+		},
+		{
+			name:      "armor named in the message body",
+			signature: "not a signature: -----BEGIN PGP SIGNATURE-----",
+			want:      0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := signatureBlocks(tt.signature); got != tt.want {
+				t.Errorf("expected %d block(s), got %d", tt.want, got)
+			}
+		})
 	}
 }
 
@@ -166,11 +233,6 @@ func TestVerifyReason(t *testing.T) {
 			name: "unknown issuer",
 			err:  pgperrors.ErrUnknownIssuer,
 			want: "signed by a key this service does not carry",
-		},
-		{
-			name: "multiple signatures",
-			err:  object.ErrMultipleSignatures,
-			want: reasonMultipleSigs,
 		},
 		{
 			name: "bad signature",

@@ -239,9 +239,12 @@ gpg-sign --json admin audit \
   never pushes; publishing the result is a force push you perform yourself. It
   needs `git` on `PATH` — signatures are verified in-process, so no `gpg`
   installation is required — refuses a detached `HEAD`, and handles PGP only.
-- `sign-commit` writes the `gpgsig` header, so it requires a `sha1` repository.
-  A `sha256` repository names the header `gpgsig-sha256`; the command refuses
-  one rather than writing a signature Git will not read.
+- `sign-commit` signs `sha1` and `sha256` repositories, writing the header Git
+  names after the repository's hash algorithm — `gpgsig` or `gpgsig-sha256` —
+  and reading that same spelling when it verifies. A repository in
+  hash-algorithm compatibility mode is signed under one of the two headers Git
+  wrote; the run warns that the other signature is dropped, because recreating
+  it means signing the mirrored object the run never builds.
 - `sign-commit` leaves a `mergetag` header alone when the commit it names is
   rewritten. The embedded tag is signed by its own tagger, so it cannot be
   repointed; the run warns, and `git log --show-signature` on that merge then
