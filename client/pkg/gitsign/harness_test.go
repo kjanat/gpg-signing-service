@@ -62,15 +62,27 @@ func exportKey(t *testing.T, entity *openpgp.Entity) string {
 	return buf.String()
 }
 
-// detachSign produces the armored detached signature the fake service returns.
+// signPayload produces the armored detached signature the fake service
+// returns. It returns an error rather than failing the test, because the
+// httptest handler calls it from its own goroutine, where a testing.T failure
+// helper panics the process instead of failing the test.
+func signPayload(entity *openpgp.Entity, payload []byte) (string, error) {
+	var buf bytes.Buffer
+	if err := openpgp.ArmoredDetachSign(&buf, entity, bytes.NewReader(payload), nil); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+// detachSign is signPayload for the tests that call it from the test goroutine.
 func detachSign(t *testing.T, entity *openpgp.Entity, payload []byte) string {
 	t.Helper()
 
-	var buf bytes.Buffer
-	if err := openpgp.ArmoredDetachSign(&buf, entity, bytes.NewReader(payload), nil); err != nil {
+	signature, err := signPayload(entity, payload)
+	if err != nil {
 		t.Fatalf("could not sign the test payload: %v", err)
 	}
-	return buf.String()
+	return signature
 }
 
 // newService stands up a signing service backed by a local key.
@@ -89,7 +101,12 @@ func newService(t *testing.T, entity *openpgp.Entity) *client.Client {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		_, _ = fmt.Fprint(w, detachSign(t, entity, payload))
+		signature, err := signPayload(entity, payload)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = fmt.Fprint(w, signature)
 	}))
 	t.Cleanup(server.Close)
 

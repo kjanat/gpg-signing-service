@@ -41,7 +41,7 @@ Example:
 		repoDir, _ := cmd.Flags().GetString("repo")
 
 		if scanLimit < 0 {
-			return fmt.Errorf("--scan-limit must be a positive integer, got %d", scanLimit)
+			return fmt.Errorf("--scan-limit must not be negative (0 means unbounded), got %d", scanLimit)
 		}
 
 		c, err := newClient()
@@ -52,7 +52,7 @@ Example:
 		// One timeout for the whole walk, not per request: a range of N commits
 		// makes N signing calls, and the per-request default would cut the run
 		// short partway through a rewrite.
-		ctx, cancel := context.WithTimeout(context.Background(), timeout*signCommitTimeoutFactor)
+		ctx, cancel := context.WithTimeout(commandContext(cmd), timeout*signCommitTimeoutFactor)
 		defer cancel()
 
 		// JSON output is a single document, so progress lines cannot go to
@@ -77,9 +77,19 @@ Example:
 			// again would bury the explanation under a generic prefix.
 			var blocked *gitsign.ResignError
 			if errors.As(err, &blocked) {
-				return blocked
+				err = blocked
+			} else {
+				err = fmt.Errorf("sign-commit failed: %w", err)
 			}
-			return fmt.Errorf("sign-commit failed: %w", err)
+			// Run hands back a populated result alongside its error, and a
+			// scripted caller in --json mode has nowhere else to read it: the
+			// progress text on stderr is not a contract.
+			if jsonOutput {
+				if writeErr := outputJSON(signCommitFailure(result, err)); writeErr != nil {
+					return writeErr
+				}
+			}
+			return err
 		}
 
 		if jsonOutput {
@@ -87,6 +97,27 @@ Example:
 		}
 		return nil
 	},
+}
+
+// signCommitResult is the JSON document a failed run emits. It is a distinct
+// shape from a successful run's bare result, so a caller can tell the two apart
+// without inspecting the exit code, and it carries the machine-readable half of
+// a refusal that the progress text only spells out in prose.
+type signCommitResult struct {
+	Error  string               `json:"error"`
+	Result *gitsign.Result      `json:"result,omitempty"`
+	Resign *gitsign.ResignError `json:"resign,omitempty"`
+}
+
+// signCommitFailure builds that document. ResignError is surfaced whole because
+// its per-commit report exists precisely to be consumed.
+func signCommitFailure(result *gitsign.Result, err error) signCommitResult {
+	document := signCommitResult{Error: err.Error(), Result: result}
+	var blocked *gitsign.ResignError
+	if errors.As(err, &blocked) {
+		document.Resign = blocked
+	}
+	return document
 }
 
 // signCommitTimeoutFactor scales the per-request timeout into a budget for a

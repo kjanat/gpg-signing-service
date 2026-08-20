@@ -64,7 +64,7 @@ func TestSignCommitCommandValidation(t *testing.T) {
 		{
 			name:        "negative scan limit",
 			args:        signCommitArgs{scanLimit: -1},
-			expectedErr: "--scan-limit must be a positive integer",
+			expectedErr: "--scan-limit must not be negative",
 		},
 		{
 			name:        "not a repository",
@@ -200,8 +200,13 @@ func newSignCommitFixture(t *testing.T) (dir, base string) {
 		}
 		var payload bytes.Buffer
 		_, _ = payload.ReadFrom(r.Body)
-		_, _ = fmt.Fprint(w, gpgRun(t, home, payload.Bytes(),
-			"--armor", "--detach-sign", "--local-user", testSignCommitEmail))
+		signature, err := gpgOutput(home, payload.Bytes(),
+			"--armor", "--detach-sign", "--local-user", testSignCommitEmail)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_, _ = fmt.Fprint(w, signature)
 	}))
 	t.Cleanup(server.Close)
 
@@ -222,9 +227,10 @@ func newSignCommitFixture(t *testing.T) (dir, base string) {
 	return dir, base
 }
 
-func gpgRun(t *testing.T, home string, stdin []byte, args ...string) string {
-	t.Helper()
-
+// gpgOutput drives gpg and returns an error rather than failing the test, so
+// the httptest handler can call it: a testing.T failure helper invoked outside
+// the test goroutine panics the process instead of failing the test.
+func gpgOutput(home string, stdin []byte, args ...string) (string, error) {
 	full := append([]string{"--homedir", home, "--batch", "--pinentry-mode", "loopback", "--passphrase", ""}, args...)
 	var stdout, stderr bytes.Buffer
 	// #nosec G204 -- test fixture; every argument is a literal from this file.
@@ -235,9 +241,19 @@ func gpgRun(t *testing.T, home string, stdin []byte, args ...string) string {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("gpg %s failed: %v\n%s", strings.Join(args, " "), err, stderr.String())
+		return "", fmt.Errorf("gpg %s failed: %w\n%s", strings.Join(args, " "), err, stderr.String())
 	}
-	return stdout.String()
+	return stdout.String(), nil
+}
+
+func gpgRun(t *testing.T, home string, stdin []byte, args ...string) string {
+	t.Helper()
+
+	out, err := gpgOutput(home, stdin, args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
 func gitRun(t *testing.T, dir string, env []string, args ...string) string {
@@ -254,4 +270,86 @@ func gitRun(t *testing.T, dir string, env []string, args ...string) string {
 		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, stderr.String())
 	}
 	return stdout.String()
+}
+
+// A failed run in --json mode still has to emit a document. A ResignError is
+// the sharpest case: it carries a per-commit report built to be consumed, and
+// the progress text on stderr is not a contract.
+func TestSignCommitCommandJSONOnRefusal(t *testing.T) {
+	dir, root := newSignCommitFixture(t)
+
+	env := []string{
+		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=" + testSignCommitEmail,
+		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=" + testSignCommitEmail,
+	}
+	first := strings.TrimSpace(gitRun(t, dir, env, "rev-parse", "HEAD"))
+	gitRun(t, dir, env, "commit", "--allow-empty", "-m", "second")
+
+	// Sign only the top commit, so the one below it is still unsigned. The next
+	// run has to rewrite that one, which invalidates the signature above it.
+	if err := signCommitCmd.RunE(signCommitArgs{repo: dir, base: first}.command(), nil); err != nil {
+		t.Fatalf("could not prepare a signed commit: %v", err)
+	}
+
+	previousJSON := jsonOutput
+	jsonOutput = true
+	defer func() { jsonOutput = previousJSON }()
+
+	var runErr error
+	stdout := captureStdout(t, func() {
+		runErr = signCommitCmd.RunE(signCommitArgs{repo: dir, base: root}.command(), nil)
+	})
+	if runErr == nil {
+		t.Fatal("expected the run to refuse to rewrite an already-signed commit")
+	}
+
+	var document struct {
+		Error  string `json:"error"`
+		Resign *struct {
+			Stale   int      `json:"stale"`
+			Commits []string `json:"commits"`
+			Report  []string `json:"report"`
+		} `json:"resign"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &document); err != nil {
+		t.Fatalf("expected stdout to hold only JSON, got %q: %v", stdout, err)
+	}
+	if document.Error == "" {
+		t.Error("expected the document to carry the error")
+	}
+	if document.Resign == nil {
+		t.Fatalf("expected the refusal detail, got %q", stdout)
+	}
+	if len(document.Resign.Commits) != 1 || len(document.Resign.Report) != 1 {
+		t.Errorf("expected one blocked commit and one report line, got %+v", document.Resign)
+	}
+	if document.Resign.Stale != 2 {
+		t.Errorf("expected both commits counted as stale, got %d", document.Resign.Stale)
+	}
+}
+
+// Any other failure has to produce a document too, even when the run never got
+// far enough to build a result.
+func TestSignCommitCommandJSONOnEarlyFailure(t *testing.T) {
+	previousJSON := jsonOutput
+	jsonOutput = true
+	defer func() { jsonOutput = previousJSON }()
+
+	var runErr error
+	stdout := captureStdout(t, func() {
+		runErr = signCommitCmd.RunE(signCommitArgs{repo: t.TempDir()}.command(), nil)
+	})
+	if runErr == nil {
+		t.Fatal("expected a failure outside a repository")
+	}
+
+	var document struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &document); err != nil {
+		t.Fatalf("expected stdout to hold only JSON, got %q: %v", stdout, err)
+	}
+	if !strings.Contains(document.Error, "sign-commit failed") {
+		t.Errorf("expected the wrapped error, got %q", document.Error)
+	}
 }
