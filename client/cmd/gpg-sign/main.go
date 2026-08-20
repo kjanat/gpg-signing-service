@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/kjanat/gpg-signing-service/client/pkg/client"
@@ -27,9 +29,31 @@ var (
 )
 
 func main() {
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
+	os.Exit(execute())
+}
+
+// execute runs the root command and reports the process exit status. It is
+// separate from main so the signal handler's cleanup runs before the exit.
+func execute() int {
+	// Ctrl-C has to reach the running command: sign-commit rewrites objects and
+	// makes one signing call per commit, and an operator who interrupts it
+	// expects the walk to stop rather than run to the end of the range.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
+		return 1
 	}
+	return 0
+}
+
+// commandContext is cmd.Context(), which is nil until Execute installs one.
+// Tests drive RunE directly, so every command reads its context through here.
+func commandContext(cmd *cobra.Command) context.Context {
+	if ctx := cmd.Context(); ctx != nil {
+		return ctx
+	}
+	return context.Background()
 }
 
 var rootCmd = &cobra.Command{
@@ -41,6 +65,7 @@ This tool allows you to:
   - Check service health
   - Retrieve public keys
   - Sign commit data
+  - Apply signatures to commits in a local repository
   - Manage keys (admin)
   - Query audit logs (admin)
 
@@ -61,6 +86,7 @@ func init() {
 	rootCmd.AddCommand(healthCmd)
 	rootCmd.AddCommand(publicKeyCmd)
 	rootCmd.AddCommand(signCmd)
+	rootCmd.AddCommand(signCommitCmd)
 	rootCmd.AddCommand(adminCmd)
 }
 
