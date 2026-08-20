@@ -205,7 +205,16 @@ describe("API Documentation Routes", () => {
 		// either and both checks stay silent about it. Auth is not per-route: index
 		// mounts /sign behind callerAuth and everything under /admin behind
 		// adminAuth, which is the list the document has to agree with.
-		const behindAuth = Object.entries(spec.paths).filter(([path]) => path === "/sign" || path.startsWith("/admin"));
+		//
+		// Matched as mount points rather than as prefixes. `app.route("/sign", …)`
+		// covers everything the sub-app declares, so a later `/sign/verify` is
+		// behind callerAuth the moment it is added and has to be caught here —
+		// while a bare `startsWith` would also claim a future top-level
+		// `/administration`, which nothing mounts behind adminAuth.
+		const AUTH_MOUNTS = ["/sign", "/admin"];
+		const behindAuth = Object.entries(spec.paths).filter(([path]) =>
+			AUTH_MOUNTS.some((mount) => path === mount || path.startsWith(`${mount}/`)),
+		);
 		expect(behindAuth.length).toBeGreaterThan(0);
 
 		for (const [path, methods] of behindAuth) {
