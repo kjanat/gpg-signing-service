@@ -15,7 +15,7 @@ specific signing key, OIDC provider, or rate-limiter bucket.
 
 ### Release or asset not found
 
-- Use a real full tag such as `v1.1.2`; there is no `v1` tag.
+- Use a real full tag such as `v1.2.0`; there is no `v1` tag.
 - Confirm `repository` points to the asset-publishing repository.
 - Confirm the release contains the exact OS/architecture filename.
 - For a private repository, provide a GitHub token with read access.

@@ -22,7 +22,7 @@ jobs:
       - id: install
         uses: kjanat/gpg-signing-service@cbcb8600547bd6799cdca0b339e8dad044481435
         with:
-          version: v1.1.2
+          version: v1.2.0
 
       - name: Check service
         env:
@@ -59,10 +59,10 @@ For a private release repository, provide a token that can read that
 repository's release assets:
 
 ```yaml
-- uses: your-org/gpg-signing-service@v1.1.2
+- uses: your-org/gpg-signing-service@v1.2.0
   with:
     repository: your-org/gpg-signing-service
-    version: v1.1.2
+    version: v1.2.0
     token: ${{ secrets.RELEASE_READ_TOKEN }}
 ```
 
@@ -77,7 +77,7 @@ repository's release assets:
 - id: install
   uses: kjanat/gpg-signing-service@cbcb8600547bd6799cdca0b339e8dad044481435
   with:
-    version: v1.1.2
+    version: v1.2.0
 
 - shell: bash
   env:
@@ -91,7 +91,7 @@ repository's release assets:
 These values control different code:
 
 - `uses: ...@<commit-sha>` selects the action implementation.
-- `with.version: v1.1.2` selects the downloaded binary release.
+- `with.version: v1.2.0` selects the downloaded binary release.
 
 If `version` is omitted, an immutable action ref still downloads the moving
 latest release. There is currently no floating `v1` tag.

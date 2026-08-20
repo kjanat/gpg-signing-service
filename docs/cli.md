@@ -14,7 +14,7 @@ does attach one, by rewriting the commit objects in the current repository.
 ```yaml
 - uses: kjanat/gpg-signing-service@cbcb8600547bd6799cdca0b339e8dad044481435
   with:
-    version: v1.1.2
+    version: v1.2.0
 ```
 
 See [GitHub Action](github-action.md) for pinning, inputs, and platform support.
@@ -22,7 +22,7 @@ See [GitHub Action](github-action.md) for pinning, inputs, and platform support.
 ### Release asset
 
 ```bash
-GPG_SIGN_VERSION=v1.1.2
+GPG_SIGN_VERSION=v1.2.0
 GPG_SIGN_SHA256='<digest recorded for that release>'
 
 curl --fail --location --remote-name \
@@ -50,7 +50,7 @@ Build it from an explicitly selected checkout:
 ```bash
 git clone https://github.com/kjanat/gpg-signing-service.git
 cd gpg-signing-service
-git checkout cbcb8600547bd6799cdca0b339e8dad044481435
+git checkout v1.2.0
 cd client
 go install ./cmd/gpg-sign
 ```
@@ -155,8 +155,9 @@ one here was committed by an identity this key does not cover.
 
 Without `--base`, the range starts at the last commit this key already verifies
 when you are on `--default-branch`, and at the merge base with
-`origin/<default-branch>` otherwise. `--scan-limit` bounds that backward scan
-and is ignored when `--base` pins the range.
+`origin/<default-branch>` otherwise. `--scan-limit` bounds that backward scan.
+It is ignored when `--base` pins the range and when you are on another branch,
+because the scan does not run in either case.
 
 The command refuses to rewrite commits that already carry a signature. It
 prints what it would do to each and exits non-zero:
@@ -172,7 +173,29 @@ not cover loses its signature with nothing to replace it — that commit is mark
 instead of stripping them.
 
 `--json` prints a machine-readable summary on stdout and sends progress to
-stderr.
+stderr. A failed run prints a document too, so a scripted caller never has to
+scrape the progress text:
+
+```json
+{
+  "error": "signing 2 commit(s) would rewrite 1 already-signed commit(s) below the tip; ...",
+  "result": {
+    "branch": "feature",
+    "base": "8ab30c91",
+    "commitsScanned": 2,
+    "refUpdated": false
+  },
+  "resign": {
+    "stale": 2,
+    "commits": ["a10ce7bb2f0d4c8e9a1b3d5f7e9c0a2b4d6f8e01"],
+    "report": [
+      "  would re-sign a10ce7bb (signed by a key this service does not carry)"
+    ]
+  }
+}
+```
+
+`resign` is present only when the run was blocked by an already-signed commit.
 
 ### Upload a PGP key
 
@@ -211,6 +234,10 @@ gpg-sign --json admin audit \
 - `sign-commit` writes the `gpgsig` header, so it requires a `sha1` repository.
   A `sha256` repository names the header `gpgsig-sha256`; the command refuses
   one rather than writing a signature Git will not read.
+- `sign-commit` leaves a `mergetag` header alone when the commit it names is
+  rewritten. The embedded tag is signed by its own tagger, so it cannot be
+  repointed; the run warns, and `git log --show-signature` on that merge then
+  describes a merged tag matching none of its parents.
 - `sign-commit` refuses to move `HEAD` if the branch changed while it was
   signing. The rewritten objects are left unreferenced and the branch is
   untouched; re-run once the branch is settled.

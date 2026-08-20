@@ -79,7 +79,7 @@ permissions:
 steps:
   - uses: kjanat/gpg-signing-service@cbcb8600547bd6799cdca0b339e8dad044481435
     with:
-      version: v1.1.2
+      version: v1.2.0
 
   - env:
       GPG_SIGN_URL: ${{ vars.SIGNING_SERVICE_URL }}

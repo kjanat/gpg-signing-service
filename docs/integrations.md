@@ -40,7 +40,7 @@ jobs:
 
       - uses: kjanat/gpg-signing-service@cbcb8600547bd6799cdca0b339e8dad044481435
         with:
-          version: v1.1.2
+          version: v1.2.0
 
       - id: oidc
         uses: actions/github-script@v9
@@ -84,7 +84,7 @@ steps:
 
   - uses: kjanat/gpg-signing-service@cbcb8600547bd6799cdca0b339e8dad044481435
     with:
-      version: v1.1.2
+      version: v1.2.0
 
   - name: Request detached signature
     env:
@@ -110,7 +110,7 @@ request-signature:
     GPG_SIGN_TOKEN:
       aud: gpg-signing-service
   variables:
-    GPG_SIGN_VERSION: v1.1.2
+    GPG_SIGN_VERSION: v1.2.0
     GPG_SIGN_SHA256: <digest recorded for that release>
     GPG_SIGN_URL: $SIGNING_SERVICE_URL
   before_script:
