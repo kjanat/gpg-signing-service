@@ -56,6 +56,9 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 
 	httpClient := &http.Client{
 		Timeout: options.timeout,
+		// See errorBodyTransport: an error body that will not decode must not
+		// take the response down with it inside the generated parser.
+		Transport: &errorBodyTransport{base: http.DefaultTransport},
 	}
 
 	clientOpts := []api.ClientOption{
@@ -123,7 +126,7 @@ func (c *Client) Health(ctx context.Context) (*HealthStatus, error) {
 			}
 	}
 
-	return nil, newStatusError(resp.StatusCode(), resp.Body)
+	return nil, newStatusError(resp.StatusCode(), resp.Body, resp.HTTPResponse.Header)
 }
 
 // PublicKey retrieves the public signing key.
@@ -173,7 +176,7 @@ func (c *Client) PublicKey(ctx context.Context, keyID string) (string, error) {
 		}
 	}
 
-	return "", newStatusError(resp.StatusCode(), resp.Body)
+	return "", newStatusError(resp.StatusCode(), resp.Body, resp.HTTPResponse.Header)
 }
 
 // Sign signs commit data and returns the signature.
@@ -203,7 +206,7 @@ func (c *Client) Sign(ctx context.Context, commitData string, keyID string) (*Si
 		return nil, mappedErr
 	}
 
-	return nil, newStatusError(resp.StatusCode(), resp.Body)
+	return nil, newStatusError(resp.StatusCode(), resp.Body, resp.HTTPResponse.Header)
 }
 
 // UploadKey uploads a new signing key (admin operation).
@@ -243,6 +246,10 @@ func (c *Client) UploadKey(ctx context.Context, keyID string, armoredPrivateKey 
 		}, nil
 	}
 
+	if resp.JSON401 != nil {
+		return nil, newAuthErrorFromResponse(resp.JSON401, resp.HTTPResponse.Header)
+	}
+
 	if resp.JSON400 != nil || resp.JSON500 != nil {
 		errResp := resp.JSON400
 		statusCode := 400
@@ -257,7 +264,7 @@ func (c *Client) UploadKey(ctx context.Context, keyID string, armoredPrivateKey 
 		}
 	}
 
-	return nil, newStatusError(resp.StatusCode(), resp.Body)
+	return nil, newStatusError(resp.StatusCode(), resp.Body, resp.HTTPResponse.Header)
 }
 
 // ListKeys lists all signing keys (admin operation).
@@ -285,6 +292,10 @@ func (c *Client) ListKeys(ctx context.Context) ([]KeyMetadata, error) {
 		return keys, nil
 	}
 
+	if resp.JSON401 != nil {
+		return nil, newAuthErrorFromResponse(resp.JSON401, resp.HTTPResponse.Header)
+	}
+
 	if resp.JSON500 != nil {
 		return nil, &ServiceError{
 			Code:       string(resp.JSON500.Code),
@@ -293,7 +304,7 @@ func (c *Client) ListKeys(ctx context.Context) ([]KeyMetadata, error) {
 		}
 	}
 
-	return nil, newStatusError(resp.StatusCode(), resp.Body)
+	return nil, newStatusError(resp.StatusCode(), resp.Body, resp.HTTPResponse.Header)
 }
 
 // DeleteKey deletes a signing key (admin operation).
@@ -323,6 +334,10 @@ func (c *Client) DeleteKey(ctx context.Context, keyID string) error {
 		}
 	}
 
+	if resp.JSON401 != nil {
+		return newAuthErrorFromResponse(resp.JSON401, resp.HTTPResponse.Header)
+	}
+
 	if resp.JSON500 != nil {
 		return &ServiceError{
 			Code:       string(resp.JSON500.Code),
@@ -331,7 +346,7 @@ func (c *Client) DeleteKey(ctx context.Context, keyID string) error {
 		}
 	}
 
-	return newStatusError(resp.StatusCode(), resp.Body)
+	return newStatusError(resp.StatusCode(), resp.Body, resp.HTTPResponse.Header)
 }
 
 // AuditLogs queries audit logs (admin operation).
@@ -356,7 +371,7 @@ func (c *Client) AuditLogs(ctx context.Context, filter AuditFilter) (*AuditResul
 		return nil, mappedErr
 	}
 
-	return nil, newStatusError(resp.StatusCode(), resp.Body)
+	return nil, newStatusError(resp.StatusCode(), resp.Body, resp.HTTPResponse.Header)
 }
 
 // AdminPublicKey retrieves the public key via the admin endpoint.
@@ -382,6 +397,10 @@ func (c *Client) AdminPublicKey(ctx context.Context, keyID string) (string, erro
 		return string(resp.Body), nil
 	}
 
+	if resp.JSON401 != nil {
+		return "", newAuthErrorFromResponse(resp.JSON401, resp.HTTPResponse.Header)
+	}
+
 	if resp.JSON404 != nil {
 		return "", &ServiceError{
 			Code:       string(resp.JSON404.Code),
@@ -398,10 +417,14 @@ func (c *Client) AdminPublicKey(ctx context.Context, keyID string) (string, erro
 		}
 	}
 
-	return "", newStatusError(resp.StatusCode(), resp.Body)
+	return "", newStatusError(resp.StatusCode(), resp.Body, resp.HTTPResponse.Header)
 }
 
 func mapAuditResponseError(resp *api.GetAdminAuditResponse) error {
+	if resp.JSON401 != nil {
+		return newAuthErrorFromResponse(resp.JSON401, resp.HTTPResponse.Header)
+	}
+
 	if resp.JSON400 == nil && resp.JSON500 == nil {
 		return nil
 	}
@@ -520,6 +543,12 @@ func mapSignResponseError(resp *api.PostSignResponse) error {
 			Code:    string(resp.JSON400.Code),
 			Message: resp.JSON400.Error,
 		}
+	case resp.JSON401 != nil:
+		// The refusal a first-time caller actually hits: an unregistered subject
+		// answers `Subject is not trusted for signing`, and no amount of correct
+		// issuer or audience configuration changes it. Carrying the code through
+		// is what separates it from a missing header or an unlisted issuer.
+		return newAuthErrorFromResponse(resp.JSON401, resp.HTTPResponse.Header)
 	case resp.JSON403 != nil:
 		// Without this case the 403 falls through to a bare "unexpected status
 		// code", discarding both the server's message and the KEY_NOT_ALLOWED code

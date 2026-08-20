@@ -2,7 +2,8 @@ import type { MiddlewareHandler } from "hono";
 
 import { oidcAuth } from "#middleware/oidc";
 import type { Env, OIDCClaims, Variables } from "#types";
-import { createIdentity, HTTP, markClaimsAsValidated } from "#types";
+import { createIdentity, markClaimsAsValidated } from "#types";
+import { unauthorized } from "#utils/errors";
 import { SERVICE_TOKEN_PREFIX, verifyServiceToken } from "#utils/service-tokens";
 
 /** Synthetic issuer for service-token callers in audit trails. */
@@ -20,7 +21,7 @@ export const callerAuth: MiddlewareHandler<{
 	const authHeader = c.req.header("Authorization");
 
 	if (!authHeader?.startsWith("Bearer ")) {
-		return c.json({ error: "Missing authorization header", code: "AUTH_MISSING" }, HTTP.Unauthorized);
+		return unauthorized(c, "Missing authorization header", "AUTH_MISSING");
 	}
 
 	const token = authHeader.slice(7);
@@ -30,7 +31,7 @@ export const callerAuth: MiddlewareHandler<{
 
 	const policy = await verifyServiceToken(c.env.AUDIT_DB, token);
 	if (!policy) {
-		return c.json({ error: "Invalid service token", code: "AUTH_INVALID" }, HTTP.Unauthorized);
+		return unauthorized(c, "Invalid service token", "AUTH_INVALID");
 	}
 
 	// Synthetic claims keep the sign route and audit trail uniform across

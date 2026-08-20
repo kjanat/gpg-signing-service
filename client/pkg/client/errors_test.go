@@ -89,7 +89,7 @@ func TestAuthError(t *testing.T) {
 		},
 		{
 			name:      "auth error with request id",
-			code:      "AUTH_INVALID",
+			code:      testCodeAuthInvalid,
 			message:   "Subject is not trusted for signing",
 			requestID: testRequestID,
 			wantError: "authentication failed: AUTH_INVALID: Subject is not trusted for signing " +
@@ -433,6 +433,17 @@ func TestIsServiceError(t *testing.T) {
 
 // TestErrorCodes tests error code constants
 func TestErrorCodes(t *testing.T) {
+	// Pinned against literals on purpose: these are wire values the service
+	// picks, so an assertion written in terms of the constant would agree with
+	// any rename and catch nothing.
+	//goland:noinspection GoBoolExpressions
+	if ErrCodeAuthMissing != "AUTH_MISSING" {
+		t.Errorf("expected ErrCodeAuthMissing 'AUTH_MISSING', got %q", ErrCodeAuthMissing)
+	}
+	//goland:noinspection GoBoolExpressions
+	if ErrCodeAuthInvalid != "AUTH_INVALID" {
+		t.Errorf("expected ErrCodeAuthInvalid 'AUTH_INVALID', got %q", ErrCodeAuthInvalid)
+	}
 	//goland:noinspection GoBoolExpressions
 	if ErrCodeDegraded != "SERVICE_DEGRADED" {
 		t.Errorf("expected ErrCodeDegraded 'SERVICE_DEGRADED', got %q", ErrCodeDegraded)

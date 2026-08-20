@@ -6,10 +6,22 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/kjanat/gpg-signing-service/client/pkg/api"
 )
 
 // Error codes returned by the service in the `code` field of an error response.
+//
+// AuthError.Code carries one of the two AUTH_ values on every 401 the document
+// declares, and the pair is the whole reason the code is surfaced rather than
+// the prose: AUTH_MISSING means no usable credential was presented and retrying
+// with the same configuration cannot help, while AUTH_INVALID means one was
+// presented and refused — a rotated admin token, an unlisted issuer, a subject
+// holding no trusted row. Exported so callers branch on these rather than on
+// string literals the service is free to reword.
 const (
+	ErrCodeAuthMissing    = "AUTH_MISSING"
+	ErrCodeAuthInvalid    = "AUTH_INVALID"
 	ErrCodeDegraded       = "SERVICE_DEGRADED"
 	ErrCodeKeyNotFound    = "KEY_NOT_FOUND"
 	ErrCodeKeyNotAllowed  = "KEY_NOT_ALLOWED"
@@ -118,14 +130,68 @@ func IsServiceError(err error) bool {
 	return errors.As(err, &se) && se.StatusCode >= 500
 }
 
+// headerRequestID is the response header the service echoes its request id on.
+const headerRequestID = "X-Request-ID"
+
+// requestIDFrom returns the id the caller should quote when asking what
+// happened, preferring the envelope's field and falling back to the header.
+//
+// Both carry the same value: requestIdMiddleware derives one id per request,
+// hands it to the handlers and echoes it on the way out. The fallback is not
+// redundancy for its own sake — it covers a service older than the release that
+// started putting the id in error bodies, and every response body this client
+// cannot parse into a typed envelope at all.
+func requestIDFrom(envelope string, header http.Header) string {
+	if envelope != "" {
+		return envelope
+	}
+	return header.Get(headerRequestID)
+}
+
+// newAuthErrorFromResponse turns the service's 401 envelope into an AuthError.
+//
+// The document declares a 401 on every operation that requires a credential, so
+// this is the mapped path — newStatusError below only ever sees a 401 the
+// document does not cover (an unauthenticated endpoint behind a proxy that
+// challenges, say).
+//
+// Two bodies decode but are not usable envelopes, and both fall back to the
+// sentinel rather than becoming a threadbare AuthError:
+//
+//   - No message — `{}`, or `null`. It says nothing the status code did not,
+//     and an AuthError built from it prints as a bare "authentication failed:".
+//   - No code. ErrorResponse declares `code` required, and the whole reason
+//     this client reads the field is that callers are told to branch on it
+//     instead of on prose the service may reword. An AuthError with an empty
+//     Code cannot be branched on, so it is not one.
+//
+// parseAPIErrorBody applies the same two rules on the fallback path. Neither
+// this service nor the document can produce such a body; an intermediary can,
+// and the two paths must not disagree about what a usable envelope is.
+func newAuthErrorFromResponse(body *api.ErrorResponse, header http.Header) error {
+	if body == nil || body.Error == "" || body.Code == "" {
+		return newUnexpectedStatusError(http.StatusUnauthorized)
+	}
+
+	envelopeID := ""
+	if body.RequestId != nil {
+		envelopeID = body.RequestId.String()
+	}
+	return &AuthError{
+		Code:      string(body.Code),
+		Message:   body.Error,
+		RequestID: requestIDFrom(envelopeID, header),
+	}
+}
+
 func newUnexpectedStatusError(code int) error {
 	return fmt.Errorf("%w: %d", ErrUnexpectedStatus, code)
 }
 
 // apiErrorBody is the service's error envelope. The generated client only
 // exposes typed fields for statuses the OpenAPI document declares per
-// operation, so a response the document omits — a 401 on /sign above all —
-// arrives with its body intact but no field to read it from.
+// operation, so a response the document omits arrives with its body intact but
+// no field to read it from.
 type apiErrorBody struct {
 	Error     string `json:"error"`
 	Code      string `json:"code"`
@@ -140,19 +206,24 @@ type apiErrorBody struct {
 // that tells an operator which of those it hit. A CI-only OIDC token cannot be
 // replayed from a laptop to recover it, so the body is read here or not at all.
 //
-// Falls back to the bare sentinel when the body is not a usable error envelope,
-// which keeps text responses and empty bodies behaving as before.
-func newStatusError(statusCode int, body []byte) error {
+// Every status the document declares is mapped before a call reaches this
+// point; what is left is whatever the document does not describe — a proxy's
+// 502, a gateway's 401 challenge — so the envelope is parsed by hand. Falls
+// back to the bare sentinel when the body is not a usable error envelope, which
+// keeps text responses and empty bodies behaving as before.
+func newStatusError(statusCode int, body []byte, header http.Header) error {
 	parsed, ok := parseAPIErrorBody(body)
 	if !ok {
 		return newUnexpectedStatusError(statusCode)
 	}
 
+	requestID := requestIDFrom(parsed.RequestID, header)
+
 	if statusCode == http.StatusUnauthorized {
 		return &AuthError{
 			Code:      parsed.Code,
 			Message:   parsed.Error,
-			RequestID: parsed.RequestID,
+			RequestID: requestID,
 		}
 	}
 
@@ -160,19 +231,21 @@ func newStatusError(statusCode int, body []byte) error {
 		Code:       parsed.Code,
 		Message:    parsed.Error,
 		StatusCode: statusCode,
-		RequestID:  parsed.RequestID,
+		RequestID:  requestID,
 	}
 }
 
-// parseAPIErrorBody reports whether body is an error envelope carrying a
-// message. A body without `error` says nothing the status code did not, so it
-// is treated as unparseable rather than surfaced as an empty message.
+// parseAPIErrorBody reports whether body is an error envelope a caller can act
+// on: a message to show and a code to branch on. A body missing either says
+// nothing the status code did not, so it is treated as unparseable rather than
+// surfaced as an error with empty fields — the same two rules
+// newAuthErrorFromResponse applies on the typed path.
 func parseAPIErrorBody(body []byte) (apiErrorBody, bool) {
 	var parsed apiErrorBody
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return apiErrorBody{}, false
 	}
-	if parsed.Error == "" {
+	if parsed.Error == "" || parsed.Code == "" {
 		return apiErrorBody{}, false
 	}
 	return parsed, true

@@ -6,6 +6,7 @@ import { createIdentity, HEADERS, HTTP, markClaimsAsValidated, TIME } from "#typ
 import { logAuditEvent } from "#utils/audit";
 import { CACHE_TTL } from "#utils/constants";
 import { fetchRateLimiter } from "#utils/durable-objects";
+import { unauthorized } from "#utils/errors";
 import { scheduleBackgroundTask } from "#utils/execution";
 import { fetchWithTimeout } from "#utils/fetch";
 import { logger } from "#utils/logger";
@@ -127,12 +128,16 @@ export const oidcAuth: MiddlewareHandler<{
 	const authHeader = c.req.header("Authorization");
 
 	if (!authHeader?.startsWith("Bearer ")) {
-		return c.json({ error: "Missing authorization header", code: "AUTH_MISSING" }, HTTP.Unauthorized);
+		return unauthorized(c, "Missing authorization header", "AUTH_MISSING");
 	}
 
 	const token = authHeader.split(" ")[1];
 	if (!token) {
-		return c.json({ error: "Missing token" }, HTTP.Unauthorized);
+		// `code` is not decoration: the document now declares this 401 as an
+		// ErrorResponse, and every client that reads the envelope branches on the
+		// code rather than the prose. A bare `Bearer ` is the same fault as no
+		// header at all, so it carries the same code.
+		return unauthorized(c, "Missing token", "AUTH_MISSING");
 	}
 
 	// Deliberately narrow: this catch echoes the thrown message to the caller,
@@ -143,7 +148,7 @@ export const oidcAuth: MiddlewareHandler<{
 		payload = await validateOIDCToken(token, c.env);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Invalid token";
-		return c.json({ error: message, code: "AUTH_INVALID" }, HTTP.Unauthorized);
+		return unauthorized(c, message, "AUTH_INVALID");
 	}
 
 	// Authentication is not authorization. A verified token only proves that some
@@ -212,7 +217,7 @@ export const oidcAuth: MiddlewareHandler<{
 			await recordRevokedReuse(c, requestId, payload, resolution);
 		}
 
-		return c.json({ error: "Subject is not trusted for signing", code: "AUTH_INVALID" }, HTTP.Unauthorized);
+		return unauthorized(c, "Subject is not trusted for signing", "AUTH_INVALID");
 	}
 
 	const policy = resolution.policy;
@@ -239,20 +244,54 @@ export const oidcAuth: MiddlewareHandler<{
 	return next();
 };
 
-// Admin token auth for management endpoints
-export const adminAuth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
+/**
+ * Admin token auth for management endpoints.
+ *
+ * Typed with `Variables` so the 401s can read `requestId` off the context the
+ * global middleware populated — the same id `X-Request-ID` echoes and
+ * `audit_logs.request_id` stores.
+ */
+export const adminAuth: MiddlewareHandler<{
+	Bindings: Env;
+	Variables: Variables;
+}> = async (c, next) => {
+	// An unset or empty ADMIN_TOKEN is a deployment fault, not a credential
+	// fault, and it is not a harmless one: timingSafeEqual("", "") compares two
+	// zero-length arrays of matching length and returns true, so without this
+	// guard a bare `Authorization: Bearer ` would authorize every admin route on
+	// a Worker whose secret was never put. `Env` types ADMIN_TOKEN as `string`,
+	// which is a compile-time promise about a value wrangler supplies at runtime
+	// — nothing checks it. Answer 500, because the caller's credential is not
+	// what is wrong and no amount of retrying with a better one will help.
+	if (!c.env.ADMIN_TOKEN) {
+		logger.error("ADMIN_TOKEN is not configured; refusing every admin request");
+		return c.json(
+			{ error: "Admin authentication is not configured", code: "INTERNAL_ERROR" },
+			HTTP.InternalServerError,
+		);
+	}
+
 	const authHeader = c.req.header("Authorization");
 
 	if (!authHeader?.startsWith("Bearer ")) {
-		return c.json({ error: "Missing authorization header", code: "AUTH_MISSING" }, HTTP.Unauthorized);
+		return unauthorized(c, "Missing authorization header", "AUTH_MISSING");
 	}
 
 	const token = authHeader.slice(7);
+	// Answered before the compare so a bare `Bearer ` gets the same code here as
+	// it does on the OIDC path. The premise of declaring `code` is that clients
+	// branch on it rather than on the prose, which is worth nothing if one
+	// malformed header maps to two codes depending on which route received it.
+	// An empty token is not a credential the service refused; it is no
+	// credential at all.
+	if (!token) {
+		return unauthorized(c, "Missing token", "AUTH_MISSING");
+	}
 
 	// Use constant-time comparison to prevent timing attacks
 	const isValid = await timingSafeEqual(token, c.env.ADMIN_TOKEN);
 	if (!isValid) {
-		return c.json({ error: "Invalid admin token", code: "AUTH_INVALID" }, HTTP.Unauthorized);
+		return unauthorized(c, "Invalid admin token", "AUTH_INVALID");
 	}
 
 	return next();

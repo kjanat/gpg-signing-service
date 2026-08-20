@@ -82,15 +82,16 @@ Errors are JSON and normally include:
 }
 ```
 
-Validation errors can also include an `issues` array. Not every early
-authentication or validation response includes a request ID.
+Validation errors can also include an `issues` array. Every `401` carries a
+`requestId` and a `WWW-Authenticate: Bearer` challenge; some validation
+responses emitted before the request id is published do not.
 
 Common status codes:
 
 | Status | Meaning                                               |
 | ------ | ----------------------------------------------------- |
 | `400`  | Invalid body, query, header, or identifier            |
-| `401`  | Missing or invalid credential                         |
+| `401`  | Missing, invalid, or untrusted credential             |
 | `403`  | Service token cannot use the selected key             |
 | `404`  | Route, key, or token not found                        |
 | `409`  | Duplicate service-token name                          |

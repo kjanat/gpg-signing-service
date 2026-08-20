@@ -153,6 +153,90 @@ describe("API Documentation Routes", () => {
 		}
 	});
 
+	it("should declare a 401 on every operation that requires a credential", async () => {
+		const ctx = createExecutionContext();
+		const response = await app.fetch(new Request("http://localhost/doc"), env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		const spec = (await response.json()) as {
+			paths: Record<
+				string,
+				Record<
+					string,
+					{
+						security?: Record<string, unknown>[];
+						responses: Record<
+							string,
+							{
+								content?: Record<string, { schema?: { $ref?: string } }>;
+								headers?: Record<string, unknown>;
+							}
+						>;
+					}
+				>
+			>;
+		};
+
+		// An undeclared status has no typed field in a generated client, so every
+		// 401 the auth middleware returns arrives with its body intact and nowhere
+		// to read it from — which is how `Subject is not trusted for signing`
+		// reached operators as a bare "unexpected status code: 401".
+		const authenticated = Object.entries(spec.paths).flatMap(([path, methods]) =>
+			Object.entries(methods)
+				.filter(([, operation]) => (operation.security ?? []).length > 0)
+				.map(([method, operation]) => ({ id: `${method.toUpperCase()} ${path}`, operation })),
+		);
+		expect(authenticated.length).toBeGreaterThan(0);
+
+		for (const { id, operation } of authenticated) {
+			const unauthorized = operation.responses["401"];
+			expect(unauthorized, `${id} declares no 401`).toBeDefined();
+			expect(unauthorized?.content?.["application/json"]?.schema?.$ref, `${id} 401 schema`).toBe(
+				"#/components/schemas/ErrorResponse",
+			);
+			// RFC 9110 §11.6.1 requires the challenge on a 401. It is part of the
+			// contract the moment the status is, and a caller reading the document
+			// to build a credential helper has no other way to learn the scheme.
+			expect(Object.keys(unauthorized?.headers ?? {}), `${id} 401 headers`).toContain("WWW-Authenticate");
+		}
+	});
+
+	it("should declare a security requirement on every route mounted behind auth", async () => {
+		const ctx = createExecutionContext();
+		const response = await app.fetch(new Request("http://localhost/doc"), env, ctx);
+		await waitOnExecutionContext(ctx);
+
+		const spec = (await response.json()) as {
+			paths: Record<string, Record<string, { security?: Record<string, unknown>[] }>>;
+		};
+
+		// The 401 assertion above is conditioned on `security`, which is written by
+		// hand in each createRoute call — so a route that omits it declares no 401
+		// either and both checks stay silent about it. Auth is not per-route: index
+		// mounts /sign behind callerAuth and everything under /admin behind
+		// adminAuth, which is the list the document has to agree with.
+		//
+		// Matched as mount points rather than as prefixes. `app.route("/sign", …)`
+		// covers everything the sub-app declares, so a later `/sign/verify` is
+		// behind callerAuth the moment it is added and has to be caught here —
+		// while a bare `startsWith` would also claim a future top-level
+		// `/administration`, which nothing mounts behind adminAuth.
+		const AUTH_MOUNTS = ["/sign", "/admin"];
+		const behindAuth = Object.entries(spec.paths).filter(([path]) =>
+			AUTH_MOUNTS.some((mount) => path === mount || path.startsWith(`${mount}/`)),
+		);
+		expect(behindAuth.length).toBeGreaterThan(0);
+
+		for (const [path, methods] of behindAuth) {
+			for (const [method, operation] of Object.entries(methods)) {
+				expect(
+					(operation.security ?? []).length,
+					`${method.toUpperCase()} ${path} is behind auth but declares no security requirement`,
+				).toBeGreaterThan(0);
+			}
+		}
+	});
+
 	it("should include security schemes when generating a document directly", () => {
 		const spec = app.getOpenAPIDocument(openApiConfig);
 		expect(Object.keys(spec.components?.securitySchemes ?? {})).toEqual(

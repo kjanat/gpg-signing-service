@@ -1,6 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 
-import { createOpenAPIApp } from "#lib/openapi";
+import { createOpenAPIApp, unauthorizedResponse } from "#lib/openapi";
 import {
 	ErrorResponseSchema,
 	PublicKeyQuerySchema,
@@ -155,6 +155,7 @@ const signRoute = createRoute({
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Bad Request",
 		},
+		[HTTP.Unauthorized]: unauthorizedResponse("Missing, invalid, or untrusted signing credential"),
 		[HTTP.Forbidden]: {
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Token not allowed to use this key",
