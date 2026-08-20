@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"slices"
 	"strings"
 )
 
@@ -40,6 +42,36 @@ type command struct {
 	stdin   []byte
 }
 
+// repoEnv are the environment variables that select a repository out from
+// under the working directory. git reads them before it looks at the current
+// directory, so with GIT_DIR set — which is the case inside every hook, under
+// "git rebase --exec", and under "git bisect run" — a subprocess given a
+// working directory would still operate on the caller's repository.
+var repoEnv = []string{
+	"GIT_DIR",
+	"GIT_COMMON_DIR",
+	"GIT_WORK_TREE",
+	"GIT_OBJECT_DIRECTORY",
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES",
+	"GIT_INDEX_FILE",
+	"GIT_NAMESPACE",
+	"GIT_CEILING_DIRECTORIES",
+}
+
+// withoutRepoEnv drops the repository-selecting variables from an environment,
+// leaving everything else — credentials, proxies, GIT_SSH — intact.
+func withoutRepoEnv(environ []string) []string {
+	kept := make([]string, 0, len(environ))
+	for _, entry := range environ {
+		name, _, found := strings.Cut(entry, "=")
+		if found && slices.Contains(repoEnv, name) {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return kept
+}
+
 // capture runs the command and returns stdout and stderr regardless of exit
 // status. Callers that only care about success should use run instead.
 func capture(ctx context.Context, c command) (stdout, stderr []byte, err error) {
@@ -48,6 +80,9 @@ func capture(ctx context.Context, c command) (stdout, stderr []byte, err error) 
 	// of the repository itself.
 	cmd := exec.CommandContext(ctx, c.program, c.args...)
 	cmd.Dir = c.dir
+	if c.dir != "" {
+		cmd.Env = withoutRepoEnv(os.Environ())
+	}
 	if c.stdin != nil {
 		cmd.Stdin = bytes.NewReader(c.stdin)
 	}

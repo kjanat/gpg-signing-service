@@ -3,6 +3,8 @@ package gitsign
 import (
 	"context"
 	"errors"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -424,5 +426,53 @@ func TestRunRefusesWhenHeadMovedDuringTheRun(t *testing.T) {
 	}
 	if got := head(t, dir); got == base {
 		t.Error("expected the concurrent commit to survive")
+	}
+}
+
+// A run must operate on the directory it was given, not on whatever repository
+// the ambient environment names. GIT_DIR is set inside every git hook, under
+// "git rebase --exec" and under "git bisect run", and git reads it before it
+// looks at the working directory — so without scrubbing it, --repo would
+// rewrite history in the caller's repository instead.
+func TestRunIgnoresAmbientGitDir(t *testing.T) {
+	dir, svc := serviceFixture(t)
+	base := head(t, dir)
+	commit(t, dir, "first", serviceEmail)
+
+	bystander := initRepo(t)
+	commit(t, bystander, "untouched", serviceEmail)
+	before := head(t, bystander)
+
+	t.Setenv("GIT_DIR", filepath.Join(bystander, ".git"))
+
+	result, _, err := runEngine(t, dir, svc.api, Options{Base: base})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.RefUpdated || result.Tip == result.Head {
+		t.Fatalf("expected the target repository to be rewritten, got %+v", result)
+	}
+	if after := head(t, bystander); after != before {
+		t.Errorf("the run moved HEAD in the repository GIT_DIR named: %s -> %s", before, after)
+	}
+	// GIT_DIR is relative to the process working directory, so this reads the
+	// target repository even with the ambient value still set.
+	if got := git(t, dir, []string{"GIT_DIR=.git"}, "rev-parse", "HEAD"); got != result.Tip {
+		t.Errorf("expected HEAD at %s in the target repository, got %s", result.Tip, got)
+	}
+}
+
+func TestWithoutRepoEnvKeepsEverythingElse(t *testing.T) {
+	got := withoutRepoEnv([]string{
+		"GIT_DIR=/elsewhere/.git",
+		"GIT_WORK_TREE=/elsewhere",
+		"GIT_AUTHOR_NAME=Kept",
+		"PATH=/usr/bin",
+		"MALFORMED",
+	})
+
+	want := []string{"GIT_AUTHOR_NAME=Kept", "PATH=/usr/bin", "MALFORMED"}
+	if !slices.Equal(got, want) {
+		t.Errorf("expected %v, got %v", want, got)
 	}
 }

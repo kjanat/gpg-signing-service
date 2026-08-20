@@ -145,9 +145,13 @@ ref to the rewritten tip. It prints one line per commit:
 ```text
   signed   3f2a91c4 -> 7d84be10
   reparent a10ce7bb -> 2c9f4a55
-Signed 1 of 2 commit(s) in 8ab30c91..HEAD
-HEAD now points at 2c9f4a55. Nothing was pushed; publishing this rewrite needs a force push.
+  signed   9b1e0f37 -> 4e6dcb82
+Signed 2 of 3 commit(s) in 8ab30c91..HEAD
+HEAD now points at 4e6dcb82. Nothing was pushed; publishing this rewrite needs a force push.
 ```
+
+`reparent` is a commit rewritten only to follow a rewritten parent; the middle
+one here was committed by an identity this key does not cover.
 
 Without `--base`, the range starts at the last commit this key already verifies
 when you are on `--default-branch`, and at the merge base with
