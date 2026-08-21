@@ -36,6 +36,9 @@ export const DOCS_CSP = [
 /** Paths that render the interactive API documentation. */
 const DOCS_UI_PATHS = new Set(["/ui"]);
 
+/** Rate-limit headers a cross-origin reader may see, when the response has them. */
+const RATE_LIMIT_HEADERS = [HEADERS.RATE_LIMIT_LIMIT, HEADERS.RATE_LIMIT_REMAINING, HEADERS.RATE_LIMIT_RESET] as const;
+
 /**
  * Security headers middleware for production hardening
  */
@@ -55,48 +58,115 @@ export const securityHeaders: MiddlewareHandler<{ Bindings: Env }> = async (c, n
 	c.res.headers.delete("Server");
 	c.res.headers.delete("X-Powered-By");
 
-	// Expose rate limit headers if present
-	const rateLimitRemaining = c.res.headers.get(HEADERS.RATE_LIMIT_REMAINING);
-	if (rateLimitRemaining !== null) {
-		c.header(
-			"Access-Control-Expose-Headers",
-			`${HEADERS.RATE_LIMIT_LIMIT}, ${HEADERS.RATE_LIMIT_REMAINING}, ${HEADERS.RATE_LIMIT_RESET}`,
-		);
+	// Advertise only the rate-limit headers this response actually carries. The
+	// list used to be hardcoded, so it named X-RateLimit-Limit — which nothing in
+	// the service ever sets — on every rate-limited response.
+	const exposed = RATE_LIMIT_HEADERS.filter((name) => c.res.headers.has(name));
+	if (exposed.length > 0) {
+		c.header("Access-Control-Expose-Headers", exposed.join(", "));
 	}
 };
 
+/** Literal `ALLOWED_ORIGINS` entry opting a deployment into public browser access. */
+const WILDCARD_ORIGIN = "*";
+
 /**
- * Production CORS middleware with restricted origins
+ * Origins that are never granted access, whatever the allowlist says.
+ *
+ * `null` is the origin a sandboxed iframe, a `data:` URL and a `file://`
+ * document all send, so honouring it hands one shared, unauthenticated origin to
+ * every context an attacker can conjure — a weaker position than the wildcard,
+ * because the attacker gets to *choose* to present it.
+ */
+const FORBIDDEN_ORIGINS = new Set(["null"]);
+
+const CORS_ALLOW_METHODS = "GET, POST, DELETE, OPTIONS";
+const CORS_ALLOW_HEADERS = `Authorization, Content-Type, ${HEADERS.REQUEST_ID}`;
+/** 24h, the cap Chromium honours for a preflight. */
+const CORS_MAX_AGE = "86400";
+
+/**
+ * Resolve the value for `Access-Control-Allow-Origin`, or `undefined` to send none.
+ *
+ * Fails **closed**: an unset or empty `ALLOWED_ORIGINS` grants no origin
+ * anything. This used to be inverted — an empty allowlist meant "allow
+ * everything", and since the binding is optional and unset in `wrangler.toml`,
+ * the deployed default reflected any attacker-supplied `Origin`. The service's
+ * real callers are CI runners and the Go client, neither of which is a browser
+ * and neither of which needs a CORS grant to work.
+ */
+function resolveAllowedOrigin(allowedOrigins: string | undefined, origin: string): string | undefined {
+	// Entries are trimmed the same way ALLOWED_ISSUERS is, so a padded value in a
+	// comma-separated list is not silently un-matchable.
+	const entries = (allowedOrigins?.split(",") ?? []).map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+
+	if (entries.length === 0) {
+		return undefined;
+	}
+	// An explicit `*` echoes the literal wildcard rather than reflecting the
+	// request origin. Safe only because no credentials are ever granted.
+	if (entries.includes(WILDCARD_ORIGIN)) {
+		return WILDCARD_ORIGIN;
+	}
+	if (FORBIDDEN_ORIGINS.has(origin)) {
+		return undefined;
+	}
+	return entries.includes(origin) ? origin : undefined;
+}
+
+/**
+ * Add `Origin` to `Vary` without duplicating a token another handler already set.
+ *
+ * Exported for direct testing: no handler in the service sets `Vary` today, so
+ * the merge paths are unreachable through the app itself.
+ */
+export function varyOnOrigin(headers: Headers): void {
+	const tokens = (headers.get("Vary") ?? "").split(",").map((token) => token.trim().toLowerCase());
+	if (!tokens.includes("origin") && !tokens.includes("*")) {
+		headers.append("Vary", "Origin");
+	}
+}
+
+/**
+ * Production CORS middleware with restricted origins.
+ *
+ * No `Access-Control-Allow-Credentials` is ever sent. The service authenticates
+ * with a bearer token in `Authorization`, which a browser never attaches
+ * ambiently, so the header bought nothing while making the fail-open default the
+ * textbook reflect-origin-with-credentials hole. It was also only ever set on the
+ * actual response and not on the preflight, so it never worked for its stated
+ * purpose in the first place. A cookie- or client-certificate-based flow would
+ * have to add it back to *both* branches deliberately.
  */
 export const productionCors: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
 	const origin = c.req.header("Origin");
-	const allowedOrigins = c.env.ALLOWED_ORIGINS?.split(",") ?? [];
-
-	// Check if origin is allowed
-	const isAllowed = allowedOrigins.length === 0 || (origin !== undefined && allowedOrigins.includes(origin));
+	const allowOrigin = origin === undefined ? undefined : resolveAllowedOrigin(c.env.ALLOWED_ORIGINS, origin);
+	// The wildcard answer is origin-independent; every other outcome — including a
+	// bare denial and the no-Origin case — is what this request's Origin earned, so
+	// a shared cache must key on it or it will hand one origin another's grant.
+	const varies = allowOrigin !== WILDCARD_ORIGIN;
 
 	if (c.req.method === "OPTIONS") {
-		// Preflight request
-		if (isAllowed && origin !== undefined) {
-			return new Response(null, {
-				status: HTTP.NoContent,
-				headers: {
-					"Access-Control-Allow-Origin": origin,
-					"Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-					"Access-Control-Allow-Headers": "Authorization, Content-Type, X-Request-ID",
-					"Access-Control-Max-Age": "86400",
-				},
-			});
+		const headers = new Headers();
+		if (varies) {
+			varyOnOrigin(headers);
 		}
-		return new Response(null, { status: HTTP.NoContent });
+		if (allowOrigin !== undefined) {
+			headers.set("Access-Control-Allow-Origin", allowOrigin);
+			headers.set("Access-Control-Allow-Methods", CORS_ALLOW_METHODS);
+			headers.set("Access-Control-Allow-Headers", CORS_ALLOW_HEADERS);
+			headers.set("Access-Control-Max-Age", CORS_MAX_AGE);
+		}
+		return new Response(null, { status: HTTP.NoContent, headers });
 	}
 
 	await next();
 
-	// Set CORS headers for allowed origins
-	if (isAllowed && origin !== undefined) {
-		c.header("Access-Control-Allow-Origin", origin);
-		c.header("Access-Control-Allow-Credentials", "true");
+	if (varies) {
+		varyOnOrigin(c.res.headers);
+	}
+	if (allowOrigin !== undefined) {
+		c.header("Access-Control-Allow-Origin", allowOrigin);
 	}
 
 	return;

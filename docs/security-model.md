@@ -110,9 +110,23 @@ There is no built-in retention, export, alerting, or tamper-evident log chain.
 
 ## Browser access
 
-`ALLOWED_ORIGINS` controls CORS. When it is empty, any supplied `Origin` is
-treated as allowed and reflected with credentials enabled. Set an explicit
-allowlist for deployments reachable from browsers.
+`ALLOWED_ORIGINS` controls CORS, and it fails **closed**: when it is unset or
+empty, no `Access-Control-Allow-Origin` is sent at all. The service's callers are
+CI runners and the Go client, neither of which is a browser, so the default grant
+is nothing. Set an explicit comma-separated allowlist for deployments reachable
+from browsers; entries are trimmed, and a lone `*` opts into public browser
+access by echoing the literal wildcard rather than reflecting the request origin.
+
+`Access-Control-Allow-Credentials` is never sent. Authentication is a bearer
+token in `Authorization`, which a browser does not attach ambiently, so there is
+no ambient credential for a cross-origin page to replay. A cookie- or client
+certificate-based flow would have to add the header to the preflight _and_ the
+actual response deliberately.
+
+The `Origin: null` that sandboxed iframes, `data:` URLs and `file://` documents
+send is refused even if it appears in the allowlist — it is a shared origin any
+attacker can choose to present. Every origin-dependent response carries
+`Vary: Origin` so a shared cache cannot hand one origin another's grant.
 
 Security headers include HSTS, CSP, frame denial, MIME sniffing prevention, and
 a restricted Permissions Policy.
