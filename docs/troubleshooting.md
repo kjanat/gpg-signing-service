@@ -50,10 +50,17 @@ verified token still needs a trusted subject. Check all of:
 - the token has not expired; and
 - discovery and JWKS endpoints are reachable.
 
-The response body separates these: `AUTH_MISSING` is an absent header,
-`Issuer not allowed: <iss>` an unlisted issuer, `Subject is not trusted for
+The response body separates these: `AUTH_MISSING` is no usable credential at
+all, `Issuer not allowed: <iss>` an unlisted issuer, `Subject is not trusted for
 signing` an unregistered caller, and any other `AUTH_INVALID` a verification
 failure. `gpg-sign` prints that body, so read it before working down the list.
+
+`AUTH_MISSING` has two messages, and the second is the one that misleads.
+`Missing authorization header` means what it says. `Missing token` means the
+header arrived as `Bearer` with nothing after it — the step interpolated an
+empty value, which is what a mistyped `steps.<id>.outputs.token` or a token step
+that never ran produces. Nothing about the trusted-subject table is implicated;
+echo the length of the token the step captured.
 
 Use `core.getIDToken("gpg-signing-service")`. Raw endpoint responses store the
 JWT in `.value`, not `.token`.

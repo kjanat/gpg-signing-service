@@ -22,7 +22,11 @@ func TestUnexpectedStatusResponses(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client, _ := New(server.URL, WithAdminToken(testMsgTest))
+			// Retries off: this asserts how an unmapped status is *reported*, and
+			// 502 and 504 are legitimately retryable, so leaving the default
+			// policy on would spend the backoff eight times per status to reach
+			// the same answer.
+			client := newMappingClient(t, server.URL, WithAdminToken(testMsgTest), WithMaxRetries(0))
 			ctx := context.Background()
 
 			// Test Health
@@ -166,11 +170,8 @@ func TestSignMethodEdgeCases(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, err := New(server.URL)
-		if err != nil {
-			t.Fatalf("failed to create client: %v", err)
-		}
-		_, err = client.Sign(context.Background(), "data", "")
+		client := newMappingClient(t, server.URL)
+		_, err := client.Sign(context.Background(), "data", "")
 		if err == nil {
 			t.Error("expected rate limit error")
 		}

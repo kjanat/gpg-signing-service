@@ -92,6 +92,11 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 // allowing callers to inspect partial health data while being informed of degradation.
 // Callers should check both return values when handling degraded states.
 func (c *Client) Health(ctx context.Context) (*HealthStatus, error) {
+	// Deliberately not executeWithRetry: this is the one operation whose 503 is
+	// an answer rather than a failure. `degraded` is a documented state carrying
+	// a body the caller is meant to read, and re-asking three times with backoff
+	// would delay that report to learn nothing — a probe wants the current
+	// status, not an eventually-healthy one. Transport faults still retry.
 	var resp *api.GetHealthResponse
 	err := c.retrier.Do(ctx, func() error {
 		var execErr error
@@ -113,17 +118,22 @@ func (c *Client) Health(ctx context.Context) (*HealthStatus, error) {
 	}
 
 	if resp.JSON503 != nil {
-		return &HealthStatus{
-				Status:     string(resp.JSON503.Status),
-				Version:    resp.JSON503.Version,
-				Timestamp:  resp.JSON503.Timestamp,
-				KeyStorage: resp.JSON503.Checks.KeyStorage,
-				Database:   resp.JSON503.Checks.Database,
-			}, &ServiceError{
-				Code:       ErrCodeDegraded,
-				Message:    "service degraded",
-				StatusCode: 503,
-			}
+		// Bound to a name rather than returned inline: goimports and gofumpt
+		// indent a two-value return of composite literals differently, and this
+		// block is the one place in the package where they disagree — enough to
+		// fail `task c:l` whichever of the two last touched the file.
+		degraded := &HealthStatus{
+			Status:     string(resp.JSON503.Status),
+			Version:    resp.JSON503.Version,
+			Timestamp:  resp.JSON503.Timestamp,
+			KeyStorage: resp.JSON503.Checks.KeyStorage,
+			Database:   resp.JSON503.Checks.Database,
+		}
+		return degraded, &ServiceError{
+			Code:       ErrCodeDegraded,
+			Message:    "service degraded",
+			StatusCode: 503,
+		}
 	}
 
 	return nil, newStatusError(resp.StatusCode(), resp.Body, resp.HTTPResponse.Header)
@@ -137,13 +147,10 @@ func (c *Client) PublicKey(ctx context.Context, keyID string) (string, error) {
 		keyIDPtr = &keyID
 	}
 
-	var resp *api.GetPublicKeyResponse
-	err := c.retrier.Do(ctx, func() error {
-		var execErr error
-		resp, execErr = c.raw.GetPublicKeyWithResponse(ctx, &api.GetPublicKeyParams{
+	resp, err := executeWithRetry(ctx, c.retrier, func() (*api.GetPublicKeyResponse, error) {
+		return c.raw.GetPublicKeyWithResponse(ctx, &api.GetPublicKeyParams{
 			KeyId: keyIDPtr,
 		})
-		return execErr
 	})
 	if err != nil {
 		return "", err
@@ -188,11 +195,8 @@ func (c *Client) Sign(ctx context.Context, commitData string, keyID string) (*Si
 
 	params := buildSignParams(keyID)
 
-	var resp *api.PostSignResponse
-	err := c.retrier.Do(ctx, func() error {
-		var execErr error
-		resp, execErr = c.raw.PostSignWithBodyWithResponse(ctx, params, "text/plain", strings.NewReader(commitData))
-		return execErr
+	resp, err := executeWithRetry(ctx, c.retrier, func() (*api.PostSignResponse, error) {
+		return c.raw.PostSignWithBodyWithResponse(ctx, params, "text/plain", strings.NewReader(commitData))
 	})
 	if err != nil {
 		return nil, err
@@ -229,11 +233,8 @@ func (c *Client) UploadKey(ctx context.Context, keyID string, armoredPrivateKey 
 		KeyId:             keyID,
 	}
 
-	var resp *api.PostAdminKeysResponse
-	err := c.retrier.Do(ctx, func() error {
-		var execErr error
-		resp, execErr = c.raw.PostAdminKeysWithResponse(ctx, body)
-		return execErr
+	resp, err := executeWithRetry(ctx, c.retrier, func() (*api.PostAdminKeysResponse, error) {
+		return c.raw.PostAdminKeysWithResponse(ctx, body)
 	})
 	if err != nil {
 		return nil, err
@@ -269,11 +270,8 @@ func (c *Client) UploadKey(ctx context.Context, keyID string, armoredPrivateKey 
 
 // ListKeys lists all signing keys (admin operation).
 func (c *Client) ListKeys(ctx context.Context) ([]KeyMetadata, error) {
-	var resp *api.GetAdminKeysResponse
-	err := c.retrier.Do(ctx, func() error {
-		var execErr error
-		resp, execErr = c.raw.GetAdminKeysWithResponse(ctx)
-		return execErr
+	resp, err := executeWithRetry(ctx, c.retrier, func() (*api.GetAdminKeysResponse, error) {
+		return c.raw.GetAdminKeysWithResponse(ctx)
 	})
 	if err != nil {
 		return nil, err
@@ -313,11 +311,8 @@ func (c *Client) ListKeys(ctx context.Context) ([]KeyMetadata, error) {
 // the key was not deleted (deleted=false), typically meaning the key doesn't exist.
 // Callers should use IsKeyNotFound() to detect this case.
 func (c *Client) DeleteKey(ctx context.Context, keyID string) error {
-	var resp *api.DeleteAdminKeysKeyIdResponse
-	err := c.retrier.Do(ctx, func() error {
-		var execErr error
-		resp, execErr = c.raw.DeleteAdminKeysKeyIdWithResponse(ctx, keyID)
-		return execErr
+	resp, err := executeWithRetry(ctx, c.retrier, func() (*api.DeleteAdminKeysKeyIdResponse, error) {
+		return c.raw.DeleteAdminKeysKeyIdWithResponse(ctx, keyID)
 	})
 	if err != nil {
 		return err
@@ -353,11 +348,8 @@ func (c *Client) DeleteKey(ctx context.Context, keyID string) error {
 func (c *Client) AuditLogs(ctx context.Context, filter AuditFilter) (*AuditResult, error) {
 	params := buildAuditParams(filter)
 
-	var resp *api.GetAdminAuditResponse
-	err := c.retrier.Do(ctx, func() error {
-		var execErr error
-		resp, execErr = c.raw.GetAdminAuditWithResponse(ctx, params)
-		return execErr
+	resp, err := executeWithRetry(ctx, c.retrier, func() (*api.GetAdminAuditResponse, error) {
+		return c.raw.GetAdminAuditWithResponse(ctx, params)
 	})
 	if err != nil {
 		return nil, err
@@ -383,11 +375,8 @@ func (c *Client) AdminPublicKey(ctx context.Context, keyID string) (string, erro
 		}
 	}
 
-	var resp *api.GetAdminKeysKeyIdPublicResponse
-	err := c.retrier.Do(ctx, func() error {
-		var execErr error
-		resp, execErr = c.raw.GetAdminKeysKeyIdPublicWithResponse(ctx, keyID)
-		return execErr
+	resp, err := executeWithRetry(ctx, c.retrier, func() (*api.GetAdminKeysKeyIdPublicResponse, error) {
+		return c.raw.GetAdminKeysKeyIdPublicWithResponse(ctx, keyID)
 	})
 	if err != nil {
 		return "", err

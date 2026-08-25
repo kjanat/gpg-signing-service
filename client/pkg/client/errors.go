@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/kjanat/gpg-signing-service/client/pkg/api"
@@ -60,8 +61,14 @@ type AuthError struct {
 
 func (e *AuthError) Error() string {
 	msg := e.Message
-	if e.Code != "" {
+	// Both halves are required for the separator to mean anything. An AuthError
+	// built from a response always has both, but the type is exported and a
+	// caller's own value need not — and "AUTH_MISSING: " reads as a message the
+	// service failed to send rather than one it never had.
+	if e.Code != "" && msg != "" {
 		msg = e.Code + ": " + msg
+	} else if msg == "" {
+		msg = e.Code
 	}
 	if e.RequestID != "" {
 		return fmt.Sprintf("authentication failed: %s (request %s)", msg, e.RequestID)
@@ -148,6 +155,23 @@ func requestIDFrom(envelope string, header http.Header) string {
 	return header.Get(headerRequestID)
 }
 
+// retryAfterFrom returns how long a 429 asks the caller to wait, preferring the
+// envelope's `retryAfter` seconds and falling back to the `Retry-After` header.
+//
+// Only the delta-seconds form of the header is read. RFC 9110 also permits an
+// HTTP-date; this service's limiter emits seconds, and an unparseable value
+// yields zero, which callers treat as "no hint" rather than "no wait".
+func retryAfterFrom(envelopeSeconds int, header http.Header) time.Duration {
+	if envelopeSeconds > 0 {
+		return time.Duration(envelopeSeconds) * time.Second
+	}
+	seconds, err := strconv.Atoi(header.Get("Retry-After"))
+	if err != nil || seconds <= 0 {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
+}
+
 // newAuthErrorFromResponse turns the service's 401 envelope into an AuthError.
 //
 // The document declares a 401 on every operation that requires a credential, so
@@ -196,6 +220,9 @@ type apiErrorBody struct {
 	Error     string `json:"error"`
 	Code      string `json:"code"`
 	RequestID string `json:"requestId"`
+	// RetryAfter is the delay in seconds a 429 asks for. Declared by
+	// RateLimitErrorSchema; absent, and so zero, on every other status.
+	RetryAfter int `json:"retryAfter"`
 }
 
 // newStatusError builds the richest error the response supports.
@@ -224,6 +251,18 @@ func newStatusError(statusCode int, body []byte, header http.Header) error {
 			Code:      parsed.Code,
 			Message:   parsed.Error,
 			RequestID: requestID,
+		}
+	}
+
+	// 429 is the one status where falling through to ServiceError would lose
+	// information the typed path keeps. IsRateLimitError, and with it the
+	// retrier's rate-limit policy and the CLI's "you are being throttled"
+	// message, key off the type — a rate limit the document happens not to
+	// declare for an operation is still a rate limit.
+	if statusCode == http.StatusTooManyRequests {
+		return &RateLimitError{
+			Message:    parsed.Error,
+			RetryAfter: retryAfterFrom(parsed.RetryAfter, header),
 		}
 	}
 

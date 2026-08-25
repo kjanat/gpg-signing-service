@@ -47,7 +47,7 @@ func runPublicKeyTest(
 			}))
 			defer server.Close()
 
-			client, _ := New(server.URL)
+			client := newMappingClient(t, server.URL)
 			key, err := callMethod(client, context.Background(), tt.keyID)
 
 			if tt.wantErr && err == nil {
@@ -145,7 +145,7 @@ func TestHealth(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client, _ := New(server.URL)
+			client := newMappingClient(t, server.URL)
 			status, err := client.Health(context.Background())
 
 			if tt.wantErr && err == nil {
@@ -269,7 +269,7 @@ func TestUploadKey(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client, _ := New(server.URL)
+			client := newMappingClient(t, server.URL)
 			info, err := client.UploadKey(context.Background(), tt.keyID, tt.privateKey)
 
 			if tt.wantErr && err == nil {
@@ -312,7 +312,7 @@ func TestListKeys(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, _ := New(server.URL)
+	client := newMappingClient(t, server.URL)
 	keys, err := client.ListKeys(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -374,7 +374,7 @@ func TestDeleteKey(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client, _ := New(server.URL)
+			client := newMappingClient(t, server.URL)
 			err := client.DeleteKey(context.Background(), tt.keyID)
 
 			if tt.wantErr && err == nil {
@@ -420,7 +420,7 @@ func TestAuditLogs(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, _ := New(server.URL)
+	client := newMappingClient(t, server.URL)
 
 	filter := AuditFilter{
 		Limit: 10,
@@ -499,7 +499,7 @@ func TestAuditFilterWithAllFields(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, _ := New(server.URL)
+	client := newMappingClient(t, server.URL)
 
 	filter := AuditFilter{
 		Limit:     20,
@@ -536,7 +536,7 @@ func BenchmarkHealth(b *testing.B) {
 	}))
 	defer server.Close()
 
-	client, _ := New(server.URL)
+	client := newMappingClient(b, server.URL)
 
 	for b.Loop() {
 		_, _ = client.Health(context.Background())
@@ -552,7 +552,7 @@ func BenchmarkPublicKey(b *testing.B) {
 	}))
 	defer server.Close()
 
-	client, _ := New(server.URL)
+	client := newMappingClient(b, server.URL)
 
 	for b.Loop() {
 		_, _ = client.PublicKey(context.Background(), "")
@@ -599,7 +599,7 @@ func TestAdminMethodsSurfaceUnauthorized(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client, _ := New(server.URL)
+			client := newMappingClient(t, server.URL)
 			err := call(context.Background(), client)
 
 			var authErr *AuthError
@@ -637,7 +637,7 @@ func TestUnauthorizedWithoutMessageFallsBackToSentinel(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, _ := New(server.URL)
+	client := newMappingClient(t, server.URL)
 
 	_, err := client.ListKeys(context.Background())
 	if !errors.Is(err, ErrUnexpectedStatus) {

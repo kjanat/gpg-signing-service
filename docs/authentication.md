@@ -58,11 +58,10 @@ prefix wins, so a specific repository can be granted different keys than the
 owner-wide row covering the rest.
 
 > [!TIP]
-> For an owner-wide trust prefer `repo:owner` over `repo:owner/`. The boundary
-> then falls on either `/` or `@`, so the row keeps matching if the repository
-> later enables immutable subject claims and its `sub` changes shape. It still
-> refuses `repo:ownerevil`. The failure is closed either way — signing breaks,
-> nothing opens — but it breaks at an awkward moment.
+> For an owner-wide trust prefer `repo:owner` over `repo:owner/`. It still
+> refuses `repo:ownerevil`, and it survives a change of `sub` shape the trailing
+> slash does not — see
+> [immutable subject claims](#immutable-subject-claims-change-sub-under-a-live-row).
 
 A prefix must also contain a delimiter with something after it. `repo:` and
 `repo` are refused, because a prefix ending at a delimiter is owner-wide and a

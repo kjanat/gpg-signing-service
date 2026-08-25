@@ -253,7 +253,9 @@ Example:
 		result, err := c.Sign(ctx, string(data), keyID)
 		if err != nil {
 			if client.IsRateLimitError(err) {
-				// The wrapper already retried, so this is a final failure
+				// The retries are already spent by the time this returns, so the
+				// limit is a standing one and not a burst worth re-running the
+				// command over. The wrapped error carries how long to wait.
 				return fmt.Errorf("rate limit exceeded: %w", err)
 			}
 			return fmt.Errorf("signing failed: %w", err)

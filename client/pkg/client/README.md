@@ -178,7 +178,8 @@ c, err := client.New(baseURL string, opts ...Option)
 
 - `AuthError` - Authentication failures (carries the service's `Code`,
   `Message`, and `RequestID`)
-- `RateLimitError` - Rate limit exceeded (includes retry-after duration)
+- `RateLimitError` - Rate limit exceeded (carries the retry-after duration, read
+  from the body's `retryAfter` or the `Retry-After` header)
 - `ValidationError` - Invalid request data
 - `ServiceError` - API errors with codes
 
@@ -310,6 +311,26 @@ c, _ := client.New(baseURL,
     client.WithoutRateLimitRetry(), // Fail fast on rate limits
 )
 ```
+
+### What is retried
+
+A `429`, and a `500`, `502`, `503` or `504` — a transport fault or a state the
+server may be out of by the next attempt. Nothing else. A `501` or a `505`
+describes what the server will never do, and every 4xx below `429` describes
+something only the caller can change, so re-sending either spends the timeout
+budget to arrive at the same answer.
+
+Two exceptions worth knowing:
+
+- `Health` never retries a status. Its `503` is `degraded`, a documented answer
+  carrying a body you are meant to read, and a probe wants the current state
+  rather than an eventually-healthy one.
+- The wait between attempts is the exponential backoff, not the server's
+  `Retry-After`. The hint is not discarded — it reaches you on the
+  `RateLimitError` returned once the attempts are spent.
+
+Retries are exhausted before an operation returns, so an error you receive is
+final under the configured policy.
 
 ## Rate Limit Information
 
