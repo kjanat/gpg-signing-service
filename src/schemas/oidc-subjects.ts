@@ -11,6 +11,21 @@ export const SubjectNameSchema = z
 	.openapi("SubjectName");
 
 /**
+ * Both prefix rules below as one expression, for the published JSON Schema.
+ *
+ * A JSON Schema string carries a single `pattern`, so the two `.regex()` checks
+ * — which exist separately to keep their error messages apart — collapse to this
+ * for `client/openapi.json`. It is the intersection: `\S` narrowed to exclude
+ * the glob characters as well as whitespace. Written as an explicit character
+ * class rather than a lookahead so it stays legible to somebody reading the spec
+ * to work out why their prefix was refused.
+ *
+ * Change either `.regex()` and this must change with it; the round trip is
+ * covered in `schemas.test.ts`.
+ */
+export const SUBJECT_PREFIX_PATTERN = "^[^\\s*?[\\]]*[:@/][^\\s*?[\\]]*[^\\s:@/*?[\\]][^\\s*?[\\]]*$";
+
+/**
  * A `sub` prefix. Matched with a delimiter boundary, so `repo:owner/name`
  * does not admit `repo:owner/name-evil`, while `repo:owner/` is owner-wide.
  */
@@ -35,7 +50,43 @@ export const SubjectPrefixSchema = z
 		/^\S*[:@/]\S*[^\s:@/]\S*$/,
 		"Subject prefix must have no whitespace and must name an identity after its scheme, e.g. repo:owner — not repo: or repo",
 	)
-	.openapi("SubjectPrefix");
+	// Globs are the other degenerate input, and the one an operator reaches for
+	// first: matching is `startsWith` plus a delimiter check, never a pattern
+	// match, so `repo:owner/*` is stored and compared verbatim and matches only a
+	// repository literally called `*`. That row lists as active, never authorizes
+	// anybody, and the failure surfaces as `Subject is not trusted for signing` on
+	// some later run with nothing tying it back to the create. Fail at the point
+	// of the typo instead, and name the form that actually does what was meant.
+	//
+	// `*`, `?` and `[` cannot appear in a real subject: git-check-ref-format
+	// forbids all three in a ref name, and neither GitHub's `repo:owner/name:…`
+	// nor GitLab's `project_path:group/project:…` puts them anywhere else. So
+	// nothing legitimate is refused here.
+	//
+	// A second `.regex()` rather than one combined pattern, so each rule keeps its
+	// own message: a caller who typed a glob is told about globs, not handed the
+	// bare-scheme rule to decode. Only the first check reaches `pattern` in
+	// client/openapi.json — a JSON Schema string has one — so the combined
+	// expression is restated in `.openapi()` below, and the two must be kept in
+	// step. The whole-string alternation is written out rather than a lookahead so
+	// the published pattern stays readable to whoever is debugging a 400 against
+	// it.
+	.regex(
+		/^[^*?[\]]*$/,
+		"Subject prefix is a literal prefix, not a glob — remove * ? [ ]. A prefix ending at a delimiter is already the wildcard: repo:owner/ trusts every repository of that owner",
+	)
+	.openapi("SubjectPrefix", {
+		pattern: SUBJECT_PREFIX_PATTERN,
+		// The rule is only obvious once you know matching is startsWith, so state
+		// it where the spec is read. TSDoc above does not reach openapi.json.
+		description:
+			"A literal prefix of the token's `sub`, not a glob — `*`, `?` and `[` are refused. A subject " +
+			"matches when it starts with this string and the next character is a delimiter (`:`, `@`, `/`) " +
+			"or the end of the subject, so `repo:owner/svc` does not admit `repo:owner/svc-evil`. A prefix " +
+			"that ends at a delimiter is the wildcard: `repo:owner/` trusts every repository of that owner. " +
+			"Where several rows match, the longest live prefix wins.",
+		example: "repo:owner/repository",
+	});
 
 /** Request body for trusting an OIDC subject. */
 export const SubjectCreateSchema = z

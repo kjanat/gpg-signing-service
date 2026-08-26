@@ -13,6 +13,8 @@ import {
 	KeyUploadSchema,
 	RequestHeadersSchema,
 	RequestIdSchema,
+	SUBJECT_PREFIX_PATTERN,
+	SubjectPrefixSchema,
 	TimestampSchema,
 } from "#schemas";
 
@@ -771,6 +773,57 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
 
 		it("should reject missing fields", () => {
 			expect(() => KeyResponseSchema.parse({ success: true, keyId: "ABC" })).toThrow();
+		});
+	});
+
+	describe("SubjectPrefixSchema", () => {
+		// A prefix is compared with startsWith and a delimiter check, never a
+		// pattern match, so a glob is not a wider rule — it is a row that matches
+		// nothing while listing as active. The refusal has to name the form that
+		// does work, or the operator's next guess is another pattern syntax.
+		it.each(["repo:kjanat/*", "repo:kjanat/svc?", "repo:kjanat/[ab]", "project_path:group/*"])(
+			"rejects the glob %s and names the trailing-delimiter form",
+			(prefix) => {
+				const result = SubjectPrefixSchema.safeParse(prefix);
+				expect(result.success).toBe(false);
+				const message = result.error?.issues.map((issue) => issue.message).join(" ");
+				expect(message).toContain("not a glob");
+				expect(message).toContain("repo:owner/");
+			},
+		);
+
+		it("accepts the cut-off a glob was reaching for", () => {
+			for (const prefix of ["repo:kjanat", "repo:kjanat/", "repo:kjanat/kjanat", "repo:kjanat@1/svc@2"]) {
+				expect(SubjectPrefixSchema.safeParse(prefix).success).toBe(true);
+			}
+		});
+
+		it("publishes a pattern that agrees with both checks", () => {
+			// client/openapi.json carries one `pattern` per string, so the two
+			// `.regex()` calls are restated as one there. Nothing keeps them in step
+			// but this: drift means the spec and the generated clients document a
+			// rule the service does not enforce, in whichever direction.
+			const published = new RegExp(SUBJECT_PREFIX_PATTERN);
+			const corpus = [
+				"repo:kjanat",
+				"repo:kjanat/",
+				"repo:kjanat/kjanat",
+				"repo:kjanat@1/svc@2:ref:refs/heads/main",
+				"project_path:group/project",
+				"repo:kjanat/*",
+				"repo:*",
+				"repo:kjanat/svc?",
+				"repo:kjanat/[ab]",
+				"repo:kjanat/svc]",
+				"repo:",
+				"repo",
+				"repo:/",
+				"has spaces",
+				"",
+			];
+			for (const prefix of corpus) {
+				expect([prefix, published.test(prefix)]).toEqual([prefix, SubjectPrefixSchema.safeParse(prefix).success]);
+			}
 		});
 	});
 });

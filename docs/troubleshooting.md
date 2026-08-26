@@ -76,6 +76,49 @@ database. The plaintext cannot be recovered; mint a replacement when lost.
 The service token has a key allowlist that does not contain the selected key.
 Mint a correctly scoped token or select an allowed key.
 
+### `409` from `POST /admin/subjects`
+
+Read which of the two uniqueness rules fired — they want opposite fixes, and
+the one people hit while editing a **prefix** is the **name** rule:
+
+- `Subject name already exists: <name>` — the `name` is taken, by a row that
+  may be live, revoked or expired. Names are never freed. Your prefix was not
+  stored; POST again under a new name.
+- `Issuer and subject prefix are already claimed: <issuer> <prefix>` — that
+  `(issuer, prefix)` pair is held by an unrevoked row. Revoke the id in the
+  message, then re-POST. **Do not edit the prefix to dodge the collision** —
+  the nearest string that avoids it is a broader one, which widens access.
+
+Either message names the blocking row's id and its state, so the fix comes
+straight out of the error. Full rules in
+[names and prefixes are separate unique keys](authentication.md#names-and-prefixes-are-separate-unique-keys).
+
+### `400 Subject prefix is a literal prefix, not a glob`
+
+`subjectPrefix` has no pattern syntax, so `repo:owner/*` is refused rather than
+stored as a row that would match nothing. Use the trailing-delimiter form —
+`repo:owner` or `repo:owner/` — which is what the glob was reaching for. See
+[`subjectPrefix` is not a glob](authentication.md#subjectprefix-is-not-a-glob).
+
+### The subject was created but signing still returns `401`
+
+The row exists and does not match. Compare the failing run's `sub` against
+`GET /admin/subjects` character by character:
+
+- the prefix must match from the **start** of the subject and end on a `:`, `@`
+  or `/` boundary — `repo:owner/svc` never admits `repo:owner/svc-two`;
+- a repository with immutable subject claims issues
+  `repo:owner@<id>/name@<id>:…`, which an exact-repository row written for the
+  old shape stops matching (see
+  [immutable subject claims](authentication.md#immutable-subject-claims-change-sub-under-a-live-row));
+- `issuer` must match `iss` exactly, trailing slash included; and
+- the row must be `active` — `expiresInDays` lapses silently.
+
+A shell footgun worth ruling out first: `-d '{"keyIds": ["${MY_KEY_ID}"]}'` in
+**single** quotes sends the literal `${MY_KEY_ID}`, so the variable never
+expands. That one is caught at create time with a `400` naming the key id, but
+the same quoting mistake in `subjectPrefix` stores a prefix nothing will match.
+
 ## Keys and signatures
 
 ### Invalid key ID
