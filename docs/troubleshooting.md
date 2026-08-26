@@ -89,8 +89,14 @@ the one people hit while editing a **prefix** is the **name** rule:
   message, then re-POST. **Do not edit the prefix to dodge the collision** —
   the nearest string that avoids it is a broader one, which widens access.
 
-Either message names the blocking row's id and its state, so the fix comes
-straight out of the error. Full rules in
+Both messages normally go on to name the blocking row's id and whether it is
+live, revoked or merely expired, so the fix comes straight out of the error.
+That lookup is best-effort — it runs after the insert has already failed and is
+allowed to give up rather than turn a `409` into a `500` — so if the row cannot
+be read you get the first sentence and nothing more. That is not a different
+problem: `GET /admin/subjects` lists the same row, and for a name collision the
+row may be revoked or expired and so absent from the live view, in which case
+the name is simply taken and a new one is the fix either way. Full rules in
 [names and prefixes are separate unique keys](authentication.md#names-and-prefixes-are-separate-unique-keys).
 
 ### `400 Subject prefix is a literal prefix, not a glob`

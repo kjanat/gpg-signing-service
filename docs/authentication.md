@@ -98,6 +98,13 @@ The trailing delimiter **is** the wildcard. `repo:kjanat/` is what
 `repo:kjanat` and `repo:kjanat/` differ only in which boundary they accept —
 prefer the first, per the tip above.
 
+The `400` guards new rows only. A glob created before this rule existed is
+still in the table, and `GET /admin/subjects` still lists it — as `active`,
+matching nothing — so that you can find it and `DELETE` it. That is also why
+the response schema publishes no pattern for `subjectPrefix` while the request
+schema does: a client that validated responses against the create rule could
+not read the listing containing the row it needs to revoke.
+
 What a prefix **cannot** express is a cut anywhere but the start. Trusting only
 tagged builds — `repo:kjanat/kjanat:ref:refs/tags/…` but not
 `refs/heads/master` — would need a suffix or middle match, and there is none.
@@ -118,9 +125,13 @@ fixes:
 
 `name` is a label for one generation of a trust, not a slot: it is unique
 across revoked and expired rows too and is never freed, because every OIDC
-`sign` audit event is keyed by it. The message says which row is holding it and
-whether that row is still live, revoked or merely expired — an expired row
-trusts nobody but still owns its name and its prefix.
+`sign` audit event is keyed by it. The message normally goes on to say which row
+is holding it and whether that row is still live, revoked or merely expired — an
+expired row trusts nobody but still owns its name and its prefix. That second
+clause comes from a lookup made after the insert failed, and it is deliberately
+best-effort: rather than let a read error turn the `409` into a `500`, it drops
+back to the bare `Subject name already exists: <name>`. So treat the id as a
+convenience, not a guarantee; the fix — pick a new name — does not depend on it.
 
 So a `Subject name already exists` when you were changing the **prefix** means
 the previous trust under that name is still there, untouched, and your new

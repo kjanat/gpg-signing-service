@@ -20,14 +20,31 @@ export const SubjectNameSchema = z
  * class rather than a lookahead so it stays legible to somebody reading the spec
  * to work out why their prefix was refused.
  *
+ * `[`, `]` and `/` are backslash-escaped inside the classes even though none of
+ * the three needs it in an ordinary JavaScript regex. JSON Schema's `pattern` is
+ * ECMA-262 without `u` or `v`, so a validator that is only reading the spec is
+ * unaffected either way — but a client is free to hand the string to
+ * `new RegExp(pattern, "v")`, and `v` mode reclassifies all three as class-set
+ * syntax and throws `invalid class set character` on the unescaped form. That is
+ * a compile error, not a mismatch: the client fails to start rather than
+ * mis-validating one prefix. The escapes have to be inert as well as legal, or
+ * the spec would mean two things depending on how a client compiled it —
+ * `schemas.test.ts` compiles the pattern under no flags, `u` and `v`, and runs
+ * the whole enumerated corpus through the unflagged and `v` forms. Go's `regexp`
+ * and Python's `re`, the engines behind kin-openapi and jsonschema, also read
+ * `\[`, `\]` and `\/` as those literal characters.
+ *
  * Change either `.regex()` and this must change with it; the round trip is
  * covered in `schemas.test.ts`.
  */
-export const SUBJECT_PREFIX_PATTERN = "^[^\\s*?[\\]]*[:@/][^\\s*?[\\]]*[^\\s:@/*?[\\]][^\\s*?[\\]]*$";
+export const SUBJECT_PREFIX_PATTERN = "^[^\\s*?\\[\\]]*[:@\\/][^\\s*?\\[\\]]*[^\\s:@\\/*?\\[\\]][^\\s*?\\[\\]]*$";
 
 /**
  * A `sub` prefix. Matched with a delimiter boundary, so `repo:owner/name`
  * does not admit `repo:owner/name-evil`, while `repo:owner/` is owner-wide.
+ *
+ * Request bodies only. Responses echo what is in the table, which may predate
+ * the rules below — see {@link StoredSubjectPrefixSchema}.
  */
 export const SubjectPrefixSchema = z
 	.string()
@@ -90,6 +107,36 @@ export const SubjectPrefixSchema = z
 		example: "repo:owner/repository",
 	});
 
+/**
+ * A `sub` prefix as it came back out of the table, for response bodies.
+ *
+ * Deliberately *not* {@link SubjectPrefixSchema}: that one is a rule about what
+ * may be created from now on, and the table predates it. A row written before
+ * the glob check — `repo:owner/*`, stored verbatim, matching nothing — is still
+ * in `oidc_subjects`, still listed by `GET /admin/subjects`, and still the thing
+ * an operator has to find in order to revoke it. Publishing the create-time
+ * `pattern` on the response would tell a spec-validating client to reject that
+ * listing, so the only view of the bad row would be unreadable to exactly the
+ * client trying to clean it up. Nothing validates responses at runtime here
+ * (`@hono/zod-openapi` does not, and the generated Go client does not check
+ * patterns), so this is a statement about the published contract only.
+ *
+ * The length bounds stay: those have been enforced since the column existed.
+ */
+export const StoredSubjectPrefixSchema = z
+	.string()
+	.min(1)
+	.max(255)
+	.openapi("StoredSubjectPrefix", {
+		description:
+			"A stored `sub` prefix. Matching is `startsWith` plus a delimiter (`:`, `@`, `/`) or " +
+			"end-of-subject boundary; the longest live prefix wins. No `pattern` is published here on " +
+			"purpose: new prefixes must satisfy `SubjectPrefix`, but rows created before that rule existed " +
+			"are returned as they were stored, so a client that must list and revoke them can still read " +
+			"this response.",
+		example: "repo:owner/repository",
+	});
+
 /** Request body for trusting an OIDC subject. */
 export const SubjectCreateSchema = z
 	.object({
@@ -119,7 +166,7 @@ export const SubjectSummarySchema = z
 		id: z.string(),
 		name: SubjectNameSchema,
 		issuer: z.string(),
-		subjectPrefix: SubjectPrefixSchema,
+		subjectPrefix: StoredSubjectPrefixSchema,
 		keyIds: z.array(z.string()).nullable(),
 		createdAt: z.string(),
 		expiresAt: z.string().nullable(),
@@ -146,7 +193,7 @@ export const CoveringSubjectSchema = z
 	.object({
 		id: z.string(),
 		name: SubjectNameSchema,
-		subjectPrefix: SubjectPrefixSchema,
+		subjectPrefix: StoredSubjectPrefixSchema,
 		keyIds: z.array(z.string()).nullable(),
 	})
 	.openapi("CoveringSubject");
