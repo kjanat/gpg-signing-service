@@ -324,7 +324,7 @@ describes something only the caller can change, so re-sending either spends the
 timeout budget to arrive at the same answer. A cancelled or expired context is
 not retried either: the next attempt fails the same way, immediately.
 
-Four things worth knowing:
+Six things worth knowing:
 
 - `WithTimeout` bounds one attempt, not the operation. `http.Client` applies its
   timeout per request, so every attempt is handed a fresh one, and a server that
