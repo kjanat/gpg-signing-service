@@ -556,3 +556,79 @@ func TestPerAttemptTimeoutIsNotAnAnswer(t *testing.T) {
 			"the branch under test was never reached: %d request(s)", got)
 	}
 }
+
+// TestDeadlineMidAttemptKeepsTheAnswer covers the second way the caller's
+// deadline reaches the branch TestDeadlineKeepsTheAnswerAlreadyInHand pins.
+//
+// That test sets the wait an order of magnitude past the deadline on purpose,
+// so the sleep is always what the deadline interrupts and Do returns ctx.Err()
+// itself. A deadline that lapses while an attempt is *in flight* never reaches
+// the sleep: net/http aborts the round trip and returns a *url.Error wrapping
+// context.DeadlineExceeded, shouldRetry declines it, and Do hands that back as
+// the last error rather than ctx.Err(). Same branch, different error, and no
+// test went in that way — which is how "Do returns ctx.Err() from the backoff
+// sleep" came to stand as a description of the only route in, and how
+// TestPerAttemptTimeoutIsNotAnAnswer's sibling half went unpinned while its own
+// half was being fixed.
+//
+// The precedence is the same either way and is asserted here so it stays that
+// way: an answer is in hand and it is the caller's own budget that ran out, so
+// the answer is what they get. What distinguishes this from the per-attempt
+// timeout below is not where the error came from but whose deadline lapsed,
+// which is exactly what the ctx.Err() test asks.
+func TestDeadlineMidAttemptKeepsTheAnswer(t *testing.T) {
+	var requests atomic.Int32
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = fmt.Fprint(w, `{"error":"unavailable","code":"INTERNAL_ERROR"}`)
+			return
+		}
+		// Parked until the caller's deadline kills the round trip, the way
+		// TestDeadlineBeforeAnyAnswerStaysADeadline does it.
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() {
+		close(release)
+		server.Close()
+	})
+
+	// The per-attempt budget is two orders of magnitude past the caller's, so
+	// the deadline that lands is unambiguously the context's; the wait is three
+	// orders below it, so it lands on an attempt and not on the sleep.
+	c, err := New(server.URL,
+		WithMaxRetries(3),
+		WithTimeout(10*time.Second),
+		WithRetryWait(time.Millisecond, 2*time.Millisecond),
+	)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	_, signErr := c.Sign(ctx, "commit data", "")
+	if signErr == nil {
+		t.Fatal("expected attempt one's 503 to be reported, got no error")
+	}
+	if errors.Is(signErr, context.DeadlineExceeded) {
+		t.Errorf("the deadline outranked the answer already in hand: %v", signErr)
+	}
+	if !IsServiceError(signErr) {
+		t.Errorf("expected attempt one's service error, got %T: %v", signErr, signErr)
+	}
+	// The precondition, asserted separately for the same reason
+	// TestPerAttemptTimeoutIsNotAnAnswer asserts its own: with one request the
+	// deadline landed on attempt one, attempted is false, and every check above
+	// holds without the branch under test being reached at all.
+	if got := requests.Load(); got < 2 {
+		t.Fatalf("the deadline landed on attempt one, so no answer was ever in "+
+			"hand and the branch under test was never reached: %d request(s)", got)
+	}
+}
