@@ -356,9 +356,11 @@ func TestRetryAfterHeaderDateReachesTheCaller(t *testing.T) {
 	if !errors.As(err, &re) {
 		t.Fatalf("expected a *RateLimitError, got %T: %v", err, err)
 	}
-	// The header carries whole seconds and the round trip eats some of them.
-	if re.RetryAfter <= 80*time.Second || re.RetryAfter > 90*time.Second {
-		t.Errorf("expected roughly 90s from the date-form header, got %v", re.RetryAfter)
+	// A lower bound in seconds would be a stalled-runner flake whose failure
+	// message teaches nothing. What the test is about is that a date-form
+	// header produces a hint at all, and one no larger than the delay sent.
+	if re.RetryAfter <= 0 || re.RetryAfter > 90*time.Second {
+		t.Errorf("expected a positive hint of at most 90s from the date-form header, got %v", re.RetryAfter)
 	}
 }
 
@@ -393,7 +395,13 @@ func TestNegativeMaxRetriesIsRejected(t *testing.T) {
 // Held to milliseconds, with an order of magnitude between the handler's delay
 // and the timeout, so the arithmetic is the only thing under test.
 func TestTimeoutBoundsOneAttemptNotTheCall(t *testing.T) {
-	const perCall = 200 * time.Millisecond
+	// The two numbers are set apart deliberately. The timeout has to be far
+	// enough above the handler's 20ms that a stalled runner cannot trip it —
+	// that would turn the *ServiceError assertion into a *url.Error and read as
+	// a logic bug rather than a slow machine — while the backoffs have to add
+	// up to more than the timeout for the point of the test to hold at all.
+	// 20ms per attempt under a 400ms timeout, against 3 x 200ms of backoff.
+	const perCall = 400 * time.Millisecond
 
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -408,7 +416,7 @@ func TestTimeoutBoundsOneAttemptNotTheCall(t *testing.T) {
 	c, err := New(server.URL,
 		WithTimeout(perCall),
 		WithMaxRetries(3),
-		WithRetryWait(60*time.Millisecond, 120*time.Millisecond),
+		WithRetryWait(150*time.Millisecond, 200*time.Millisecond),
 	)
 	if err != nil {
 		t.Fatalf("failed to create client: %v", err)

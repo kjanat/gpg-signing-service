@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -84,6 +85,11 @@ func (t *errorBodyTransport) RoundTrip(req *http.Request) (*http.Response, error
 	if resp.StatusCode < http.StatusBadRequest {
 		return resp, nil
 	}
+	// Recorded before the body is read, so a response this transport declines
+	// to buffer still contributes its header, and refreshed below once the
+	// envelope — where this service actually puts the hint — is in hand.
+	recordRetryHint(req.Context(), resp.StatusCode, nil, resp.Header)
+
 	if !strings.Contains(resp.Header.Get("Content-Type"), "json") {
 		return resp, nil
 	}
@@ -107,6 +113,8 @@ func (t *errorBodyTransport) RoundTrip(req *http.Request) (*http.Response, error
 	// Put it back regardless: the generated code reads it again, and so does
 	// newStatusError via resp.Body on the fallback path.
 	resp.Body = io.NopCloser(bytes.NewReader(body))
+
+	recordRetryHint(req.Context(), resp.StatusCode, body, resp.Header)
 
 	if !decodesAsErrorEnvelope(resp.StatusCode, body) {
 		resp.Header.Set("Content-Type", contentTypeUndecodable)
@@ -152,4 +160,33 @@ func decodesAsErrorEnvelope(statusCode int, body []byte) bool {
 
 	var dest api.ErrorResponse
 	return json.Unmarshal(body, &dest) == nil
+}
+
+// recordRetryHint leaves the server's retry-after where the retry policy can
+// read it.
+//
+// See retryHint: this transport is the only point in a call where the status,
+// the headers and the body are in hand at once, and the retry policy sees none
+// of the three — it works with a generic response type exposing StatusCode()
+// alone. A no-op when no sink is on the context, which is every request Health
+// makes and every request a caller drives through the raw client.
+//
+// Only a 429 is recorded. It is the one status this client has a hint type for,
+// the one WithoutRateLimitRetry governs, and the only one this service attaches
+// a delay to.
+func recordRetryHint(ctx context.Context, statusCode int, body []byte, header http.Header) {
+	sink := retryHintFrom(ctx)
+	if sink == nil || statusCode != http.StatusTooManyRequests {
+		return
+	}
+
+	envelopeSeconds := 0
+	if len(body) > 0 {
+		// The `ok` is deliberately dropped: a half-envelope carrying
+		// `retryAfter` but no `code` still carries the hint, and reading it
+		// anyway is the same call newStatusError's 429 branch makes.
+		parsed, _ := parseAPIErrorBody(body)
+		envelopeSeconds = parsed.RetryAfter
+	}
+	sink.retryAfter = retryAfterFrom(envelopeSeconds, header)
 }

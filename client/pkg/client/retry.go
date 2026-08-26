@@ -33,11 +33,12 @@ func newRetrier(opts *Options) *Retrier {
 // Do executes fn with retry logic.
 func (r *Retrier) Do(ctx context.Context, fn func() error) error {
 	var lastErr error
+	var wait time.Duration
 
 	for attempt := 0; attempt <= r.maxRetries; attempt++ {
-		// Exponential backoff before retry (skip on the first attempt)
+		// Skipped on the first attempt; otherwise this is what the previous
+		// failure asked for, decided by waitBefore below.
 		if attempt > 0 {
-			wait := r.backoff(attempt)
 			select {
 			case <-time.After(wait):
 			case <-ctx.Done():
@@ -55,23 +56,38 @@ func (r *Retrier) Do(ctx context.Context, fn func() error) error {
 			return lastErr
 		}
 
-		// Handle rate limit with explicit wait
-		var rateLimitErr *RateLimitError
-		if errors.As(lastErr, &rateLimitErr) && r.retryOnRateLimit {
-			if rateLimitErr.RetryAfter > 0 {
-				timer := time.NewTimer(rateLimitErr.RetryAfter)
-				select {
-				case <-timer.C:
-					// Timer fired normally, no cleanup needed
-				case <-ctx.Done():
-					stopTimer(timer)
-					return ctx.Err()
-				}
-			}
-		}
+		wait = r.waitBefore(attempt+1, lastErr)
 	}
 
 	return lastErr
+}
+
+// waitBefore is how long to hold off before the given attempt.
+//
+// The exponential backoff, unless the failure carried the server's own
+// retry-after hint. Preferring the hint is not politeness: this service floors
+// `retryAfter` at one second and its limiter refills a single token in well
+// under that, so a client that ignores it turns a limit which cleared in one
+// second into a fifteen-second stall — and spends three more requests on a
+// bucket that had already refilled.
+//
+// Clamped to retryWaitMax, because the hint is written by whatever answered and
+// an unbounded one lets a misconfigured or hostile responder park the call for
+// as long as it likes. retryWaitMax is the ceiling the caller configured for
+// exactly that, and the true hint still reaches them on the RateLimitError the
+// operation returns.
+//
+// Gated on retryOnRateLimit only because a 429 is the sole failure that carries
+// a hint at all; WithoutRateLimitRetry stops the retry before this is reached.
+func (r *Retrier) waitBefore(attempt int, err error) time.Duration {
+	var rateLimitErr *RateLimitError
+	if r.retryOnRateLimit && errors.As(err, &rateLimitErr) && rateLimitErr.RetryAfter > 0 {
+		if rateLimitErr.RetryAfter > r.retryWaitMax {
+			return r.retryWaitMax
+		}
+		return rateLimitErr.RetryAfter
+	}
+	return r.backoff(attempt)
 }
 
 func (r *Retrier) shouldRetry(err error) bool {
@@ -186,19 +202,6 @@ func (r *Retrier) backoff(attempt int) time.Duration {
 	return wait
 }
 
-func stopTimer(t *time.Timer) {
-	if t == nil {
-		return
-	}
-
-	if !t.Stop() {
-		select {
-		case <-t.C:
-		default:
-		}
-	}
-}
-
 // statusCoder is satisfied by every generated `…Response` type.
 type statusCoder interface {
 	StatusCode() int
@@ -215,15 +218,50 @@ type statusCoder interface {
 // executeWithRetry discards the signal once the attempts are spent, and the
 // final response is mapped exactly as it would have been.
 //
-// shouldRetry uses errors.As throughout, so the wrapper is transparent to it —
-// including Do's RateLimitError branch, which reads RetryAfter through the same
-// unwrap.
+// shouldRetry and waitBefore both use errors.As, so the wrapper is transparent
+// to them: the signal's RateLimitError is what carries the server's retry-after
+// hint into the wait between attempts.
 type retrySignalError struct {
 	inner error
 }
 
 func (s *retrySignalError) Error() string { return s.inner.Error() }
 func (s *retrySignalError) Unwrap() error { return s.inner }
+
+// retryHint is where a completed response leaves what it asks the retrier to do
+// about the next attempt.
+//
+// The policy runs on a generic response type that exposes StatusCode() and
+// nothing else, so neither the `Retry-After` header nor this service's own
+// `retryAfter` envelope field is reachable from where the wait is decided —
+// which is why that wait ignored the server's hint entirely and answered a
+// one-second limit with fifteen seconds of backoff. Both sources are in hand at
+// exactly one point per response, errorBodyTransport, which already holds the
+// status, the headers and the body; so the hint is recorded there and travels
+// back on the request context, the way httptrace's hooks do.
+//
+// One sink per call, created by executeWithRetry, written by the transport on
+// the goroutine running the attempt and read after it returns. http.Client
+// calls RoundTrip synchronously, so that ordering needs no synchronisation.
+type retryHint struct {
+	retryAfter time.Duration
+}
+
+// retryHintKey is the context key for a *retryHint. Unexported struct type, so
+// nothing outside this package can collide with it or reach the sink.
+type retryHintKey struct{}
+
+func withRetryHint(ctx context.Context, hint *retryHint) context.Context {
+	return context.WithValue(ctx, retryHintKey{}, hint)
+}
+
+// retryHintFrom returns the sink for the call in flight, or nil when the caller
+// is not running under executeWithRetry — Health, which drives the retrier
+// directly.
+func retryHintFrom(ctx context.Context) *retryHint {
+	hint, _ := ctx.Value(retryHintKey{}).(*retryHint)
+	return hint
+}
 
 // retryStatusSignal classifies a completed round trip for the retrier.
 //
@@ -236,22 +274,24 @@ func (s *retrySignalError) Unwrap() error { return s.inner }
 // retryWaitMin/Max governed nothing at all. Returning the classification here
 // is what connects the policy to responses.
 //
-// The values are skeletal by design; they are read for their type and nothing
-// else. The wait between attempts is the retrier's exponential backoff rather
-// than the server's `Retry-After` hint: the hint is not reachable from the
-// generic response type, and a bounded, jittered backoff is a well-behaved
-// policy to fall back to. Callers still receive the hint — it survives on the
-// mapped RateLimitError the operation returns once the attempts are spent.
+// The values are skeletal apart from retryAfter, which is the one thing the
+// retrier acts on beyond the type: waitBefore prefers it over the backoff, so a
+// 429 costs the wait the server asked for rather than an exponential guess over
+// it. Callers still receive the full hint on the mapped RateLimitError the
+// operation returns once the attempts are spent.
 //
 // Not every 5xx qualifies. shouldRetry's ServiceError branch tests `>= 500`
 // because a caller reaching it has already decided the error is worth another
 // go; deciding it here from a bare status has to be narrower, because 501 and
 // 505 describe what the server will never do rather than what it could not do
 // this time. Repeating those only spends the caller's timeout budget.
-func retryStatusSignal(statusCode int) error {
+func retryStatusSignal(statusCode int, retryAfter time.Duration) error {
 	switch statusCode {
 	case http.StatusTooManyRequests:
-		return &retrySignalError{inner: &RateLimitError{Message: "rate limited"}}
+		return &retrySignalError{inner: &RateLimitError{
+			Message:    "rate limited",
+			RetryAfter: retryAfter,
+		}}
 	case http.StatusInternalServerError,
 		http.StatusBadGateway,
 		http.StatusServiceUnavailable,
@@ -268,23 +308,53 @@ func retryStatusSignal(statusCode int) error {
 // attempt of a retryable one — is handed back with a nil error, so the caller's
 // own mapping decides what the failure is called. Only a transport error or a
 // cancelled context escapes as an error from here.
+//
+// The closure is handed the context to use rather than closing over the
+// caller's: this one carries the retry-after sink the transport writes into.
 func executeWithRetry[T statusCoder](
 	ctx context.Context,
 	r *Retrier,
-	call func() (T, error),
+	call func(context.Context) (T, error),
 ) (T, error) {
 	var resp T
+	attempted := false
+
+	hint := &retryHint{}
+	ctx = withRetryHint(ctx, hint)
+
 	err := r.Do(ctx, func() error {
-		var execErr error
-		resp, execErr = call()
+		hint.retryAfter = 0
+		got, execErr := call(ctx)
 		if execErr != nil {
+			// resp is deliberately left alone. A transport fault on a later
+			// attempt would otherwise overwrite the response an earlier one
+			// produced, and that response is the more informative of the two.
 			return execErr
 		}
-		return retryStatusSignal(resp.StatusCode())
+		resp, attempted = got, true
+		return retryStatusSignal(resp.StatusCode(), hint.retryAfter)
 	})
 
 	var signal *retrySignalError
 	if err != nil && !errors.As(err, &signal) {
+		// A deadline that expired while the policy was still working is not the
+		// most informative thing that happened: a response is in hand and
+		// unmapped, and Do returns ctx.Err() from the backoff sleep — reached
+		// only *after* an attempt was classified retryable. Retries are an
+		// optimisation over that response, not a precondition for it, so
+		// running out of budget mid-policy costs the retry rather than the
+		// answer. Otherwise the CLI, which hands the same --timeout to
+		// WithTimeout and to its context, reports "context deadline exceeded"
+		// for a call the service already answered "you are being throttled".
+		//
+		// context.Canceled deliberately falls through: a caller who cancelled
+		// asked for exactly that, while a caller whose deadline lapsed asked
+		// for an answer within N seconds and one exists. So does a context that
+		// expired before any attempt completed — attempted is false, resp is
+		// the zero value, and the error is all there is.
+		if attempted && errors.Is(err, context.DeadlineExceeded) {
+			return resp, nil
+		}
 		return resp, err
 	}
 	return resp, nil

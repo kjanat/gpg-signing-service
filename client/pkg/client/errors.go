@@ -80,15 +80,26 @@ func (e *AuthError) Error() string {
 
 // RateLimitError represents the rate limit having been exceeded.
 type RateLimitError struct {
-	Message    string
+	Message string
+	// RequestID is the server's request identifier when the response carried
+	// one. On a 429 that is usually the echoed X-Request-ID header and nothing
+	// else: RateLimitErrorSchema declares no `requestId`, and none of the three
+	// bodies this service answers a 429 with sends one — so a rate limit was
+	// the one refusal whose id an operator could not quote, which is exactly
+	// what docs/troubleshooting.md asks them to do.
+	RequestID  string
 	RetryAfter time.Duration
 }
 
 func (e *RateLimitError) Error() string {
+	msg := "rate limited: " + e.Message
 	if e.RetryAfter > 0 {
-		return fmt.Sprintf("rate limited: %s (retry after %v)", e.Message, e.RetryAfter)
+		msg += fmt.Sprintf(" (retry after %v)", e.RetryAfter)
 	}
-	return fmt.Sprintf("rate limited: %s", e.Message)
+	if e.RequestID != "" {
+		msg += fmt.Sprintf(" (request %s)", e.RequestID)
+	}
+	return msg
 }
 
 // ValidationError represents invalid request data.
@@ -139,8 +150,14 @@ func IsServiceError(err error) bool {
 	return errors.As(err, &se) && se.StatusCode >= 500
 }
 
-// headerRequestID is the response header the service echoes its request id on.
-const headerRequestID = "X-Request-ID"
+// Response headers this client reads.
+const (
+	// headerRequestID is the one the service echoes its request id on.
+	headerRequestID = "X-Request-ID"
+	// headerRetryAfter is the RFC 9110 hint, in either of the two forms
+	// parseRetryAfter accepts.
+	headerRetryAfter = "Retry-After"
+)
 
 // requestIDFrom returns the id the caller should quote when asking what
 // happened, preferring the envelope's field and falling back to the header.
@@ -169,7 +186,7 @@ func retryAfterFrom(envelopeSeconds int, header http.Header) time.Duration {
 	if hint := retryAfterSeconds(envelopeSeconds); hint > 0 {
 		return hint
 	}
-	return parseRetryAfter(header.Get("Retry-After"), time.Now())
+	return parseRetryAfter(header.Get(headerRetryAfter), time.Now())
 }
 
 // maxRetryAfterSeconds is the largest delay-seconds a time.Duration can hold.
@@ -286,7 +303,7 @@ type apiErrorBody struct {
 // whose body carries neither field: no `error`, so Error() printed a bare
 // "rate limited: ", and no `retryAfter`, so a Retry-After header sitting on the
 // same response was discarded.
-func newRateLimitError(envelopeMessage string, envelopeSeconds int, header http.Header) *RateLimitError {
+func newRateLimitError(envelopeMessage string, envelopeSeconds int, envelopeRequestID string, header http.Header) *RateLimitError {
 	message := envelopeMessage
 	if message == "" {
 		// Otherwise Error() prints a bare "rate limited: ".
@@ -294,6 +311,7 @@ func newRateLimitError(envelopeMessage string, envelopeSeconds int, header http.
 	}
 	return &RateLimitError{
 		Message:    message,
+		RequestID:  requestIDFrom(envelopeRequestID, header),
 		RetryAfter: retryAfterFrom(envelopeSeconds, header),
 	}
 }
@@ -325,7 +343,7 @@ func newStatusError(statusCode int, body []byte, header http.Header) error {
 	// it was written for. A rate limit the document does not declare is still a
 	// rate limit, and so is one this service did not write.
 	if statusCode == http.StatusTooManyRequests {
-		return newRateLimitError(parsed.Error, parsed.RetryAfter, header)
+		return newRateLimitError(parsed.Error, parsed.RetryAfter, parsed.RequestID, header)
 	}
 
 	if !ok {

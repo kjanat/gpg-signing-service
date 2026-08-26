@@ -176,7 +176,8 @@ c, err := client.New(baseURL string, opts ...Option)
   `Message`, and `RequestID`)
 - `RateLimitError` - Rate limit exceeded (carries the retry-after duration, read
   from the body's `retryAfter` or the `Retry-After` header, in either the
-  delay-seconds or the HTTP-date form)
+  delay-seconds or the HTTP-date form, and the `RequestID` — which on a 429 is
+  the echoed `X-Request-ID` header, since no 429 body declares one)
 - `ValidationError` - Invalid request data
 - `ServiceError` - API errors with codes
 
@@ -293,7 +294,8 @@ It never retries:
 
 Retry strategy:
 
-- Exponential backoff with jitter
+- The server's `Retry-After` when a `429` carries one, clamped to the configured
+  maximum; exponential backoff with jitter otherwise
 - Default: 3 retries, 1s-30s backoff range
 - Respects context cancellation
 
@@ -333,10 +335,23 @@ Four things worth knowing:
 - `Health` never retries a status. Its `503` is `degraded`, a documented answer
   carrying a body you are meant to read, and a probe wants the current state
   rather than an eventually healthy one. Transport faults still retry there.
-- The wait between attempts is the exponential backoff, not the server's
-  `Retry-After`. The hint is not reachable from the generic response type the
-  retry policy sees — but it is not discarded either: it reaches you on the
+- The wait between attempts is the server's `Retry-After` when a `429` carries
+  one — read from the body's `retryAfter` or the header, in either RFC 9110
+  form — and the exponential backoff otherwise. A hint longer than
+  `WithRetryWait`'s maximum is clamped to it, so a misconfigured responder
+  cannot park the call; the untruncated value still reaches you on the
   `RateLimitError` returned once the attempts are spent.
+- A caller-side deadline that expires while the policy is still waiting costs
+  you the retry, not the answer. The response that caused the wait is returned
+  and mapped as usual, so `IsRateLimitError` still holds for a throttled call
+  whose `context` ran out. A context you _cancel_ is reported as cancelled, and
+  so is a deadline that expires before any attempt completes.
+- `DeleteKey`'s `deleted` field describes the attempt that answered, not the
+  call. A delete that commits and then loses its response is answered
+  `deleted:false` by the next attempt, so once a retry has happened this client
+  reports success rather than `KEY_NOT_FOUND` — the postcondition holds either
+  way, and the alternative is telling you nothing happened for work that did.
+  A `deleted:false` on the _first_ attempt is still a not-found.
 - `Sign` and `UploadKey` are retried like everything else. Neither carries an
   idempotency key, so a retried attempt is a second request the service will
   act on: `Sign` produces another signature and another `sign` audit row,
@@ -344,8 +359,12 @@ Four things worth knowing:
   `key_upload` row. Both converge on the same state — a signature is a pure
   function of the request, and an overwrite with identical content is a no-op —
   so what a retry duplicates is the audit trail, which is a record of attempts
-  and is meant to show them. If your deployment needs at-most-once semantics
-  instead, run those calls with `WithMaxRetries(0)` and decide for yourself.
+  and is meant to show them. A retried `500` on `/sign` does spend one
+  rate-limit token per attempt — the limiter is consulted before the work, so
+  unlike a retried `429`, which `consumeToken` answers without decrementing,
+  the extra attempts draw down the caller's budget. If your deployment needs
+  at-most-once semantics instead, run those calls with `WithMaxRetries(0)` and
+  decide for yourself.
 
 Retries are exhausted before an operation returns, so an error you receive is
 final under the configured policy.

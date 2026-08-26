@@ -133,7 +133,13 @@ and OIDC-authorization tables.
 ### `429`
 
 The caller's 100-token bucket is empty. Wait for refill. The bucket refills at
-100 tokens per minute.
+100 tokens per minute, proportionally — a single token against a ceiling of 100
+is back in well under the one second `retryAfter` is floored at.
+
+The Go client waits exactly that long before re-asking, and returns the hint on
+`RateLimitError.RetryAfter` once its attempts are spent. Quote the id from
+`X-Request-ID`: no 429 body carries a `requestId` field, so the header is the
+only place it appears.
 
 ### `503`
 
