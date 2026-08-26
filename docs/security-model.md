@@ -110,9 +110,36 @@ There is no built-in retention, export, alerting, or tamper-evident log chain.
 
 ## Browser access
 
-`ALLOWED_ORIGINS` controls CORS. When it is empty, any supplied `Origin` is
-treated as allowed and reflected with credentials enabled. Set an explicit
-allowlist for deployments reachable from browsers.
+`ALLOWED_ORIGINS` controls CORS, and it fails **closed**: when it is unset or
+empty, no `Access-Control-Allow-Origin` is sent at all. The service's callers are
+CI runners and the Go client, neither of which is a browser, so the default grant
+is nothing. Set an explicit comma-separated allowlist for deployments reachable
+from browsers; entries are trimmed, and a `*` entry opts into public browser
+access by echoing the literal wildcard rather than reflecting the request origin.
+The wildcard is honoured wherever it appears in the list and is not narrowed by
+the entries beside it, so `https://app.example.com,*` grants every origin.
+Entries are matched exactly against the serialized request origin, so each one
+must be a bare scheme, host and optional port — a trailing slash or an uppercase
+host never matches, and the deployment silently grants nothing.
+
+`Access-Control-Allow-Credentials` is never sent. Authentication is a bearer
+token in `Authorization`, which a browser does not attach ambiently, so there is
+no ambient credential for a cross-origin page to replay. A cookie- or client
+certificate-based flow would have to add the header to the preflight _and_ the
+actual response deliberately.
+
+The `Origin: null` that sandboxed iframes, `data:` URLs and `file://` documents
+send is refused even if it appears in the allowlist — it is a shared origin any
+attacker can choose to present. A `*` entry is the exception: it answers every
+origin, `null` included, because the CORS spec already lets an opaque origin
+read a wildcard response, so refusing it there would be theatre. Every
+origin-dependent response carries `Vary: Origin` so a shared cache cannot hand
+one origin another's grant.
+
+A granted origin may read `X-Request-ID` — the id to quote when reporting a
+refusal — plus whichever rate-limit headers the response carries;
+`Access-Control-Expose-Headers` names exactly those and nothing else. See
+[Response headers](api.md#response-headers).
 
 Security headers include HSTS, CSP, frame denial, MIME sniffing prevention, and
 a restricted Permissions Policy.

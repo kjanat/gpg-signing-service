@@ -83,7 +83,7 @@ Update `[vars]` in `wrangler.toml`:
 | `KEY_ID`            | Default 16-character hexadecimal signing key ID          |
 | `ALLOWED_ISSUERS`   | Comma-separated OIDC issuer URLs                         |
 | `EXPECTED_AUDIENCE` | Optional JWT audience; defaults to `gpg-signing-service` |
-| `ALLOWED_ORIGINS`   | Optional comma-separated browser CORS allowlist          |
+| `ALLOWED_ORIGINS`   | Browser CORS allowlist; unset grants no origin anything  |
 
 Example:
 

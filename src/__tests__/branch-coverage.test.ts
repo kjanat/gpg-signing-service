@@ -236,6 +236,13 @@ describe("Branch Coverage Helpers", () => {
 			await waitOnExecutionContext(ctx);
 
 			expect(res.status).toBe(429);
+			// End to end, not just at the `c.json` call: the headers survive the
+			// middleware chain, and `securityHeaders` advertises them to a browser.
+			expect(res.headers.get("X-RateLimit-Remaining")).toBe("0");
+			expect(Number(res.headers.get("X-RateLimit-Reset"))).toBeGreaterThan(Math.floor(Date.now() / 1000));
+			expect(res.headers.get("Access-Control-Expose-Headers")).toBe(
+				"X-Request-ID, X-RateLimit-Remaining, X-RateLimit-Reset",
+			);
 			const body = await parseJson<{ code: string }>(res);
 			expect(body.code).toBe("RATE_LIMITED");
 		});
@@ -271,6 +278,18 @@ describe("Branch Coverage Helpers", () => {
 
 			expect(res.status).toBe(200);
 			expect(res.headers.get("X-RateLimit-Remaining")).toBe("5");
+			expect(res.headers.get("X-RateLimit-Reset")).not.toBeNull();
+			// Only the rate-limit headers this response actually carries are named.
+			// Nothing in the service sets X-RateLimit-Limit, so advertising it would
+			// point a cross-origin reader at a header that is never there.
+			expect(res.headers.get("X-RateLimit-Limit")).toBeNull();
+			// X-Request-ID is named unconditionally: `requestId` is the outermost
+			// middleware, so it stamps the header after `securityHeaders` has already
+			// built this list and presence-testing it there would never see it.
+			expect(res.headers.get("Access-Control-Expose-Headers")).toBe(
+				"X-Request-ID, X-RateLimit-Remaining, X-RateLimit-Reset",
+			);
+			expect(res.headers.get("X-Request-ID")).not.toBeNull();
 		});
 
 		it("handles missing token after Bearer prefix", async () => {
@@ -352,6 +371,10 @@ describe("Branch Coverage Helpers", () => {
 			expect(json).toHaveBeenCalledWith(
 				expect.objectContaining({ code: "RATE_LIMITED", retryAfter: expect.any(Number) }),
 				429,
+				// The refusal carries the budget that refused it. A 429 with no
+				// rate-limit headers is the one response where a caller most needs to
+				// know when to come back and the only one that did not say.
+				{ "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": expect.any(String) },
 			);
 		});
 
