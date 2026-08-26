@@ -271,6 +271,12 @@ describe("Branch Coverage Helpers", () => {
 
 			expect(res.status).toBe(200);
 			expect(res.headers.get("X-RateLimit-Remaining")).toBe("5");
+			expect(res.headers.get("X-RateLimit-Reset")).not.toBeNull();
+			// Only the rate-limit headers this response actually carries are named.
+			// Nothing in the service sets X-RateLimit-Limit, so advertising it would
+			// point a cross-origin reader at a header that is never there.
+			expect(res.headers.get("X-RateLimit-Limit")).toBeNull();
+			expect(res.headers.get("Access-Control-Expose-Headers")).toBe("X-RateLimit-Remaining, X-RateLimit-Reset");
 		});
 
 		it("handles missing token after Bearer prefix", async () => {

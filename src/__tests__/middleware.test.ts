@@ -206,9 +206,25 @@ describe("Security Headers Middleware", () => {
 			// granting it would hand every such context the same shared origin.
 			setAllowedOrigins("null,https://allowed.com");
 
+			const actual = await corsRequest("null");
+			const preflight = await corsRequest("null", "OPTIONS");
+
+			expect(actual.headers.get("Access-Control-Allow-Origin")).toBeNull();
+			expect(preflight.headers.get("Access-Control-Allow-Origin")).toBeNull();
+		});
+
+		it("still answers the null origin with the wildcard when `*` is listed", async () => {
+			// The wildcard is checked before the null-origin refusal, and deliberately
+			// so: `*` is an explicit opt-in to public browser access, and the CORS spec
+			// already lets an opaque origin read a `*` response. The refusal above
+			// covers `null` as an *allowlist entry*, which is the case that would
+			// otherwise look like a targeted grant.
+			setAllowedOrigins("*");
+
 			const response = await corsRequest("null");
 
-			expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
+			expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+			expect(response.headers.get("Access-Control-Allow-Credentials")).toBeNull();
 		});
 
 		it("trims whitespace around allowlist entries", async () => {
@@ -245,6 +261,17 @@ describe("Security Headers Middleware", () => {
 
 			expect(actual.headers.get("Vary")).toBe("Origin");
 			expect(preflight.headers.get("Vary")).toBe("Origin");
+		});
+
+		it("advertises no Access-Control-Expose-Headers when the response carries none", async () => {
+			// /health sets no rate-limit headers, so the list would have been empty.
+			// The positive case — only the headers actually present get named — is
+			// pinned on the admin route in branch-coverage.test.ts.
+			setAllowedOrigins("https://allowed.com");
+
+			const response = await corsRequest("https://allowed.com");
+
+			expect(response.headers.get("Access-Control-Expose-Headers")).toBeNull();
 		});
 
 		// No handler in the service sets Vary, so the merge paths are only
