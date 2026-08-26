@@ -82,7 +82,11 @@ const FORBIDDEN_ORIGINS = new Set(["null"]);
 
 const CORS_ALLOW_METHODS = "GET, POST, DELETE, OPTIONS";
 const CORS_ALLOW_HEADERS = `Authorization, Content-Type, ${HEADERS.REQUEST_ID}`;
-/** 24h, the cap Chromium honours for a preflight. */
+/**
+ * 24h. This is a request, not a guarantee: every engine clamps it to its own
+ * ceiling — Firefox to this value, Chromium to 2h, WebKit to 10min — so asking
+ * for the largest of them just means no engine caches for less than it would.
+ */
 const CORS_MAX_AGE = "86400";
 
 /**

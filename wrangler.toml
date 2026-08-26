@@ -44,8 +44,9 @@ ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.co
 KEY_ID          = "62E75E54497815DD"
 # ALLOWED_ORIGINS: comma-separated CORS allowlist. Left unset on purpose — CORS
 # then fails closed and no browser origin is granted anything, which is correct
-# for callers that are CI runners and the Go client. Set it (or a lone "*") only
-# when a browser needs to read responses from this API.
+# for callers that are CI runners and the Go client. Set it only when a browser
+# needs to read responses from this API. A "*" entry grants every origin no
+# matter what is listed beside it.
 
 # Secrets (set via `wrangler secret put`)
 # - KEY_PASSPHRASE: Passphrase for encrypted private key

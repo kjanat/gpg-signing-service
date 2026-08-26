@@ -249,6 +249,18 @@ describe("Security Headers Middleware", () => {
 			}
 		});
 
+		it("honours a wildcard listed beside real origins, granting every origin", async () => {
+			// `entries.includes("*")` does not require the wildcard to stand alone, so
+			// appending one to an allowlist that looks restrictive opens the whole
+			// deployment. Pinned because the blast radius is much larger than the diff
+			// that would cause it.
+			setAllowedOrigins("https://allowed.com,*");
+
+			const response = await corsRequest("https://anyone.example.com");
+
+			expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+		});
+
 		it.each([
 			["an allowed origin", "https://allowed.com"],
 			["a denied origin", "https://evil.example.com"],
