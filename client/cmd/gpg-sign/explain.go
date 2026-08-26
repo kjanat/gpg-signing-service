@@ -28,8 +28,15 @@ import (
 // constructed error and any service older than the release that added the
 // fields — so this never prints an empty frame around nothing.
 func reportFailure(w io.Writer, err error) {
-	guidance, ok := client.GuidanceFor(err)
-	if !ok {
+	// Guidance and the request id are gathered before either is tested, because
+	// either one alone is worth printing. Gating the whole block on guidance
+	// dropped the id for every refusal that carried no hint — an intermediary's
+	// 429, a deployment older than the release that added the fields — which is
+	// exactly the failure docs/troubleshooting.md asks the operator to quote an
+	// id for.
+	guidance, _ := client.GuidanceFor(err)
+	requestID := requestIDOf(err)
+	if guidance == (client.Guidance{}) && requestID == "" {
 		return
 	}
 
@@ -51,23 +58,29 @@ func reportFailure(w io.Writer, err error) {
 	// is that the hint starts on its own line rather than in the middle of one.
 	write("hint", strings.TrimSpace(guidance.Hint))
 	write("docs", guidance.Docs)
-
 	// The id is on the error types rather than in Guidance — it identifies the
 	// request, it does not advise — but it belongs in the same block: it is what
 	// an operator quotes when the hint was not enough.
+	write("request", requestID)
+}
+
+// requestIDOf digs out the server's request identifier, whichever refusal type
+// is carrying it.
+//
+// A 429 is the one whose id lives only in the echoed X-Request-ID header —
+// RateLimitErrorSchema declares no `requestId` — so it is read from the error
+// rather than from an envelope field that does not exist.
+func requestIDOf(err error) string {
 	var authErr *client.AuthError
 	var rateErr *client.RateLimitError
 	var svcErr *client.ServiceError
 	switch {
-	case errors.As(err, &authErr) && authErr.RequestID != "":
-		write("request", authErr.RequestID)
-	// A 429 is the one refusal whose id lives only in the echoed X-Request-ID
-	// header — RateLimitErrorSchema declares no `requestId` — so leaving it out
-	// here is the same as not having it, which is what troubleshooting asks the
-	// operator to quote.
-	case errors.As(err, &rateErr) && rateErr.RequestID != "":
-		write("request", rateErr.RequestID)
-	case errors.As(err, &svcErr) && svcErr.RequestID != "":
-		write("request", svcErr.RequestID)
+	case errors.As(err, &authErr):
+		return authErr.RequestID
+	case errors.As(err, &rateErr):
+		return rateErr.RequestID
+	case errors.As(err, &svcErr):
+		return svcErr.RequestID
 	}
+	return ""
 }

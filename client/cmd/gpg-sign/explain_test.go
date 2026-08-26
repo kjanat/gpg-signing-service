@@ -77,6 +77,23 @@ func TestReportFailureStaysQuietWithNothingToAdd(t *testing.T) {
 	}
 }
 
+// An error can carry an id and nothing else — an intermediary's refusal, or a
+// deployment older than the release that added the guidance fields. The id is
+// still the thing the operator is asked to quote, so it prints on its own.
+func TestReportFailurePrintsRequestIDWithoutGuidance(t *testing.T) {
+	var out bytes.Buffer
+	reportFailure(&out, &client.AuthError{
+		Code:      client.ErrCodeAuthInvalid,
+		Message:   "Invalid token signature",
+		RequestID: "628c9a74-c46d-403c-84c6-9c873298a17f",
+	})
+
+	got := strings.TrimRight(out.String(), "\n")
+	if got != "  request: 628c9a74-c46d-403c-84c6-9c873298a17f" {
+		t.Errorf("unexpected output %q", got)
+	}
+}
+
 // A hint alone is enough to print; the other fields are skipped rather than
 // rendered as empty labels.
 func TestReportFailureSkipsAbsentFields(t *testing.T) {

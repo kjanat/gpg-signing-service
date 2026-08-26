@@ -220,13 +220,16 @@ export async function resolveOIDCSubject(db: D1Database, issuer: string, sub: st
 	const isLive = (candidate: OIDCSubjectRow) =>
 		!candidate.revoked_at && (!candidate.expires_at || Date.parse(candidate.expires_at) >= now);
 
-	const context: RefusalContext = {
-		issuerRuleCount: results.length,
-		activePrefixes: results.filter(isLive).map((candidate) => candidate.subject_prefix),
-	};
-
 	const row = matches.find(isLive);
 	if (!row) {
+		// Built here rather than above the branch: it is only ever read on a
+		// refusal, and this function sits on the critical path of every signed
+		// commit — the success path should not walk the issuer's rules twice.
+		const context: RefusalContext = {
+			issuerRuleCount: results.length,
+			activePrefixes: results.filter(isLive).map((candidate) => candidate.subject_prefix),
+		};
+
 		// No live row. Report the most specific dead match so the log names the
 		// credential actually being presented, preferring a revoked row over an
 		// expired one: expiry is routine, revocation was a decision.
