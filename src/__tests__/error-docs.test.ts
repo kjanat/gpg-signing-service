@@ -164,6 +164,31 @@ describe("the middleware leaves alone what it cannot improve", () => {
 		expect(await got.json()).toEqual({ error: "something" });
 	});
 
+	it("does not carry over a content-length the enlarged body has outgrown", async () => {
+		// Hono's `c.res` setter merges the *old* response's headers over the new
+		// one (context.ts:120), so deleting `content-length` from the Headers this
+		// middleware builds is not on its own enough — the stale value comes
+		// straight back, and the client truncates the body at it. The upstream
+		// bodies this middleware is written to tolerate are exactly the ones that
+		// declare a length.
+		const payload = JSON.stringify({ error: "upstream said no", code: "SIGN_ERROR" });
+		const got = await answer(
+			new Response(payload, {
+				status: 502,
+				headers: {
+					"content-type": "application/json",
+					"content-length": String(new TextEncoder().encode(payload).length),
+				},
+			}),
+		);
+
+		const declared = got.headers.get("content-length");
+		const text = await got.text();
+
+		expect(JSON.parse(text)).toHaveProperty("docs");
+		expect(declared === null || Number(declared) === new TextEncoder().encode(text).length).toBe(true);
+	});
+
 	it("does not overwrite a link a handler chose for itself", async () => {
 		// The generic link is a floor, not a ceiling: a handler with somewhere
 		// more specific to send the caller keeps it.

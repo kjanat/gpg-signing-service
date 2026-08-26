@@ -340,12 +340,7 @@ func newAuthErrorFromResponse(body *api.ErrorResponse, header http.Header) error
 	}
 }
 
-// guidanceFromResponse reads the actionable fields off a typed envelope.
-//
-// All three are optional in the document: an older deployment sends none of
-// them, and an intermediary's error carries whatever it likes. Absent fields
-// become empty strings, which every consumer treats as "nothing to say" rather
-// than printing an empty line.
+// deref reads an optional document field, absent meaning "nothing to say".
 func deref(value *string) string {
 	if value == nil {
 		return ""
@@ -359,6 +354,12 @@ func guidanceOfBody(body apiErrorBody) Guidance {
 	return Guidance{Hint: body.Hint, Docs: body.Docs, Subject: body.Subject}
 }
 
+// guidanceFromResponse reads the actionable fields off a typed envelope.
+//
+// All three are optional in the document: an older deployment sends none of
+// them, and an intermediary's error carries whatever it likes. Absent fields
+// become empty strings, which every consumer treats as "nothing to say" rather
+// than printing an empty line.
 func guidanceFromResponse(body *api.ErrorResponse) Guidance {
 	guidance := Guidance{}
 	if body == nil {

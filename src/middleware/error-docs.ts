@@ -69,6 +69,12 @@ export const errorDocs: MiddlewareHandler<{
 	const headers = new Headers(response.headers);
 	headers.delete("content-length");
 
+	// Cleared first because Hono's `set res` merges the *old* response's headers
+	// over the new one whenever `c.res` is already populated (context.ts:120) —
+	// which would put the stale `content-length` straight back and truncate the
+	// body at the client. Nulling it makes the assignment below take the headers
+	// as written.
+	c.res = undefined;
 	c.res = new Response(JSON.stringify({ ...envelope, docs: errorDocsUrl(c, envelope.code) }), {
 		status: response.status,
 		statusText: response.statusText,
