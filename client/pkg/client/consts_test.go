@@ -1,5 +1,7 @@
 package client
 
+import "testing"
+
 // Shared fixtures for the client test suite. Extracted so repeated literals
 // have a single definition (and a single place to change them).
 const (
@@ -23,8 +25,10 @@ const (
 	// Stub server and request fixtures.
 	testBaseURL   = "http://localhost:8080"
 	testRequestID = "550e8400-e29b-41d4-a716-446655440000"
-	testVersion   = "1.0.0"
-	testTimestamp = "2023-11-20T10:30:45Z"
+	// The id the stub servers embed in error envelopes.
+	testErrRequestID = "1b4e28ba-2fa1-11d2-883f-0016d3cca427"
+	testVersion      = "1.0.0"
+	testTimestamp    = "2023-11-20T10:30:45Z"
 
 	// Key fixtures.
 	testKeyID        = "key-123"
@@ -56,3 +60,21 @@ const (
 	testNameValidation   = "validation error"
 	testNameOtherErrType = "other error type"
 )
+
+// newMappingClient builds a client for a test that asserts how a response is
+// *reported* rather than whether it is re-attempted.
+//
+// Retries are off. A 429 or a transient 5xx is now genuinely retried against a
+// real server, so a stub answering one of those on every request would put the
+// default 1s–30s backoff between the test and the answer it is checking —
+// several minutes across the suite, to reach exactly the same error. Retry
+// behaviour has its own tests, which count requests instead of inspecting one.
+func newMappingClient(tb testing.TB, baseURL string, opts ...Option) *Client {
+	tb.Helper()
+
+	c, err := New(baseURL, append([]Option{WithMaxRetries(0)}, opts...)...)
+	if err != nil {
+		tb.Fatalf("failed to create client: %v", err)
+	}
+	return c
+}

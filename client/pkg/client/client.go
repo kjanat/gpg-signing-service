@@ -92,6 +92,12 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 // allowing callers to inspect partial health data while being informed of degradation.
 // Callers should check both return values when handling degraded states.
 func (c *Client) Health(ctx context.Context) (*HealthStatus, error) {
+	// Deliberately not executeWithRetry: this is the one operation whose 503 is
+	// an answer rather than a failure. `degraded` is a documented state carrying
+	// a body the caller is meant to read, and re-asking three times with backoff
+	// would delay that report to learn nothing — a probe wants the current
+	// status, not an eventually healthy one. Transport faults still retry: a
+	// dial that never connected is not an answer about anything.
 	var resp *api.GetHealthResponse
 	err := c.retrier.Do(ctx, func() error {
 		var execErr error
@@ -113,17 +119,24 @@ func (c *Client) Health(ctx context.Context) (*HealthStatus, error) {
 	}
 
 	if resp.JSON503 != nil {
+		// The error is built above the return rather than inline. Two multi-line
+		// composite literals in one multi-value return is the single construct
+		// gofmt and goimports indent differently, and each reverts the other: with
+		// both formatters in the chain (.golangci.yml enables gofumpt and
+		// goimports) `task format` rewrote this file on every run and any editor
+		// running gofmt put it straight back.
+		degraded := &ServiceError{
+			Code:       ErrCodeDegraded,
+			Message:    "service degraded",
+			StatusCode: 503,
+		}
 		return &HealthStatus{
 			Status:     string(resp.JSON503.Status),
 			Version:    resp.JSON503.Version,
 			Timestamp:  resp.JSON503.Timestamp,
 			KeyStorage: resp.JSON503.Checks.KeyStorage,
 			Database:   resp.JSON503.Checks.Database,
-		}, &ServiceError{
-			Code:       ErrCodeDegraded,
-			Message:    "service degraded",
-			StatusCode: 503,
-		}
+		}, degraded
 	}
 
 	return nil, newStatusError(resp.StatusCode(), resp.Body, resp.HTTPResponse.Header)
@@ -137,13 +150,10 @@ func (c *Client) PublicKey(ctx context.Context, keyID string) (string, error) {
 		keyIDPtr = &keyID
 	}
 
-	var resp *api.GetPublicKeyResponse
-	err := c.retrier.Do(ctx, func() error {
-		var execErr error
-		resp, execErr = c.raw.GetPublicKeyWithResponse(ctx, &api.GetPublicKeyParams{
+	resp, err := executeWithRetry(ctx, c.retrier, func(ctx context.Context) (*api.GetPublicKeyResponse, error) {
+		return c.raw.GetPublicKeyWithResponse(ctx, &api.GetPublicKeyParams{
 			KeyId: keyIDPtr,
 		})
-		return execErr
 	})
 	if err != nil {
 		return "", err
@@ -188,11 +198,11 @@ func (c *Client) Sign(ctx context.Context, commitData string, keyID string) (*Si
 
 	params := buildSignParams(keyID)
 
-	var resp *api.PostSignResponse
-	err := c.retrier.Do(ctx, func() error {
-		var execErr error
-		resp, execErr = c.raw.PostSignWithBodyWithResponse(ctx, params, "text/plain", strings.NewReader(commitData))
-		return execErr
+	resp, err := executeWithRetry(ctx, c.retrier, func(ctx context.Context) (*api.PostSignResponse, error) {
+		// The reader is built per attempt on purpose: one hoisted out of the
+		// closure is drained by the first request and every retry after it
+		// POSTs an empty body.
+		return c.raw.PostSignWithBodyWithResponse(ctx, params, "text/plain", strings.NewReader(commitData))
 	})
 	if err != nil {
 		return nil, err
@@ -229,11 +239,8 @@ func (c *Client) UploadKey(ctx context.Context, keyID string, armoredPrivateKey 
 		KeyId:             keyID,
 	}
 
-	var resp *api.PostAdminKeysResponse
-	err := c.retrier.Do(ctx, func() error {
-		var execErr error
-		resp, execErr = c.raw.PostAdminKeysWithResponse(ctx, body)
-		return execErr
+	resp, err := executeWithRetry(ctx, c.retrier, func(ctx context.Context) (*api.PostAdminKeysResponse, error) {
+		return c.raw.PostAdminKeysWithResponse(ctx, body)
 	})
 	if err != nil {
 		return nil, err
@@ -269,11 +276,8 @@ func (c *Client) UploadKey(ctx context.Context, keyID string, armoredPrivateKey 
 
 // ListKeys lists all signing keys (admin operation).
 func (c *Client) ListKeys(ctx context.Context) ([]KeyMetadata, error) {
-	var resp *api.GetAdminKeysResponse
-	err := c.retrier.Do(ctx, func() error {
-		var execErr error
-		resp, execErr = c.raw.GetAdminKeysWithResponse(ctx)
-		return execErr
+	resp, err := executeWithRetry(ctx, c.retrier, func(ctx context.Context) (*api.GetAdminKeysResponse, error) {
+		return c.raw.GetAdminKeysWithResponse(ctx)
 	})
 	if err != nil {
 		return nil, err
@@ -312,19 +316,35 @@ func (c *Client) ListKeys(ctx context.Context) ([]KeyMetadata, error) {
 // Returns KEY_NOT_FOUND error (with StatusCode 200) when the API indicates
 // the key was not deleted (deleted=false), typically meaning the key doesn't exist.
 // Callers should use IsKeyNotFound() to detect this case.
+//
+// That report is only trustworthy on the first attempt. `deleted` describes
+// the attempt that answered, not the call — see the attempts check below.
 func (c *Client) DeleteKey(ctx context.Context, keyID string) error {
-	var resp *api.DeleteAdminKeysKeyIdResponse
-	err := c.retrier.Do(ctx, func() error {
-		var execErr error
-		resp, execErr = c.raw.DeleteAdminKeysKeyIdWithResponse(ctx, keyID)
-		return execErr
+	attempts := 0
+	resp, err := executeWithRetry(ctx, c.retrier, func(ctx context.Context) (*api.DeleteAdminKeysKeyIdResponse, error) {
+		attempts++
+		return c.raw.DeleteAdminKeysKeyIdWithResponse(ctx, keyID)
 	})
 	if err != nil {
 		return err
 	}
 
 	if resp.JSON200 != nil {
-		if resp.JSON200.Deleted {
+		// Sign and UploadKey converge under a retry because their state does;
+		// this one's state converges but its *answer* does not. The handler
+		// reports whether the key was there when this attempt ran, so a delete
+		// that committed and then lost its response — a 500 raised by the audit
+		// write that follows it, a connection dropped mid-body — is answered
+		// `deleted:false` by the next attempt, and mapped to KEY_NOT_FOUND for
+		// a key this call removed a moment earlier. The CLI prints
+		// {"deleted":false} and exits 0 for work it did do.
+		//
+		// Once an attempt has already run, "it was not there" and "I removed it
+		// a moment ago" are the same response and the postcondition holds
+		// either way, so the call succeeds. Nothing changes before a retry: the
+		// first attempt's `deleted:false` is still a not-found, which is the
+		// only reading a single round trip supports.
+		if resp.JSON200.Deleted || attempts > 1 {
 			return nil
 		}
 		return &ServiceError{
@@ -353,11 +373,8 @@ func (c *Client) DeleteKey(ctx context.Context, keyID string) error {
 func (c *Client) AuditLogs(ctx context.Context, filter AuditFilter) (*AuditResult, error) {
 	params := buildAuditParams(filter)
 
-	var resp *api.GetAdminAuditResponse
-	err := c.retrier.Do(ctx, func() error {
-		var execErr error
-		resp, execErr = c.raw.GetAdminAuditWithResponse(ctx, params)
-		return execErr
+	resp, err := executeWithRetry(ctx, c.retrier, func(ctx context.Context) (*api.GetAdminAuditResponse, error) {
+		return c.raw.GetAdminAuditWithResponse(ctx, params)
 	})
 	if err != nil {
 		return nil, err
@@ -383,11 +400,8 @@ func (c *Client) AdminPublicKey(ctx context.Context, keyID string) (string, erro
 		}
 	}
 
-	var resp *api.GetAdminKeysKeyIdPublicResponse
-	err := c.retrier.Do(ctx, func() error {
-		var execErr error
-		resp, execErr = c.raw.GetAdminKeysKeyIdPublicWithResponse(ctx, keyID)
-		return execErr
+	resp, err := executeWithRetry(ctx, c.retrier, func(ctx context.Context) (*api.GetAdminKeysKeyIdPublicResponse, error) {
+		return c.raw.GetAdminKeysKeyIdPublicWithResponse(ctx, keyID)
 	})
 	if err != nil {
 		return "", err
@@ -572,14 +586,23 @@ func mapSignResponseError(resp *api.PostSignResponse) error {
 			StatusCode: 404,
 		}
 	case resp.JSON429 != nil:
-		return &RateLimitError{
-			// A different envelope type — RateLimitError declares `retryAfter` and
-			// no `requestId` — so the shared reader cannot take it, but the two
-			// fields a caller acts on are spelled the same way in both.
-			Guidance:   Guidance{Hint: deref(resp.JSON429.Hint), Docs: deref(resp.JSON429.Docs)},
-			Message:    resp.JSON429.Error,
-			RetryAfter: time.Duration(resp.JSON429.RetryAfter) * time.Second,
-		}
+		// Through the shared constructor rather than inline: this is the declared
+		// path, and it had neither fallback the undeclared one grew. A 429 that
+		// decodes into the typed body without filling it — an edge throttle's own
+		// JSON, which is the only responder that reaches here without the
+		// service's envelope — printed as a bare "rate limited: " and dropped the
+		// Retry-After header sitting beside it.
+		// No envelope id to prefer: RateLimitErrorSchema declares no
+		// `requestId`, so the echoed header is the only source there is. Its
+		// `hint` and `docs` are spelled as they are everywhere else, so the
+		// guidance comes off the typed body directly.
+		return newRateLimitError(
+			resp.JSON429.Error,
+			resp.JSON429.RetryAfter,
+			"",
+			Guidance{Hint: deref(resp.JSON429.Hint), Docs: deref(resp.JSON429.Docs)},
+			resp.HTTPResponse.Header,
+		)
 	case resp.JSON500 != nil || resp.JSON503 != nil:
 		return mapServerError(resp)
 	default:

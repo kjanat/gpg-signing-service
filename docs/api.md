@@ -71,6 +71,25 @@ Routing is prefix-based:
 
 See [Authentication](authentication.md) for token acquisition and policy.
 
+## Response headers
+
+| Header                          | On                   | Meaning                                     |
+| ------------------------------- | -------------------- | ------------------------------------------- |
+| `X-Request-ID`                  | every response       | Correlation id; quote it when reporting     |
+| `X-RateLimit-Remaining`         | when a limiter ruled | Signatures left in the bucket that answered |
+| `X-RateLimit-Reset`             | when a limiter ruled | Epoch seconds when that bucket has a token  |
+| `Access-Control-Expose-Headers` | every response       | The subset of the above a browser may read  |
+
+A `429` carries the rate-limit pair too, describing the budget that refused —
+which on `/sign` may be the per-row ceiling rather than the caller's own bucket.
+`X-RateLimit-Reset` is then derived from the body's `retryAfter`, so the two
+never disagree.
+
+`X-RateLimit-Limit` is never sent; the bucket capacity is not published.
+
+Browsers only see these on a cross-origin response when `ALLOWED_ORIGINS` grants
+the requesting origin. See [Security model](security-model.md#browser-access).
+
 ## Error responses
 
 Errors are JSON:

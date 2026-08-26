@@ -91,3 +91,20 @@ func TestReportFailureSkipsAbsentFields(t *testing.T) {
 		t.Errorf("unexpected output %q", got)
 	}
 }
+
+// A rate limit carries its id on the echoed header and nowhere else, so the
+// block prints it from RateLimitError rather than only from the two envelope
+// types that declare a `requestId`.
+func TestReportFailurePrintsRateLimitRequestID(t *testing.T) {
+	var out bytes.Buffer
+	reportFailure(&out, &client.RateLimitError{
+		Guidance:  client.Guidance{Hint: "Wait for the bucket to refill."},
+		Message:   "Rate limit exceeded",
+		RequestID: "0e2a8f3c-6b41-4d7e-9a55-1c8d0f6b2e77",
+	})
+
+	got := out.String()
+	if !strings.Contains(got, "request: 0e2a8f3c-6b41-4d7e-9a55-1c8d0f6b2e77") {
+		t.Errorf("request id missing from %q", got)
+	}
+}

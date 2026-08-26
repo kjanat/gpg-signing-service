@@ -27,7 +27,18 @@ func defaultOptions() *Options {
 // Option configures the client.
 type Option func(*Options)
 
-// WithTimeout sets the HTTP request timeout.
+// WithTimeout sets the per-attempt HTTP request timeout. The default is 30s.
+//
+// It bounds one attempt, not the call. http.Client applies its timeout per
+// request, so every retry is handed a fresh one — WithTimeout(30s) under the
+// default policy is four attempts of up to 30s plus roughly 15s of backoff. An
+// attempt that does run out of time ends the call and is reported as the
+// timeout it is, never as the status an earlier attempt happened to return.
+//
+// Pass a context with a deadline when you want one budget for the whole call.
+// That one is checked before every wait, and a deadline lapsing with an answer
+// already in hand costs the retry rather than the answer — see the retry
+// section of the package README.
 func WithTimeout(d time.Duration) Option {
 	return func(o *Options) {
 		o.timeout = d
@@ -65,9 +76,17 @@ func WithRetryWait(minWait, maxWait time.Duration) Option {
 	}
 }
 
-// WithoutRateLimitRetry disables automatic retry on rate limit errors.
-// By default, rate limit errors are automatically retried after the
-// retry-after duration specified by the server.
+// WithoutRateLimitRetry makes a 429 final on the first response.
+//
+// By default a 429 is attempted again under the same budget as any other
+// retryable status, and the wait between attempts is the server's retry-after
+// hint when the response carries one — from the body's `retryAfter` or the
+// Retry-After header — falling back to the exponential backoff when it does
+// not. A hint longer than WithRetryWait's maximum is clamped to it, so a
+// misconfigured responder cannot park the call; the untruncated value still
+// reaches the caller on the RateLimitError returned once the attempts are
+// spent. Set this when a throttled call should fail fast rather than spend
+// that budget.
 func WithoutRateLimitRetry() Option {
 	return func(o *Options) {
 		o.retryOnRateLimit = false

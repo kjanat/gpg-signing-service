@@ -80,7 +80,7 @@ func TestAuthError(t *testing.T) {
 			name:      "auth error empty message",
 			code:      "NO_CREDENTIALS",
 			message:   "",
-			wantError: "authentication failed: NO_CREDENTIALS: ",
+			wantError: "authentication failed: NO_CREDENTIALS",
 		},
 		{
 			name:      "auth error without a code",

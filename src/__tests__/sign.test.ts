@@ -385,6 +385,34 @@ describe("Sign Route", () => {
 			expect(body.code).toBe("RATE_LIMITED");
 			expect(body.retryAfter).toBeGreaterThan(0);
 			expect(Number.isInteger(body.retryAfter)).toBe(true);
+			// X-RateLimit-Reset is derived from the same floored hint, so it cannot
+			// contradict the body by naming an instant already past — which is exactly
+			// what the raw `resetAt` would have done here, it being 40ms in the past.
+			expect(response.headers.get("X-RateLimit-Remaining")).toBe("0");
+			expect(Number(response.headers.get("X-RateLimit-Reset"))).toBeGreaterThan(Math.floor(Date.now() / 1000));
+		});
+
+		it("tells a refused caller when to come back, in headers as well as the body", async () => {
+			// A 429 used to carry no rate-limit headers at all: the one response where
+			// a caller most needs the budget was the only response that omitted it, and
+			// `securityHeaders` therefore had nothing to expose to a browser reader.
+			await setupJWKSMock();
+			await uploadTestKey("A1B2C3D4E5F67890");
+			const token = await createToken();
+
+			const response = await makeRequest(
+				"/sign?keyId=A1B2C3D4E5F67890",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{ RATE_LIMITER: stubRateLimiter({ allowed: false, remaining: 0, resetAt: Date.now() + 30_000 }) },
+			);
+
+			expect(response.status).toBe(429);
+			const body = await parseJson<{ retryAfter: number }>(response);
+			expect(response.headers.get("X-RateLimit-Remaining")).toBe("0");
+			expect(Number(response.headers.get("X-RateLimit-Reset"))).toBe(Math.ceil(Date.now() / 1000) + body.retryAfter);
+			expect(response.headers.get("Access-Control-Expose-Headers")).toBe(
+				"X-Request-ID, X-RateLimit-Remaining, X-RateLimit-Reset",
+			);
 		});
 
 		it("refuses with 429 once a trusted row hits its ceiling, even under budget per caller", async () => {
@@ -412,6 +440,11 @@ describe("Sign Route", () => {
 
 			expect(response.status).toBe(429);
 			expect(await response.json()).toMatchObject({ code: "RATE_LIMITED" });
+			// The row ceiling refused, so the headers describe *it*. Reporting the
+			// per-caller bucket that allowed a moment ago would answer 429 while
+			// telling the caller it still had 99 signatures in hand.
+			expect(response.headers.get("X-RateLimit-Remaining")).toBe("0");
+			expect(Number(response.headers.get("X-RateLimit-Reset"))).toBeGreaterThan(Math.floor(Date.now() / 1000));
 		});
 
 		it("audits a trusted subject reaching outside its key scope", async () => {

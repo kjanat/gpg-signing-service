@@ -83,7 +83,7 @@ Update `[vars]` in `wrangler.toml`:
 | `KEY_ID`                  | Default 16-character hexadecimal signing key ID                                             |
 | `ALLOWED_ISSUERS`         | Comma-separated OIDC issuer URLs                                                            |
 | `EXPECTED_AUDIENCE`       | Optional JWT audience; defaults to `gpg-signing-service`                                    |
-| `ALLOWED_ORIGINS`         | Optional comma-separated browser CORS allowlist                                             |
+| `ALLOWED_ORIGINS`         | Browser CORS allowlist; unset grants no origin anything                                     |
 | `SERVICE_BASE_URL`        | Optional public origin for the `docs` link on errors; defaults to the request's own origin  |
 | `ERROR_DOCS_URL`          | Optional target for `/e/<CODE>`; defaults to this repository's [error reference](errors.md) |
 | `DISCLOSE_TRUST_PATTERNS` | Optional `"true"` to name trusted subject prefixes in an untrusted-subject `401`            |

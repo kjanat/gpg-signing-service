@@ -925,6 +925,11 @@ describe("admin subject management", () => {
 			{ name: "ci/schemeonly", issuer: GITHUB, subjectPrefix: "repo" },
 			{ name: "ci/gitlabbare", issuer: GITHUB, subjectPrefix: "project_path:" },
 			{ name: "ci/delimsonly", issuer: GITHUB, subjectPrefix: "repo:/" },
+			// Matching is startsWith plus a delimiter check, never a pattern match,
+			// so a glob would store verbatim and match nothing.
+			{ name: "ci/glob", issuer: GITHUB, subjectPrefix: "repo:kjanat/*" },
+			{ name: "ci/globq", issuer: GITHUB, subjectPrefix: "repo:kjanat/svc?" },
+			{ name: "ci/globclass", issuer: GITHUB, subjectPrefix: "repo:kjanat/[ab]" },
 		];
 		for (const body of cases) {
 			const response = await adminRequest("/admin/subjects", {
@@ -934,6 +939,21 @@ describe("admin subject management", () => {
 			});
 			expect(response.status).toBe(400);
 		}
+	});
+
+	it("tells a caller who typed a glob which form to use instead", async () => {
+		// The whole point of refusing a glob is that the 400 teaches the
+		// trailing-delimiter form; a bare "invalid prefix" would send the operator
+		// looking for a pattern syntax that does not exist.
+		const response = await adminRequest("/admin/subjects", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ name: "ci/globhint", issuer: GITHUB, subjectPrefix: "repo:kjanat/*" }),
+		});
+		expect(response.status).toBe(400);
+		const error = JSON.stringify(await response.json());
+		expect(error).toContain("not a glob");
+		expect(error).toContain("repo:owner/");
 	});
 
 	it("refuses an issuer that is not in ALLOWED_ISSUERS", async () => {

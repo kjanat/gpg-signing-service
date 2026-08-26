@@ -210,3 +210,47 @@ func TestSignPathCarriesGuidanceOnEveryStatus(t *testing.T) {
 		})
 	}
 }
+
+// The undeclared 429. `retryAfter` is the only field the document declares a
+// typed body for on /sign, so every other operation's 429 is hand-parsed —
+// and that branch sits above the envelope gate, where it would be easy to
+// build the error from the status alone and drop the fields beside it.
+func TestGuidanceSurvivesAnUndeclaredRateLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Request-ID", "0e2a8f3c-6b41-4d7e-9a55-1c8d0f6b2e77")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = fmt.Fprint(w, `{"error":"Rate limit exceeded","code":"RATE_LIMITED","retryAfter":3,`+
+			`"hint":"Two tiers meter this call.","docs":"https://gpg.example/e/RATE_LIMITED"}`)
+	}))
+	defer server.Close()
+
+	c, err := New(server.URL, WithMaxRetries(0), WithoutRateLimitRetry())
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+
+	_, keyErr := c.PublicKey(context.Background(), "")
+	if keyErr == nil {
+		t.Fatal("expected an error")
+	}
+
+	guidance, ok := GuidanceFor(keyErr)
+	if !ok {
+		t.Fatalf("guidance was dropped: %v", keyErr)
+	}
+	if guidance.Hint != "Two tiers meter this call." {
+		t.Errorf("hint: got %q", guidance.Hint)
+	}
+	if guidance.Docs != "https://gpg.example/e/RATE_LIMITED" {
+		t.Errorf("docs: got %q", guidance.Docs)
+	}
+
+	var rateErr *RateLimitError
+	if !errors.As(keyErr, &rateErr) {
+		t.Fatalf("want a RateLimitError, got %T", keyErr)
+	}
+	if rateErr.RequestID != "0e2a8f3c-6b41-4d7e-9a55-1c8d0f6b2e77" {
+		t.Errorf("request id: got %q", rateErr.RequestID)
+	}
+}

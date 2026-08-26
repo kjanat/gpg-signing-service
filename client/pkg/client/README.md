@@ -97,11 +97,7 @@ if resp.JSON401 != nil {
 }
 
 if resp.JSON429 != nil {
-    retryAfter := 0
-    if resp.JSON429.RetryAfter != nil {
-        retryAfter = *resp.JSON429.RetryAfter
-    }
-    return fmt.Errorf("rate limited, retry after %d", retryAfter)
+    return fmt.Errorf("rate limited, retry after %d", resp.JSON429.RetryAfter)
 }
 
 if resp.JSON400 != nil {
@@ -178,7 +174,10 @@ c, err := client.New(baseURL string, opts ...Option)
 
 - `AuthError` - Authentication failures (carries the service's `Code`,
   `Message`, and `RequestID`)
-- `RateLimitError` - Rate limit exceeded (includes retry-after duration)
+- `RateLimitError` - Rate limit exceeded (carries the retry-after duration, read
+  from the body's `retryAfter` or the `Retry-After` header, in either the
+  delay-seconds or the HTTP-date form, and the `RequestID` — which on a 429 is
+  the echoed `X-Request-ID` header, since no 429 body declares one)
 - `ValidationError` - Invalid request data
 - `ServiceError` - API errors with codes
 
@@ -280,18 +279,23 @@ fmt.Printf("Found %d audit entries\n", logs.Count)
 
 The client automatically retries:
 
-- Rate limit errors (respects `Retry-After` header)
-- Service errors (5xx status codes)
+- Rate limits (`429`)
+- Transient service errors (`500`, `502`, `503`, `504`)
+- Transport faults — a refused dial, a connection dropped mid-body
 
 It never retries:
 
 - Authentication errors (401)
 - Validation errors (400)
 - Not found errors (404)
+- `501` and `505`, which describe what the server will never do
+- A cancelled or expired context
+- A response that arrived and failed to decode — the bytes are already in hand
 
 Retry strategy:
 
-- Exponential backoff with jitter
+- The server's `Retry-After` when a `429` carries one, clamped to the configured
+  maximum; exponential backoff with jitter otherwise
 - Default: 3 retries, 1s-30s backoff range
 - Respects context cancellation
 
@@ -310,6 +314,66 @@ c, _ := client.New(baseURL,
     client.WithoutRateLimitRetry(), // Fail fast on rate limits
 )
 ```
+
+### What is retried
+
+A `429`, a `500`, `502`, `503` or `504`, and a transport fault — a state the
+server or the network may be out of by the next attempt. Nothing else. A `501`
+or a `505` describes what the server will never do, and every 4xx below `429`
+describes something only the caller can change, so re-sending either spends the
+timeout budget to arrive at the same answer. A cancelled or expired context is
+not retried either: the next attempt fails the same way, immediately.
+
+Six things worth knowing:
+
+- `WithTimeout` bounds one attempt, not the operation. `http.Client` applies its
+  timeout per request, so every attempt is handed a fresh one, and a server that
+  answers _promptly_ with a retryable status never trips it — `WithTimeout(30s)`
+  under the default policy is four attempts of up to 30s plus roughly 15s of
+  backoff. Pass a context with a deadline when you need one budget for the whole
+  call; the retrier checks it before every wait.
+- `Health` never retries a status. Its `503` is `degraded`, a documented answer
+  carrying a body you are meant to read, and a probe wants the current state
+  rather than an eventually healthy one. Transport faults still retry there.
+- The wait between attempts is the server's `Retry-After` when a `429` carries
+  one — read from the body's `retryAfter` or the header, in either RFC 9110
+  form — and the exponential backoff otherwise. A hint longer than
+  `WithRetryWait`'s maximum is clamped to it, so a misconfigured responder
+  cannot park the call; the untruncated value still reaches you on the
+  `RateLimitError` returned once the attempts are spent.
+- A caller-side deadline that expires while the policy is still waiting costs
+  you the retry, not the answer. The last response received is returned and
+  mapped as usual, so `IsRateLimitError` still holds for a throttled call whose
+  `context` ran out. The last _response_, not the last attempt: a transport
+  fault after it is deliberately not allowed to displace it, so the status you
+  get can predate the wait the deadline landed in by an attempt or more. A
+  context you _cancel_ is reported as cancelled, and so is a deadline that
+  expires before any attempt completes. `WithTimeout` is not covered by this:
+  it bounds one attempt, so an attempt of its own that runs out of time is
+  reported as the timeout it is, never as the status some earlier attempt
+  returned.
+- `DeleteKey`'s `deleted` field describes the attempt that answered, not the
+  call. A delete that commits and then loses its response is answered
+  `deleted:false` by the next attempt, so once a retry has happened this client
+  reports success rather than `KEY_NOT_FOUND` — the postcondition holds either
+  way, and the alternative is telling you nothing happened for work that did.
+  A `deleted:false` on the _first_ attempt is still a not-found.
+- `Sign` and `UploadKey` are retried like everything else. Neither carries an
+  idempotency key, so a retried attempt is a second request the service will
+  act on: `Sign` produces another signature and another `sign` audit row,
+  `UploadKey` rewrites `key:<keyId>` with the same bytes and appends another
+  `key_upload` row. Both converge on the same state — a signature is a pure
+  function of the request, and an overwrite with identical content is a no-op —
+  so what a retry duplicates is the audit trail, which is a record of attempts
+  and is meant to show them. A retried `500` on `/sign` does spend one
+  rate-limit token per attempt — the limiter is consulted before the work, so
+  unlike a retried `429`, which `consumeToken` answers without decrementing,
+  the extra attempts draw down the caller's budget. If your deployment needs
+  at-most-once semantics instead, run those calls with `WithMaxRetries(0)` and
+  decide for yourself.
+
+Retries are exhausted before an operation returns, so an error you receive is
+final under the configured policy.
 
 ## Rate Limit Information
 

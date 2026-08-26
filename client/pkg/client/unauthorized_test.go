@@ -168,7 +168,7 @@ func TestSuccessBodiesAreNotBuffered(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, _ := New(server.URL)
+	client := newMappingClient(t, server.URL)
 
 	key, err := client.PublicKey(context.Background(), "")
 	if err != nil {

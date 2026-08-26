@@ -56,10 +56,17 @@ func reportFailure(w io.Writer, err error) {
 	// request, it does not advise — but it belongs in the same block: it is what
 	// an operator quotes when the hint was not enough.
 	var authErr *client.AuthError
+	var rateErr *client.RateLimitError
 	var svcErr *client.ServiceError
 	switch {
 	case errors.As(err, &authErr) && authErr.RequestID != "":
 		write("request", authErr.RequestID)
+	// A 429 is the one refusal whose id lives only in the echoed X-Request-ID
+	// header — RateLimitErrorSchema declares no `requestId` — so leaving it out
+	// here is the same as not having it, which is what troubleshooting asks the
+	// operator to quote.
+	case errors.As(err, &rateErr) && rateErr.RequestID != "":
+		write("request", rateErr.RequestID)
 	case errors.As(err, &svcErr) && svcErr.RequestID != "":
 		write("request", svcErr.RequestID)
 	}
