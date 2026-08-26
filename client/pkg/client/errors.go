@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -165,10 +166,30 @@ func requestIDFrom(envelope string, header http.Header) string {
 // edge throttle in front of it, which answers with a page rather than an
 // envelope. That is exactly the response whose hint is otherwise lost.
 func retryAfterFrom(envelopeSeconds int, header http.Header) time.Duration {
-	if envelopeSeconds > 0 {
-		return time.Duration(envelopeSeconds) * time.Second
+	if hint := retryAfterSeconds(envelopeSeconds); hint > 0 {
+		return hint
 	}
 	return parseRetryAfter(header.Get("Retry-After"), time.Now())
+}
+
+// maxRetryAfterSeconds is the largest delay-seconds a time.Duration can hold.
+// A Duration is an int64 of nanoseconds, so the conversion wraps somewhere past
+// 292 years and a header meaning "wait forever" would arrive as a negative wait.
+const maxRetryAfterSeconds = int64(math.MaxInt64) / int64(time.Second)
+
+// retryAfterSeconds converts a delay-seconds hint to a Duration, reporting zero
+// — "no hint" — for anything a Duration cannot hold.
+//
+// Both sources are outside this client's control: the header is written by
+// whatever answered, and `retryAfter` in the envelope is an unbounded JSON
+// integer whatever wrote the body chose. The multiply wraps silently, so
+// 9223372036854 arrives as -775ms: a wait that is not merely wrong but reads as
+// one already past.
+func retryAfterSeconds(seconds int) time.Duration {
+	if seconds <= 0 || int64(seconds) > maxRetryAfterSeconds {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 // parseRetryAfter reads both forms RFC 9110 §10.2.3 permits: delay-seconds, and
@@ -186,10 +207,7 @@ func parseRetryAfter(value string, now time.Time) time.Duration {
 	}
 
 	if seconds, err := strconv.Atoi(value); err == nil {
-		if seconds <= 0 {
-			return 0
-		}
-		return time.Duration(seconds) * time.Second
+		return retryAfterSeconds(seconds)
 	}
 
 	// http.ParseTime accepts IMF-fixdate and the two obsolete formats RFC 9110

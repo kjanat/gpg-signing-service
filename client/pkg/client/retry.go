@@ -101,6 +101,13 @@ func (r *Retrier) shouldRetry(err error) bool {
 	// fails the same way, immediately, and the caller's deadline is the answer
 	// either way. Checked before the transport branch below, because a context
 	// that expires mid-flight surfaces wrapped in a *url.Error like any other.
+	//
+	// WithTimeout lands here too, and deliberately. net/http renders an exceeded
+	// Client.Timeout as "context deadline exceeded (Client.Timeout exceeded while
+	// awaiting headers)" and it satisfies errors.Is against DeadlineExceeded, so
+	// the configured timeout stays a budget for the whole call rather than one
+	// each attempt is handed afresh — WithTimeout(30s) with three retries would
+	// otherwise be a two-minute call.
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
@@ -111,12 +118,11 @@ func (r *Retrier) shouldRetry(err error) bool {
 	// retryWaitMin/Max governed nothing at all.
 	//
 	// net/http reports every one of those as a *url.Error — a refused dial, a
-	// connection closed mid-body, a failed handshake, a per-request timeout —
-	// which is why this tests for the type rather than defaulting to true. A
-	// response that arrived and then failed to decode is not a transport fault:
-	// the body is already in hand and the next attempt parses exactly as badly,
-	// so a blanket default would spend the whole backoff budget re-reading a
-	// malformed 200.
+	// connection closed mid-body, a failed handshake — which is why this tests
+	// for the type rather than defaulting to true. A response that arrived and
+	// then failed to decode is not a transport fault: the body is already in hand
+	// and the next attempt parses exactly as badly, so a blanket default would
+	// spend the whole backoff budget re-reading a malformed 200.
 	var urlErr *url.Error
 	return errors.As(err, &urlErr)
 }

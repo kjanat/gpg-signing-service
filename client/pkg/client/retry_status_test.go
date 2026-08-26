@@ -152,6 +152,9 @@ func TestParseRetryAfter(t *testing.T) {
 			want:  30 * time.Second,
 		},
 		{name: "a date already past is no hint", value: "Wed, 26 Aug 2026 11:00:00 GMT"},
+		// Atoi accepts it, time.Duration does not: the multiply wraps to -775ms.
+		{name: "seconds past what a Duration holds is no hint", value: "9223372036854"},
+		{name: "seconds past int64 is no hint", value: "99999999999999999999"},
 	}
 
 	for _, tt := range tests {

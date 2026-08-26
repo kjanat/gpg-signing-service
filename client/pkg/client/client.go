@@ -561,7 +561,7 @@ func mapSignResponseError(resp *api.PostSignResponse) error {
 	case resp.JSON429 != nil:
 		return &RateLimitError{
 			Message:    resp.JSON429.Error,
-			RetryAfter: time.Duration(resp.JSON429.RetryAfter) * time.Second,
+			RetryAfter: retryAfterSeconds(resp.JSON429.RetryAfter),
 		}
 	case resp.JSON500 != nil || resp.JSON503 != nil:
 		return mapServerError(resp)
