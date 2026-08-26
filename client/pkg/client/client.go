@@ -92,52 +92,54 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 // allowing callers to inspect partial health data while being informed of degradation.
 // Callers should check both return values when handling degraded states.
 func (c *Client) Health(ctx context.Context) (*HealthStatus, error) {
-	// Deliberately not executeWithRetry: this is the one operation whose 503 is
-	// an answer rather than a failure. `degraded` is a documented state carrying
-	// a body the caller is meant to read, and re-asking three times with backoff
-	// would delay that report to learn nothing — a probe wants the current
-	// status, not an eventually healthy one. Transport faults still retry: a
-	// dial that never connected is not an answer about anything.
-	var resp *api.GetHealthResponse
-	err := c.retrier.Do(ctx, func() error {
-		var execErr error
-		resp, execErr = c.raw.GetHealthWithResponse(ctx)
-		return execErr
-	})
-	if err != nil {
-		return nil, err
-	}
+    // Deliberately not executeWithRetry: this is the one operation whose 503 is
+    // an answer rather than a failure. `degraded` is a documented state carrying
+    // a body the caller is meant to read, and re-asking three times with backoff
+    // would delay that report to learn nothing — a probe wants the current
+    // status, not an eventually healthy one. Transport faults still retry: a
+    // dial that never connected is not an answer about anything.
+    var resp *api.GetHealthResponse
+    err := c.retrier.Do(ctx, func() error {
+        var execErr error
+        resp, execErr = c.raw.GetHealthWithResponse(ctx)
+        return execErr
+    })
+    if err != nil {
+        return nil, err
+    }
 
-	if resp.JSON200 != nil {
-		return &HealthStatus{
-			Status:     string(resp.JSON200.Status),
-			Version:    resp.JSON200.Version,
-			Timestamp:  resp.JSON200.Timestamp,
-			KeyStorage: resp.JSON200.Checks.KeyStorage,
-			Database:   resp.JSON200.Checks.Database,
-		}, nil
-	}
+    if resp.JSON200 != nil {
+        return &HealthStatus{
+            Status:     string(resp.JSON200.Status),
+            Version:    resp.JSON200.Version,
+            Timestamp:  resp.JSON200.Timestamp,
+            KeyStorage: resp.JSON200.Checks.KeyStorage,
+            Database:   resp.JSON200.Checks.Database,
+        }, nil
+    }
 
-	if resp.JSON503 != nil {
-		// Bound to a name rather than returned inline: goimports and gofumpt
-		// indent a two-value return of composite literals differently, and this
-		// block is the one place in the package where they disagree — enough to
-		// fail `task c:l` whichever of the two last touched the file.
-		degraded := &HealthStatus{
-			Status:     string(resp.JSON503.Status),
-			Version:    resp.JSON503.Version,
-			Timestamp:  resp.JSON503.Timestamp,
-			KeyStorage: resp.JSON503.Checks.KeyStorage,
-			Database:   resp.JSON503.Checks.Database,
-		}
-		return degraded, &ServiceError{
-			Code:       ErrCodeDegraded,
-			Message:    "service degraded",
-			StatusCode: 503,
-		}
-	}
+    if resp.JSON503 != nil {
+        // The error is built above the return rather than inline. Two multi-line
+        // composite literals in one multi-value return is the single construct
+        // gofmt and goimports indent differently, and each reverts the other: with
+        // both formatters in the chain (.golangci.yml enables gofumpt and
+        // goimports) `task format` rewrote this file on every run and any editor
+        // running gofmt put it straight back.
+        degraded := &ServiceError{
+            Code:       ErrCodeDegraded,
+            Message:    "service degraded",
+            StatusCode: 503,
+        }
+        return &HealthStatus{
+            Status:     string(resp.JSON503.Status),
+            Version:    resp.JSON503.Version,
+            Timestamp:  resp.JSON503.Timestamp,
+            KeyStorage: resp.JSON503.Checks.KeyStorage,
+            Database:   resp.JSON503.Checks.Database,
+        }, degraded
+    }
 
-	return nil, newStatusError(resp.StatusCode(), resp.Body, resp.HTTPResponse.Header)
+    return nil, newStatusError(resp.StatusCode(), resp.Body, resp.HTTPResponse.Header)
 }
 
 // PublicKey retrieves the public signing key.

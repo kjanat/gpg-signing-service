@@ -11,8 +11,40 @@ export const SubjectNameSchema = z
 	.openapi("SubjectName");
 
 /**
+ * Both prefix rules below as one expression, for the published JSON Schema.
+ *
+ * A JSON Schema string carries a single `pattern`, so the two `.regex()` checks
+ * — which exist separately to keep their error messages apart — collapse to this
+ * for `client/openapi.json`. It is the intersection: `\S` narrowed to exclude
+ * the glob characters as well as whitespace. Written as an explicit character
+ * class rather than a lookahead so it stays legible to somebody reading the spec
+ * to work out why their prefix was refused.
+ *
+ * `[`, `]` and `/` are backslash-escaped inside the classes even though none of
+ * the three needs it in an ordinary JavaScript regex. JSON Schema's `pattern` is
+ * ECMA-262 without `u` or `v`, so a validator that is only reading the spec is
+ * unaffected either way — but a client is free to hand the string to
+ * `new RegExp(pattern, "v")`, and `v` mode reclassifies all three as class-set
+ * syntax and throws `invalid class set character` on the unescaped form. That is
+ * a compile error, not a mismatch: the client fails to start rather than
+ * mis-validating one prefix. The escapes have to be inert as well as legal, or
+ * the spec would mean two things depending on how a client compiled it —
+ * `schemas.test.ts` compiles the pattern under no flags, `u` and `v`, and runs
+ * the whole enumerated corpus through the unflagged and `v` forms. Go's `regexp`
+ * and Python's `re`, the engines behind kin-openapi and jsonschema, also read
+ * `\[`, `\]` and `\/` as those literal characters.
+ *
+ * Change either `.regex()` and this must change with it; the round trip is
+ * covered in `schemas.test.ts`.
+ */
+export const SUBJECT_PREFIX_PATTERN = "^[^\\s*?\\[\\]]*[:@\\/][^\\s*?\\[\\]]*[^\\s:@\\/*?\\[\\]][^\\s*?\\[\\]]*$";
+
+/**
  * A `sub` prefix. Matched with a delimiter boundary, so `repo:owner/name`
  * does not admit `repo:owner/name-evil`, while `repo:owner/` is owner-wide.
+ *
+ * Request bodies only. Responses echo what is in the table, which may predate
+ * the rules below — see {@link StoredSubjectPrefixSchema}.
  */
 export const SubjectPrefixSchema = z
 	.string()
@@ -35,7 +67,75 @@ export const SubjectPrefixSchema = z
 		/^\S*[:@/]\S*[^\s:@/]\S*$/,
 		"Subject prefix must have no whitespace and must name an identity after its scheme, e.g. repo:owner — not repo: or repo",
 	)
-	.openapi("SubjectPrefix");
+	// Globs are the other degenerate input, and the one an operator reaches for
+	// first: matching is `startsWith` plus a delimiter check, never a pattern
+	// match, so `repo:owner/*` is stored and compared verbatim and matches only a
+	// repository literally called `*`. That row lists as active, never authorizes
+	// anybody, and the failure surfaces as `Subject is not trusted for signing` on
+	// some later run with nothing tying it back to the create. Fail at the point
+	// of the typo instead, and name the form that actually does what was meant.
+	//
+	// `*`, `?` and `[` cannot appear in a real subject: git-check-ref-format
+	// forbids all three in a ref name, and neither GitHub's `repo:owner/name:…`
+	// nor GitLab's `project_path:group/project:…` puts them anywhere else. `]`
+	// goes with them even though a ref name may contain one: on its own it opens
+	// nothing, but it only ever reaches this field as the tail of a `[…]` somebody
+	// typed, and refusing it keeps rule and message to a single set of characters.
+	//
+	// A second `.regex()` rather than one combined pattern, so each rule keeps its
+	// own message: a caller who typed a glob is told about globs, not handed the
+	// bare-scheme rule to decode. Only the first check reaches `pattern` in
+	// client/openapi.json — a JSON Schema string has one — so the combined
+	// expression is restated in `.openapi()` below, and the two must be kept in
+	// step. The exclusions are written into each character class rather than as a
+	// leading lookahead so the published pattern stays readable to whoever is
+	// debugging a 400 against it.
+	.regex(
+		/^[^*?[\]]*$/,
+		"Subject prefix is a literal prefix, not a glob — remove * ? [ ]. A prefix ending at a delimiter is already the wildcard: repo:owner/ trusts every repository of that owner",
+	)
+	.openapi("SubjectPrefix", {
+		pattern: SUBJECT_PREFIX_PATTERN,
+		// The rule is only obvious once you know matching is startsWith, so state
+		// it where the spec is read. TSDoc above does not reach openapi.json.
+		description:
+			"A literal prefix of the token's `sub`, not a glob — `*`, `?`, `[` and `]` are refused. A subject " +
+			"matches when it starts with this string and the next character is a delimiter (`:`, `@`, `/`) " +
+			"or the end of the subject, so `repo:owner/svc` does not admit `repo:owner/svc-evil`. A prefix " +
+			"that ends at a delimiter is the wildcard: `repo:owner/` trusts every repository of that owner. " +
+			"Where several rows match, the longest live prefix wins.",
+		example: "repo:owner/repository",
+	});
+
+/**
+ * A `sub` prefix as it came back out of the table, for response bodies.
+ *
+ * Deliberately *not* {@link SubjectPrefixSchema}: that one is a rule about what
+ * may be created from now on, and the table predates it. A row written before
+ * the glob check — `repo:owner/*`, stored verbatim, matching nothing — is still
+ * in `oidc_subjects`, still listed by `GET /admin/subjects`, and still the thing
+ * an operator has to find in order to revoke it. Publishing the create-time
+ * `pattern` on the response would tell a spec-validating client to reject that
+ * listing, so the only view of the bad row would be unreadable to exactly the
+ * client trying to clean it up. Nothing validates responses at runtime here
+ * (`@hono/zod-openapi` does not, and the generated Go client does not check
+ * patterns), so this is a statement about the published contract only.
+ *
+ * The length bounds stay: those have been enforced since the column existed.
+ */
+export const StoredSubjectPrefixSchema = z
+	.string()
+	.min(1)
+	.max(255)
+	.openapi("StoredSubjectPrefix", {
+		description:
+			"A stored `sub` prefix. Matching is `startsWith` plus a delimiter (`:`, `@`, `/`) or " +
+			"end-of-subject boundary; the longest live prefix wins. No `pattern` is published here on " +
+			"purpose: new prefixes must satisfy `SubjectPrefix`, but rows created before that rule existed " +
+			"are returned as they were stored, so a client that must list and revoke them can still read " +
+			"this response.",
+		example: "repo:owner/repository",
+	});
 
 /** Request body for trusting an OIDC subject. */
 export const SubjectCreateSchema = z
@@ -66,7 +166,7 @@ export const SubjectSummarySchema = z
 		id: z.string(),
 		name: SubjectNameSchema,
 		issuer: z.string(),
-		subjectPrefix: SubjectPrefixSchema,
+		subjectPrefix: StoredSubjectPrefixSchema,
 		keyIds: z.array(z.string()).nullable(),
 		createdAt: z.string(),
 		expiresAt: z.string().nullable(),
@@ -93,7 +193,7 @@ export const CoveringSubjectSchema = z
 	.object({
 		id: z.string(),
 		name: SubjectNameSchema,
-		subjectPrefix: SubjectPrefixSchema,
+		subjectPrefix: StoredSubjectPrefixSchema,
 		keyIds: z.array(z.string()).nullable(),
 	})
 	.openapi("CoveringSubject");

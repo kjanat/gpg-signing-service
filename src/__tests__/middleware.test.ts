@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import * as jose from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "#gpg-signing-service";
+import { varyOnOrigin } from "#middleware/security";
 import { logAuditEvent } from "#utils/audit";
 import { logger } from "#utils/logger";
 import { insertOIDCSubject, revokeOIDCSubject } from "#utils/oidc-subjects";
@@ -113,39 +114,248 @@ describe("Security Headers Middleware", () => {
 		expect(response.headers.get("Permissions-Policy")).toBe("geolocation=(), microphone=(), camera=()");
 	});
 
-	it("should handle CORS preflight", async () => {
-		const response = await makeRequest("/health", {
-			method: "OPTIONS",
-			headers: {
-				Origin: "https://allowed-origin.com",
-				"Access-Control-Request-Method": "GET",
-			},
-		});
-		expect(response.status).toBe(204);
-		expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://allowed-origin.com");
-	});
+	describe("CORS", () => {
+		/** `exactOptionalPropertyTypes` forbids assigning `undefined`, so unset by deleting. */
+		function setAllowedOrigins(value: string | undefined): void {
+			if (value === undefined) {
+				delete env.ALLOWED_ORIGINS;
+			} else {
+				env.ALLOWED_ORIGINS = value;
+			}
+		}
 
-	it("should handle CORS actual request", async () => {
-		const response = await makeRequest("/health", {
-			headers: {
-				Origin: "https://allowed-origin.com",
-			},
-		});
-		expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://allowed-origin.com");
-	});
+		/** `env` is module-scoped and shared, so every case states its own allowlist. */
+		function corsRequest(origin: string | undefined, method = "GET"): Promise<Response> {
+			return makeRequest("/health", {
+				method,
+				headers: {
+					...(origin === undefined ? {} : { Origin: origin }),
+					...(method === "OPTIONS" ? { "Access-Control-Request-Method": "GET" } : {}),
+				},
+			});
+		}
 
-	it("should handle CORS OPTIONS with disallowed origin", async () => {
-		// Set allowed origins to ensure strict checking
-		env.ALLOWED_ORIGINS = "https://allowed.com";
-
-		const response = await makeRequest("/health", {
-			method: "OPTIONS",
-			headers: {
-				Origin: "https://disallowed-origin.com",
-			},
+		beforeEach(() => {
+			setAllowedOrigins(undefined);
 		});
-		expect(response.status).toBe(204);
-		expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
+
+		afterEach(() => {
+			setAllowedOrigins(undefined);
+		});
+
+		it("should handle CORS preflight for an allowed origin", async () => {
+			setAllowedOrigins("https://allowed-origin.com");
+
+			const response = await corsRequest("https://allowed-origin.com", "OPTIONS");
+
+			expect(response.status).toBe(204);
+			expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://allowed-origin.com");
+			expect(response.headers.get("Access-Control-Allow-Methods")).toBe("GET, POST, DELETE, OPTIONS");
+			expect(response.headers.get("Access-Control-Allow-Headers")).toBe("Authorization, Content-Type, X-Request-ID");
+			expect(response.headers.get("Access-Control-Max-Age")).toBe("86400");
+		});
+
+		it("should handle CORS actual request for an allowed origin", async () => {
+			setAllowedOrigins("https://allowed-origin.com");
+
+			const response = await corsRequest("https://allowed-origin.com");
+
+			expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://allowed-origin.com");
+		});
+
+		it("should handle CORS OPTIONS with disallowed origin", async () => {
+			setAllowedOrigins("https://allowed.com");
+
+			const response = await corsRequest("https://disallowed-origin.com", "OPTIONS");
+
+			expect(response.status).toBe(204);
+			expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
+			expect(response.headers.get("Access-Control-Allow-Methods")).toBeNull();
+		});
+
+		it.each([
+			["unset", undefined],
+			["empty", ""],
+			["only separators and whitespace", " , "],
+		])("fails closed when ALLOWED_ORIGINS is %s", async (_label, allowlist) => {
+			setAllowedOrigins(allowlist);
+
+			const actual = await corsRequest("https://evil.example.com");
+			const preflight = await corsRequest("https://evil.example.com", "OPTIONS");
+
+			for (const response of [actual, preflight]) {
+				expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
+				expect(response.headers.get("Access-Control-Allow-Credentials")).toBeNull();
+			}
+		});
+
+		it("never grants credentials, even to an allowed origin", async () => {
+			setAllowedOrigins("https://allowed.com");
+
+			const actual = await corsRequest("https://allowed.com");
+			const preflight = await corsRequest("https://allowed.com", "OPTIONS");
+
+			// Auth is a bearer token in `Authorization`, which no browser attaches
+			// ambiently — so the header buys nothing and is never sent on either branch.
+			expect(actual.headers.get("Access-Control-Allow-Credentials")).toBeNull();
+			expect(preflight.headers.get("Access-Control-Allow-Credentials")).toBeNull();
+		});
+
+		it("rejects the null origin even when it is listed", async () => {
+			// Sandboxed iframes, `data:` URLs and `file://` documents all send it, so
+			// granting it would hand every such context the same shared origin.
+			setAllowedOrigins("null,https://allowed.com");
+
+			const actual = await corsRequest("null");
+			const preflight = await corsRequest("null", "OPTIONS");
+
+			expect(actual.headers.get("Access-Control-Allow-Origin")).toBeNull();
+			expect(preflight.headers.get("Access-Control-Allow-Origin")).toBeNull();
+		});
+
+		it("still answers the null origin with the wildcard when `*` is listed", async () => {
+			// The wildcard is checked before the null-origin refusal, and deliberately
+			// so: `*` is an explicit opt-in to public browser access, and the CORS spec
+			// already lets an opaque origin read a `*` response. The refusal above
+			// covers `null` as an *allowlist entry*, which is the case that would
+			// otherwise look like a targeted grant.
+			setAllowedOrigins("*");
+
+			const actual = await corsRequest("null");
+			const preflight = await corsRequest("null", "OPTIONS");
+
+			for (const response of [actual, preflight]) {
+				expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+				expect(response.headers.get("Access-Control-Allow-Credentials")).toBeNull();
+			}
+		});
+
+		it("answers a caller that sends no Origin with the wildcard too", async () => {
+			// The wildcard is resolved before `Origin` is read, so a `*` deployment
+			// answers every request identically and a shared cache needs one entry
+			// rather than one per origin. Inert for the callers this reaches: nothing
+			// consults `Access-Control-Allow-Origin` on a request it sent no `Origin`
+			// on, which is every CI runner and Go client call this service serves.
+			setAllowedOrigins("*");
+
+			const actual = await corsRequest(undefined);
+			const preflight = await corsRequest(undefined, "OPTIONS");
+
+			for (const response of [actual, preflight]) {
+				expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+				expect(response.headers.get("Vary")).toBeNull();
+			}
+		});
+
+		it("trims whitespace around allowlist entries", async () => {
+			setAllowedOrigins("https://a.example.com , https://b.example.com");
+
+			const response = await corsRequest("https://b.example.com");
+
+			expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://b.example.com");
+		});
+
+		it("echoes a literal wildcard rather than reflecting the origin when `*` is listed", async () => {
+			setAllowedOrigins("*");
+
+			const actual = await corsRequest("https://anyone.example.com");
+			const preflight = await corsRequest("https://anyone.example.com", "OPTIONS");
+
+			for (const response of [actual, preflight]) {
+				expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+				expect(response.headers.get("Access-Control-Allow-Credentials")).toBeNull();
+				// The answer no longer depends on the request origin, so caches need not key on it.
+				expect(response.headers.get("Vary")).toBeNull();
+			}
+		});
+
+		it("honours a wildcard listed beside real origins, granting every origin", async () => {
+			// `entries.includes("*")` does not require the wildcard to stand alone, so
+			// appending one to an allowlist that looks restrictive opens the whole
+			// deployment. Pinned because the blast radius is much larger than the diff
+			// that would cause it.
+			setAllowedOrigins("https://allowed.com,*");
+
+			const response = await corsRequest("https://anyone.example.com");
+
+			expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+		});
+
+		it.each([
+			["an allowed origin", "https://allowed.com"],
+			["a denied origin", "https://evil.example.com"],
+			["no origin at all", undefined],
+		])("sets Vary: Origin for %s", async (_label, origin) => {
+			setAllowedOrigins("https://allowed.com");
+
+			const actual = await corsRequest(origin);
+			const preflight = await corsRequest(origin, "OPTIONS");
+
+			expect(actual.headers.get("Vary")).toBe("Origin");
+			expect(preflight.headers.get("Vary")).toBe("Origin");
+		});
+
+		it("exposes X-Request-ID even on a response that carries no rate-limit headers", async () => {
+			// /health sets no rate-limit headers, so the conditional half of the list
+			// is empty here — but X-Request-ID is on every response and is the header
+			// a browser caller needs to quote when filing a bug. It is named
+			// unconditionally because `requestId` is the outermost middleware and
+			// stamps it *after* `securityHeaders` builds this list, so a presence test
+			// would see it only on the signing route, which sets it itself. The
+			// conditional half is pinned on the admin route in branch-coverage.test.ts.
+			setAllowedOrigins("https://allowed.com");
+
+			const response = await corsRequest("https://allowed.com");
+
+			expect(response.headers.get("Access-Control-Expose-Headers")).toBe("X-Request-ID");
+			expect(response.headers.get("X-Request-ID")).not.toBeNull();
+		});
+
+		it("exposes X-Request-ID on a 404, which no route handler touches", async () => {
+			// The claim the unconditional listing rests on is that *every* response
+			// carries the header. `app.notFound` synthesises its response outside any
+			// route, so it is the path most likely to have escaped `requestId` — it
+			// does not, because `notFound` runs inside the middleware chain.
+			setAllowedOrigins("https://allowed.com");
+
+			const response = await makeRequest("/no-such-route", { headers: { Origin: "https://allowed.com" } });
+
+			expect(response.status).toBe(404);
+			expect(response.headers.get("X-Request-ID")).not.toBeNull();
+			expect(response.headers.get("Access-Control-Expose-Headers")).toBe("X-Request-ID");
+		});
+
+		it("names X-Request-ID in Access-Control-Allow-Headers and exposes it back", async () => {
+			// Both directions, on the same deployment: a browser may *send* the header
+			// (the preflight allows it) and may *read* it back (the actual response
+			// exposes it). Allowing one without the other is the shape that makes a
+			// caller's correlation id vanish on the way home.
+			setAllowedOrigins("https://allowed.com");
+
+			const preflight = await corsRequest("https://allowed.com", "OPTIONS");
+			const actual = await corsRequest("https://allowed.com");
+
+			expect(preflight.headers.get("Access-Control-Allow-Headers")).toContain("X-Request-ID");
+			expect(actual.headers.get("Access-Control-Expose-Headers")).toContain("X-Request-ID");
+		});
+
+		// No handler in the service sets Vary, so the merge paths are only
+		// reachable directly — but a future one must not have its token clobbered.
+		describe("varyOnOrigin", () => {
+			it.each([
+				["absent", undefined, "Origin"],
+				["another token", "Accept-Encoding", "Accept-Encoding, Origin"],
+				["Origin already, differently cased", "origin", "origin"],
+				["Origin among others", "Accept-Encoding, Origin", "Accept-Encoding, Origin"],
+				["the wildcard", "*", "*"],
+			])("with Vary %s", (_label, existing, expected) => {
+				const headers = new Headers(existing === undefined ? {} : { Vary: existing });
+
+				varyOnOrigin(headers);
+
+				expect(headers.get("Vary")).toBe(expected);
+			});
+		});
 	});
 
 	describe("OIDC Token Validation", () => {

@@ -541,7 +541,7 @@
             "type": "string"
           },
           "subjectPrefix": {
-            "$ref": "#/components/schemas/SubjectPrefix"
+            "$ref": "#/components/schemas/StoredSubjectPrefix"
           },
           "keyIds": {
             "type": "array",
@@ -588,11 +588,12 @@
         "maxLength": 64,
         "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._/-]*$"
       },
-      "SubjectPrefix": {
+      "StoredSubjectPrefix": {
         "type": "string",
         "minLength": 1,
         "maxLength": 255,
-        "pattern": "^\\S*[:@/]\\S*[^\\s:@/]\\S*$"
+        "description": "A stored `sub` prefix. Matching is `startsWith` plus a delimiter (`:`, `@`, `/`) or end-of-subject boundary; the longest live prefix wins. No `pattern` is published here on purpose: new prefixes must satisfy `SubjectPrefix`, but rows created before that rule existed are returned as they were stored, so a client that must list and revoke them can still read this response.",
+        "example": "repo:owner/repository"
       },
       "SubjectCreate": {
         "type": "object",
@@ -629,6 +630,14 @@
           "subjectPrefix"
         ]
       },
+      "SubjectPrefix": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 255,
+        "pattern": "^[^\\s*?\\[\\]]*[:@\\/][^\\s*?\\[\\]]*[^\\s:@\\/*?\\[\\]][^\\s*?\\[\\]]*$",
+        "description": "A literal prefix of the token's `sub`, not a glob — `*`, `?`, `[` and `]` are refused. A subject matches when it starts with this string and the next character is a delimiter (`:`, `@`, `/`) or the end of the subject, so `repo:owner/svc` does not admit `repo:owner/svc-evil`. A prefix that ends at a delimiter is the wildcard: `repo:owner/` trusts every repository of that owner. Where several rows match, the longest live prefix wins.",
+        "example": "repo:owner/repository"
+      },
       "SubjectListResponse": {
         "type": "object",
         "properties": {
@@ -656,7 +665,7 @@
             "type": "string"
           },
           "subjectPrefix": {
-            "$ref": "#/components/schemas/SubjectPrefix"
+            "$ref": "#/components/schemas/StoredSubjectPrefix"
           },
           "keyIds": {
             "type": "array",
@@ -742,7 +751,7 @@
             "$ref": "#/components/schemas/SubjectName"
           },
           "subjectPrefix": {
-            "$ref": "#/components/schemas/SubjectPrefix"
+            "$ref": "#/components/schemas/StoredSubjectPrefix"
           },
           "keyIds": {
             "type": "array",

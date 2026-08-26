@@ -74,6 +74,72 @@ entry in `ALLOWED_ISSUERS` might.
 Omit `keyIds` to allow every key. Omit `expiresInDays` for a trust that does
 not expire.
 
+### `subjectPrefix` is not a glob
+
+There is no pattern syntax. A `sub` is admitted when it **starts with** the
+stored string and the next character is a delimiter (`:`, `@` or `/`) or the
+end of the subject — nothing else. `*`, `?`, `[` and `]` are therefore refused
+with `400`, because a stored `repo:kjanat/*` would be compared literally and
+match only a repository actually named `*`: a row that lists as `active`,
+authorizes nobody, and surfaces days later as `Subject is not trusted for
+signing` on some unrelated run.
+
+The trailing delimiter **is** the wildcard. `repo:kjanat/` is what
+`repo:kjanat/*` was reaching for:
+
+| You want                             | Write                | Not                    |
+| ------------------------------------ | -------------------- | ---------------------- |
+| Every repo of an owner               | `repo:kjanat`        | `repo:kjanat/*`        |
+| Every repo of an owner, `/` boundary | `repo:kjanat/`       | `repo:kjanat/*`        |
+| One repository, any ref              | `repo:kjanat/kjanat` | `repo:kjanat/kjanat:*` |
+| Every repository on the issuer       | _not possible_       | `repo:*`, `repo:`      |
+
+`repo:kjanat` and `repo:kjanat/` differ only in which boundary they accept —
+prefer the first, per the tip above.
+
+The `400` guards new rows only. A glob created before this rule existed is
+still in the table, and `GET /admin/subjects` still lists it — as `active`,
+matching nothing — so that you can find it and `DELETE` it. That is also why
+the response schema publishes no pattern for `subjectPrefix` while the request
+schema does: a client that validated responses against the create rule could
+not read the listing containing the row it needs to revoke.
+
+What a prefix **cannot** express is a cut anywhere but the start. Trusting only
+tagged builds — `repo:kjanat/kjanat:ref:refs/tags/…` but not
+`refs/heads/master` — would need a suffix or middle match, and there is none.
+Write the prefix as far right as it stays constant
+(`repo:kjanat/kjanat:ref:refs/tags/`) and it will admit exactly the tag refs,
+but understand that this only works because the varying part happens to be at
+the end. Anything else has to be enforced in the workflow, not here.
+
+### Names and prefixes are separate unique keys
+
+Two different `409`s come out of `POST /admin/subjects`, and they want opposite
+fixes:
+
+| Error message begins                               | What collided                              | Fix                                                            |
+| -------------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------- |
+| `Subject name already exists: …`                   | `name`, against **every** row ever created | Pick a different `name`. The prefix in your request was fine.  |
+| `Issuer and subject prefix are already claimed: …` | `(issuer, subjectPrefix)`, unrevoked rows  | Revoke the row named in the error, then re-POST. Do not widen. |
+
+`name` is a label for one generation of a trust, not a slot: it is unique
+across revoked and expired rows too and is never freed, because every OIDC
+`sign` audit event is keyed by it. The message normally goes on to say which row
+is holding it and whether that row is still live, revoked or merely expired — an
+expired row trusts nobody but still owns its name and its prefix. That second
+clause comes from a lookup made after the insert failed, and it is deliberately
+best-effort: rather than let a read error turn the `409` into a `500`, it drops
+back to the bare `Subject name already exists: <name>`. So treat the id as a
+convenience, not a guarantee; the fix — pick a new name — does not depend on it.
+
+So a `Subject name already exists` when you were changing the **prefix** means
+the previous trust under that name is still there, untouched, and your new
+prefix was never stored. `GET /admin/subjects` shows what is actually live; use
+a fresh name such as `statute-oidc-2` for the replacement, and revoke the old
+row if you meant to replace rather than add — see
+[Renewing an expired trust](#renewing-an-expired-trust) for the full sequence
+and why the name can never be reused.
+
 ### Immutable subject claims change `sub` under a live row
 
 A GitHub repository that enables immutable subject claims stops issuing
