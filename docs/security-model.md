@@ -136,6 +136,11 @@ read a wildcard response, so refusing it there would be theatre. Every
 origin-dependent response carries `Vary: Origin` so a shared cache cannot hand
 one origin another's grant.
 
+A granted origin may read `X-Request-ID` — the id to quote when reporting a
+refusal — plus whichever rate-limit headers the response carries;
+`Access-Control-Expose-Headers` names exactly those and nothing else. See
+[Response headers](api.md#response-headers).
+
 Security headers include HSTS, CSP, frame denial, MIME sniffing prevention, and
 a restricted Permissions Policy.
 

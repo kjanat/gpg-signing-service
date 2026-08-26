@@ -4,6 +4,7 @@ import type { ErrorCode } from "#schemas/errors";
 import type { Env, RateLimitResult } from "#types";
 import { HEADERS, HTTP, TIME } from "#types";
 import { logger } from "#utils/logger";
+import { rateLimitDeniedHeaders } from "#utils/rate-limit";
 
 /**
  * Default CSP: every API route returns JSON, so nothing may be loaded at all.
@@ -40,6 +41,18 @@ const DOCS_UI_PATHS = new Set(["/ui"]);
 const RATE_LIMIT_HEADERS = [HEADERS.RATE_LIMIT_LIMIT, HEADERS.RATE_LIMIT_REMAINING, HEADERS.RATE_LIMIT_RESET] as const;
 
 /**
+ * Headers named unconditionally, because presence cannot be tested for here.
+ *
+ * `X-Request-ID` is on every response — it is the id an operator correlates a
+ * refusal against, and the one header a browser caller wants when filing a bug —
+ * but `requestId` is the *outermost* middleware, so it stamps the header on the
+ * way out, after this one has already computed the list. Filtering on
+ * `c.res.headers.has` would therefore expose it only on the routes that happen
+ * to set it themselves, which is the signing route and nothing else.
+ */
+const ALWAYS_EXPOSED_HEADERS = [HEADERS.REQUEST_ID] as const;
+
+/**
  * Security headers middleware for production hardening
  */
 export const securityHeaders: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
@@ -58,13 +71,12 @@ export const securityHeaders: MiddlewareHandler<{ Bindings: Env }> = async (c, n
 	c.res.headers.delete("Server");
 	c.res.headers.delete("X-Powered-By");
 
-	// Advertise only the rate-limit headers this response actually carries. The
-	// list used to be hardcoded, so it named X-RateLimit-Limit — which nothing in
-	// the service ever sets — on every rate-limited response.
-	const exposed = RATE_LIMIT_HEADERS.filter((name) => c.res.headers.has(name));
-	if (exposed.length > 0) {
-		c.header("Access-Control-Expose-Headers", exposed.join(", "));
-	}
+	// Advertise the always-present headers plus only the rate-limit ones this
+	// response actually carries. The list used to be hardcoded, so it named
+	// X-RateLimit-Limit — which nothing in the service ever sets — on every
+	// rate-limited response, and named nothing at all on every other response.
+	const exposed = [...ALWAYS_EXPOSED_HEADERS, ...RATE_LIMIT_HEADERS.filter((name) => c.res.headers.has(name))];
+	c.header("Access-Control-Expose-Headers", exposed.join(", "));
 };
 
 /** Literal `ALLOWED_ORIGINS` entry opting a deployment into public browser access. */
@@ -209,19 +221,20 @@ export const adminRateLimit: MiddlewareHandler<{ Bindings: Env }> = async (c, ne
 		const rateLimit = (await rateLimitResponse.json()) as RateLimitResult;
 
 		if (!rateLimit.allowed) {
+			// Floored at one second. `resetAt` on a denial is when the bucket next
+			// holds a token, which is sub-second at every capacity in use, so the bare
+			// `ceil` underflows to zero across a Durable Object round trip — off-spec
+			// against `RateLimitErrorSchema`, and ignored by the Go client, which only
+			// honours a positive hint. Mirrors the sign route's `retryAfterSeconds`.
+			const retryAfter = Math.max(1, Math.ceil((rateLimit.resetAt - Date.now()) / TIME.SECOND));
 			return c.json(
 				{
 					error: "Rate limit exceeded",
 					code: "RATE_LIMITED" as const satisfies ErrorCode,
-					// Floored at one second. `resetAt` on a denial is when the bucket next
-					// holds a token, which is sub-second at every capacity in use, so the
-					// bare `ceil` underflows to zero across a Durable Object round trip —
-					// off-spec against `RateLimitErrorSchema`, and ignored by the Go
-					// client, which only honours a positive hint. Mirrors the sign
-					// route's `retryAfterSeconds`.
-					retryAfter: Math.max(1, Math.ceil((rateLimit.resetAt - Date.now()) / TIME.SECOND)),
+					retryAfter,
 				},
 				HTTP.TooManyRequests,
+				rateLimitDeniedHeaders(retryAfter),
 			);
 		}
 

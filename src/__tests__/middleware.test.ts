@@ -295,15 +295,48 @@ describe("Security Headers Middleware", () => {
 			expect(preflight.headers.get("Vary")).toBe("Origin");
 		});
 
-		it("advertises no Access-Control-Expose-Headers when the response carries none", async () => {
-			// /health sets no rate-limit headers, so the list would have been empty.
-			// The positive case — only the headers actually present get named — is
-			// pinned on the admin route in branch-coverage.test.ts.
+		it("exposes X-Request-ID even on a response that carries no rate-limit headers", async () => {
+			// /health sets no rate-limit headers, so the conditional half of the list
+			// is empty here — but X-Request-ID is on every response and is the header
+			// a browser caller needs to quote when filing a bug. It is named
+			// unconditionally because `requestId` is the outermost middleware and
+			// stamps it *after* `securityHeaders` builds this list, so a presence test
+			// would see it only on the signing route, which sets it itself. The
+			// conditional half is pinned on the admin route in branch-coverage.test.ts.
 			setAllowedOrigins("https://allowed.com");
 
 			const response = await corsRequest("https://allowed.com");
 
-			expect(response.headers.get("Access-Control-Expose-Headers")).toBeNull();
+			expect(response.headers.get("Access-Control-Expose-Headers")).toBe("X-Request-ID");
+			expect(response.headers.get("X-Request-ID")).not.toBeNull();
+		});
+
+		it("exposes X-Request-ID on a 404, which no route handler touches", async () => {
+			// The claim the unconditional listing rests on is that *every* response
+			// carries the header. `app.notFound` synthesises its response outside any
+			// route, so it is the path most likely to have escaped `requestId` — it
+			// does not, because `notFound` runs inside the middleware chain.
+			setAllowedOrigins("https://allowed.com");
+
+			const response = await makeRequest("/no-such-route", { headers: { Origin: "https://allowed.com" } });
+
+			expect(response.status).toBe(404);
+			expect(response.headers.get("X-Request-ID")).not.toBeNull();
+			expect(response.headers.get("Access-Control-Expose-Headers")).toBe("X-Request-ID");
+		});
+
+		it("names X-Request-ID in Access-Control-Allow-Headers and exposes it back", async () => {
+			// Both directions, on the same deployment: a browser may *send* the header
+			// (the preflight allows it) and may *read* it back (the actual response
+			// exposes it). Allowing one without the other is the shape that makes a
+			// caller's correlation id vanish on the way home.
+			setAllowedOrigins("https://allowed.com");
+
+			const preflight = await corsRequest("https://allowed.com", "OPTIONS");
+			const actual = await corsRequest("https://allowed.com");
+
+			expect(preflight.headers.get("Access-Control-Allow-Headers")).toContain("X-Request-ID");
+			expect(actual.headers.get("Access-Control-Expose-Headers")).toContain("X-Request-ID");
 		});
 
 		// No handler in the service sets Vary, so the merge paths are only
