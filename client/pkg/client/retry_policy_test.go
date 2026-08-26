@@ -481,7 +481,8 @@ func TestDeleteKeyNotFoundOnTheFirstAttemptStaysNotFound(t *testing.T) {
 }
 
 // TestPerAttemptTimeoutIsNotAnAnswer pins the boundary of the branch
-// TestDeadlineOutranksNothing's siblings cover from the other side.
+// TestDeadlineKeepsTheAnswerAlreadyInHand and its siblings cover from the
+// other side.
 //
 // executeWithRetry reports a response rather than a deadline when the caller's
 // context ran out mid-policy, on the reasoning that the answer was already in
@@ -542,5 +543,16 @@ func TestPerAttemptTimeoutIsNotAnAnswer(t *testing.T) {
 	if errors.As(signErr, &serviceErr) {
 		t.Errorf("attempt one's %d was reported in place of the timeout: %v",
 			serviceErr.StatusCode, signErr)
+	}
+	// Asserted last and separately from the error: without it the test passes
+	// on the unfixed code whenever attempt *one* is what runs out of time,
+	// which a loaded runner can produce out of a 150ms budget. That call never
+	// reaches the branch under test — attempted is false, the deadline is
+	// returned as itself, and every assertion above holds for the wrong
+	// reason. Two requests is what puts a response in hand for the timeout to
+	// be swallowed by.
+	if got := requests.Load(); got < 2 {
+		t.Fatalf("attempt one did not answer within the per-request timeout, so "+
+			"the branch under test was never reached: %d request(s)", got)
 	}
 }
