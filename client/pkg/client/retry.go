@@ -107,9 +107,16 @@ func (r *Retrier) shouldRetry(err error) bool {
 	// WithTimeout lands here too, and deliberately. net/http renders an exceeded
 	// Client.Timeout as "context deadline exceeded (Client.Timeout exceeded while
 	// awaiting headers)" and it satisfies errors.Is against DeadlineExceeded, so
-	// the configured timeout stays a budget for the whole call rather than one
-	// each attempt is handed afresh — WithTimeout(30s) with three retries would
-	// otherwise be a two-minute call.
+	// an attempt that ran out of time is final rather than repeated: the next one
+	// is handed the same duration and the same slow server.
+	//
+	// That does not make WithTimeout a budget for the whole call, and it never
+	// did. http.Client applies its Timeout per Do, so each attempt gets a fresh
+	// one, and a server answering *promptly* with a retryable status never trips
+	// it at all — WithTimeout(30s) under the default policy is four attempts of
+	// up to 30s plus ~15s of backoff. A caller wanting one budget for the whole
+	// operation passes a context with a deadline, which Do checks before every
+	// wait.
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}

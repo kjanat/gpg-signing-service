@@ -376,3 +376,55 @@ func TestNegativeMaxRetriesIsRejected(t *testing.T) {
 		t.Errorf("expected a nil client alongside the error, got %#v", c)
 	}
 }
+
+// TestTimeoutBoundsOneAttemptNotTheCall pins what WithTimeout actually bounds.
+//
+// http.Client applies its Timeout per request, so each attempt is handed a
+// fresh one — and a server answering promptly with a retryable status never
+// trips it at all. Connecting the retry policy to statuses is what made that
+// visible: before it, a 503 ended the call on attempt one and the configured
+// timeout was the only clock. It is now four attempts plus the backoff between
+// them, which on the defaults is a WithTimeout(30s) call of up to 2m15s. A
+// caller who wants one budget for the operation passes a context deadline,
+// which Do checks before every wait — TestSignDoesNotRetryCancelledContext
+// covers that side.
+//
+// Held to milliseconds, with an order of magnitude between the handler's delay
+// and the timeout, so the arithmetic is the only thing under test.
+func TestTimeoutBoundsOneAttemptNotTheCall(t *testing.T) {
+	const perCall = 200 * time.Millisecond
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		time.Sleep(20 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = fmt.Fprint(w, `{"error":"unavailable","code":"INTERNAL_ERROR"}`)
+	}))
+	defer server.Close()
+
+	c, err := New(server.URL,
+		WithTimeout(perCall),
+		WithMaxRetries(3),
+		WithRetryWait(60*time.Millisecond, 120*time.Millisecond),
+	)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+
+	start := time.Now()
+	_, err = c.Sign(context.Background(), "commit data", "")
+	elapsed := time.Since(start)
+
+	var se *ServiceError
+	if !errors.As(err, &se) {
+		t.Fatalf("expected a *ServiceError, got %T: %v", err, err)
+	}
+	if requests != 4 {
+		t.Errorf("expected 4 attempts, got %d", requests)
+	}
+	if elapsed <= perCall {
+		t.Errorf("expected the call to outlast WithTimeout(%v), took %v", perCall, elapsed)
+	}
+}

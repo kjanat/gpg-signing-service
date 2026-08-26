@@ -322,8 +322,14 @@ describes something only the caller can change, so re-sending either spends the
 timeout budget to arrive at the same answer. A cancelled or expired context is
 not retried either: the next attempt fails the same way, immediately.
 
-Three things worth knowing:
+Four things worth knowing:
 
+- `WithTimeout` bounds one attempt, not the operation. `http.Client` applies its
+  timeout per request, so every attempt is handed a fresh one, and a server that
+  answers _promptly_ with a retryable status never trips it — `WithTimeout(30s)`
+  under the default policy is four attempts of up to 30s plus roughly 15s of
+  backoff. Pass a context with a deadline when you need one budget for the whole
+  call; the retrier checks it before every wait.
 - `Health` never retries a status. Its `503` is `degraded`, a documented answer
   carrying a body you are meant to read, and a probe wants the current state
   rather than an eventually healthy one. Transport faults still retry there.
