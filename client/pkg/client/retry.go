@@ -3,8 +3,10 @@ package client
 import (
 	"context"
 	"errors"
+	"io"
 	"math"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"net/url"
 	"time"
@@ -117,14 +119,31 @@ func (r *Retrier) shouldRetry(err error) bool {
 	// retrier, and the transport faults that did fell through to false, so
 	// retryWaitMin/Max governed nothing at all.
 	//
-	// net/http reports every one of those as a *url.Error — a refused dial, a
-	// connection closed mid-body, a failed handshake — which is why this tests
-	// for the type rather than defaulting to true. A response that arrived and
-	// then failed to decode is not a transport fault: the body is already in hand
-	// and the next attempt parses exactly as badly, so a blanket default would
-	// spend the whole backoff budget re-reading a malformed 200.
+	// A fault before the response headers arrive — a refused dial, a failed
+	// handshake, a reset before the status line — is reported by net/http as a
+	// *url.Error, which is why this tests for the type rather than defaulting to
+	// true. A response that arrived and then failed to decode is not a transport
+	// fault: the body is already in hand and the next attempt parses exactly as
+	// badly, so a blanket default would spend the whole backoff budget re-reading
+	// a malformed 200.
 	var urlErr *url.Error
-	return errors.As(err, &urlErr)
+	if errors.As(err, &urlErr) {
+		return true
+	}
+
+	// A fault *after* the headers arrive does not look like one. The generated
+	// client reads the body with io.ReadAll inside Parse…Response, well past the
+	// *url.Error the round trip returned, so a connection dropped mid-body comes
+	// back bare: io.ErrUnexpectedEOF when the peer hung up, a *net.OpError when
+	// it reset. README lists that case among the faults this retries, and it is
+	// the more likely of the two in practice — the request was accepted and the
+	// server may well have done the work — so it has to be recognised here.
+	//
+	// Neither shape can be a decode failure. json.Unmarshal reports a truncated
+	// document as *json.SyntaxError ("unexpected end of JSON input") and never
+	// wraps io.ErrUnexpectedEOF, so a malformed 200 still falls through to false.
+	var opErr *net.OpError
+	return errors.Is(err, io.ErrUnexpectedEOF) || errors.As(err, &opErr)
 }
 
 func (r *Retrier) backoff(attempt int) time.Duration {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -123,6 +124,176 @@ func TestOpaqueRateLimitIsStillRateLimited(t *testing.T) {
 
 	if _, err := c.Sign(context.Background(), "commit data", ""); !IsRateLimitError(err) {
 		t.Errorf("Sign: expected a rate limit error, got %T: %v", err, err)
+	}
+}
+
+// TestSignRetrySendsTheBodyAgain pins the invariant executeWithRetry rests on:
+// the closure must build the request body afresh on every attempt.
+//
+// Sign's reader is constructed inside the closure, which is correct and was
+// load-bearing the moment a status became retryable — a reader hoisted out is
+// drained by attempt one and every attempt after it POSTs an empty body. The
+// existing tests count requests and read the final response, so they pass
+// either way; nothing looked at what arrived. This does.
+func TestSignRetrySendsTheBodyAgain(t *testing.T) {
+	const commitData = "tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\nauthor A <a@example.com>"
+	const signature = "-----BEGIN PGP SIGNATURE-----\n\nsig\n-----END PGP SIGNATURE-----"
+
+	var bodies []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("reading request body: %v", err)
+			return
+		}
+		bodies = append(bodies, string(body))
+		if len(bodies) == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = fmt.Fprint(w, `{"error":"unavailable","code":"SERVICE_UNAVAILABLE"}`)
+			return
+		}
+		_, _ = fmt.Fprint(w, signature)
+	}))
+	defer server.Close()
+
+	c, err := New(server.URL,
+		WithMaxRetries(2),
+		WithRetryWait(time.Millisecond, 5*time.Millisecond),
+	)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+
+	if _, err := c.Sign(context.Background(), commitData, ""); err != nil {
+		t.Fatalf("Sign failed: %v", err)
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("expected 2 requests, got %d", len(bodies))
+	}
+	for i, body := range bodies {
+		if body != commitData {
+			t.Errorf("request %d carried %q, want the commit data", i+1, body)
+		}
+	}
+}
+
+// TestSignRetriesBodyTruncatedMidRead covers the transport fault that does not
+// look like one.
+//
+// The generated client reads the body with io.ReadAll inside Parse…Response,
+// well past the *url.Error the round trip returned, so a connection dropped
+// after the headers arrived comes back as a bare io.ErrUnexpectedEOF. Testing
+// only for *url.Error missed it, while README listed "a connection dropped
+// mid-body" among the faults this retries — the same shape of gap this file
+// exists to close, one layer further in.
+func TestSignRetriesBodyTruncatedMidRead(t *testing.T) {
+	const signature = "-----BEGIN PGP SIGNATURE-----\n\nsig\n-----END PGP SIGNATURE-----"
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		if requests == 1 {
+			// Promise more than is sent, then hang up: the client reads the
+			// status and headers, then runs out of body.
+			w.Header().Set("Content-Type", "text/plain")
+			w.Header().Set("Content-Length", "512")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("-----BEGIN PGP SIG"))
+			conn, _, err := http.NewResponseController(w).Hijack()
+			if err != nil {
+				t.Errorf("hijack failed: %v", err)
+				return
+			}
+			_ = conn.Close()
+			return
+		}
+		_, _ = fmt.Fprint(w, signature)
+	}))
+	defer server.Close()
+
+	c, err := New(server.URL,
+		WithMaxRetries(2),
+		WithRetryWait(time.Millisecond, 5*time.Millisecond),
+	)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+
+	result, err := c.Sign(context.Background(), "commit data", "")
+	if err != nil {
+		t.Fatalf("truncated body was not retried: %v", err)
+	}
+	if result.Signature != signature {
+		t.Errorf("unexpected signature: %q", result.Signature)
+	}
+	if requests != 2 {
+		t.Errorf("expected 2 requests, got %d", requests)
+	}
+}
+
+// TestMalformedBodyIsNotRetried pins the other side of that line.
+//
+// A response that arrived whole and failed to decode is not a transport fault:
+// the bytes are in hand and the next attempt parses exactly as badly. json
+// reports a truncated document as *json.SyntaxError and never wraps
+// io.ErrUnexpectedEOF, so recognising the truncated *read* must not drag the
+// truncated *document* along with it.
+func TestMalformedBodyIsNotRetried(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, `{"keys":[`)
+	}))
+	defer server.Close()
+
+	c, err := New(server.URL,
+		WithAdminToken(testMsgTest),
+		WithMaxRetries(3),
+		WithRetryWait(time.Millisecond, 5*time.Millisecond),
+	)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+
+	if _, err := c.ListKeys(context.Background()); err == nil {
+		t.Fatal("expected a decode error")
+	}
+	if requests != 1 {
+		t.Errorf("expected the malformed body to be final, got %d requests", requests)
+	}
+}
+
+// TestHalfEnvelopeRateLimitKeepsItsBody covers a 429 whose body parsed cleanly
+// but is not an envelope: `error` and `retryAfter` with no `code`, which is
+// what an intermediary that knows the shape but not the vocabulary emits.
+//
+// The 429 branch sits above the parse gate, so it reads a value the gate
+// rejected. Zeroing that value on rejection threw away a message and a hint
+// that had both survived json.Unmarshal — the hoist survived the type of the
+// body but not its contents.
+func TestHalfEnvelopeRateLimitKeepsItsBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = fmt.Fprint(w, `{"error":"Too many requests, slow down","retryAfter":7}`)
+	}))
+	defer server.Close()
+
+	c := newMappingClient(t, server.URL, WithAdminToken(testMsgTest))
+
+	_, err := c.ListKeys(context.Background())
+	var re *RateLimitError
+	if !errors.As(err, &re) {
+		t.Fatalf("expected a *RateLimitError, got %T: %v", err, err)
+	}
+	if re.Message != "Too many requests, slow down" {
+		t.Errorf("expected the body's message, got %q", re.Message)
+	}
+	if re.RetryAfter != 7*time.Second {
+		t.Errorf("expected the body's 7s hint, got %v", re.RetryAfter)
 	}
 }
 

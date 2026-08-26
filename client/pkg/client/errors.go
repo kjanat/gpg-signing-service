@@ -346,7 +346,12 @@ func parseAPIErrorBody(body []byte) (apiErrorBody, bool) {
 		return apiErrorBody{}, false
 	}
 	if parsed.Error == "" || parsed.Code == "" {
-		return apiErrorBody{}, false
+		// The value still goes back. Only newStatusError's 429 branch, which sits
+		// above the gate because a 429 needs no envelope to be understood, reads
+		// it when ok is false — a half-envelope carrying `error` and `retryAfter`
+		// but no `code` parsed cleanly and has both of the things that branch
+		// wants. Every other path discards it and reports the status alone.
+		return parsed, false
 	}
 	return parsed, true
 }
