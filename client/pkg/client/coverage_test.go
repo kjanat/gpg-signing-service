@@ -22,7 +22,7 @@ func TestUnexpectedStatusResponses(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client, _ := New(server.URL, WithAdminToken(testMsgTest))
+			client := newMappingClient(t, server.URL, WithAdminToken(testMsgTest))
 			ctx := context.Background()
 
 			// Test Health
@@ -166,11 +166,8 @@ func TestSignMethodEdgeCases(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, err := New(server.URL)
-		if err != nil {
-			t.Fatalf("failed to create client: %v", err)
-		}
-		_, err = client.Sign(context.Background(), "data", "")
+		client := newMappingClient(t, server.URL)
+		_, err := client.Sign(context.Background(), "data", "")
 		if err == nil {
 			t.Error("expected rate limit error")
 		}

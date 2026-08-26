@@ -21,7 +21,7 @@ func TestSignValidation(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, _ := New(server.URL)
+	client := newMappingClient(t, server.URL)
 
 	tests := []struct {
 		name       string
@@ -67,7 +67,7 @@ func TestSignSuccessResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, _ := New(server.URL)
+	client := newMappingClient(t, server.URL)
 	result, err := client.Sign(context.Background(), "commit data", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -93,7 +93,7 @@ func TestSignWithRateLimitHeaders(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, _ := New(server.URL)
+	client := newMappingClient(t, server.URL)
 	result, err := client.Sign(context.Background(), "commit data", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -115,7 +115,7 @@ func TestSignWithKeyID(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, _ := New(server.URL)
+	client := newMappingClient(t, server.URL)
 	result, err := client.Sign(context.Background(), "commit data", "test-key-123")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -428,11 +428,11 @@ func TestSignKeyNotAllowed(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = fmt.Fprint(w, `{"error":"Token is not allowed to sign with key BBBBBBBBBBBBBBBB",`+
-			`"code":"KEY_NOT_ALLOWED","requestId":"1b4e28ba-2fa1-11d2-883f-0016d3cca427"}`)
+			`"code":"KEY_NOT_ALLOWED","requestId":"`+testErrRequestID+`"}`)
 	}))
 	defer server.Close()
 
-	c, _ := New(server.URL)
+	c := newMappingClient(t, server.URL)
 	_, err := c.Sign(context.Background(), "commit data", "BBBBBBBBBBBBBBBB")
 	if err == nil {
 		t.Fatal("expected an error for a 403 response")
@@ -454,7 +454,7 @@ func TestSignKeyNotAllowed(t *testing.T) {
 	if !strings.Contains(se.Message, "not allowed to sign") {
 		t.Errorf("server message was discarded: %q", se.Message)
 	}
-	if se.RequestID != "1b4e28ba-2fa1-11d2-883f-0016d3cca427" {
+	if se.RequestID != testErrRequestID {
 		t.Errorf("request id was discarded: %q", se.RequestID)
 	}
 }
@@ -469,11 +469,11 @@ func TestSignUntrustedSubject(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = fmt.Fprint(w, `{"error":"Subject is not trusted for signing",`+
-			`"code":"AUTH_INVALID","requestId":"1b4e28ba-2fa1-11d2-883f-0016d3cca427"}`)
+			`"code":"AUTH_INVALID","requestId":"`+testErrRequestID+`"}`)
 	}))
 	defer server.Close()
 
-	c, _ := New(server.URL)
+	c := newMappingClient(t, server.URL)
 	_, err := c.Sign(context.Background(), "commit data", "")
 	if err == nil {
 		t.Fatal("expected an error for a 401 response")
@@ -495,7 +495,7 @@ func TestSignUntrustedSubject(t *testing.T) {
 	if ae.Code != testCodeAuthInvalid {
 		t.Errorf("error code was discarded: %q", ae.Code)
 	}
-	if ae.RequestID != "1b4e28ba-2fa1-11d2-883f-0016d3cca427" {
+	if ae.RequestID != testErrRequestID {
 		t.Errorf("request id was discarded: %q", ae.RequestID)
 	}
 	if !strings.Contains(err.Error(), "Subject is not trusted for signing") {
@@ -511,7 +511,7 @@ func TestSignAuthErrorWithoutBody(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c, _ := New(server.URL)
+	c := newMappingClient(t, server.URL)
 	_, err := c.Sign(context.Background(), "commit data", "")
 	if !errors.Is(err, ErrUnexpectedStatus) {
 		t.Fatalf("expected the unexpected-status sentinel, got %v", err)
@@ -531,7 +531,7 @@ func TestSignUndocumentedStatusWithBody(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c, _ := New(server.URL)
+	c := newMappingClient(t, server.URL)
 	_, err := c.Sign(context.Background(), "commit data", "")
 
 	var se *ServiceError
@@ -543,5 +543,287 @@ func TestSignUndocumentedStatusWithBody(t *testing.T) {
 	}
 	if se.Message != "brewing refused" {
 		t.Errorf("server message was discarded: %q", se.Message)
+	}
+}
+
+// TestSignRetriesRealStatusResponses drives the retry policy through an actual
+// HTTP server rather than a synthetic closure.
+//
+// The unit tests around Retrier hand it functions that return errors directly,
+// which is why a gap sat here unseen: a 429 or a 500 is a *successful* round
+// trip, so the closure the client used to pass reported a nil error and the
+// retrier saw nothing to retry. shouldRetry's RateLimitError and 5xx branches
+// were unreachable against a real server and WithoutRateLimitRetry() toggled
+// nothing. Only a test that counts requests arriving at a server can tell the
+// difference. TestSignRetriesTransportFaults covers the other half: the faults
+// that did reach shouldRetry were dropped by its fallthrough.
+func TestSignRetriesRealStatusResponses(t *testing.T) {
+	const signature = "-----BEGIN PGP SIGNATURE-----\n\nsig\n-----END PGP SIGNATURE-----"
+
+	tests := []struct {
+		name string
+		// failures is how many attempts answer with status before one succeeds;
+		// a count above maxRetries means every attempt fails.
+		failures     int
+		status       int
+		body         string
+		opts         []Option
+		wantRequests int
+		wantErr      bool
+	}{
+		{
+			name:         "rate limit is retried and then succeeds",
+			failures:     2,
+			status:       http.StatusTooManyRequests,
+			body:         `{"error":"rate limit exceeded","code":"RATE_LIMITED","retryAfter":1}`,
+			wantRequests: 3,
+		},
+		{
+			name:         "server error is retried and then succeeds",
+			failures:     1,
+			status:       http.StatusInternalServerError,
+			body:         `{"error":"boom","code":"INTERNAL_ERROR"}`,
+			wantRequests: 2,
+		},
+		{
+			// 502 and 504 are the two arms of retryStatusSignal's 5xx switch
+			// that no other case reaches. Without them the switch can lose
+			// either one and nothing in the suite notices.
+			name:         "a bad gateway is retried and then succeeds",
+			failures:     1,
+			status:       http.StatusBadGateway,
+			body:         `{"error":"bad gateway","code":"INTERNAL_ERROR"}`,
+			wantRequests: 2,
+		},
+		{
+			name:         "a gateway timeout is retried and then succeeds",
+			failures:     1,
+			status:       http.StatusGatewayTimeout,
+			body:         `{"error":"gateway timeout","code":"INTERNAL_ERROR"}`,
+			wantRequests: 2,
+		},
+		{
+			// The narrowing this change argues for: a 5xx describing what the
+			// server will never do is not a state it may be out of next time,
+			// so re-asking only spends the caller's budget. Asserted here
+			// because the README and the 5xx switch both promise it and
+			// neither was pinned.
+			name:         "a 501 is not retried",
+			failures:     99,
+			status:       http.StatusNotImplemented,
+			body:         `{"error":"not implemented","code":"INTERNAL_ERROR"}`,
+			wantRequests: 1,
+			wantErr:      true,
+		},
+		{
+			name:         "a 505 is not retried",
+			failures:     99,
+			status:       http.StatusHTTPVersionNotSupported,
+			body:         `{"error":"version not supported","code":"INTERNAL_ERROR"}`,
+			wantRequests: 1,
+			wantErr:      true,
+		},
+		{
+			name:         "retries are bounded by maxRetries",
+			failures:     99,
+			status:       http.StatusInternalServerError,
+			body:         `{"error":"boom","code":"INTERNAL_ERROR"}`,
+			wantRequests: 3,
+			wantErr:      true,
+		},
+		{
+			name:         "WithoutRateLimitRetry stops after the first 429",
+			failures:     99,
+			status:       http.StatusTooManyRequests,
+			body:         `{"error":"rate limit exceeded","code":"RATE_LIMITED","retryAfter":1}`,
+			opts:         []Option{WithoutRateLimitRetry()},
+			wantRequests: 1,
+			wantErr:      true,
+		},
+		{
+			name:         "a refusal the caller cannot fix is not retried",
+			failures:     99,
+			status:       http.StatusUnauthorized,
+			body:         `{"error":"Subject is not trusted for signing","code":"AUTH_INVALID"}`,
+			wantRequests: 1,
+			wantErr:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests++
+				if requests > tt.failures {
+					w.WriteHeader(http.StatusOK)
+					_, _ = fmt.Fprint(w, signature)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.status)
+				_, _ = fmt.Fprint(w, tt.body)
+			}))
+			defer server.Close()
+
+			// Waits are held to milliseconds: the point is how many requests
+			// arrive, not how long the backoff sleeps between them.
+			opts := append([]Option{
+				WithMaxRetries(2),
+				WithRetryWait(time.Millisecond, 5*time.Millisecond),
+			}, tt.opts...)
+
+			c, err := New(server.URL, opts...)
+			if err != nil {
+				t.Fatalf("failed to create client: %v", err)
+			}
+
+			_, err = c.Sign(context.Background(), "commit data", "")
+			if tt.wantErr && err == nil {
+				t.Fatal("expected an error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if requests != tt.wantRequests {
+				t.Errorf("expected %d requests, got %d", tt.wantRequests, requests)
+			}
+		})
+	}
+}
+
+// TestSignRateLimitKeepsRetryAfter checks that the hint survives the retries.
+// The retrier's own waits are exponential, but what the caller is finally handed
+// must still say how long the service asked it to wait.
+func TestSignRateLimitKeepsRetryAfter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "7")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = fmt.Fprint(w, `{"error":"rate limit exceeded","code":"RATE_LIMITED","retryAfter":42}`)
+	}))
+	defer server.Close()
+
+	c := newMappingClient(t, server.URL)
+	_, err := c.Sign(context.Background(), "commit data", "")
+	if !IsRateLimitError(err) {
+		t.Fatalf("expected a rate limit error, got %T: %v", err, err)
+	}
+
+	var re *RateLimitError
+	if !errors.As(err, &re) {
+		t.Fatalf("expected a *RateLimitError, got %T", err)
+	}
+	if re.RetryAfter != 42*time.Second {
+		t.Errorf("expected the envelope's 42s hint, got %v", re.RetryAfter)
+	}
+}
+
+// TestAdminUndeclaredRateLimit covers a 429 on an operation the document does
+// not declare one for. It reaches the caller through the envelope fallback, and
+// must still arrive as a rate limit: IsRateLimitError, the retry policy and the
+// CLI's throttling message all key off the type, not the status.
+func TestAdminUndeclaredRateLimit(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "3")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = fmt.Fprint(w, `{"error":"too many requests","code":"RATE_LIMITED"}`)
+	}))
+	defer server.Close()
+
+	c := newMappingClient(t, server.URL)
+	_, err := c.ListKeys(context.Background())
+	if !IsRateLimitError(err) {
+		t.Fatalf("expected a rate limit error, got %T: %v", err, err)
+	}
+
+	var re *RateLimitError
+	if !errors.As(err, &re) {
+		t.Fatalf("expected a *RateLimitError, got %T", err)
+	}
+	// No `retryAfter` in the body, so the header is the only source left.
+	if re.RetryAfter != 3*time.Second {
+		t.Errorf("expected the header's 3s hint, got %v", re.RetryAfter)
+	}
+	if requests != 1 {
+		t.Errorf("expected 1 request with retries off, got %d", requests)
+	}
+}
+
+// TestSignDeclaredRateLimitFallbacks covers the 429 the document declares,
+// answered by something other than this service.
+//
+// /sign is the one operation with a declared 429, so its body is unmarshalled
+// into the typed RateLimitError and never reaches newStatusError. Both cases
+// below are an edge throttle's own JSON in front of the service, and each broke
+// a different part of the typed path:
+//
+//   - A body with none of the envelope's fields decodes into the typed value
+//     and fills nothing — every field is optional to encoding/json — so the
+//     error printed as a bare "rate limited: " and the hint on the header
+//     alongside it was dropped. TestAdminUndeclaredRateLimit is this case with
+//     the endpoint swapped, and it has always passed.
+//   - `retryAfter` is an int in RateLimitError and absent from ErrorResponse,
+//     so a responder that stringifies its numbers produced a body that passed
+//     errorBodyTransport's guard and then died inside the generated parser's
+//     `return nil, err`, taking the status, the sentinel and every classifier
+//     with it — the regression that transport exists to prevent.
+//
+// Either way the caller has to end up holding a rate limit it can act on.
+func TestSignDeclaredRateLimitFallbacks(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		retryAfter  string
+		wantMessage string
+		wantWait    time.Duration
+	}{
+		{
+			name:        "no envelope fields falls back to status text and header",
+			body:        `{"message":"slow down"}`,
+			retryAfter:  "30",
+			wantMessage: http.StatusText(http.StatusTooManyRequests),
+			wantWait:    30 * time.Second,
+		},
+		{
+			// apiErrorBody declares `retryAfter` as an int too, so the hand parse
+			// declines the same body — but it declines it the way every
+			// unparseable body is declined, falling back to the status text and
+			// the header, rather than by destroying the response.
+			name:        "off-schema retryAfter survives as a rate limit",
+			body:        `{"error":"too many requests","code":"RATE_LIMITED","retryAfter":"60"}`,
+			retryAfter:  "12",
+			wantMessage: http.StatusText(http.StatusTooManyRequests),
+			wantWait:    12 * time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Retry-After", tt.retryAfter)
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = fmt.Fprint(w, tt.body)
+			}))
+			defer server.Close()
+
+			c := newMappingClient(t, server.URL)
+			_, err := c.Sign(context.Background(), "commit data", "")
+
+			var re *RateLimitError
+			if !errors.As(err, &re) {
+				t.Fatalf("expected a *RateLimitError, got %T: %v", err, err)
+			}
+			if re.Message != tt.wantMessage {
+				t.Errorf("Message = %q, want %q", re.Message, tt.wantMessage)
+			}
+			if re.RetryAfter != tt.wantWait {
+				t.Errorf("RetryAfter = %v, want %v", re.RetryAfter, tt.wantWait)
+			}
+		})
 	}
 }

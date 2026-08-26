@@ -142,7 +142,7 @@ if resp.JSON401 != nil {
 }
 
 if resp.JSON429 != nil {
-    return fmt.Errorf("rate limited, retry after %d seconds", *resp.JSON429.RetryAfter)
+    return fmt.Errorf("rate limited, retry after %d seconds", resp.JSON429.RetryAfter)
 }
 
 if resp.StatusCode() != 200 {

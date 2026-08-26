@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/kjanat/gpg-signing-service/client/pkg/api"
@@ -60,8 +63,14 @@ type AuthError struct {
 
 func (e *AuthError) Error() string {
 	msg := e.Message
-	if e.Code != "" {
+	// Both halves are required for the separator to mean anything. An AuthError
+	// built from a response always has both, but the type is exported and a
+	// caller's own value need not — and "AUTH_MISSING: " reads as a message the
+	// service failed to send rather than one it never had.
+	if e.Code != "" && msg != "" {
 		msg = e.Code + ": " + msg
+	} else if msg == "" {
+		msg = e.Code
 	}
 	if e.RequestID != "" {
 		return fmt.Sprintf("authentication failed: %s (request %s)", msg, e.RequestID)
@@ -71,15 +80,26 @@ func (e *AuthError) Error() string {
 
 // RateLimitError represents the rate limit having been exceeded.
 type RateLimitError struct {
-	Message    string
+	Message string
+	// RequestID is the server's request identifier when the response carried
+	// one. On a 429 that is usually the echoed X-Request-ID header and nothing
+	// else: RateLimitErrorSchema declares no `requestId`, and none of the three
+	// bodies this service answers a 429 with sends one — so a rate limit was
+	// the one refusal whose id an operator could not quote, which is exactly
+	// what docs/troubleshooting.md asks them to do.
+	RequestID  string
 	RetryAfter time.Duration
 }
 
 func (e *RateLimitError) Error() string {
+	msg := "rate limited: " + e.Message
 	if e.RetryAfter > 0 {
-		return fmt.Sprintf("rate limited: %s (retry after %v)", e.Message, e.RetryAfter)
+		msg += fmt.Sprintf(" (retry after %v)", e.RetryAfter)
 	}
-	return fmt.Sprintf("rate limited: %s", e.Message)
+	if e.RequestID != "" {
+		msg += fmt.Sprintf(" (request %s)", e.RequestID)
+	}
+	return msg
 }
 
 // ValidationError represents invalid request data.
@@ -130,8 +150,14 @@ func IsServiceError(err error) bool {
 	return errors.As(err, &se) && se.StatusCode >= 500
 }
 
-// headerRequestID is the response header the service echoes its request id on.
-const headerRequestID = "X-Request-ID"
+// Response headers this client reads.
+const (
+	// headerRequestID is the one the service echoes its request id on.
+	headerRequestID = "X-Request-ID"
+	// headerRetryAfter is the RFC 9110 hint, in either of the two forms
+	// parseRetryAfter accepts.
+	headerRetryAfter = "Retry-After"
+)
 
 // requestIDFrom returns the id the caller should quote when asking what
 // happened, preferring the envelope's field and falling back to the header.
@@ -146,6 +172,71 @@ func requestIDFrom(envelope string, header http.Header) string {
 		return envelope
 	}
 	return header.Get(headerRequestID)
+}
+
+// retryAfterFrom returns how long a 429 asks the caller to wait, preferring the
+// envelope's `retryAfter` seconds and falling back to the `Retry-After` header.
+//
+// The header matters more than its rarity suggests. This service's limiter
+// always emits `retryAfter` in the body when it emits a body at all, so the
+// only 429 that reaches the fallback is one this service did not author — an
+// edge throttle in front of it, which answers with a page rather than an
+// envelope. That is exactly the response whose hint is otherwise lost.
+func retryAfterFrom(envelopeSeconds int, header http.Header) time.Duration {
+	if hint := retryAfterSeconds(envelopeSeconds); hint > 0 {
+		return hint
+	}
+	return parseRetryAfter(header.Get(headerRetryAfter), time.Now())
+}
+
+// maxRetryAfterSeconds is the largest delay-seconds a time.Duration can hold.
+// A Duration is an int64 of nanoseconds, so the conversion wraps somewhere past
+// 292 years and a header meaning "wait forever" would arrive as a negative wait.
+const maxRetryAfterSeconds = int64(math.MaxInt64) / int64(time.Second)
+
+// retryAfterSeconds converts a delay-seconds hint to a Duration, reporting zero
+// — "no hint" — for anything a Duration cannot hold.
+//
+// Both sources are outside this client's control: the header is written by
+// whatever answered, and `retryAfter` in the envelope is an unbounded JSON
+// integer whatever wrote the body chose. The multiply wraps silently, so
+// 9223372036854 arrives as -775ms: a wait that is not merely wrong but reads as
+// one already past.
+func retryAfterSeconds(seconds int) time.Duration {
+	if seconds <= 0 || int64(seconds) > maxRetryAfterSeconds {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+// parseRetryAfter reads both forms RFC 9110 §10.2.3 permits: delay-seconds, and
+// an absolute HTTP-date, which is reported as the delay remaining at now.
+//
+// The date form is not hypothetical — intermediaries and CDNs emit IMF-fixdate
+// freely, and reading only integers turned one into "no hint". A value already
+// in the past, or one that parses as neither form, yields zero, which callers
+// read as "no hint" rather than "no wait": the retrier falls back to its own
+// backoff and the error simply carries nothing to show.
+func parseRetryAfter(value string, now time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+
+	if seconds, err := strconv.Atoi(value); err == nil {
+		return retryAfterSeconds(seconds)
+	}
+
+	// http.ParseTime accepts IMF-fixdate and the two obsolete formats RFC 9110
+	// still requires a recipient to understand.
+	deadline, err := http.ParseTime(value)
+	if err != nil {
+		return 0
+	}
+	if wait := deadline.Sub(now); wait > 0 {
+		return wait
+	}
+	return 0
 }
 
 // newAuthErrorFromResponse turns the service's 401 envelope into an AuthError.
@@ -196,6 +287,33 @@ type apiErrorBody struct {
 	Error     string `json:"error"`
 	Code      string `json:"code"`
 	RequestID string `json:"requestId"`
+	// RetryAfter is the delay in seconds a 429 asks for. Declared by
+	// RateLimitErrorSchema; absent, and so zero, on every other status.
+	RetryAfter int `json:"retryAfter"`
+}
+
+// newRateLimitError builds the RateLimitError a 429 deserves, from whichever of
+// its sources carries anything.
+//
+// Both paths that answer a 429 go through here so they cannot disagree about
+// what one means. The declared path — /sign's typed JSON429 — built the value
+// inline from the envelope alone, which cost it both fallbacks the undeclared
+// path has. An intermediary that answers 429 with a JSON body reaches the typed
+// path whenever that body happens to decode, and it is exactly the responder
+// whose body carries neither field: no `error`, so Error() printed a bare
+// "rate limited: ", and no `retryAfter`, so a Retry-After header sitting on the
+// same response was discarded.
+func newRateLimitError(envelopeMessage string, envelopeSeconds int, envelopeRequestID string, header http.Header) *RateLimitError {
+	message := envelopeMessage
+	if message == "" {
+		// Otherwise Error() prints a bare "rate limited: ".
+		message = http.StatusText(http.StatusTooManyRequests)
+	}
+	return &RateLimitError{
+		Message:    message,
+		RequestID:  requestIDFrom(envelopeRequestID, header),
+		RetryAfter: retryAfterFrom(envelopeSeconds, header),
+	}
 }
 
 // newStatusError builds the richest error the response supports.
@@ -213,6 +331,21 @@ type apiErrorBody struct {
 // keeps text responses and empty bodies behaving as before.
 func newStatusError(statusCode int, body []byte, header http.Header) error {
 	parsed, ok := parseAPIErrorBody(body)
+
+	// Deliberately above the envelope gate. A 429 needs no body to be
+	// understood: the status *is* the whole meaning, and IsRateLimitError —
+	// with it the retry policy and the CLI's "you are being throttled"
+	// message — keys off the type. An edge throttle sitting in front of this
+	// service answers 429 with an HTML page and a Retry-After header, which is
+	// not a usable envelope but is unambiguously a rate limit; gating this
+	// branch on one collapsed it to the bare sentinel and threw the hint away,
+	// leaving retryAfterFrom's header fallback unreachable in the single case
+	// it was written for. A rate limit the document does not declare is still a
+	// rate limit, and so is one this service did not write.
+	if statusCode == http.StatusTooManyRequests {
+		return newRateLimitError(parsed.Error, parsed.RetryAfter, parsed.RequestID, header)
+	}
+
 	if !ok {
 		return newUnexpectedStatusError(statusCode)
 	}
@@ -246,7 +379,12 @@ func parseAPIErrorBody(body []byte) (apiErrorBody, bool) {
 		return apiErrorBody{}, false
 	}
 	if parsed.Error == "" || parsed.Code == "" {
-		return apiErrorBody{}, false
+		// The value still goes back. Only newStatusError's 429 branch, which sits
+		// above the gate because a 429 needs no envelope to be understood, reads
+		// it when ok is false — a half-envelope carrying `error` and `retryAfter`
+		// but no `code` parsed cleanly and has both of the things that branch
+		// wants. Every other path discards it and reports the status alone.
+		return parsed, false
 	}
 	return parsed, true
 }

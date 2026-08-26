@@ -22,7 +22,7 @@ func TestSignMethodAllPaths(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, _ := New(server.URL)
+		client := newMappingClient(t, server.URL)
 		_, err := client.Sign(context.Background(), "data", "")
 		if err == nil {
 			t.Error("expected validation error")
@@ -40,7 +40,7 @@ func TestSignMethodAllPaths(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, _ := New(server.URL)
+		client := newMappingClient(t, server.URL)
 		_, err := client.Sign(context.Background(), "data", "")
 		if err == nil {
 			t.Error("expected validation error")
@@ -59,7 +59,7 @@ func TestSignMethodAllPaths(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, _ := New(server.URL)
+		client := newMappingClient(t, server.URL)
 		_, err := client.Sign(context.Background(), "data", "")
 		if err == nil {
 			t.Error("expected service error")
@@ -80,7 +80,7 @@ func TestSignMethodAllPaths(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, _ := New(server.URL)
+		client := newMappingClient(t, server.URL)
 		_, err := client.Sign(context.Background(), "data", "")
 		if err == nil {
 			t.Error("expected service error")
@@ -104,7 +104,7 @@ func TestUploadKeyAllPaths(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, _ := New(server.URL, WithAdminToken(testMsgTest))
+		client := newMappingClient(t, server.URL, WithAdminToken(testMsgTest))
 		_, err := client.UploadKey(context.Background(), "id", "key")
 		// Should get unexpected status error since 200 is not expected
 		if err == nil {
@@ -122,7 +122,7 @@ func TestUploadKeyAllPaths(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, _ := New(server.URL, WithAdminToken(testMsgTest))
+		client := newMappingClient(t, server.URL, WithAdminToken(testMsgTest))
 		_, err := client.UploadKey(context.Background(), "id", "key")
 		if err == nil {
 			t.Error("expected validation error")
@@ -135,7 +135,7 @@ func TestUploadKeyAllPaths(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, _ := New(server.URL, WithAdminToken(testMsgTest))
+		client := newMappingClient(t, server.URL, WithAdminToken(testMsgTest))
 		_, err := client.UploadKey(context.Background(), "id", "key")
 		if err == nil {
 			t.Error("expected service error")
@@ -156,7 +156,7 @@ func TestAuditLogsAllPaths(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, _ := New(server.URL, WithAdminToken(testMsgTest))
+		client := newMappingClient(t, server.URL, WithAdminToken(testMsgTest))
 		_, err := client.AuditLogs(context.Background(), AuditFilter{})
 		if err == nil {
 			t.Error("expected unexpected status error for 206")
@@ -173,7 +173,7 @@ func TestAuditLogsAllPaths(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, _ := New(server.URL, WithAdminToken(testMsgTest))
+		client := newMappingClient(t, server.URL, WithAdminToken(testMsgTest))
 		_, err := client.AuditLogs(context.Background(), AuditFilter{})
 		if err == nil {
 			t.Error("expected validation error")
@@ -186,7 +186,7 @@ func TestAuditLogsAllPaths(t *testing.T) {
 		}))
 		defer server.Close()
 
-		client, _ := New(server.URL, WithAdminToken(testMsgTest))
+		client := newMappingClient(t, server.URL, WithAdminToken(testMsgTest))
 		_, err := client.AuditLogs(context.Background(), AuditFilter{})
 		if err == nil {
 			t.Error("expected service error")
