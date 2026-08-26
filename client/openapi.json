@@ -593,7 +593,7 @@
         "minLength": 1,
         "maxLength": 255,
         "pattern": "^[^\\s*?[\\]]*[:@/][^\\s*?[\\]]*[^\\s:@/*?[\\]][^\\s*?[\\]]*$",
-        "description": "A literal prefix of the token's `sub`, not a glob — `*`, `?` and `[` are refused. A subject matches when it starts with this string and the next character is a delimiter (`:`, `@`, `/`) or the end of the subject, so `repo:owner/svc` does not admit `repo:owner/svc-evil`. A prefix that ends at a delimiter is the wildcard: `repo:owner/` trusts every repository of that owner. Where several rows match, the longest live prefix wins.",
+        "description": "A literal prefix of the token's `sub`, not a glob — `*`, `?`, `[` and `]` are refused. A subject matches when it starts with this string and the next character is a delimiter (`:`, `@`, `/`) or the end of the subject, so `repo:owner/svc` does not admit `repo:owner/svc-evil`. A prefix that ends at a delimiter is the wildcard: `repo:owner/` trusts every repository of that owner. Where several rows match, the longest live prefix wins.",
         "example": "repo:owner/repository"
       },
       "SubjectCreate": {

@@ -825,5 +825,30 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
 				expect([prefix, published.test(prefix)]).toEqual([prefix, SubjectPrefixSchema.safeParse(prefix).success]);
 			}
 		});
+
+		it("agrees with both checks on every short string over the interesting alphabet", () => {
+			// The corpus above only covers characters somebody thought to list, so it
+			// would stay green if a later rule added, say, `\\` to the glob class and
+			// the published pattern was not updated with it. Enumerating every string
+			// up to length 4 over one representative of each character role — the
+			// delimiters, each refused character, whitespace and an ordinary letter —
+			// makes the round trip exhaustive rather than illustrative.
+			const alphabet = [":", "@", "/", "*", "?", "[", "]", " ", "\t", "a"];
+			const published = new RegExp(SUBJECT_PREFIX_PATTERN);
+			const disagreements: string[] = [];
+			const walk = (prefix: string, depth: number) => {
+				if (prefix && published.test(prefix) !== SubjectPrefixSchema.safeParse(prefix).success) {
+					disagreements.push(prefix);
+				}
+				if (depth === 0) {
+					return;
+				}
+				for (const character of alphabet) {
+					walk(prefix + character, depth - 1);
+				}
+			};
+			walk("", 4);
+			expect(disagreements).toEqual([]);
+		});
 	});
 });

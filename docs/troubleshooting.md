@@ -116,8 +116,10 @@ The row exists and does not match. Compare the failing run's `sub` against
 
 A shell footgun worth ruling out first: `-d '{"keyIds": ["${MY_KEY_ID}"]}'` in
 **single** quotes sends the literal `${MY_KEY_ID}`, so the variable never
-expands. That one is caught at create time with a `400` naming the key id, but
-the same quoting mistake in `subjectPrefix` stores a prefix nothing will match.
+expands. That one is caught at create time with a `400` whose `issues[].path` is
+`["keyIds", 0]` — the response never echoes the value, so read the path, not the
+message — but the same quoting mistake in `subjectPrefix` stores a prefix nothing
+will match.
 
 ## Keys and signatures
 

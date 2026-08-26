@@ -162,7 +162,7 @@ type CoveringSubject struct {
 	KeyIds *[]string   `json:"keyIds"`
 	Name   SubjectName `json:"name"`
 
-	// SubjectPrefix A literal prefix of the token's `sub`, not a glob — `*`, `?` and `[` are refused. A subject matches when it starts with this string and the next character is a delimiter (`:`, `@`, `/`) or the end of the subject, so `repo:owner/svc` does not admit `repo:owner/svc-evil`. A prefix that ends at a delimiter is the wildcard: `repo:owner/` trusts every repository of that owner. Where several rows match, the longest live prefix wins.
+	// SubjectPrefix A literal prefix of the token's `sub`, not a glob — `*`, `?`, `[` and `]` are refused. A subject matches when it starts with this string and the next character is a delimiter (`:`, `@`, `/`) or the end of the subject, so `repo:owner/svc` does not admit `repo:owner/svc-evil`. A prefix that ends at a delimiter is the wildcard: `repo:owner/` trusts every repository of that owner. Where several rows match, the longest live prefix wins.
 	SubjectPrefix SubjectPrefix `json:"subjectPrefix"`
 }
 
@@ -247,7 +247,7 @@ type SubjectCreate struct {
 	KeyIds        *[]string   `json:"keyIds,omitempty"`
 	Name          SubjectName `json:"name"`
 
-	// SubjectPrefix A literal prefix of the token's `sub`, not a glob — `*`, `?` and `[` are refused. A subject matches when it starts with this string and the next character is a delimiter (`:`, `@`, `/`) or the end of the subject, so `repo:owner/svc` does not admit `repo:owner/svc-evil`. A prefix that ends at a delimiter is the wildcard: `repo:owner/` trusts every repository of that owner. Where several rows match, the longest live prefix wins.
+	// SubjectPrefix A literal prefix of the token's `sub`, not a glob — `*`, `?`, `[` and `]` are refused. A subject matches when it starts with this string and the next character is a delimiter (`:`, `@`, `/`) or the end of the subject, so `repo:owner/svc` does not admit `repo:owner/svc-evil`. A prefix that ends at a delimiter is the wildcard: `repo:owner/` trusts every repository of that owner. Where several rows match, the longest live prefix wins.
 	SubjectPrefix SubjectPrefix `json:"subjectPrefix"`
 }
 
@@ -263,7 +263,7 @@ type SubjectCreatedResponse struct {
 	Name       SubjectName `json:"name"`
 	RevokedAt  *string     `json:"revokedAt"`
 
-	// SubjectPrefix A literal prefix of the token's `sub`, not a glob — `*`, `?` and `[` are refused. A subject matches when it starts with this string and the next character is a delimiter (`:`, `@`, `/`) or the end of the subject, so `repo:owner/svc` does not admit `repo:owner/svc-evil`. A prefix that ends at a delimiter is the wildcard: `repo:owner/` trusts every repository of that owner. Where several rows match, the longest live prefix wins.
+	// SubjectPrefix A literal prefix of the token's `sub`, not a glob — `*`, `?`, `[` and `]` are refused. A subject matches when it starts with this string and the next character is a delimiter (`:`, `@`, `/`) or the end of the subject, so `repo:owner/svc` does not admit `repo:owner/svc-evil`. A prefix that ends at a delimiter is the wildcard: `repo:owner/` trusts every repository of that owner. Where several rows match, the longest live prefix wins.
 	SubjectPrefix SubjectPrefix `json:"subjectPrefix"`
 }
 
@@ -275,7 +275,7 @@ type SubjectListResponse struct {
 // SubjectName defines model for SubjectName.
 type SubjectName = string
 
-// SubjectPrefix A literal prefix of the token's `sub`, not a glob — `*`, `?` and `[` are refused. A subject matches when it starts with this string and the next character is a delimiter (`:`, `@`, `/`) or the end of the subject, so `repo:owner/svc` does not admit `repo:owner/svc-evil`. A prefix that ends at a delimiter is the wildcard: `repo:owner/` trusts every repository of that owner. Where several rows match, the longest live prefix wins.
+// SubjectPrefix A literal prefix of the token's `sub`, not a glob — `*`, `?`, `[` and `]` are refused. A subject matches when it starts with this string and the next character is a delimiter (`:`, `@`, `/`) or the end of the subject, so `repo:owner/svc` does not admit `repo:owner/svc-evil`. A prefix that ends at a delimiter is the wildcard: `repo:owner/` trusts every repository of that owner. Where several rows match, the longest live prefix wins.
 type SubjectPrefix = string
 
 // SubjectRevokeResponse defines model for SubjectRevokeResponse.
@@ -303,7 +303,7 @@ type SubjectSummary struct {
 	Name       SubjectName `json:"name"`
 	RevokedAt  *string     `json:"revokedAt"`
 
-	// SubjectPrefix A literal prefix of the token's `sub`, not a glob — `*`, `?` and `[` are refused. A subject matches when it starts with this string and the next character is a delimiter (`:`, `@`, `/`) or the end of the subject, so `repo:owner/svc` does not admit `repo:owner/svc-evil`. A prefix that ends at a delimiter is the wildcard: `repo:owner/` trusts every repository of that owner. Where several rows match, the longest live prefix wins.
+	// SubjectPrefix A literal prefix of the token's `sub`, not a glob — `*`, `?`, `[` and `]` are refused. A subject matches when it starts with this string and the next character is a delimiter (`:`, `@`, `/`) or the end of the subject, so `repo:owner/svc` does not admit `repo:owner/svc-evil`. A prefix that ends at a delimiter is the wildcard: `repo:owner/` trusts every repository of that owner. Where several rows match, the longest live prefix wins.
 	SubjectPrefix SubjectPrefix `json:"subjectPrefix"`
 }
 
@@ -2883,7 +2883,7 @@ func ParsePostSignResponse(rsp *http.Response) (*PostSignResponse, error) {
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
 	"7Hz7cts4sverdHGnajP5JFlO7Fw0tbWj2BqPPju2juWczJ7Ya0NkS8KYBLgAKFubctV5iPOE50lO4cKb",
-	"RMqK1/YkG+ePWCRBoNGXX3cDDX72fB7FnCFT0ut89qQ/xYiYn90koKrrK8qZvkSWRF7nkyfphHkN7xLn",
+	"RMqK1/YkG+cPRyRBoNGXX3cDDX72fB7FnCFT0ut89qQ/xYiYn90koKrrK8qZvkSWRF7nkyfphHkN7xLn",
 	"50kcchK4C8EVUeg1PMUvkZ37AouXAmf8Ul/KZPQ7+ip/nt5wLc4anprH6HU8qQRlE++mYSk54BN5jDLm",
 	"TKKmJxY8RqEoGmJ9njClf0SU0UhT2s46okzhBIXuKeQT05wqjORyLySb7Q8Cx17H+9NGzp4Nx5uNImNu",
 	"Gh4KwcUOD/C293pZw5uGRwPdfMxFRJTX8ZKEakYuTZ1KmaBwEztANlFTr7NZ0fAS5/1gjXYRKhIQRXTT",
@@ -2893,64 +2893,64 @@ var swaggerSpec = []string{
 	"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",
-	"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",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

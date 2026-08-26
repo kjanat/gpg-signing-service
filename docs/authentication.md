@@ -79,11 +79,11 @@ not expire.
 
 There is no pattern syntax. A `sub` is admitted when it **starts with** the
 stored string and the next character is a delimiter (`:`, `@` or `/`) or the
-end of the subject — nothing else. `*`, `?` and `[` are therefore refused with
-`400`, because a stored `repo:kjanat/*` would be compared literally and match
-only a repository actually named `*`: a row that lists as `active`, authorizes
-nobody, and surfaces days later as `Subject is not trusted for signing` on some
-unrelated run.
+end of the subject — nothing else. `*`, `?`, `[` and `]` are therefore refused
+with `400`, because a stored `repo:kjanat/*` would be compared literally and
+match only a repository actually named `*`: a row that lists as `active`,
+authorizes nobody, and surfaces days later as `Subject is not trusted for
+signing` on some unrelated run.
 
 The trailing delimiter **is** the wildcard. `repo:kjanat/` is what
 `repo:kjanat/*` was reaching for:

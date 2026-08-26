@@ -60,17 +60,19 @@ export const SubjectPrefixSchema = z
 	//
 	// `*`, `?` and `[` cannot appear in a real subject: git-check-ref-format
 	// forbids all three in a ref name, and neither GitHub's `repo:owner/name:…`
-	// nor GitLab's `project_path:group/project:…` puts them anywhere else. So
-	// nothing legitimate is refused here.
+	// nor GitLab's `project_path:group/project:…` puts them anywhere else. `]`
+	// goes with them even though a ref name may contain one: on its own it opens
+	// nothing, but it only ever reaches this field as the tail of a `[…]` somebody
+	// typed, and refusing it keeps rule and message to a single set of characters.
 	//
 	// A second `.regex()` rather than one combined pattern, so each rule keeps its
 	// own message: a caller who typed a glob is told about globs, not handed the
 	// bare-scheme rule to decode. Only the first check reaches `pattern` in
 	// client/openapi.json — a JSON Schema string has one — so the combined
 	// expression is restated in `.openapi()` below, and the two must be kept in
-	// step. The whole-string alternation is written out rather than a lookahead so
-	// the published pattern stays readable to whoever is debugging a 400 against
-	// it.
+	// step. The exclusions are written into each character class rather than as a
+	// leading lookahead so the published pattern stays readable to whoever is
+	// debugging a 400 against it.
 	.regex(
 		/^[^*?[\]]*$/,
 		"Subject prefix is a literal prefix, not a glob — remove * ? [ ]. A prefix ending at a delimiter is already the wildcard: repo:owner/ trusts every repository of that owner",
@@ -80,7 +82,7 @@ export const SubjectPrefixSchema = z
 		// The rule is only obvious once you know matching is startsWith, so state
 		// it where the spec is read. TSDoc above does not reach openapi.json.
 		description:
-			"A literal prefix of the token's `sub`, not a glob — `*`, `?` and `[` are refused. A subject " +
+			"A literal prefix of the token's `sub`, not a glob — `*`, `?`, `[` and `]` are refused. A subject " +
 			"matches when it starts with this string and the next character is a delimiter (`:`, `@`, `/`) " +
 			"or the end of the subject, so `repo:owner/svc` does not admit `repo:owner/svc-evil`. A prefix " +
 			"that ends at a delimiter is the wildcard: `repo:owner/` trusts every repository of that owner. " +
