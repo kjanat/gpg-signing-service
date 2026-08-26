@@ -113,17 +113,24 @@ func (c *Client) Health(ctx context.Context) (*HealthStatus, error) {
 	}
 
 	if resp.JSON503 != nil {
+		// The error is built above the return rather than inline. Two multi-line
+		// composite literals in one multi-value return is the single construct
+		// gofmt and goimports indent differently, and each reverts the other: with
+		// both formatters in the chain (.golangci.yml enables gofumpt and
+		// goimports) `task format` rewrote this file on every run and any editor
+		// running gofmt put it straight back.
+		degraded := &ServiceError{
+			Code:       ErrCodeDegraded,
+			Message:    "service degraded",
+			StatusCode: 503,
+		}
 		return &HealthStatus{
-				Status:     string(resp.JSON503.Status),
-				Version:    resp.JSON503.Version,
-				Timestamp:  resp.JSON503.Timestamp,
-				KeyStorage: resp.JSON503.Checks.KeyStorage,
-				Database:   resp.JSON503.Checks.Database,
-			}, &ServiceError{
-				Code:       ErrCodeDegraded,
-				Message:    "service degraded",
-				StatusCode: 503,
-			}
+			Status:     string(resp.JSON503.Status),
+			Version:    resp.JSON503.Version,
+			Timestamp:  resp.JSON503.Timestamp,
+			KeyStorage: resp.JSON503.Checks.KeyStorage,
+			Database:   resp.JSON503.Checks.Database,
+		}, degraded
 	}
 
 	return nil, newStatusError(resp.StatusCode(), resp.Body, resp.HTTPResponse.Header)
