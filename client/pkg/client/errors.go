@@ -275,6 +275,29 @@ type apiErrorBody struct {
 	RetryAfter int `json:"retryAfter"`
 }
 
+// newRateLimitError builds the RateLimitError a 429 deserves, from whichever of
+// its sources carries anything.
+//
+// Both paths that answer a 429 go through here so they cannot disagree about
+// what one means. The declared path — /sign's typed JSON429 — built the value
+// inline from the envelope alone, which cost it both fallbacks the undeclared
+// path has. An intermediary that answers 429 with a JSON body reaches the typed
+// path whenever that body happens to decode, and it is exactly the responder
+// whose body carries neither field: no `error`, so Error() printed a bare
+// "rate limited: ", and no `retryAfter`, so a Retry-After header sitting on the
+// same response was discarded.
+func newRateLimitError(envelopeMessage string, envelopeSeconds int, header http.Header) *RateLimitError {
+	message := envelopeMessage
+	if message == "" {
+		// Otherwise Error() prints a bare "rate limited: ".
+		message = http.StatusText(http.StatusTooManyRequests)
+	}
+	return &RateLimitError{
+		Message:    message,
+		RetryAfter: retryAfterFrom(envelopeSeconds, header),
+	}
+}
+
 // newStatusError builds the richest error the response supports.
 //
 // The service answers every refusal with a precise message — `AUTH_MISSING`,
@@ -302,15 +325,7 @@ func newStatusError(statusCode int, body []byte, header http.Header) error {
 	// it was written for. A rate limit the document does not declare is still a
 	// rate limit, and so is one this service did not write.
 	if statusCode == http.StatusTooManyRequests {
-		message := parsed.Error
-		if message == "" {
-			// Otherwise Error() prints a bare "rate limited: ".
-			message = http.StatusText(statusCode)
-		}
-		return &RateLimitError{
-			Message:    message,
-			RetryAfter: retryAfterFrom(parsed.RetryAfter, header),
-		}
+		return newRateLimitError(parsed.Error, parsed.RetryAfter, header)
 	}
 
 	if !ok {

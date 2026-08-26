@@ -559,10 +559,13 @@ func mapSignResponseError(resp *api.PostSignResponse) error {
 			StatusCode: 404,
 		}
 	case resp.JSON429 != nil:
-		return &RateLimitError{
-			Message:    resp.JSON429.Error,
-			RetryAfter: retryAfterSeconds(resp.JSON429.RetryAfter),
-		}
+		// Through the shared constructor rather than inline: this is the declared
+		// path, and it had neither fallback the undeclared one grew. A 429 that
+		// decodes into the typed body without filling it — an edge throttle's own
+		// JSON, which is the only responder that reaches here without the
+		// service's envelope — printed as a bare "rate limited: " and dropped the
+		// Retry-After header sitting beside it.
+		return newRateLimitError(resp.JSON429.Error, resp.JSON429.RetryAfter, resp.HTTPResponse.Header)
 	case resp.JSON500 != nil || resp.JSON503 != nil:
 		return mapServerError(resp)
 	default:

@@ -108,7 +108,7 @@ func (t *errorBodyTransport) RoundTrip(req *http.Request) (*http.Response, error
 	// newStatusError via resp.Body on the fallback path.
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 
-	if !decodesAsErrorEnvelope(body) {
+	if !decodesAsErrorEnvelope(resp.StatusCode, body) {
 		resp.Header.Set("Content-Type", contentTypeUndecodable)
 	}
 	return resp, nil
@@ -117,12 +117,39 @@ func (t *errorBodyTransport) RoundTrip(req *http.Request) (*http.Response, error
 // decodesAsErrorEnvelope reports whether body is what the generated parsers
 // will successfully unmarshal for a declared error status.
 //
-// Deliberately the same target type the generated code uses, so this cannot
+// Deliberately the same target types the generated code uses, so this cannot
 // drift into accepting a body the parser then rejects. `{}` and `null` decode
 // and are left alone — they are handled downstream, where an envelope carrying
 // no message is turned into the sentinel rather than an error with an empty
 // message.
-func decodesAsErrorEnvelope(body []byte) bool {
+//
+// There is more than one target type, which is why the status matters here.
+// ErrorResponse covers most of them, but a 429 is unmarshalled into
+// RateLimitError and /health's 503 into HealthResponse, and each carries a
+// field ErrorResponse does not: `retryAfter` is an int, `timestamp` a
+// time.Time. Checking ErrorResponse alone therefore passed bodies the real
+// parser rejects — `{"error":"…","code":"…","retryAfter":"60"}`, a service that
+// stringifies its numbers, decoded here and died there — which is the exact
+// `return nil, err` this transport exists to keep away from the caller.
+//
+// The transport cannot know which operation a response belongs to, so a status
+// answered by two schemas has to satisfy both. That costs nothing: every field
+// is optional to encoding/json, so a genuine ErrorResponse decodes into a
+// HealthResponse as a zero value and vice versa. Only a type conflict fails.
+func decodesAsErrorEnvelope(statusCode int, body []byte) bool {
+	switch statusCode {
+	case http.StatusTooManyRequests:
+		var rateLimit api.RateLimitError
+		if json.Unmarshal(body, &rateLimit) != nil {
+			return false
+		}
+	case http.StatusServiceUnavailable:
+		var health api.HealthResponse
+		if json.Unmarshal(body, &health) != nil {
+			return false
+		}
+	}
+
 	var dest api.ErrorResponse
 	return json.Unmarshal(body, &dest) == nil
 }

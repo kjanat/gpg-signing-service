@@ -714,3 +714,78 @@ func TestAdminUndeclaredRateLimit(t *testing.T) {
 		t.Errorf("expected 1 request with retries off, got %d", requests)
 	}
 }
+
+// TestSignDeclaredRateLimitFallbacks covers the 429 the document declares,
+// answered by something other than this service.
+//
+// /sign is the one operation with a declared 429, so its body is unmarshalled
+// into the typed RateLimitError and never reaches newStatusError. Both cases
+// below are an edge throttle's own JSON in front of the service, and each broke
+// a different part of the typed path:
+//
+//   - A body with none of the envelope's fields decodes into the typed value
+//     and fills nothing — every field is optional to encoding/json — so the
+//     error printed as a bare "rate limited: " and the hint on the header
+//     alongside it was dropped. TestAdminUndeclaredRateLimit is this case with
+//     the endpoint swapped, and it has always passed.
+//   - `retryAfter` is an int in RateLimitError and absent from ErrorResponse,
+//     so a responder that stringifies its numbers produced a body that passed
+//     errorBodyTransport's guard and then died inside the generated parser's
+//     `return nil, err`, taking the status, the sentinel and every classifier
+//     with it — the regression that transport exists to prevent.
+//
+// Either way the caller has to end up holding a rate limit it can act on.
+func TestSignDeclaredRateLimitFallbacks(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		retryAfter  string
+		wantMessage string
+		wantWait    time.Duration
+	}{
+		{
+			name:        "no envelope fields falls back to status text and header",
+			body:        `{"message":"slow down"}`,
+			retryAfter:  "30",
+			wantMessage: http.StatusText(http.StatusTooManyRequests),
+			wantWait:    30 * time.Second,
+		},
+		{
+			// apiErrorBody declares `retryAfter` as an int too, so the hand parse
+			// declines the same body — but it declines it the way every
+			// unparseable body is declined, falling back to the status text and
+			// the header, rather than by destroying the response.
+			name:        "off-schema retryAfter survives as a rate limit",
+			body:        `{"error":"too many requests","code":"RATE_LIMITED","retryAfter":"60"}`,
+			retryAfter:  "12",
+			wantMessage: http.StatusText(http.StatusTooManyRequests),
+			wantWait:    12 * time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Retry-After", tt.retryAfter)
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = fmt.Fprint(w, tt.body)
+			}))
+			defer server.Close()
+
+			c := newMappingClient(t, server.URL)
+			_, err := c.Sign(context.Background(), "commit data", "")
+
+			var re *RateLimitError
+			if !errors.As(err, &re) {
+				t.Fatalf("expected a *RateLimitError, got %T: %v", err, err)
+			}
+			if re.Message != tt.wantMessage {
+				t.Errorf("Message = %q, want %q", re.Message, tt.wantMessage)
+			}
+			if re.RetryAfter != tt.wantWait {
+				t.Errorf("RetryAfter = %v, want %v", re.RetryAfter, tt.wantWait)
+			}
+		})
+	}
+}
