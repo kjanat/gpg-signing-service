@@ -99,7 +99,7 @@ const CORS_MAX_AGE = "86400";
  * real callers are CI runners and the Go client, neither of which is a browser
  * and neither of which needs a CORS grant to work.
  */
-function resolveAllowedOrigin(allowedOrigins: string | undefined, origin: string): string | undefined {
+function resolveAllowedOrigin(allowedOrigins: string | undefined, origin: string | undefined): string | undefined {
 	// Entries are trimmed the same way ALLOWED_ISSUERS is, so a padded value in a
 	// comma-separated list is not silently un-matchable.
 	const entries = (allowedOrigins?.split(",") ?? []).map((entry) => entry.trim()).filter((entry) => entry.length > 0);
@@ -108,11 +108,13 @@ function resolveAllowedOrigin(allowedOrigins: string | undefined, origin: string
 		return undefined;
 	}
 	// An explicit `*` echoes the literal wildcard rather than reflecting the
-	// request origin. Safe only because no credentials are ever granted.
+	// request origin. Safe only because no credentials are ever granted. Resolved
+	// before `origin` is read at all, so the answer is genuinely origin-independent
+	// and one cached copy serves every caller, `Origin`-less ones included.
 	if (entries.includes(WILDCARD_ORIGIN)) {
 		return WILDCARD_ORIGIN;
 	}
-	if (FORBIDDEN_ORIGINS.has(origin)) {
+	if (origin === undefined || FORBIDDEN_ORIGINS.has(origin)) {
 		return undefined;
 	}
 	return entries.includes(origin) ? origin : undefined;
@@ -143,8 +145,7 @@ export function varyOnOrigin(headers: Headers): void {
  * have to add it back to *both* branches deliberately.
  */
 export const productionCors: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
-	const origin = c.req.header("Origin");
-	const allowOrigin = origin === undefined ? undefined : resolveAllowedOrigin(c.env.ALLOWED_ORIGINS, origin);
+	const allowOrigin = resolveAllowedOrigin(c.env.ALLOWED_ORIGINS, c.req.header("Origin"));
 	// The wildcard answer is origin-independent; every other outcome — including a
 	// bare denial and the no-Origin case — is what this request's Origin earned, so
 	// a shared cache must key on it or it will hand one origin another's grant.

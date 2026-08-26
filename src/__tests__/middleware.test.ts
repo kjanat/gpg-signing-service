@@ -221,10 +221,30 @@ describe("Security Headers Middleware", () => {
 			// otherwise look like a targeted grant.
 			setAllowedOrigins("*");
 
-			const response = await corsRequest("null");
+			const actual = await corsRequest("null");
+			const preflight = await corsRequest("null", "OPTIONS");
 
-			expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
-			expect(response.headers.get("Access-Control-Allow-Credentials")).toBeNull();
+			for (const response of [actual, preflight]) {
+				expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+				expect(response.headers.get("Access-Control-Allow-Credentials")).toBeNull();
+			}
+		});
+
+		it("answers a caller that sends no Origin with the wildcard too", async () => {
+			// The wildcard is resolved before `Origin` is read, so a `*` deployment
+			// answers every request identically and a shared cache needs one entry
+			// rather than one per origin. Inert for the callers this reaches: nothing
+			// consults `Access-Control-Allow-Origin` on a request it sent no `Origin`
+			// on, which is every CI runner and Go client call this service serves.
+			setAllowedOrigins("*");
+
+			const actual = await corsRequest(undefined);
+			const preflight = await corsRequest(undefined, "OPTIONS");
+
+			for (const response of [actual, preflight]) {
+				expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+				expect(response.headers.get("Vary")).toBeNull();
+			}
 		});
 
 		it("trims whitespace around allowlist entries", async () => {
