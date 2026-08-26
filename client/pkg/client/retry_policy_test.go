@@ -573,9 +573,9 @@ func TestPerAttemptTimeoutIsNotAnAnswer(t *testing.T) {
 //
 // The precedence is the same either way and is asserted here so it stays that
 // way: an answer is in hand and it is the caller's own budget that ran out, so
-// the answer is what they get. What distinguishes this from the per-attempt
-// timeout below is not where the error came from but whose deadline lapsed,
-// which is exactly what the ctx.Err() test asks.
+// the answer is what they get. What distinguishes this from
+// TestPerAttemptTimeoutIsNotAnAnswer above is not where the error came from
+// but whose deadline lapsed, which is exactly what the ctx.Err() test asks.
 func TestDeadlineMidAttemptKeepsTheAnswer(t *testing.T) {
 	var requests atomic.Int32
 	release := make(chan struct{})
