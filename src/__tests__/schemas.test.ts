@@ -13,6 +13,9 @@ import {
 	KeyUploadSchema,
 	RequestHeadersSchema,
 	RequestIdSchema,
+	StoredSubjectPrefixSchema,
+	SUBJECT_PREFIX_PATTERN,
+	SubjectPrefixSchema,
 	TimestampSchema,
 } from "#schemas";
 
@@ -771,6 +774,132 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
 
 		it("should reject missing fields", () => {
 			expect(() => KeyResponseSchema.parse({ success: true, keyId: "ABC" })).toThrow();
+		});
+	});
+
+	describe("SubjectPrefixSchema", () => {
+		// A prefix is compared with startsWith and a delimiter check, never a
+		// pattern match, so a glob is not a wider rule — it is a row that matches
+		// nothing while listing as active. The refusal has to name the form that
+		// does work, or the operator's next guess is another pattern syntax.
+		it.each(["repo:kjanat/*", "repo:kjanat/svc?", "repo:kjanat/[ab]", "project_path:group/*"])(
+			"rejects the glob %s and names the trailing-delimiter form",
+			(prefix) => {
+				const result = SubjectPrefixSchema.safeParse(prefix);
+				expect(result.success).toBe(false);
+				const message = result.error?.issues.map((issue) => issue.message).join(" ");
+				expect(message).toContain("not a glob");
+				expect(message).toContain("repo:owner/");
+			},
+		);
+
+		it("accepts the cut-off a glob was reaching for", () => {
+			for (const prefix of ["repo:kjanat", "repo:kjanat/", "repo:kjanat/kjanat", "repo:kjanat@1/svc@2"]) {
+				expect(SubjectPrefixSchema.safeParse(prefix).success).toBe(true);
+			}
+		});
+
+		it("publishes a pattern that agrees with both checks", () => {
+			// client/openapi.json carries one `pattern` per string, so the two
+			// `.regex()` calls are restated as one there. Nothing keeps them in step
+			// but this: drift means the spec and the generated clients document a
+			// rule the service does not enforce, in whichever direction.
+			const published = new RegExp(SUBJECT_PREFIX_PATTERN);
+			const corpus = [
+				"repo:kjanat",
+				"repo:kjanat/",
+				"repo:kjanat/kjanat",
+				"repo:kjanat@1/svc@2:ref:refs/heads/main",
+				"project_path:group/project",
+				"repo:kjanat/*",
+				"repo:*",
+				"repo:kjanat/svc?",
+				"repo:kjanat/[ab]",
+				"repo:kjanat/svc]",
+				"repo:",
+				"repo",
+				"repo:/",
+				"has spaces",
+				"",
+			];
+			for (const prefix of corpus) {
+				expect([prefix, published.test(prefix)]).toEqual([prefix, SubjectPrefixSchema.safeParse(prefix).success]);
+			}
+		});
+
+		it("publishes a pattern every engine that might compile it accepts", () => {
+			// JSON Schema's `pattern` is ECMA-262 without `u` or `v`, so nothing in
+			// this toolchain compiles it in `v` mode today — but a client is free
+			// to, and `v` mode reclassifies `[`, `]` and `/` inside a character
+			// class as set syntax and throws on the unescaped form. That is a
+			// startup crash in somebody else's client, caused by a character we
+			// only had to escape, so escape it and pin the property here rather
+			// than rediscover it from a bug report.
+			for (const flags of ["", "u", "v"]) {
+				expect(() => new RegExp(SUBJECT_PREFIX_PATTERN, flags)).not.toThrow();
+			}
+			// The escapes must be inert, not merely legal: `v` mode is stricter
+			// about syntax but must accept and refuse exactly what the unflagged
+			// engine does, or the spec means two different things depending on how
+			// a client chose to compile it.
+			const unflagged = new RegExp(SUBJECT_PREFIX_PATTERN);
+			const unicodeSets = new RegExp(SUBJECT_PREFIX_PATTERN, "v");
+			for (const prefix of ["repo:kjanat/svc", "repo:kjanat/", "repo:kjanat/*", "repo:kjanat/[ab]", "repo:", "a b"]) {
+				expect([prefix, unicodeSets.test(prefix)]).toEqual([prefix, unflagged.test(prefix)]);
+			}
+		});
+
+		it("agrees with both checks on every short string over the interesting alphabet", () => {
+			// The corpus above only covers characters somebody thought to list, so it
+			// would stay green if a later rule added, say, `\\` to the glob class and
+			// the published pattern was not updated with it. Enumerating every string
+			// up to length 4 over one representative of each character role — the
+			// delimiters, each refused character, whitespace and an ordinary letter —
+			// makes the round trip exhaustive rather than illustrative.
+			const alphabet = [":", "@", "/", "*", "?", "[", "]", " ", "\t", "a"];
+			const published = new RegExp(SUBJECT_PREFIX_PATTERN);
+			// Same corpus under `v`, so the escapes stay inert across the whole
+			// enumeration rather than only the handful of strings above.
+			const unicodeSets = new RegExp(SUBJECT_PREFIX_PATTERN, "v");
+			const disagreements: string[] = [];
+			const walk = (prefix: string, depth: number) => {
+				if (prefix) {
+					const enforced = SubjectPrefixSchema.safeParse(prefix).success;
+					if (published.test(prefix) !== enforced || unicodeSets.test(prefix) !== enforced) {
+						disagreements.push(prefix);
+					}
+				}
+				if (depth === 0) {
+					return;
+				}
+				for (const character of alphabet) {
+					walk(prefix + character, depth - 1);
+				}
+			};
+			walk("", 4);
+			expect(disagreements).toEqual([]);
+		});
+	});
+
+	describe("StoredSubjectPrefixSchema", () => {
+		// The glob rule is a rule about creates. Rows written before it exist, and
+		// listing them is how an operator finds one to revoke — so the response
+		// schema must not refuse what the table can hold, or a spec-validating
+		// client would be blind to exactly the rows it needs to clean up.
+		it("accepts prefixes the create schema now refuses", () => {
+			for (const prefix of ["repo:kjanat/*", "repo:kjanat/[ab]", "repo:", "repo"]) {
+				expect(SubjectPrefixSchema.safeParse(prefix).success).toBe(false);
+				expect(StoredSubjectPrefixSchema.safeParse(prefix).success).toBe(true);
+			}
+		});
+
+		it("keeps the bounds the column has always had", () => {
+			// Dropping the create rule is not dropping every rule: the length bounds
+			// have been enforced for every row ever written, so unlike the glob
+			// class they cannot be violated by anything already in the table.
+			expect(StoredSubjectPrefixSchema.safeParse("").success).toBe(false);
+			expect(StoredSubjectPrefixSchema.safeParse(`repo:kjanat/${"r".repeat(255)}`).success).toBe(false);
+			expect(StoredSubjectPrefixSchema.safeParse("repo:kjanat/svc").success).toBe(true);
 		});
 	});
 });
