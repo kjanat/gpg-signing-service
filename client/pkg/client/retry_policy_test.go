@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -476,5 +477,70 @@ func TestDeleteKeyNotFoundOnTheFirstAttemptStaysNotFound(t *testing.T) {
 	}
 	if requests != 1 {
 		t.Errorf("expected 1 request, got %d", requests)
+	}
+}
+
+// TestPerAttemptTimeoutIsNotAnAnswer pins the boundary of the branch
+// TestDeadlineOutranksNothing's siblings cover from the other side.
+//
+// executeWithRetry reports a response rather than a deadline when the caller's
+// context ran out mid-policy, on the reasoning that the answer was already in
+// hand and the retry was only an optimisation over it. That reasoning is about
+// ctx.Err() returned from Do's backoff sleep — but a WithTimeout that expires
+// on a later attempt arrives as a *url.Error wrapping "context deadline
+// exceeded (Client.Timeout exceeded while awaiting headers)", which satisfies
+// errors.Is against DeadlineExceeded identically. Testing the error alone
+// therefore swallowed a real timeout and answered with whatever status an
+// earlier attempt had returned: measured here before the ctx.Err() test was
+// added, a call whose second attempt never got a reply came back as attempt
+// one's 503, with a nil error from executeWithRetry and no trace of the
+// timeout anywhere.
+//
+// The caller's context is untouched here, so nothing about this call ran out
+// of the budget the caller set — only one attempt did, and that is what
+// WithTimeout bounds. See TestTimeoutBoundsOneAttemptNotTheCall.
+func TestPerAttemptTimeoutIsNotAnAnswer(t *testing.T) {
+	var requests atomic.Int32
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"attempt one said this","code":"INTERNAL_ERROR"}`))
+			return
+		}
+		// Never answers, so a passing run costs one timeout rather than a fixed
+		// sleep. Released at teardown the way TestExpiredTimeoutEndsTheCall
+		// does it: r.Context() alone is not enough to unblock Close.
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() {
+		close(release)
+		server.Close()
+	})
+
+	c, err := New(server.URL,
+		WithMaxRetries(3),
+		WithTimeout(150*time.Millisecond),
+		WithRetryWait(10*time.Millisecond, 20*time.Millisecond),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, signErr := c.Sign(context.Background(), "commit data", "")
+	if signErr == nil {
+		t.Fatal("expected the expired per-request timeout to be reported, got no error")
+	}
+	if !errors.Is(signErr, context.DeadlineExceeded) {
+		t.Errorf("expected a deadline error, got %T: %v", signErr, signErr)
+	}
+	var serviceErr *ServiceError
+	if errors.As(signErr, &serviceErr) {
+		t.Errorf("attempt one's %d was reported in place of the timeout: %v",
+			serviceErr.StatusCode, signErr)
 	}
 }

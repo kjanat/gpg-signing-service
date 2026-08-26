@@ -345,7 +345,10 @@ Six things worth knowing:
   you the retry, not the answer. The response that caused the wait is returned
   and mapped as usual, so `IsRateLimitError` still holds for a throttled call
   whose `context` ran out. A context you _cancel_ is reported as cancelled, and
-  so is a deadline that expires before any attempt completes.
+  so is a deadline that expires before any attempt completes. `WithTimeout` is
+  not covered by this: it bounds one attempt, so an attempt of its own that
+  runs out of time is reported as the timeout it is, never as the status some
+  earlier attempt returned.
 - `DeleteKey`'s `deleted` field describes the attempt that answered, not the
   call. A delete that commits and then loses its response is answered
   `deleted:false` by the next attempt, so once a retry has happened this client

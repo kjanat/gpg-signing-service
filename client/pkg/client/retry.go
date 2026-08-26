@@ -352,7 +352,17 @@ func executeWithRetry[T statusCoder](
 		// for an answer within N seconds and one exists. So does a context that
 		// expired before any attempt completed — attempted is false, resp is
 		// the zero value, and the error is all there is.
-		if attempted && errors.Is(err, context.DeadlineExceeded) {
+		//
+		// The ctx.Err() test is what confines this to the case above. The error
+		// alone does not identify it: net/http renders an exceeded
+		// Client.Timeout as a *url.Error wrapping "context deadline exceeded
+		// (Client.Timeout exceeded while awaiting headers)", which satisfies
+		// errors.Is against DeadlineExceeded just as the sleep's ctx.Err()
+		// does. Asking the caller's context instead separates the two: a
+		// WithTimeout that expires on a *later* attempt leaves this context
+		// live, so the timeout is reported as itself rather than replaced by
+		// whatever status an earlier attempt happened to return.
+		if attempted && errors.Is(err, context.DeadlineExceeded) && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return resp, nil
 		}
 		return resp, err
