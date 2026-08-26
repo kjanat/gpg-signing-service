@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -426,5 +427,71 @@ func TestTimeoutBoundsOneAttemptNotTheCall(t *testing.T) {
 	}
 	if elapsed <= perCall {
 		t.Errorf("expected the call to outlast WithTimeout(%v), took %v", perCall, elapsed)
+	}
+}
+
+// TestExpiredTimeoutEndsTheCall pins the other half of what WithTimeout does.
+//
+// The test above covers a timeout that never fires — a server answering
+// promptly with a retryable status. This one covers a timeout that does fire,
+// and the rule is the opposite: an attempt that ran out of time is final,
+// because the next one is handed the same duration and the same slow server.
+//
+// It rests entirely on an ordering inside shouldRetry. net/http renders an
+// exceeded Client.Timeout as a *url.Error wrapping "context deadline exceeded
+// (Client.Timeout exceeded while awaiting headers)", which also satisfies
+// errors.Is against context.DeadlineExceeded — so both the context branch and
+// the *url.Error branch below it match, and only the fact that the context one
+// is written first ends the call. Nothing asserted that: moving the context
+// branch below the transport branch left `task c:t` green while turning a
+// WithTimeout(30s) call against an unresponsive server into four of them plus
+// backoff. The comment above the branch and README's "It never retries: a
+// cancelled or expired context" both describe this; now something checks it.
+//
+// The handler parks until the client hangs up rather than sleeping a fixed
+// span, so a passing run costs one timeout instead of one sleep, and a
+// regression costs four timeouts rather than hanging. That also makes this the
+// one test here whose handler is still running when the call returns, which is
+// why the counter is atomic where the rest of the file uses a plain int: every
+// other handler has written its response by then, and the round trip is the
+// happens-before this one does not get.
+func TestExpiredTimeoutEndsTheCall(t *testing.T) {
+	const perCall = 100 * time.Millisecond
+
+	var requests atomic.Int32
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		// Never answers. Returns when the client gives up, or at teardown.
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() {
+		close(release)
+		server.Close()
+	})
+
+	c, err := New(server.URL,
+		WithTimeout(perCall),
+		WithMaxRetries(3),
+		WithRetryWait(60*time.Millisecond, 120*time.Millisecond),
+	)
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+
+	_, err = c.Sign(context.Background(), "commit data", "")
+	if err == nil {
+		t.Fatal("expected the expired timeout to surface as an error")
+	}
+	// The caller still learns it was a timeout rather than a status.
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected an error satisfying context.DeadlineExceeded, got %T: %v", err, err)
+	}
+
+	if got := requests.Load(); got != 1 {
+		t.Errorf("expected an expired timeout to be final after 1 attempt, got %d", got)
 	}
 }
