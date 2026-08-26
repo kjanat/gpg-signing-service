@@ -339,20 +339,34 @@ func executeWithRetry[T statusCoder](
 	if err != nil && !errors.As(err, &signal) {
 		// A deadline that expired while the policy was still working is not the
 		// most informative thing that happened: a response is in hand and
-		// unmapped, and Do returns ctx.Err() from the backoff sleep — reached
-		// only *after* an attempt was classified retryable. Retries are an
-		// optimisation over that response, not a precondition for it, so
-		// running out of budget mid-policy costs the retry rather than the
-		// answer. Otherwise the CLI, which hands the same --timeout to
-		// WithTimeout and to its context, reports "context deadline exceeded"
-		// for a call the service already answered "you are being throttled".
+		// unmapped, and `attempted` is what says so. The deadline arrives here
+		// by either of two routes — as ctx.Err() returned from Do's backoff
+		// sleep, or, when it lapses while an attempt is in flight, as the
+		// *url.Error net/http aborts the round trip with, which shouldRetry
+		// declines and Do hands back as the last error. The error differs; the
+		// situation does not. Retries are an optimisation over that response,
+		// not a precondition for it, so running out of budget mid-policy costs
+		// the retry rather than the answer. Otherwise the CLI, which hands the
+		// same --timeout to WithTimeout and to its context, reports "context
+		// deadline exceeded" for a call the service already answered "you are
+		// being throttled".
 		//
 		// context.Canceled deliberately falls through: a caller who cancelled
 		// asked for exactly that, while a caller whose deadline lapsed asked
 		// for an answer within N seconds and one exists. So does a context that
 		// expired before any attempt completed — attempted is false, resp is
 		// the zero value, and the error is all there is.
-		if attempted && errors.Is(err, context.DeadlineExceeded) {
+		//
+		// The ctx.Err() test is what confines this to the case above. The error
+		// alone does not identify it: net/http renders an exceeded
+		// Client.Timeout as a *url.Error wrapping "context deadline exceeded
+		// (Client.Timeout exceeded while awaiting headers)", which satisfies
+		// errors.Is against DeadlineExceeded just as the sleep's ctx.Err()
+		// does. Asking the caller's context instead separates the two: a
+		// WithTimeout that expires on a *later* attempt leaves this context
+		// live, so the timeout is reported as itself rather than replaced by
+		// whatever status an earlier attempt happened to return.
+		if attempted && errors.Is(err, context.DeadlineExceeded) && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return resp, nil
 		}
 		return resp, err

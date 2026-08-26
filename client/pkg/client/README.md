@@ -342,10 +342,16 @@ Six things worth knowing:
   cannot park the call; the untruncated value still reaches you on the
   `RateLimitError` returned once the attempts are spent.
 - A caller-side deadline that expires while the policy is still waiting costs
-  you the retry, not the answer. The response that caused the wait is returned
-  and mapped as usual, so `IsRateLimitError` still holds for a throttled call
-  whose `context` ran out. A context you _cancel_ is reported as cancelled, and
-  so is a deadline that expires before any attempt completes.
+  you the retry, not the answer. The last response received is returned and
+  mapped as usual, so `IsRateLimitError` still holds for a throttled call whose
+  `context` ran out. The last _response_, not the last attempt: a transport
+  fault after it is deliberately not allowed to displace it, so the status you
+  get can predate the wait the deadline landed in by an attempt or more. A
+  context you _cancel_ is reported as cancelled, and so is a deadline that
+  expires before any attempt completes. `WithTimeout` is not covered by this:
+  it bounds one attempt, so an attempt of its own that runs out of time is
+  reported as the timeout it is, never as the status some earlier attempt
+  returned.
 - `DeleteKey`'s `deleted` field describes the attempt that answered, not the
   call. A delete that commits and then loses its response is answered
   `deleted:false` by the next attempt, so once a retry has happened this client
