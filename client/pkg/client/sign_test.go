@@ -553,9 +553,10 @@ func TestSignUndocumentedStatusWithBody(t *testing.T) {
 // which is why a gap sat here unseen: a 429 or a 500 is a *successful* round
 // trip, so the closure the client used to pass reported a nil error and the
 // retrier saw nothing to retry. shouldRetry's RateLimitError and 5xx branches
-// were unreachable against a real server, WithoutRateLimitRetry() toggled
-// nothing, and retryWaitMin/Max governed transport faults alone. Only a test
-// that counts requests arriving at a server can tell the difference.
+// were unreachable against a real server and WithoutRateLimitRetry() toggled
+// nothing. Only a test that counts requests arriving at a server can tell the
+// difference. TestSignRetriesTransportFaults covers the other half: the faults
+// that did reach shouldRetry were dropped by its fallthrough.
 func TestSignRetriesRealStatusResponses(t *testing.T) {
 	const signature = "-----BEGIN PGP SIGNATURE-----\n\nsig\n-----END PGP SIGNATURE-----"
 
@@ -665,7 +666,7 @@ func TestSignRateLimitKeepsRetryAfter(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := newMappingClient(t, server.URL, WithMaxRetries(0))
+	c := newMappingClient(t, server.URL)
 	_, err := c.Sign(context.Background(), "commit data", "")
 	if !IsRateLimitError(err) {
 		t.Fatalf("expected a rate limit error, got %T: %v", err, err)
@@ -695,7 +696,7 @@ func TestAdminUndeclaredRateLimit(t *testing.T) {
 	}))
 	defer server.Close()
 
-	c := newMappingClient(t, server.URL, WithMaxRetries(0))
+	c := newMappingClient(t, server.URL)
 	_, err := c.ListKeys(context.Background())
 	if !IsRateLimitError(err) {
 		t.Fatalf("expected a rate limit error, got %T: %v", err, err)

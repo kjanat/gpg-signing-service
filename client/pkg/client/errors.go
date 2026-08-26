@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/kjanat/gpg-signing-service/client/pkg/api"
@@ -158,18 +159,49 @@ func requestIDFrom(envelope string, header http.Header) string {
 // retryAfterFrom returns how long a 429 asks the caller to wait, preferring the
 // envelope's `retryAfter` seconds and falling back to the `Retry-After` header.
 //
-// Only the delta-seconds form of the header is read. RFC 9110 also permits an
-// HTTP-date; this service's limiter emits seconds, and an unparseable value
-// yields zero, which callers treat as "no hint" rather than "no wait".
+// The header matters more than its rarity suggests. This service's limiter
+// always emits `retryAfter` in the body when it emits a body at all, so the
+// only 429 that reaches the fallback is one this service did not author — an
+// edge throttle in front of it, which answers with a page rather than an
+// envelope. That is exactly the response whose hint is otherwise lost.
 func retryAfterFrom(envelopeSeconds int, header http.Header) time.Duration {
 	if envelopeSeconds > 0 {
 		return time.Duration(envelopeSeconds) * time.Second
 	}
-	seconds, err := strconv.Atoi(header.Get("Retry-After"))
-	if err != nil || seconds <= 0 {
+	return parseRetryAfter(header.Get("Retry-After"), time.Now())
+}
+
+// parseRetryAfter reads both forms RFC 9110 §10.2.3 permits: delay-seconds, and
+// an absolute HTTP-date, which is reported as the delay remaining at now.
+//
+// The date form is not hypothetical — intermediaries and CDNs emit IMF-fixdate
+// freely, and reading only integers turned one into "no hint". A value already
+// in the past, or one that parses as neither form, yields zero, which callers
+// read as "no hint" rather than "no wait": the retrier falls back to its own
+// backoff and the error simply carries nothing to show.
+func parseRetryAfter(value string, now time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
 		return 0
 	}
-	return time.Duration(seconds) * time.Second
+
+	if seconds, err := strconv.Atoi(value); err == nil {
+		if seconds <= 0 {
+			return 0
+		}
+		return time.Duration(seconds) * time.Second
+	}
+
+	// http.ParseTime accepts IMF-fixdate and the two obsolete formats RFC 9110
+	// still requires a recipient to understand.
+	deadline, err := http.ParseTime(value)
+	if err != nil {
+		return 0
+	}
+	if wait := deadline.Sub(now); wait > 0 {
+		return wait
+	}
+	return 0
 }
 
 // newAuthErrorFromResponse turns the service's 401 envelope into an AuthError.
@@ -240,6 +272,29 @@ type apiErrorBody struct {
 // keeps text responses and empty bodies behaving as before.
 func newStatusError(statusCode int, body []byte, header http.Header) error {
 	parsed, ok := parseAPIErrorBody(body)
+
+	// Deliberately above the envelope gate. A 429 needs no body to be
+	// understood: the status *is* the whole meaning, and IsRateLimitError —
+	// with it the retry policy and the CLI's "you are being throttled"
+	// message — keys off the type. An edge throttle sitting in front of this
+	// service answers 429 with an HTML page and a Retry-After header, which is
+	// not a usable envelope but is unambiguously a rate limit; gating this
+	// branch on one collapsed it to the bare sentinel and threw the hint away,
+	// leaving retryAfterFrom's header fallback unreachable in the single case
+	// it was written for. A rate limit the document does not declare is still a
+	// rate limit, and so is one this service did not write.
+	if statusCode == http.StatusTooManyRequests {
+		message := parsed.Error
+		if message == "" {
+			// Otherwise Error() prints a bare "rate limited: ".
+			message = http.StatusText(statusCode)
+		}
+		return &RateLimitError{
+			Message:    message,
+			RetryAfter: retryAfterFrom(parsed.RetryAfter, header),
+		}
+	}
+
 	if !ok {
 		return newUnexpectedStatusError(statusCode)
 	}
@@ -251,18 +306,6 @@ func newStatusError(statusCode int, body []byte, header http.Header) error {
 			Code:      parsed.Code,
 			Message:   parsed.Error,
 			RequestID: requestID,
-		}
-	}
-
-	// 429 is the one status where falling through to ServiceError would lose
-	// information the typed path keeps. IsRateLimitError, and with it the
-	// retrier's rate-limit policy and the CLI's "you are being throttled"
-	// message, key off the type — a rate limit the document happens not to
-	// declare for an operation is still a rate limit.
-	if statusCode == http.StatusTooManyRequests {
-		return &RateLimitError{
-			Message:    parsed.Error,
-			RetryAfter: retryAfterFrom(parsed.RetryAfter, header),
 		}
 	}
 

@@ -96,7 +96,8 @@ func (c *Client) Health(ctx context.Context) (*HealthStatus, error) {
 	// an answer rather than a failure. `degraded` is a documented state carrying
 	// a body the caller is meant to read, and re-asking three times with backoff
 	// would delay that report to learn nothing — a probe wants the current
-	// status, not an eventually-healthy one. Transport faults still retry.
+	// status, not an eventually healthy one. Transport faults still retry: a
+	// dial that never connected is not an answer about anything.
 	var resp *api.GetHealthResponse
 	err := c.retrier.Do(ctx, func() error {
 		var execErr error

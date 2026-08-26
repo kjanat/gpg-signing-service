@@ -6,6 +6,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -96,7 +97,28 @@ func (r *Retrier) shouldRetry(err error) bool {
 		return false
 	}
 
-	return false
+	// A cancelled or expired context is not worth another attempt: the next one
+	// fails the same way, immediately, and the caller's deadline is the answer
+	// either way. Checked before the transport branch below, because a context
+	// that expires mid-flight surfaces wrapped in a *url.Error like any other.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+
+	// A round trip that never completed is the textbook case for trying again,
+	// and used to be the case this function dropped: statuses never reached the
+	// retrier, and the transport faults that did fell through to false, so
+	// retryWaitMin/Max governed nothing at all.
+	//
+	// net/http reports every one of those as a *url.Error — a refused dial, a
+	// connection closed mid-body, a failed handshake, a per-request timeout —
+	// which is why this tests for the type rather than defaulting to true. A
+	// response that arrived and then failed to decode is not a transport fault:
+	// the body is already in hand and the next attempt parses exactly as badly,
+	// so a blanket default would spend the whole backoff budget re-reading a
+	// malformed 200.
+	var urlErr *url.Error
+	return errors.As(err, &urlErr)
 }
 
 func (r *Retrier) backoff(attempt int) time.Duration {
@@ -177,9 +199,10 @@ func (s *retrySignalError) Unwrap() error { return s.inner }
 // a nil error and puts the status on the response. A closure reporting only
 // that error therefore told the retrier nothing was wrong, which left
 // shouldRetry's RateLimitError and 5xx-ServiceError branches unreachable
-// against a real server — WithoutRateLimitRetry() toggled nothing, and
-// retryWaitMin/Max governed transport faults alone. Returning the
-// classification here is what connects them to responses.
+// against a real server, and WithoutRateLimitRetry() toggling nothing. The
+// transport faults that did reach shouldRetry fell through to false, so
+// retryWaitMin/Max governed nothing at all. Returning the classification here
+// is what connects the policy to responses.
 //
 // The values are skeletal by design; they are read for their type and nothing
 // else. The wait between attempts is the retrier's exponential backoff rather

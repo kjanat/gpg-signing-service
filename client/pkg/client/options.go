@@ -65,9 +65,14 @@ func WithRetryWait(minWait, maxWait time.Duration) Option {
 	}
 }
 
-// WithoutRateLimitRetry disables automatic retry on rate limit errors.
-// By default, rate limit errors are automatically retried after the
-// retry-after duration specified by the server.
+// WithoutRateLimitRetry makes a 429 final on the first response.
+//
+// By default a 429 is attempted again under the same budget as any other
+// retryable status. The wait between attempts is the exponential backoff, not
+// the server's retry-after hint — the hint is not reachable from the generic
+// response type the retry policy sees — but it is not lost either: it reaches
+// the caller on the RateLimitError returned once the attempts are spent. Set
+// this when a throttled call should fail fast rather than spend that budget.
 func WithoutRateLimitRetry() Option {
 	return func(o *Options) {
 		o.retryOnRateLimit = false

@@ -55,12 +55,15 @@ all, `Issuer not allowed: <iss>` an unlisted issuer, `Subject is not trusted for
 signing` an unregistered caller, and any other `AUTH_INVALID` a verification
 failure. `gpg-sign` prints that body, so read it before working down the list.
 
-`AUTH_MISSING` has two messages, and the second is the one that misleads.
-`Missing authorization header` means what it says. `Missing token` means the
-header arrived as `Bearer` with nothing after it — the step interpolated an
-empty value, which is what a mistyped `steps.<id>.outputs.token` or a token step
-that never ran produces. Nothing about the trusted-subject table is implicated;
-echo the length of the token the step captured.
+`AUTH_MISSING` has two messages, and the second is the one that misleads. The
+prefix test is for the word `Bearer` _followed by a space_, so a header that is
+the bare word alone never reaches the token check and reports
+`Missing authorization header`, exactly as sending no header at all does.
+`Missing token` means the space was there and nothing came after it — the step
+interpolated an empty value, which is what a mistyped
+`steps.<id>.outputs.token` or a token step that never ran produces. Nothing
+about the trusted-subject table is implicated; echo the length of the token the
+step captured.
 
 Use `core.getIDToken("gpg-signing-service")`. Raw endpoint responses store the
 JWT in `.value`, not `.token`.
