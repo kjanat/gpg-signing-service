@@ -489,7 +489,7 @@ func TestSignUntrustedSubject(t *testing.T) {
 	if !errors.As(err, &ae) {
 		t.Fatalf("expected an *AuthError, got %T", err)
 	}
-	if ae.Message != "Subject is not trusted for signing" {
+	if ae.Message != testMsgUntrusted {
 		t.Errorf("server message was discarded: %q", ae.Message)
 	}
 	if ae.Code != testCodeAuthInvalid {

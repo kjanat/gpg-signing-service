@@ -16,6 +16,26 @@ log_error() {
 	echo "[ERROR] $*" >&2
 }
 
+# Print a refusal the way it is meant to be read.
+#
+# The service answers with four separate things — what happened, which subject
+# it was about, what to change, and where to read more — and dumping the raw
+# envelope into the log buries all four in one wrapped line. So each goes on its
+# own line, and only the ones that are present.
+#
+# `docs` is a short redirect (`<service>/e/<CODE>`) that lands on the section
+# for that exact code.
+log_service_error() {
+	local http_code="$1" body="$2" field value
+
+	log_error "HTTP ${http_code}: $(jq -r '.error // "no message"' <<<"${body}" 2>/dev/null || echo "${body}")"
+
+	for field in code subject hint docs requestId; do
+		value=$(jq -r --arg f "${field}" '.[$f] // empty' <<<"${body}" 2>/dev/null) || continue
+		[[ -n ${value} ]] && log_error "  ${field}: ${value}"
+	done
+}
+
 check_requirements() {
 	local required_tools=("curl" "jq" "git" "gpg" "uuidgen")
 	for tool in "${required_tools[@]}"; do
@@ -105,15 +125,16 @@ sign_commit() {
 				retry_count=$((retry_count + 1))
 				;;
 			401)
-				local error_msg
-				error_msg=$(echo "${body}" | jq -r .error) || true
-				log_error "Authentication failed: ${error_msg}"
+				# AUTH_MISSING and AUTH_INVALID are the credential's problem;
+				# AUTH_SUBJECT_UNTRUSTED means the credential was fine and the
+				# identity is not authorized, which no amount of re-minting fixes.
+				# The `code` field is what separates them; the `hint` says what to
+				# do about it.
+				log_service_error "${http_code}" "${body}"
 				return 1
 				;;
 			*)
-				local error_msg
-				error_msg=$(echo "${body}" | jq -r '.error // .') || true
-				log_error "Signing failed (HTTP ${http_code}): ${error_msg}"
+				log_service_error "${http_code}" "${body}"
 				return 1
 				;;
 		esac

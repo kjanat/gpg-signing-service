@@ -21,7 +21,9 @@ export const callerAuth: MiddlewareHandler<{
 	const authHeader = c.req.header("Authorization");
 
 	if (!authHeader?.startsWith("Bearer ")) {
-		return unauthorized(c, "Missing authorization header", "AUTH_MISSING");
+		return unauthorized(c, "Missing authorization header", "AUTH_MISSING", {
+			hint: "Send `Authorization: Bearer <token>` with either an OIDC token minted for this service's audience or a service token starting with `gst_`.",
+		});
 	}
 
 	const token = authHeader.slice(7);
@@ -31,7 +33,9 @@ export const callerAuth: MiddlewareHandler<{
 
 	const policy = await verifyServiceToken(c.env.AUDIT_DB, token);
 	if (!policy) {
-		return unauthorized(c, "Invalid service token", "AUTH_INVALID");
+		return unauthorized(c, "Invalid service token", "AUTH_INVALID", {
+			hint: "The token is unknown, revoked or expired. List the live ones with GET /admin/tokens, and mint a replacement with POST /admin/tokens.",
+		});
 	}
 
 	// Synthetic claims keep the sign route and audit trail uniform across

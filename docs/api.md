@@ -15,6 +15,7 @@ OpenAPI 3.1.
 | -------- | ---------------------------- | --------------------- | ----------------------------------------- |
 | `GET`    | `/health`                    | Public                | Service and storage health                |
 | `GET`    | `/public-key`                | Public                | Default or selected PGP public key        |
+| `GET`    | `/e/{code}`                  | Public                | Redirect to an error code's documentation |
 | `POST`   | `/sign`                      | OIDC or service token | Sign the text body                        |
 | `POST`   | `/admin/keys`                | Admin                 | Upload a PGP private key                  |
 | `POST`   | `/admin/keys/x509`           | Admin                 | Upload a PKCS#8 key and X.509 certificate |
@@ -72,19 +73,36 @@ See [Authentication](authentication.md) for token acquisition and policy.
 
 ## Error responses
 
-Errors are JSON and normally include:
+Errors are JSON:
 
 ```json
 {
-  "error": "Human-readable message",
-  "code": "MACHINE_READABLE_CODE",
-  "requestId": "optional-uuid"
+  "error": "Subject is not trusted for signing",
+  "code": "AUTH_SUBJECT_UNTRUSTED",
+  "subject": "repo:kjanat/kjanat:ref:refs/heads/master",
+  "hint": "No active trust rule matches this subject. …",
+  "docs": "https://gpg.kajkowalski.nl/e/AUTH_SUBJECT_UNTRUSTED",
+  "requestId": "628c9a74-c46d-403c-84c6-9c873298a17f"
 }
 ```
 
-Validation errors can also include an `issues` array. Every `401` carries a
-`requestId` and a `WWW-Authenticate: Bearer` challenge; some validation
-responses emitted before the request id is published do not.
+| Field        | Present                                 | Meaning                                                        |
+| ------------ | --------------------------------------- | -------------------------------------------------------------- |
+| `error`      | always                                  | Prose. The service may reword these; branch on `code` instead. |
+| `code`       | always                                  | Stable identifier. See the [error reference](errors.md).       |
+| `docs`       | always                                  | `<service>/e/<CODE>`, redirecting to that code's section.      |
+| `requestId`  | except a few early validation responses | Also the `X-Request-ID` header and `audit_logs.request_id`.    |
+| `hint`       | where there is an action to name        | What to change.                                                |
+| `subject`    | authorization `401`s                    | The `sub` claim the caller presented, echoed back.             |
+| `retryAfter` | `429`                                   | Whole seconds to wait, at least one.                           |
+| `issues`     | schema validation `400`s                | Per-field validation failures.                                 |
+
+The `docs` link is a redirect served by the deployment rather than a deep link,
+so it stays short enough to survive a wrapped CI log and keeps working if the
+documentation moves. `GET /e/{code}` accepts either case and answers `404` for a
+code the service does not define.
+
+Every `401` also carries a `WWW-Authenticate: Bearer` challenge.
 
 Common status codes:
 

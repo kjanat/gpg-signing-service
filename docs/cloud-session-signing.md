@@ -150,8 +150,8 @@ Error: signing failed: authentication failed: AUTH_INVALID: Invalid service toke
 fatal: failed to write commit object
 ```
 
-The service's own `code` and message come through — `AUTH_INVALID` with
-`Subject is not trusted for signing` is the OIDC equivalent, and means the
+The service's own `code` and message come through — `AUTH_SUBJECT_UNTRUSTED`
+with `Subject is not trusted for signing` is the OIDC equivalent, and means the
 credential was accepted but its subject holds no trusted row.
 
 The trailing id is this request's, echoed in `X-Request-ID` and stored as

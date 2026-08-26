@@ -277,6 +277,15 @@ func TestRunRefusesWhenNoCommitVerifies(t *testing.T) {
 	if !strings.Contains(err.Error(), "the last 5 commit(s)") {
 		t.Errorf("expected the scan bound named in the error, got: %v", err)
 	}
+	// Naming the fault is not the same as saying what to do about it. The reader
+	// of this line has never met `base`, and the message is the only place they
+	// are going to learn what it bounds or what a working value looks like.
+	if !strings.Contains(err.Error(), "exclusive lower bound of the range to sign") {
+		t.Errorf("expected the error to say what base means, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "--base=origin/master") {
+		t.Errorf("expected the error to suggest a concrete value, got: %v", err)
+	}
 }
 
 // A scan limit only means something when the base is being scanned for, so a

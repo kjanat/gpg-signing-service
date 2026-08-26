@@ -293,5 +293,21 @@ func (s *session) lastSigned(ctx context.Context, head string) (string, error) {
 	if s.opts.ScanLimit > 0 {
 		scope = fmt.Sprintf("the last %d commit(s) on HEAD", s.opts.ScanLimit)
 	}
-	return "", fmt.Errorf("no verified commit in %s; pass base explicitly", scope)
+	// The old message named the fault and stopped there, which left three
+	// questions in the reader's way: what base *is*, what a correct value looks
+	// like, and whether this failure is why the signing call further down also
+	// failed. It is not — this one ends the run before any request is made — and
+	// saying what the flag means is the difference between one edit and a round
+	// of guessing.
+	//
+	// The suggested value is the branch point, because that is what the scan was
+	// standing in for: it looks for the newest commit this key already verifies
+	// so it can sign only what came after, and when there is none, the range has
+	// to be pinned by hand.
+	return "", fmt.Errorf(
+		"no verified commit in %s; pass base explicitly: base is the exclusive lower bound of the range to sign, "+
+			"so --base=%s signs every commit after the branch point, and --base=<sha> signs everything after that "+
+			"commit (nothing this key signed was found in %s, which is expected on a branch that has never been "+
+			"signed with it)",
+		scope, "origin/"+s.opts.DefaultBranch, scope)
 }

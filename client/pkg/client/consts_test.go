@@ -44,6 +44,7 @@ const (
 	testMsgServerError  = "server error"
 	testMsgExpired      = "token expired"
 	testMsgBadAdmin     = "Invalid admin token"
+	testMsgUntrusted    = "Subject is not trusted for signing"
 
 	// Table-driven test case names and operations.
 	testOpSign           = "Sign"

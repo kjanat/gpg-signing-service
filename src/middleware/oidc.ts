@@ -10,7 +10,7 @@ import { unauthorized } from "#utils/errors";
 import { scheduleBackgroundTask } from "#utils/execution";
 import { fetchWithTimeout } from "#utils/fetch";
 import { logger } from "#utils/logger";
-import type { OIDCSubjectResolution } from "#utils/oidc-subjects";
+import type { OIDCSubjectResolution, RefusalContext } from "#utils/oidc-subjects";
 import { resolveOIDCSubject } from "#utils/oidc-subjects";
 import { validateUrl } from "#utils/url-validation";
 
@@ -87,7 +87,7 @@ async function recordRevokedReuse(
 			subject: payload.sub,
 			keyId: "*",
 			success: false,
-			errorCode: "AUTH_INVALID",
+			errorCode: "AUTH_SUBJECT_UNTRUSTED",
 			metadata: JSON.stringify({
 				reason: "revoked_trust_presented",
 				subjectId: resolution.id,
@@ -96,6 +96,81 @@ async function recordRevokedReuse(
 			}),
 		}),
 	);
+}
+
+/**
+ * What to change when the *credential* was refused.
+ *
+ * `validateOIDCToken` throws a curated string per failure, and each one has a
+ * different fix — a stale token, a workflow that asked for the wrong audience,
+ * an issuer this deployment does not accept. The message names the fault; this
+ * names the action, because the two are not the same sentence and a caller
+ * reading "Invalid token audience" in a CI log has no way to guess which knob
+ * produces it.
+ *
+ * Returns undefined for the faults where the message already is the action, or
+ * where anything more specific would describe our JWKS handling to a stranger.
+ * The `docs` link covers those.
+ *
+ * @param message - The message `validateOIDCToken` threw
+ * @param env - Deployment bindings, for naming the values actually configured
+ */
+function tokenHint(message: string, env: Env): string | undefined {
+	if (message === "Token expired" || message === "Token not yet valid") {
+		return "The token's lifetime does not cover this request. Mint a fresh OIDC token immediately before calling /sign rather than reusing one from earlier in the job, and check the runner's clock.";
+	}
+	if (message === "Invalid token audience") {
+		return `Request the token with audience "${env.EXPECTED_AUDIENCE || "gpg-signing-service"}" — for GitHub Actions, core.getIDToken(audience) or the audience input of the OIDC step.`;
+	}
+	if (message.startsWith("Issuer not allowed")) {
+		return `This deployment accepts tokens from: ${env.ALLOWED_ISSUERS.split(",")
+			.map((issuer) => issuer.trim())
+			.filter(Boolean)
+			.join(", ")}.`;
+	}
+	if (message === "Invalid token format" || message === "Invalid token encoding") {
+		return "The Authorization header did not carry a JWT. A common cause is an unset variable expanding to an empty string, so the header reads `Bearer ` with nothing after it.";
+	}
+	return undefined;
+}
+
+/**
+ * What to change when the credential verified but the identity is not trusted.
+ *
+ * Deliberately identical for all three refusal statuses. Reaching `revoked` or
+ * `expired` means the presented `sub` matched a stored prefix, and saying so
+ * confirms to whoever holds that token that the row exists — the same
+ * disclosure the single shared message has always avoided. The operator still
+ * gets the three apart, in the logs.
+ *
+ * What it does add is the one distinction a caller can act on: whether this
+ * service has *any* rules for the issuer. Nought means nobody was ever
+ * authorized here; several means this particular subject is not among them,
+ * which points at the ref or repository part of the claim.
+ *
+ * @param issuer - The verified `iss`
+ * @param context - Counts gathered while resolving
+ * @param env - Deployment bindings, for the disclosure opt-in
+ */
+function untrustedSubjectHint(issuer: string, context: RefusalContext, env: Env): string {
+	if (context.issuerRuleCount === 0) {
+		return `No trust rules are configured for issuer ${issuer}. Authorize this subject with POST /admin/subjects before signing.`;
+	}
+
+	const active = context.activePrefixes.length;
+	let hint =
+		`No active trust rule matches this subject. ${context.issuerRuleCount} rule(s) exist for issuer ${issuer}, ` +
+		`${active} of them active. A subject must fall under a stored prefix at a ":", "@" or "/" boundary, so a rule ` +
+		`for one ref does not cover another — compare the ref part of the subject above with GET /admin/subjects, ` +
+		`then add or widen a rule with POST /admin/subjects.`;
+
+	// Off by default; see RefusalContext for why the prefixes are not free to
+	// hand out. `=== "true"` rather than truthiness so an operator who sets it to
+	// "false" gets what they asked for.
+	if (env.DISCLOSE_TRUST_PATTERNS === "true" && active > 0) {
+		hint += ` Active prefixes for this issuer: ${context.activePrefixes.join(", ")}.`;
+	}
+	return hint;
 }
 
 /**
@@ -128,7 +203,9 @@ export const oidcAuth: MiddlewareHandler<{
 	const authHeader = c.req.header("Authorization");
 
 	if (!authHeader?.startsWith("Bearer ")) {
-		return unauthorized(c, "Missing authorization header", "AUTH_MISSING");
+		return unauthorized(c, "Missing authorization header", "AUTH_MISSING", {
+			hint: "Send `Authorization: Bearer <token>` with an OIDC token minted for this service's audience.",
+		});
 	}
 
 	const token = authHeader.split(" ")[1];
@@ -137,7 +214,9 @@ export const oidcAuth: MiddlewareHandler<{
 		// ErrorResponse, and every client that reads the envelope branches on the
 		// code rather than the prose. A bare `Bearer ` is the same fault as no
 		// header at all, so it carries the same code.
-		return unauthorized(c, "Missing token", "AUTH_MISSING");
+		return unauthorized(c, "Missing token", "AUTH_MISSING", {
+			hint: "The Authorization header was `Bearer ` with nothing after it, which is what an unset variable expands to.",
+		});
 	}
 
 	// Deliberately narrow: this catch echoes the thrown message to the caller,
@@ -148,7 +227,7 @@ export const oidcAuth: MiddlewareHandler<{
 		payload = await validateOIDCToken(token, c.env);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Invalid token";
-		return unauthorized(c, message, "AUTH_INVALID");
+		return unauthorized(c, message, "AUTH_INVALID", { hint: tokenHint(message, c.env) });
 	}
 
 	// Authentication is not authorization. A verified token only proves that some
@@ -176,8 +255,15 @@ export const oidcAuth: MiddlewareHandler<{
 		// the row exists — but the operator gets to tell them apart. Reuse of a
 		// revoked credential is an incident; an unknown subject on a shared issuer
 		// is background traffic.
+		//
+		// `requestId` on all three: the 401 hands the caller an id and the response
+		// deliberately does not say which of the three it was, so the id is the
+		// operator's only route from a pasted CI log to the reason. Without it here
+		// that route dead-ended — the id reached `audit_logs` on the revoked path
+		// alone, and the two arms that write no row were unfindable by it.
 		if (resolution.status === "revoked") {
 			logger.warn("Revoked OIDC trust presented", {
+				requestId,
 				issuer: payload.iss,
 				subject: payload.sub,
 				subjectId: resolution.id,
@@ -186,6 +272,7 @@ export const oidcAuth: MiddlewareHandler<{
 			});
 		} else if (resolution.status === "expired") {
 			logger.warn("Expired OIDC trust presented", {
+				requestId,
 				issuer: payload.iss,
 				subject: payload.sub,
 				subjectId: resolution.id,
@@ -194,8 +281,11 @@ export const oidcAuth: MiddlewareHandler<{
 			});
 		} else {
 			logger.warn("Rejected untrusted OIDC subject", {
+				requestId,
 				issuer: payload.iss,
 				subject: payload.sub,
+				issuerRuleCount: resolution.issuerRuleCount,
+				activePrefixes: resolution.activePrefixes,
 			});
 		}
 		// `unknown` gets no audit_logs row: that arm is reachable by anyone holding
@@ -217,7 +307,19 @@ export const oidcAuth: MiddlewareHandler<{
 			await recordRevokedReuse(c, requestId, payload, resolution);
 		}
 
-		return unauthorized(c, "Subject is not trusted for signing", "AUTH_INVALID");
+		// Its own code, not AUTH_INVALID. The token is fine; the identity it proves
+		// is not authorized, and those two take opposite fixes — regenerate the
+		// credential versus edit the trust list. One code for both is what sends a
+		// caller round the first loop for a problem only the second one solves.
+		//
+		// `subject` is echoed because it is the fact the caller needs and the one
+		// thing here that discloses nothing: it arrived in a token they hold and
+		// already signed. Withholding it only meant re-running the workflow with a
+		// debug step to print the claim the refusal was about.
+		return unauthorized(c, "Subject is not trusted for signing", "AUTH_SUBJECT_UNTRUSTED", {
+			subject: payload.sub,
+			hint: untrustedSubjectHint(payload.iss, resolution, c.env),
+		});
 	}
 
 	const policy = resolution.policy;
@@ -274,7 +376,9 @@ export const adminAuth: MiddlewareHandler<{
 	const authHeader = c.req.header("Authorization");
 
 	if (!authHeader?.startsWith("Bearer ")) {
-		return unauthorized(c, "Missing authorization header", "AUTH_MISSING");
+		return unauthorized(c, "Missing authorization header", "AUTH_MISSING", {
+			hint: "Admin routes take `Authorization: Bearer <ADMIN_TOKEN>`.",
+		});
 	}
 
 	const token = authHeader.slice(7);
@@ -285,13 +389,17 @@ export const adminAuth: MiddlewareHandler<{
 	// An empty token is not a credential the service refused; it is no
 	// credential at all.
 	if (!token) {
-		return unauthorized(c, "Missing token", "AUTH_MISSING");
+		return unauthorized(c, "Missing token", "AUTH_MISSING", {
+			hint: "The Authorization header was `Bearer ` with nothing after it, which is what an unset variable expands to.",
+		});
 	}
 
 	// Use constant-time comparison to prevent timing attacks
 	const isValid = await timingSafeEqual(token, c.env.ADMIN_TOKEN);
 	if (!isValid) {
-		return unauthorized(c, "Invalid admin token", "AUTH_INVALID");
+		return unauthorized(c, "Invalid admin token", "AUTH_INVALID", {
+			hint: "The bearer did not match this deployment's ADMIN_TOKEN secret. Rotate it with `wrangler secret put ADMIN_TOKEN` if it has been lost.",
+		});
 	}
 
 	return next();

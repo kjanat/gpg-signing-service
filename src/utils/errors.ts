@@ -14,13 +14,15 @@ interface ErrorOptions {
 	status?: ContentfulStatusCode;
 	requestId?: string;
 	context?: Record<string, unknown>;
+	/** What the caller should change, in prose. Rendered on its own line by the CLI. */
+	hint?: string;
 }
 
 /**
  * Standardized error response
  */
 export function errorResponse(c: Context, message: string, options: ErrorOptions) {
-	const { code, status = HTTP.InternalServerError, requestId, context } = options;
+	const { code, status = HTTP.InternalServerError, requestId, context, hint } = options;
 
 	// Log the error
 	logger.error(message, undefined, {
@@ -30,9 +32,14 @@ export function errorResponse(c: Context, message: string, options: ErrorOptions
 		...context,
 	});
 
-	// Return standardized response
-	return c.json({ error: message, code, ...(requestId && { requestId }) }, status);
+	// Return standardized response. `docs` is not set here: `errorDocs` fills it
+	// in for every coded JSON error on the way out, including the ones built by
+	// hand elsewhere, so writing it twice would only be a second place to forget.
+	return c.json({ error: message, code, ...(requestId && { requestId }), ...(hint && { hint }) }, status);
 }
+
+/** The codes a 401 may carry. */
+export type UnauthorizedCode = Extract<ErrorCode, "AUTH_MISSING" | "AUTH_INVALID" | "AUTH_SUBJECT_UNTRUSTED">;
 
 /**
  * The service's single 401.
@@ -57,12 +64,31 @@ export function errorResponse(c: Context, message: string, options: ErrorOptions
  * @param c - Request context
  * @param message - What the caller may be told; never leaks stored state
  * @param code - AUTH_MISSING when no usable credential was presented,
- *   AUTH_INVALID when one was and it was refused
+ *   AUTH_INVALID when one was and the *credential* was refused,
+ *   AUTH_SUBJECT_UNTRUSTED when the credential verified and the identity it
+ *   proves holds no active trust
+ * @param details - Extra fields for the envelope. `hint` says what to change;
+ *   `subject` echoes the `sub` the caller presented, which is only ever a value
+ *   it already holds in a signed token.
  */
-export function unauthorized(c: Context, message: string, code: "AUTH_MISSING" | "AUTH_INVALID") {
+export function unauthorized(
+	c: Context,
+	message: string,
+	code: UnauthorizedCode,
+	details: { hint?: string | undefined; subject?: string | undefined } = {},
+) {
 	const requestId = c.get("requestId");
 	c.header("WWW-Authenticate", WWW_AUTHENTICATE);
-	return c.json({ error: message, code, ...(requestId && { requestId }) }, HTTP.Unauthorized);
+	return c.json(
+		{
+			error: message,
+			code,
+			...(requestId && { requestId }),
+			...(details.subject && { subject: details.subject }),
+			...(details.hint && { hint: details.hint }),
+		},
+		HTTP.Unauthorized,
+	);
 }
 
 /**

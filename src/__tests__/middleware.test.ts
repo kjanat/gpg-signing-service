@@ -298,12 +298,136 @@ describe("Security Headers Middleware", () => {
 			});
 
 			expect(response.status).toBe(401);
-			const body = await parseJson<{ error: string; code: string }>(response);
+			const body = await parseJson<{ error: string; code: string; subject: string; hint: string; docs: string }>(
+				response,
+			);
 			expect(body.error).toContain("not trusted");
-			expect(body.code).toBe("AUTH_INVALID");
+			// Its own code: the token is fine, the identity is not authorized, and
+			// the fix is to the trust list rather than to the credential.
+			expect(body.code).toBe("AUTH_SUBJECT_UNTRUSTED");
+			// The subject the caller presented, echoed back. It came from a token
+			// they hold, so this discloses nothing — and without it the only way to
+			// see which claim was refused was another workflow run.
+			expect(body.subject).toBe("repo:attacker/evil:ref:refs/heads/main");
+			// The table was cleared, so the hint has to say the list is empty rather
+			// than imply this particular subject was the problem.
+			expect(body.hint).toContain("No trust rules are configured");
+			// Short enough to survive a wrapped, truncated CI log, and derived from
+			// the origin the request arrived on so a fresh deployment needs no
+			// configuration to emit a working one.
+			expect(body.docs).toBe("http://localhost/e/AUTH_SUBJECT_UNTRUSTED");
+			// The prefixes are not disclosed unless the deployment opts in.
+			expect(body.hint).not.toContain("repo:");
 
 			// Restore the fixture for the rest of the suite.
 			await seedTrustedSubjects(env.AUDIT_DB);
+		});
+
+		it("separates an unconfigured trust list from a subject that misses a configured one", async () => {
+			// The two are opposite problems with the same old message. Nothing
+			// configured means the service was never set up for this issuer;
+			// something configured means this particular ref or repository is not
+			// the one that was authorized, which is where to look next.
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await seedTrustedSubjects(env.AUDIT_DB);
+
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "near-miss-key";
+			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const token = await new jose.SignJWT({
+				iss: issuer,
+				sub: "repo:test/other-svc:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "ES256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(401);
+			const payload = await parseJson<{ code: string; hint: string; subject: string }>(response);
+			expect(payload.code).toBe("AUTH_SUBJECT_UNTRUSTED");
+			expect(payload.subject).toBe("repo:test/other-svc:ref:refs/heads/main");
+			expect(payload.hint).toContain("No active trust rule matches this subject");
+			expect(payload.hint).toContain("rule(s) exist for issuer");
+			// Which prefixes those are is not free to hand out: this issuer is
+			// shared with every repository on GitHub Actions, so anyone who can run
+			// a workflow could read the list of everyone who signs here.
+			expect(payload.hint).not.toContain("repo:test/svc");
+		});
+
+		it("names the trusted prefixes only where the deployment opted in", async () => {
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await seedTrustedSubjects(env.AUDIT_DB);
+
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "disclosing-key";
+			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const token = await new jose.SignJWT({
+				iss: issuer,
+				sub: "repo:test/other-svc:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "ES256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const response = await makeRequest(
+				"/sign",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{ DISCLOSE_TRUST_PATTERNS: "true" },
+			);
+
+			const payload = await parseJson<{ hint: string }>(response);
+			expect(payload.hint).toContain("Active prefixes for this issuer:");
+			expect(payload.hint).toContain("repo:test/svc");
+		});
+
+		it("says what to change when the credential itself was refused", async () => {
+			// A token problem and an authorization problem now carry different
+			// codes, and the token problem's hint names the knob rather than the
+			// symptom — "Invalid token audience" does not tell anyone where the
+			// audience is set.
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await seedTrustedSubjects(env.AUDIT_DB);
+
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "wrong-audience-key";
+			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const token = await new jose.SignJWT({
+				iss: issuer,
+				sub: "repo:test/svc:ref:refs/heads/main",
+				aud: "some-other-service",
+			})
+				.setProtectedHeader({ alg: "ES256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(401);
+			const payload = await parseJson<{ code: string; hint: string; docs: string }>(response);
+			expect(payload.code).toBe("AUTH_INVALID");
+			expect(payload.hint).toContain("gpg-signing-service");
+			expect(payload.docs).toBe("http://localhost/e/AUTH_INVALID");
 		});
 
 		it("distinguishes a revoked trust still in use from an unknown subject", async () => {
@@ -347,17 +471,20 @@ describe("Security Headers Middleware", () => {
 			// The response must not differ from the stranger's.
 			expect(await parseJson<{ error: string }>(reused)).toMatchObject({
 				error: "Subject is not trusted for signing",
-				code: "AUTH_INVALID",
+				code: "AUTH_SUBJECT_UNTRUSTED",
 			});
 			expect(warnSpy).toHaveBeenCalledWith(
 				"Revoked OIDC trust presented",
-				expect.objectContaining({ subjectId, subjectPolicy: "ci/killed" }),
+				// `requestId` too: the response deliberately does not say which of
+				// the three refusals it was, so the id it hands back is the only
+				// route from a pasted CI log to the reason.
+				expect.objectContaining({ subjectId, subjectPolicy: "ci/killed", requestId: expect.any(String) }),
 			);
 			// A killed credential still in use outlives the log store's retention,
 			// so it gets a durable row too — unlike the unknown-subject arm, which
 			// anyone can trigger and which stays log-only.
 			const reuseEvents = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
-			const recorded = reuseEvents.find((event) => event.errorCode === "AUTH_INVALID");
+			const recorded = reuseEvents.find((event) => event.errorCode === "AUTH_SUBJECT_UNTRUSTED");
 			expect(recorded).toBeDefined();
 			expect(JSON.parse(recorded?.metadata ?? "{}")).toMatchObject({
 				reason: "revoked_trust_presented",
@@ -373,7 +500,13 @@ describe("Security Headers Middleware", () => {
 				body: "commit data",
 			});
 			expect(stranger.status).toBe(401);
-			expect(warnSpy).toHaveBeenCalledWith("Rejected untrusted OIDC subject", expect.any(Object));
+			expect(warnSpy).toHaveBeenCalledWith(
+				"Rejected untrusted OIDC subject",
+				expect.objectContaining({
+					requestId: expect.any(String),
+					subject: "repo:some-rando/thing:ref:refs/heads/main",
+				}),
+			);
 			expect(warnSpy).not.toHaveBeenCalledWith("Revoked OIDC trust presented", expect.any(Object));
 			// No durable row for the unknown arm: anyone holding any token the
 			// issuer will mint can reach it.
@@ -427,7 +560,7 @@ describe("Security Headers Middleware", () => {
 			expect(response.status).toBe(401);
 
 			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
-			const recorded = events.find((event) => event.errorCode === "AUTH_INVALID");
+			const recorded = events.find((event) => event.errorCode === "AUTH_SUBJECT_UNTRUSTED");
 			expect(recorded).toBeDefined();
 			expect(recorded?.requestId).not.toBe(forged);
 			// Replaced with a real one rather than dropped, so the row still
@@ -447,7 +580,7 @@ describe("Security Headers Middleware", () => {
 			const second = vi
 				.mocked(logAuditEvent)
 				.mock.calls.map(([, event]) => event)
-				.find((event) => event.errorCode === "AUTH_INVALID");
+				.find((event) => event.errorCode === "AUTH_SUBJECT_UNTRUSTED");
 			expect(second?.requestId).toBe(supplied);
 
 			await seedTrustedSubjects(env.AUDIT_DB);

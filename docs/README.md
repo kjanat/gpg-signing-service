@@ -17,6 +17,7 @@ implementation disagree.
 | Understand the trust boundary              | [Security model](security-model.md)   |
 | Look up an endpoint                        | [API guide](api.md)                   |
 | Diagnose a failure                         | [Troubleshooting](troubleshooting.md) |
+| Look up an error code                      | [Error reference](errors.md)          |
 
 ## Components
 

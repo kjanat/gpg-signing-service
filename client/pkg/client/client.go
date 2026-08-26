@@ -114,16 +114,16 @@ func (c *Client) Health(ctx context.Context) (*HealthStatus, error) {
 
 	if resp.JSON503 != nil {
 		return &HealthStatus{
-				Status:     string(resp.JSON503.Status),
-				Version:    resp.JSON503.Version,
-				Timestamp:  resp.JSON503.Timestamp,
-				KeyStorage: resp.JSON503.Checks.KeyStorage,
-				Database:   resp.JSON503.Checks.Database,
-			}, &ServiceError{
-				Code:       ErrCodeDegraded,
-				Message:    "service degraded",
-				StatusCode: 503,
-			}
+			Status:     string(resp.JSON503.Status),
+			Version:    resp.JSON503.Version,
+			Timestamp:  resp.JSON503.Timestamp,
+			KeyStorage: resp.JSON503.Checks.KeyStorage,
+			Database:   resp.JSON503.Checks.Database,
+		}, &ServiceError{
+			Code:       ErrCodeDegraded,
+			Message:    "service degraded",
+			StatusCode: 503,
+		}
 	}
 
 	return nil, newStatusError(resp.StatusCode(), resp.Body, resp.HTTPResponse.Header)
@@ -540,8 +540,9 @@ func mapSignResponseError(resp *api.PostSignResponse) error {
 	switch {
 	case resp.JSON400 != nil:
 		return &ValidationError{
-			Code:    string(resp.JSON400.Code),
-			Message: resp.JSON400.Error,
+			Guidance: guidanceFromResponse(resp.JSON400),
+			Code:     string(resp.JSON400.Code),
+			Message:  resp.JSON400.Error,
 		}
 	case resp.JSON401 != nil:
 		// The refusal a first-time caller actually hits: an unregistered subject
@@ -554,6 +555,7 @@ func mapSignResponseError(resp *api.PostSignResponse) error {
 		// code", discarding both the server's message and the KEY_NOT_ALLOWED code
 		// that exists so a scope denial is distinguishable from any other refusal.
 		e := &ServiceError{
+			Guidance:   guidanceFromResponse(resp.JSON403),
 			Code:       string(resp.JSON403.Code),
 			Message:    resp.JSON403.Error,
 			StatusCode: 403,
@@ -564,12 +566,17 @@ func mapSignResponseError(resp *api.PostSignResponse) error {
 		return e
 	case resp.JSON404 != nil:
 		return &ServiceError{
+			Guidance:   guidanceFromResponse(resp.JSON404),
 			Code:       string(resp.JSON404.Code),
 			Message:    resp.JSON404.Error,
 			StatusCode: 404,
 		}
 	case resp.JSON429 != nil:
 		return &RateLimitError{
+			// A different envelope type — RateLimitError declares `retryAfter` and
+			// no `requestId` — so the shared reader cannot take it, but the two
+			// fields a caller acts on are spelled the same way in both.
+			Guidance:   Guidance{Hint: deref(resp.JSON429.Hint), Docs: deref(resp.JSON429.Docs)},
 			Message:    resp.JSON429.Error,
 			RetryAfter: time.Duration(resp.JSON429.RetryAfter) * time.Second,
 		}
@@ -607,6 +614,7 @@ func mapServerError(resp *api.PostSignResponse) *ServiceError {
 	}
 
 	serviceErr := &ServiceError{
+		Guidance:   guidanceFromResponse(errResp),
 		Code:       string(errResp.Code),
 		Message:    errResp.Error,
 		StatusCode: statusCode,

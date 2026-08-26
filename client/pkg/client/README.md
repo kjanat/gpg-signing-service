@@ -189,7 +189,7 @@ typed response; anything the document does not describe is read from the error
 envelope directly. A `401` on `Sign` therefore reads
 
 ```text
-authentication failed: AUTH_INVALID: Subject is not trusted for signing (request 0e2a8f3c-6b41-4d7e-9a55-1c8d0f6b2e77)
+authentication failed: AUTH_SUBJECT_UNTRUSTED: Subject is not trusted for signing (request 0e2a8f3c-6b41-4d7e-9a55-1c8d0f6b2e77)
 ```
 
 rather than a bare status number — that particular message means the credential

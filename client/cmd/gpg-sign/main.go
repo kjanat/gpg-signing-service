@@ -42,6 +42,10 @@ func execute() int {
 	defer stop()
 
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
+		// Cobra has already printed the one-line form. Everything the service sent
+		// alongside it — which subject was refused, what to change, where to read
+		// about the code — goes underneath, one field per line.
+		reportFailure(rootCmd.ErrOrStderr(), err)
 		return 1
 	}
 	return 0

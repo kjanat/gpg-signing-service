@@ -21,3 +21,27 @@ declare namespace Cloudflare {
 		KEY_ID: string;
 	}
 }
+
+// Optional vars a suite overrides per request. `wrangler types` only writes the
+// keys wrangler.toml declares, and these are deliberately absent from it — they
+// are opt-in per deployment — so the global `Env` the tests build overrides
+// against has to be told about them here.
+interface Env {
+	/** Public origin the `docs` link on an error response is built from. */
+	SERVICE_BASE_URL?: string;
+
+	/** Document that `/e/:code` redirects into. */
+	ERROR_DOCS_URL?: string;
+
+	/** "true" to name the trusted subject prefixes in an untrusted-subject 401. */
+	DISCLOSE_TRUST_PATTERNS?: string;
+}
+
+// Vite's `?raw` suffix, used by the error-docs suite to read `docs/errors.md`.
+// The Workers pool has no filesystem, so inlining the file at build time is the
+// only way a test can check that every code the enum declares has a section to
+// link to.
+declare module "*.md?raw" {
+	const content: string;
+	export default content;
+}

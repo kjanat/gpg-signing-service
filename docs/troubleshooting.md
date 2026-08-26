@@ -1,5 +1,23 @@
 # Troubleshooting
 
+## Start with the error itself
+
+Every error the service returns names its own documentation:
+
+```json
+{
+  "error": "…",
+  "code": "AUTH_SUBJECT_UNTRUSTED",
+  "hint": "…",
+  "docs": "https://gpg.kajkowalski.nl/e/AUTH_SUBJECT_UNTRUSTED"
+}
+```
+
+Open the `docs` link, or look the `code` up in the
+[error reference](errors.md) — every code has a section there naming the fix.
+This page covers the failures that are not a single error code: installer
+problems, environment issues, and the checks worth running first.
+
 ## Start with health and the contract
 
 ```bash
@@ -39,8 +57,8 @@ The likely cause on a first call is authorization, not authentication: a
 verified token still needs a trusted subject. Check all of:
 
 - the calling repository's `sub` matches a live row in `GET /admin/subjects` —
-  a body of `Subject is not trusted for signing` means the credential verified
-  and nothing trusts it, and an empty table denies everyone (see
+  a code of `AUTH_SUBJECT_UNTRUSTED` means the credential verified and nothing
+  trusts it, and an empty table denies everyone (see
   [trusted OIDC subjects](authentication.md#trusted-oidc-subjects));
 - the job grants `id-token: write`;
 - the token was requested with audience `gpg-signing-service`, or the configured
@@ -50,10 +68,20 @@ verified token still needs a trusted subject. Check all of:
 - the token has not expired; and
 - discovery and JWKS endpoints are reachable.
 
-The response body separates these: `AUTH_MISSING` is an absent header,
-`Issuer not allowed: <iss>` an unlisted issuer, `Subject is not trusted for
-signing` an unregistered caller, and any other `AUTH_INVALID` a verification
-failure. `gpg-sign` prints that body, so read it before working down the list.
+The `code` separates these, and the split matters because the fixes do:
+
+- `AUTH_MISSING` — no usable credential reached the service.
+- `AUTH_INVALID` — a credential was presented and **the credential** was
+  refused: unlisted issuer, wrong audience, expired, bad signature. Fix the
+  token.
+- [`AUTH_SUBJECT_UNTRUSTED`](errors.md#auth_subject_untrusted) — the token
+  verified and **the identity is not authorized**. Nothing about the workflow's
+  OIDC setup will change this; add a trust rule. The response echoes the
+  `subject` it refused, which is the value to compare against
+  `GET /admin/subjects`.
+
+`gpg-sign` prints the message, the subject, the hint and the docs link on
+separate lines, so read those before working down the list.
 
 Use `core.getIDToken("gpg-signing-service")`. Raw endpoint responses store the
 JWT in `.value`, not `.token`.
@@ -61,7 +89,8 @@ JWT in `.value`, not `.token`.
 ### `401` with GitLab
 
 Check the project's `sub` matches a live row in `GET /admin/subjects` first;
-`Subject is not trusted for signing` is a verified token that nothing trusts.
+`AUTH_SUBJECT_UNTRUSTED` is a verified token that nothing trusts, and the
+response tells you which `subject` it refused.
 
 Then declare `id_tokens` and set `aud` to the configured expected audience.
 Legacy `CI_JOB_JWT` examples do not establish that audience.
@@ -100,6 +129,24 @@ Key IDs must be exactly 16 hexadecimal characters. Names such as
 
 The service supports detached PKCS#7, but the current high-level CLI and Go
 wrapper require PGP response markers. Use the HTTP API or generated raw client.
+
+### `no verified commit in HEAD; pass base explicitly`
+
+`sign-commit` could not work out where the range to sign should start, so it
+refused rather than guessing — guessing low rewrites history nobody asked it to
+touch.
+
+It happens when no `--base` was given, you are on the default branch, and the
+backward scan found no commit this key already verifies. That is expected the
+first time a repository signs with a key, and on any branch older than the key.
+
+Pass the bound explicitly: `--base` is the **exclusive** lower bound, so
+`--base=origin/master` signs everything after the branch point and
+`--base=<sha>` signs everything after that commit. See
+[what `--base` is](cli.md#what---base-is).
+
+This failure ends the run before any request is made. A `401` later in the same
+job is a separate problem, not a consequence of this one.
 
 ### Signature file does not make the commit signed
 

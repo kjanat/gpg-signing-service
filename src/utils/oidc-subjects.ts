@@ -41,9 +41,33 @@ export interface OIDCSubjectPolicy {
  */
 export type OIDCSubjectResolution =
 	| { status: "trusted"; policy: OIDCSubjectPolicy }
-	| { status: "unknown" }
-	| { status: "revoked"; id: string; name: string; revokedAt: string }
-	| { status: "expired"; id: string; name: string; expiresAt: string };
+	| ({ status: "unknown" } & RefusalContext)
+	| ({ status: "revoked"; id: string; name: string; revokedAt: string } & RefusalContext)
+	| ({ status: "expired"; id: string; name: string; expiresAt: string } & RefusalContext);
+
+/**
+ * What was checked, carried on every refusal so the 401 can say more than "no".
+ *
+ * A caller staring at `Subject is not trusted for signing` cannot tell an empty
+ * trust list from a full one that its subject misses — and those are opposite
+ * problems: the first is "the service was never configured", the second is
+ * "this ref/repo is not the one that was authorized". The counts separate them
+ * without naming anything.
+ *
+ * `activePrefixes` is the full answer, and the middleware only puts it in a
+ * response when the deployment opts in: both issuers this service accepts are
+ * shared with every repository on their platform, so anyone who can run a
+ * workflow can obtain a verified token and read whatever the refusal says. That
+ * makes the list of trusted prefixes — the org and repository names of everyone
+ * who signs here — readable by strangers. Operators who run a private issuer,
+ * or who consider that list public anyway, can turn it on.
+ */
+export interface RefusalContext {
+	/** How many rows exist for this issuer, live or not. */
+	issuerRuleCount: number;
+	/** Prefixes for this issuer that could authorize someone right now. */
+	activePrefixes: string[];
+}
 
 /** A stored subject as returned to admins. */
 export interface OIDCSubjectRecord {
@@ -196,6 +220,11 @@ export async function resolveOIDCSubject(db: D1Database, issuer: string, sub: st
 	const isLive = (candidate: OIDCSubjectRow) =>
 		!candidate.revoked_at && (!candidate.expires_at || Date.parse(candidate.expires_at) >= now);
 
+	const context: RefusalContext = {
+		issuerRuleCount: results.length,
+		activePrefixes: results.filter(isLive).map((candidate) => candidate.subject_prefix),
+	};
+
 	const row = matches.find(isLive);
 	if (!row) {
 		// No live row. Report the most specific dead match so the log names the
@@ -203,13 +232,13 @@ export async function resolveOIDCSubject(db: D1Database, issuer: string, sub: st
 		// expired one: expiry is routine, revocation was a decision.
 		const revoked = matches.find((candidate) => candidate.revoked_at);
 		if (revoked?.revoked_at) {
-			return { status: "revoked", id: revoked.id, name: revoked.name, revokedAt: revoked.revoked_at };
+			return { status: "revoked", id: revoked.id, name: revoked.name, revokedAt: revoked.revoked_at, ...context };
 		}
 		const expired = matches[0];
 		if (expired?.expires_at) {
-			return { status: "expired", id: expired.id, name: expired.name, expiresAt: expired.expires_at };
+			return { status: "expired", id: expired.id, name: expired.name, expiresAt: expired.expires_at, ...context };
 		}
-		return { status: "unknown" };
+		return { status: "unknown", ...context };
 	}
 
 	// Best-effort usage stamp, deferred rather than awaited: this sits on the
