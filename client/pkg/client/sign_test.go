@@ -586,6 +586,44 @@ func TestSignRetriesRealStatusResponses(t *testing.T) {
 			wantRequests: 2,
 		},
 		{
+			// 502 and 504 are the two arms of retryStatusSignal's 5xx switch
+			// that no other case reaches. Without them the switch can lose
+			// either one and nothing in the suite notices.
+			name:         "a bad gateway is retried and then succeeds",
+			failures:     1,
+			status:       http.StatusBadGateway,
+			body:         `{"error":"bad gateway","code":"INTERNAL_ERROR"}`,
+			wantRequests: 2,
+		},
+		{
+			name:         "a gateway timeout is retried and then succeeds",
+			failures:     1,
+			status:       http.StatusGatewayTimeout,
+			body:         `{"error":"gateway timeout","code":"INTERNAL_ERROR"}`,
+			wantRequests: 2,
+		},
+		{
+			// The narrowing this change argues for: a 5xx describing what the
+			// server will never do is not a state it may be out of next time,
+			// so re-asking only spends the caller's budget. Asserted here
+			// because the README and the 5xx switch both promise it and
+			// neither was pinned.
+			name:         "a 501 is not retried",
+			failures:     99,
+			status:       http.StatusNotImplemented,
+			body:         `{"error":"not implemented","code":"INTERNAL_ERROR"}`,
+			wantRequests: 1,
+			wantErr:      true,
+		},
+		{
+			name:         "a 505 is not retried",
+			failures:     99,
+			status:       http.StatusHTTPVersionNotSupported,
+			body:         `{"error":"version not supported","code":"INTERNAL_ERROR"}`,
+			wantRequests: 1,
+			wantErr:      true,
+		},
+		{
 			name:         "retries are bounded by maxRetries",
 			failures:     99,
 			status:       http.StatusInternalServerError,
