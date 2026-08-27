@@ -46,6 +46,22 @@ export const ErrorCodeSchema = z
 		 * change something, and there is nothing on their side to change.
 		 */
 		"SERVICE_DEGRADED",
+		/**
+		 * The same 503 shape as SERVICE_DEGRADED — this deployment could not
+		 * decide the request, and nothing on the caller's side is wrong — but the
+		 * cause is this deployment's own configuration, so it will answer
+		 * identically forever. An `ALLOWED_ISSUERS` entry whose discovery URL the
+		 * SSRF guard refuses to fetch is the whole of it today.
+		 *
+		 * A separate code because retryability is the only thing a caller does
+		 * with a 503, and the two answers are opposite. The absence of a
+		 * `Retry-After` was carrying that distinction before, which no client
+		 * reads as "stop": the Go retrier tries any 5xx, so omitting the header
+		 * only removed the interval and left the permanent fault being attempted
+		 * four times. A code says it in a value, where `shouldRetry` and a
+		 * `case` in a shell script can both branch on it.
+		 */
+		"SERVICE_MISCONFIGURED",
 	])
 	.openapi("ErrorCode");
 

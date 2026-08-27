@@ -69,8 +69,10 @@ verified token still needs a trusted subject. Check all of:
 
 Discovery and JWKS reachability is _not_ on that list any more: a deployment
 that cannot reach the issuer now answers
-[`503 SERVICE_DEGRADED`](errors.md#service_degraded), not a `401`. If you are
-reading a `401`, the issuer was reached.
+[`503 SERVICE_DEGRADED`](errors.md#service_degraded) — or
+[`SERVICE_MISCONFIGURED`](errors.md#service_misconfigured), when the URL is one
+it refuses to fetch at all — not a `401`. If you are reading a `401`, the issuer
+was reached.
 
 The `code` separates these, and the split matters because the fixes do:
 
@@ -264,10 +266,16 @@ fix:
   `401 AUTH_INVALID`, which sent people to rotate a perfectly good token and
   told every Go client not to retry the one auth failure a retry fixes.
 
-  The exception is `SSRF protection: …`, which is the same code with no
-  `Retry-After`: an entry in `ALLOWED_ISSUERS` points at a URL this deployment
-  refuses to fetch, and it will answer identically forever. That one is the
-  operator's.
+- **[`SERVICE_MISCONFIGURED`](errors.md#service_misconfigured)** — the same
+  "not yours to fix" with the opposite answer. An entry in `ALLOWED_ISSUERS`
+  points at a URL this deployment refuses to fetch — a private address, a
+  metadata endpoint — so it will answer identically forever and carries no
+  `Retry-After`. That one is the operator's, and clients stop on it rather than
+  retrying.
+
+  This was `SERVICE_DEGRADED` with the header left off, which sounds like a
+  signal and is not one: nothing reads a missing `Retry-After` as "stop", so the
+  permanent fault was retried the full four times and only lost the interval.
 
 - **`RATE_LIMIT_ERROR`** — the limiter itself was unreachable, and the service
   refused rather than signing unmetered. Check the Durable Object.

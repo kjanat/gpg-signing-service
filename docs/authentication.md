@@ -332,6 +332,11 @@ out, a `D1` that was briefly away — and those answer
 instead. Nothing about the credential is implicated, and it is the one refusal
 on this path worth repeating.
 
+A URL the SSRF guard refuses to fetch is the exception: the deployment cannot
+reach that issuer and never will, so it answers
+[`503 SERVICE_MISCONFIGURED`](errors.md#service_misconfigured) with no
+`Retry-After`. Still not the credential's fault; still not worth repeating.
+
 ### GitHub Actions
 
 The job needs `id-token: write`. Request the audience expected by the service:

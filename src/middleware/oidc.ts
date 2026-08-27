@@ -6,7 +6,7 @@ import { createIdentity, HEADERS, HTTP, markClaimsAsValidated, TIME } from "#typ
 import { logAuditEvent } from "#utils/audit";
 import { CACHE_TTL } from "#utils/constants";
 import { fetchRateLimiter } from "#utils/durable-objects";
-import { serviceDegraded, unauthorized } from "#utils/errors";
+import { serviceDegraded, serviceMisconfigured, unauthorized } from "#utils/errors";
 import { scheduleBackgroundTask } from "#utils/execution";
 import { fetchWithTimeout } from "#utils/fetch";
 import { logger } from "#utils/logger";
@@ -48,9 +48,14 @@ const REVOKED_REUSE_METER = "oidc-revoked-reuse";
  * issuer clears on its own and is worth another attempt; a URL blocked by SSRF
  * validation is this deployment's `ALLOWED_ISSUERS` pointing somewhere it will
  * never fetch from, which no amount of waiting resolves. Both are 503 — neither
- * is the caller's to fix — but only the first gets a `Retry-After`, because
- * telling a caller to try again for a fault that is permanent until an operator
- * edits a variable is just a slower failure.
+ * is the caller's to fix — and they carry different codes: `SERVICE_DEGRADED`
+ * with a `Retry-After`, `SERVICE_MISCONFIGURED` without one, because telling a
+ * caller to try again for a fault that is permanent until an operator edits a
+ * variable is just a slower failure.
+ *
+ * The code is what carries that, and the missing `Retry-After` deliberately is
+ * not: a header's absence is not a channel any client reads as "stop", so
+ * expressing it that way left the permanent fault being attempted four times.
  */
 export class IssuerUnavailableError extends Error {
 	constructor(
@@ -208,7 +213,9 @@ function tokenHint(message: string, env: Env): string | undefined {
  * Split by `transient` because the two have opposite audiences. A timeout is
  * the caller's to wait out and nobody's to fix; a blocked URL is an operator's
  * to correct and waiting will not help. Saying "retry" for the second is how a
- * pipeline burns its retry budget on a variable that is simply wrong.
+ * pipeline burns its retry budget on a variable that is simply wrong — so the
+ * second one says outright that the answer will not change, which is the part
+ * a human reading a CI log acts on. The `code` says the same to a client.
  *
  * @param error - The failure to reach the issuer
  */
@@ -216,7 +223,7 @@ function issuerUnavailableHint(error: IssuerUnavailableError): string {
 	if (error.transient) {
 		return "This deployment could not reach the issuer to verify the token, so it could not decide the request either way. Nothing about the token is wrong and nothing in the workflow needs changing — wait the interval in `Retry-After` and call again. If it persists, check the issuer's status and this deployment's egress.";
 	}
-	return "This deployment refuses to fetch from the URL that issuer's discovery points at, so no token from it can ever be verified here. That is a deployment fault, not a credential one: the operator should check the entry in `ALLOWED_ISSUERS` resolves to a public host.";
+	return "This deployment refuses to fetch from the URL that issuer's discovery points at, so no token from it can ever be verified here. Retrying will get this same answer every time. That is a deployment fault, not a credential one: the operator should check the entry in `ALLOWED_ISSUERS` resolves to a public host.";
 }
 
 /**
@@ -330,9 +337,17 @@ export const oidcAuth: MiddlewareHandler<{
 		// while handing the Go client the one code its retry policy refuses to
 		// retry, for the one auth failure a retry actually fixes.
 		if (error instanceof IssuerUnavailableError) {
+			// The two halves of `transient` get two codes, not one code and a
+			// missing header. Retryability is the only thing a caller does with a
+			// 503, and no client reads the absence of `Retry-After` as "stop" — the
+			// Go retrier attempts any 5xx — so expressing "permanent" that way had
+			// the SSRF fault tried four times and only cost it the interval.
+			if (!error.transient) {
+				return serviceMisconfigured(c, error.message, { hint: issuerUnavailableHint(error) });
+			}
 			return serviceDegraded(c, error.message, {
 				hint: issuerUnavailableHint(error),
-				...(error.transient && { retryAfter: ISSUER_RETRY_AFTER_SECONDS }),
+				retryAfter: ISSUER_RETRY_AFTER_SECONDS,
 			});
 		}
 		const message = error instanceof Error ? error.message : "Invalid token";

@@ -1,12 +1,14 @@
 /** biome-ignore-all lint/suspicious/noExplicitAny: Is a test file */
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { Hono } from "hono";
 import * as openpgp from "openpgp";
 import { describe, expect, it, vi } from "vitest";
 import { KeyStorage } from "#durable-objects/key-storage";
 import { RateLimiter } from "#durable-objects/rate-limiter";
 import app from "#gpg-signing-service";
 import { logAuditEvent } from "#utils/audit";
+import { serviceMisconfigured } from "#utils/errors";
 import * as signingUtils from "#utils/signing";
 
 const parseJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
@@ -568,6 +570,27 @@ rxgkrugpagY=
 
 			const info = await signingUtils.parseAndValidateKey("armored-key");
 			expect(info.algorithm).toBe("Unknown(99)");
+		});
+
+		// The permanent 503 driven directly, without the requestId middleware and
+		// without a hint. Both are optional and neither is optional at the one
+		// place that calls it today, so the route tests reach only the shape where
+		// they are present — and a helper that throws on a missing requestId would
+		// turn an already-broken deployment into a 500 with no code at all.
+		it("builds a SERVICE_MISCONFIGURED body with nothing but a message", async () => {
+			const bare = new Hono();
+			bare.get("/", (c) => serviceMisconfigured(c, "SSRF protection: URL resolves to a private address"));
+
+			const response = await bare.request("/");
+
+			expect(response.status).toBe(503);
+			// No Retry-After, ever: there is no parameter for one. A caller handed
+			// both this code and an interval would have to guess which to believe.
+			expect(response.headers.get("Retry-After")).toBeNull();
+			expect(await parseJson<Record<string, unknown>>(response)).toEqual({
+				error: "SSRF protection: URL resolves to a private address",
+				code: "SERVICE_MISCONFIGURED",
+			});
 		});
 	});
 });

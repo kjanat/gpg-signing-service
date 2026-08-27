@@ -123,7 +123,8 @@
           "AUDIT_ERROR",
           "NOT_FOUND",
           "INTERNAL_ERROR",
-          "SERVICE_DEGRADED"
+          "SERVICE_DEGRADED",
+          "SERVICE_MISCONFIGURED"
         ]
       },
       "SignResponse": {

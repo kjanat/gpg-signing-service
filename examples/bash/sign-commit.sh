@@ -186,6 +186,21 @@ sign_commit() {
 				retry_count=$((retry_count + 1))
 				;;
 			503)
+				# Two different faults share this status, and the `code` is what
+				# tells them apart. SERVICE_MISCONFIGURED means the deployment's own
+				# configuration is what stopped the request — an ALLOWED_ISSUERS
+				# entry pointing at a URL it refuses to fetch — so it answers
+				# identically until an operator changes it and every retry is a
+				# slower failure. Branching on the code rather than on the absence
+				# of `Retry-After`: a missing header is not a signal, and reading it
+				# as one had this loop spend its whole budget here.
+				local degraded_code
+				degraded_code=$(jq -r '.code // empty' <<<"${body}" 2>/dev/null) || degraded_code=""
+				if [[ ${degraded_code} == "SERVICE_MISCONFIGURED" ]]; then
+					log_service_error "${http_code}" "${body}"
+					return 1
+				fi
+
 				# SERVICE_DEGRADED: the service could not reach something it needs
 				# — the issuer's JWKS, its authorization store — so nothing about
 				# this request was judged. It is the one refusal the service invites

@@ -262,21 +262,57 @@ is the only code in this reference a caller is invited to retry.
 | `Could not reach the JWKS at …`                 | Same, one hop further in.                                                                                                        |
 | `Failed to fetch JWKS from … (status)`          | The issuer answered its JWKS endpoint with a non-2xx.                                                                            |
 | `JWKS at … was not readable JSON`               | Same.                                                                                                                            |
-| `SSRF protection: …`                            | This deployment refuses to fetch that issuer's URL. **Not transient** — see below.                                               |
 | `Authorization store unavailable`               | The D1 lookup of the caller's trust failed — trusted subjects, or service tokens. Check `task db:migrate` and `gpg-sign health`. |
 
-Everything but the SSRF row carries a `Retry-After`, and the JWKS is cached for
-five minutes once it is read, so a fleet that all hit a blip together recovers
-together.
+Every row carries a `Retry-After`, and the JWKS is cached for five minutes once
+it is read, so a fleet that all hit a blip together recovers together.
 
-The SSRF row is the exception on purpose: it means an entry in this deployment's
-`ALLOWED_ISSUERS` points at a URL the service will not fetch — a private
-address, a metadata endpoint — so it answers identically forever and gets no
-`Retry-After`. That is an operator's to fix, not a caller's to wait out.
+A 503 that will **not** clear on its own is a different code —
+[`SERVICE_MISCONFIGURED`](#service_misconfigured) — rather than this one without
+a `Retry-After`. See there for why.
 
 These used to be answered `401 AUTH_INVALID`, which sent the caller to a table
 of seven token faults, none of which they had, and told every Go client not to
 retry.
+
+### SERVICE_MISCONFIGURED
+
+**503.** The same shape as [`SERVICE_DEGRADED`](#service_degraded) — this
+deployment could not decide the request, and nothing about the request is wrong
+— except that the cause is this deployment's own configuration, so **it will
+answer identically until an operator changes something**. No `Retry-After`, and
+retrying is not useful.
+
+| Message              | What failed                                                                  |
+| -------------------- | ---------------------------------------------------------------------------- |
+| `SSRF protection: …` | An entry in `ALLOWED_ISSUERS` points at a URL this service refuses to fetch. |
+
+The URL is refused because it resolves somewhere a signing service must not go:
+a private address, a loopback, a cloud metadata endpoint. It is checked before
+both the discovery fetch and the JWKS fetch, so either can raise it.
+
+For an operator:
+
+```bash
+# What this deployment thinks it accepts
+wrangler deployments status | grep ALLOWED_ISSUERS
+
+# The two URLs the guard is refusing, for one issuer
+curl -sS "$ISSUER/.well-known/openid-configuration" | jq -r '.jwks_uri'
+```
+
+Both have to be public hosts. A self-hosted issuer on an internal address cannot
+be reached from a Worker, and pointing `ALLOWED_ISSUERS` at it will produce this
+code on every request rather than a timeout.
+
+**Why a separate code and not `SERVICE_DEGRADED` with no `Retry-After`.** The
+only thing a caller does with a 503 is decide whether to try again, and a
+missing header is not something any client reads as "stop": the Go client
+retries every 5xx, and this reference's own bash example retried a 503
+unconditionally. So the permanent fault was attempted four times and the absent
+header cost it nothing but the interval. `SERVICE_MISCONFIGURED` puts the
+classification in a value — `IsServiceMisconfigured(err)` in the Go client, a
+`case` in a shell script — instead of in the absence of one.
 
 ## Looking a refusal up
 

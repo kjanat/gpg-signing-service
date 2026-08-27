@@ -45,7 +45,19 @@ const (
 	// for and shouldRetry refuses to retry, so the one auth-path failure a retry
 	// fixes was the one wearing the code that forbids it. TestErrorCodesExistOnTheWire
 	// is what keeps this list and the service's enum from drifting apart again.
-	ErrCodeDegraded       = "SERVICE_DEGRADED"
+	ErrCodeDegraded = "SERVICE_DEGRADED"
+	// ErrCodeMisconfigured is the other half of that 503: the service could not
+	// decide the request either, and the cause is its own configuration, so it
+	// will answer identically until an operator changes something. An
+	// ALLOWED_ISSUERS entry whose discovery URL the service refuses to fetch is
+	// the whole of it today.
+	//
+	// The one code here that is a 5xx and still not worth retrying, which is why
+	// it exists as a code at all. The service used to express "permanent" by
+	// omitting Retry-After, and nothing reads a missing header as "stop":
+	// shouldRetry attempts every 5xx, so the fault that could never clear was
+	// tried the full four times.
+	ErrCodeMisconfigured  = "SERVICE_MISCONFIGURED"
 	ErrCodeKeyNotFound    = "KEY_NOT_FOUND"
 	ErrCodeKeyNotAllowed  = "KEY_NOT_ALLOWED"
 	ErrCodeInvalidRequest = "INVALID_REQUEST"
@@ -263,6 +275,20 @@ func IsValidationError(err error) bool {
 func IsServiceDegraded(err error) bool {
 	var se *ServiceError
 	return errors.As(err, &se) && se.Code == ErrCodeDegraded
+}
+
+// IsServiceMisconfigured returns true if the service could not serve the
+// request because of its own configuration, and will answer the same way until
+// an operator changes it.
+//
+// The distinction IsServiceDegraded cannot make, and the one that decides
+// whether waiting is a strategy: both are 503 and neither is the caller's
+// fault, but a JWKS blip clears and an ALLOWED_ISSUERS entry pointing at a
+// private address does not. shouldRetry declines this one for exactly that
+// reason; a caller running its own retry loop wants the same test.
+func IsServiceMisconfigured(err error) bool {
+	var se *ServiceError
+	return errors.As(err, &se) && se.Code == ErrCodeMisconfigured
 }
 
 // IsServiceError returns true if the error is a service-side error (5xx).

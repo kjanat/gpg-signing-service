@@ -1875,13 +1875,23 @@ describe("Security Headers Middleware", () => {
 
 			// A configured issuer whose discovery URL this deployment refuses to
 			// fetch is a deployment fault, not a credential one — and unlike the
-			// timeouts above it is permanent, so it carries no Retry-After.
+			// timeouts above it is permanent, so it gets its own code and no
+			// Retry-After. The code is what carries "permanent": a missing header
+			// is not a signal any client reads, and while this was SERVICE_DEGRADED
+			// without one the Go retrier attempted it four times.
 			expect(response.status).toBe(503);
-			const body = await parseJson<{ error: string; code: string; hint: string }>(response);
+			const body = await parseJson<{ error: string; code: string; hint: string; docs: string }>(response);
 			expect(body.error).toContain("SSRF protection");
-			expect(body.code).toBe("SERVICE_DEGRADED");
+			expect(body.code).toBe("SERVICE_MISCONFIGURED");
 			expect(response.headers.get("Retry-After")).toBeNull();
 			expect(body.hint).toContain("ALLOWED_ISSUERS");
+			// The hint says the thing the code says, for the human who is reading a
+			// CI log rather than branching on a field.
+			expect(body.hint).toContain("same answer every time");
+			// And the link lands on the section that explains why this one is not
+			// worth retrying, rather than on SERVICE_DEGRADED's "wait and call
+			// again".
+			expect(body.docs).toBe("http://localhost/e/SERVICE_MISCONFIGURED");
 		});
 
 		it("should block SSRF in OIDC wellKnown URL with non-Error", async () => {
@@ -1912,7 +1922,7 @@ describe("Security Headers Middleware", () => {
 			expect(response.status).toBe(503);
 			const body = await parseJson<{ error: string; code: string }>(response);
 			expect(body.error).toContain("SSRF protection: Invalid URL");
-			expect(body.code).toBe("SERVICE_DEGRADED");
+			expect(body.code).toBe("SERVICE_MISCONFIGURED");
 		});
 
 		it("should block SSRF in JWKS URI with Error object", async () => {
@@ -1948,7 +1958,7 @@ describe("Security Headers Middleware", () => {
 			expect(response.status).toBe(503);
 			const body = await parseJson<{ error: string; code: string }>(response);
 			expect(body.error).toContain("SSRF protection");
-			expect(body.code).toBe("SERVICE_DEGRADED");
+			expect(body.code).toBe("SERVICE_MISCONFIGURED");
 			expect(response.headers.get("Retry-After")).toBeNull();
 		});
 
@@ -1978,7 +1988,7 @@ describe("Security Headers Middleware", () => {
 			expect(response.status).toBe(503);
 			const body = await parseJson<{ error: string; code: string }>(response);
 			expect(body.error).toContain("SSRF protection: Invalid URL");
-			expect(body.code).toBe("SERVICE_DEGRADED");
+			expect(body.code).toBe("SERVICE_MISCONFIGURED");
 		});
 	});
 });

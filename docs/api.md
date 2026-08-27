@@ -144,6 +144,13 @@ authorization store, so nothing about the request was judged. It carries a
 declares no `retryAfter` — and waiting is the whole fix. See
 [`SERVICE_DEGRADED`](errors.md#service_degraded).
 
+The other `503` is [`SERVICE_MISCONFIGURED`](errors.md#service_misconfigured),
+and it is the one to **stop** on. Same "nothing about your request is wrong",
+opposite answer: the cause is this deployment's configuration, so it answers
+identically until an operator changes it. Branch on the `code`, not on whether
+a `Retry-After` came back — a missing header means "no interval offered", which
+plenty of retryable `5xx` also mean.
+
 ## Regeneration
 
 After changing route or schema definitions:

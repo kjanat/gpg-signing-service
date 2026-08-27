@@ -147,6 +147,53 @@ export function serviceDegraded(
 }
 
 /**
+ * The service's "this one is ours, and it will not pass".
+ *
+ * Same 503 and same "nothing on your side is wrong" as `serviceDegraded`, and a
+ * different code, because the only thing a caller does with a 503 is decide
+ * whether to try again and these two answer that oppositely. This one is a
+ * fault in the deployment's own configuration: it answers identically until an
+ * operator edits a variable, so every retry is a slower failure.
+ *
+ * That distinction used to be carried by *omitting* `Retry-After`, which is not
+ * a channel any client reads as "stop". The Go retrier tries any 5xx and the
+ * bash example's `503)` branch retried unconditionally, so the permanent fault
+ * was attempted four times and the missing header only cost it the interval.
+ * A code puts the classification in a value both can branch on.
+ *
+ * Never carries a `Retry-After`, and there is no parameter for one: a caller
+ * given both this code and an interval would have to guess which to believe.
+ *
+ * Logged at error, unlike `serviceDegraded`'s warn. A dependency being briefly
+ * away is that function working; a URL this service will never fetch is a
+ * deployment that cannot serve the issuer it claims to accept, and it stays
+ * broken until somebody looks.
+ *
+ * @param c - Request context
+ * @param message - What could not be reached; never names stored state
+ * @param details - `hint` says which knob the operator should check
+ */
+export function serviceMisconfigured(c: Context, message: string, details: { hint?: string | undefined } = {}) {
+	const requestId = c.get("requestId");
+
+	logger.error(message, undefined, {
+		code: "SERVICE_MISCONFIGURED",
+		status: HTTP.ServiceUnavailable,
+		...(requestId && { requestId }),
+	});
+
+	return c.json(
+		{
+			error: message,
+			code: "SERVICE_MISCONFIGURED" as const satisfies ErrorCode,
+			...(requestId && { requestId }),
+			...(details.hint && { hint: details.hint }),
+		},
+		HTTP.ServiceUnavailable,
+	);
+}
+
+/**
  * Handle unknown errors
  */
 export function handleUnknownError(c: Context, error: unknown, fallbackMessage: string, code: ErrorCode): Response {

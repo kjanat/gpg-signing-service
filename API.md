@@ -499,24 +499,25 @@ redirects to that code's section in the
 [error reference](docs/errors.md). Most also carry a `hint` naming what to
 change; `401`s carry the `subject` that was presented.
 
-| Code                     | HTTP  | Description                                                      |
-| ------------------------ | ----- | ---------------------------------------------------------------- |
-| `AUTH_MISSING`           | `401` | Authorization header not provided                                |
-| `AUTH_INVALID`           | `401` | A credential was presented and the credential was refused        |
-| `AUTH_SUBJECT_UNTRUSTED` | `401` | The credential verified; the identity holds no active trust rule |
-| `KEY_NOT_FOUND`          | `404` | Requested key does not exist                                     |
-| `KEY_PROCESSING_ERROR`   | `500` | Error processing key data (extraction, parsing)                  |
-| `KEY_LIST_ERROR`         | `500` | Error retrieving list of keys                                    |
-| `KEY_UPLOAD_ERROR`       | `500` | Error uploading or storing new key                               |
-| `KEY_DELETE_ERROR`       | `500` | Error deleting key                                               |
-| `SIGN_ERROR`             | `500` | Signing operation failed                                         |
-| `RATE_LIMIT_ERROR`       | `503` | Rate limiter service unavailable                                 |
-| `RATE_LIMITED`           | `429` | Rate limit exceeded for this identity                            |
-| `INVALID_REQUEST`        | `400` | Malformed request (missing fields, invalid format)               |
-| `AUDIT_ERROR`            | `500` | Failed to retrieve audit logs                                    |
-| `NOT_FOUND`              | `404` | Endpoint not found                                               |
-| `INTERNAL_ERROR`         | `500` | Unexpected server error                                          |
-| `SERVICE_DEGRADED`       | `503` | A dependency was unreachable; the request was never judged       |
+| Code                     | HTTP  | Description                                                           |
+| ------------------------ | ----- | --------------------------------------------------------------------- |
+| `AUTH_MISSING`           | `401` | Authorization header not provided                                     |
+| `AUTH_INVALID`           | `401` | A credential was presented and the credential was refused             |
+| `AUTH_SUBJECT_UNTRUSTED` | `401` | The credential verified; the identity holds no active trust rule      |
+| `KEY_NOT_FOUND`          | `404` | Requested key does not exist                                          |
+| `KEY_PROCESSING_ERROR`   | `500` | Error processing key data (extraction, parsing)                       |
+| `KEY_LIST_ERROR`         | `500` | Error retrieving list of keys                                         |
+| `KEY_UPLOAD_ERROR`       | `500` | Error uploading or storing new key                                    |
+| `KEY_DELETE_ERROR`       | `500` | Error deleting key                                                    |
+| `SIGN_ERROR`             | `500` | Signing operation failed                                              |
+| `RATE_LIMIT_ERROR`       | `503` | Rate limiter service unavailable                                      |
+| `RATE_LIMITED`           | `429` | Rate limit exceeded for this identity                                 |
+| `INVALID_REQUEST`        | `400` | Malformed request (missing fields, invalid format)                    |
+| `AUDIT_ERROR`            | `500` | Failed to retrieve audit logs                                         |
+| `NOT_FOUND`              | `404` | Endpoint not found                                                    |
+| `INTERNAL_ERROR`         | `500` | Unexpected server error                                               |
+| `SERVICE_DEGRADED`       | `503` | A dependency was unreachable; the request was never judged            |
+| `SERVICE_MISCONFIGURED`  | `503` | The deployment's own configuration stopped it; retrying will not help |
 
 ---
 

@@ -215,6 +215,13 @@ service answers when it could not reach the issuer or its own authorization
 store, so the request was never judged. Those are retried automatically, and the
 retrier waits the `Retry-After` the service sent instead of guessing.
 
+`client.IsServiceMisconfigured(err)` is the fourth, and the one to stop on: the
+same `503` shape, but the cause is the deployment's own configuration, so it
+answers identically until an operator changes it. It is the only `5xx` the
+retrier declines — and it declines it on the `code`, not on the absent
+`Retry-After`, since a missing header is what plenty of retryable failures also
+send.
+
 The command refuses to rewrite commits that already carry a signature. It
 prints what it would do to each and exits non-zero:
 
