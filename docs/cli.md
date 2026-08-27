@@ -200,7 +200,7 @@ per line, instead of dumping the JSON envelope:
 ```text
 Error: sign failed: authentication failed: AUTH_SUBJECT_UNTRUSTED: Subject is not trusted for signing (request 628c9a74-…)
   subject: repo:kjanat/kjanat:ref:refs/heads/master
-  hint:    No active trust rule matches this subject. Trust rules exist for this issuer, but none of them covers this subject. …
+  hint:    No active trust rule matches this subject. Trust rules exist for this issuer, but none of them both covers this subject and is currently active. …
   docs:    https://gpg.kajkowalski.nl/e/AUTH_SUBJECT_UNTRUSTED
   request: 628c9a74-c46d-403c-84c6-9c873298a17f
 ```

@@ -263,11 +263,23 @@ function untrustedSubjectHint(issuer: string, context: RefusalContext, env: Env)
 	// row, so a live count here is an unmetered, unrecorded oracle on the trust
 	// table for anyone who can mint a token on a shared issuer — poll it and the
 	// delta is an add/revoke/expire feed.
+	// Says which rules failed to apply, not why this particular one did. The
+	// three arms share this string, so it has to be true of all three, and
+	// "none of them covers this subject" is not: `revoked` and `expired` are
+	// reachable only when a stored prefix *did* cover the subject and the row
+	// was not live. An operator who followed that sentence to GET /admin/subjects
+	// would find a rule matching the subject exactly and conclude the prefix
+	// matcher was broken, when the answer was in `revoked_at` or `expires_at` on
+	// the row in front of them. Naming both ways a rule misses keeps the string
+	// identical on every arm — so it still discloses nothing about which one this
+	// was — while sending the reader at the two columns that actually decide it.
 	let hint =
-		`No active trust rule matches this subject. Trust rules exist for this issuer, but none of them covers ` +
-		`this subject. A subject must fall under a stored prefix at a ":", "@" or "/" boundary, so a rule for one ` +
-		`ref does not cover another — compare the ref part of the subject above with GET /admin/subjects, then add ` +
-		`or widen a rule with POST /admin/subjects.`;
+		`No active trust rule matches this subject. Trust rules exist for this issuer, but none of them both ` +
+		`covers this subject and is currently active. A rule misses either way: its prefix must cover the subject ` +
+		`and end at a ":", "@" or "/" boundary, so a rule for one ref does not cover another; and a rule that has ` +
+		`been revoked or has expired stops applying while still being listed. Compare the subject above with ` +
+		`GET /admin/subjects, checking "active" as well as the prefix, then add or renew a rule with ` +
+		`POST /admin/subjects.`;
 
 	// Off by default; see RefusalContext for why the trust list is not free to
 	// hand out. `=== "true"` rather than truthiness so an operator who sets it to

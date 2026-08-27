@@ -1074,6 +1074,18 @@ describe("Security Headers Middleware", () => {
 				body: "commit data",
 			});
 			expect(response.status).toBe(401);
+			// The hint is one string shared by all three refusal arms, so it has to
+			// be true of this one too. Here a stored prefix *does* cover the subject
+			// — that is what makes this the expired arm rather than the unknown one
+			// — and it is the only rule for the issuer, so a hint saying no rule
+			// covers the subject would send the operator to GET /admin/subjects to
+			// find `repo:lapsed/svc` matching exactly and conclude the prefix
+			// matcher was broken. The answer is in `active`, and the hint has to
+			// name that possibility without saying which arm this was.
+			const expiredPayload = await parseJson<{ hint: string }>(response);
+			expect(expiredPayload.hint).toContain("No active trust rule matches this subject");
+			expect(expiredPayload.hint).not.toContain("none of them covers this subject");
+			expect(expiredPayload.hint).toContain("revoked or has expired");
 			expect(warnSpy).toHaveBeenCalledWith(
 				"Expired OIDC trust presented",
 				expect.objectContaining({ subjectId, subjectPolicy: "ci/lapsed", expiresAt }),
