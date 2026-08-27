@@ -101,12 +101,13 @@ describe("docs links on error responses", () => {
 		// at the client, which is the one way this middleware could corrupt a
 		// response rather than improve it.
 		const response = await request("/no-such-route");
-		const declared = response.headers.get("content-length");
 		const text = await response.text();
 
-		if (declared !== null) {
-			expect(Number(declared)).toBe(new TextEncoder().encode(text).length);
-		}
+		// Asserted as absent rather than as "absent or correct": the middleware
+		// deletes the header and nothing puts one back, so a conditional here
+		// would be an assertion that never fires — coverage on the summary and
+		// nothing underneath it.
+		expect(response.headers.get("content-length")).toBeNull();
 		expect(JSON.parse(text)).toHaveProperty("docs");
 	});
 });
@@ -186,7 +187,10 @@ describe("the middleware leaves alone what it cannot improve", () => {
 		const text = await got.text();
 
 		expect(JSON.parse(text)).toHaveProperty("docs");
-		expect(declared === null || Number(declared) === new TextEncoder().encode(text).length).toBe(true);
+		// What the middleware guarantees, stated directly. The disjunction this
+		// replaces was satisfied by the `null` arm alone, so it could have gone on
+		// passing while the length arm stopped meaning anything.
+		expect(declared).toBeNull();
 	});
 
 	it("does not overwrite a link a handler chose for itself", async () => {

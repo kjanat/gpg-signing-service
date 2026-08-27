@@ -32,7 +32,13 @@ log_service_error() {
 
 	for field in code subject hint docs requestId; do
 		value=$(jq -r --arg f "${field}" '.[$f] // empty' <<<"${body}" 2>/dev/null) || continue
-		[[ -n ${value} ]] && log_error "  ${field}: ${value}"
+		# `if` rather than `[[ ... ]] && ...`: the loop body's status becomes the
+		# function's, and under `set -e` a missing *last* field — requestId, which
+		# several refusal bodies legitimately omit — made the caller exit on the
+		# spot instead of reaching its own `return 1`.
+		if [[ -n ${value} ]]; then
+			log_error "  ${field}: ${value}"
+		fi
 	done
 }
 
