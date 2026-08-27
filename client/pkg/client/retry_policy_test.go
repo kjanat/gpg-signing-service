@@ -156,8 +156,8 @@ func TestRecordRetryHint(t *testing.T) {
 		{
 			// The code is the whole reason a 5xx body is read at all: it is what
 			// tells shouldRetry that this one will never clear.
-			name:       "a permanent 503 carries its code and no wait",
-			statusCode: http.StatusServiceUnavailable,
+			name:       "a permanent 500 carries its code and no wait",
+			statusCode: http.StatusInternalServerError,
 			body:       `{"error":"SSRF protection: private address","code":"SERVICE_MISCONFIGURED"}`,
 			wantCode:   "SERVICE_MISCONFIGURED",
 		},

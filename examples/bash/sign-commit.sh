@@ -186,27 +186,18 @@ sign_commit() {
 				retry_count=$((retry_count + 1))
 				;;
 			503)
-				# Two different faults share this status, and the `code` is what
-				# tells them apart. SERVICE_MISCONFIGURED means the deployment's own
-				# configuration is what stopped the request — an ALLOWED_ISSUERS
-				# entry pointing at a URL it refuses to fetch — so it answers
-				# identically until an operator changes it and every retry is a
-				# slower failure. Branching on the code rather than on the absence
-				# of `Retry-After`: a missing header is not a signal, and reading it
-				# as one had this loop spend its whole budget here.
-				local degraded_code
-				degraded_code=$(jq -r '.code // empty' <<<"${body}" 2>/dev/null) || degraded_code=""
-				if [[ ${degraded_code} == "SERVICE_MISCONFIGURED" ]]; then
-					log_service_error "${http_code}" "${body}"
-					return 1
-				fi
-
 				# SERVICE_DEGRADED: the service could not reach something it needs
 				# — the issuer's JWKS, its authorization store — so nothing about
 				# this request was judged. It is the one refusal the service invites
 				# a caller to repeat, and the only one where waiting is the whole
 				# fix. Retry-After is a header here, not a body field: ErrorResponse
 				# declares no `retryAfter`.
+				#
+				# Every 503 from this service is that one, and every 503 carries a
+				# Retry-After. The permanent fault — a deployment whose own
+				# configuration stopped the request, which answers identically until
+				# an operator changes it — is SERVICE_MISCONFIGURED and arrives as a
+				# 500, so it never reaches this branch to be sorted out of it.
 				local degraded_wait
 				degraded_wait=$(sed -n 's/^[Rr]etry-[Aa]fter: *\([0-9]*\).*/\1/p' <<<"${headers}" | tail -1)
 				degraded_wait=$(clamp_wait "${degraded_wait:-30}" 30)
@@ -225,6 +216,13 @@ sign_commit() {
 				return 1
 				;;
 			*)
+				# Everything else, 500 included, is reported once and not repeated.
+				#
+				# 500 is where SERVICE_MISCONFIGURED lands, and stopping is the
+				# whole point of it having its own status: the service is telling
+				# the caller that retrying gets this same answer every time. Adding
+				# a generic 5xx retry above this would undo that — if you do, read
+				# `.code` first and let SERVICE_MISCONFIGURED fall through to here.
 				log_service_error "${http_code}" "${body}"
 				return 1
 				;;

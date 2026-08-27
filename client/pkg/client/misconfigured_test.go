@@ -30,7 +30,10 @@ func TestMisconfiguredIsNotRetried(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		// Deliberately no Retry-After: the code is the signal, and this asserts
 		// the policy does not need the header's absence to reach the same answer.
-		w.WriteHeader(http.StatusServiceUnavailable)
+		// 500 rather than 503 for the same reason the service sends one — 503 is
+		// the status intermediaries retry on their own account, and a proxy
+		// cannot read the code.
+		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = fmt.Fprint(w, misconfiguredBody)
 	}))
 	defer server.Close()
@@ -46,7 +49,7 @@ func TestMisconfiguredIsNotRetried(t *testing.T) {
 	}
 
 	if attempts != 1 {
-		t.Errorf("a permanent 503 was attempted %d times; it must be attempted once", attempts)
+		t.Errorf("a permanent 500 was attempted %d times; it must be attempted once", attempts)
 	}
 	if !IsServiceMisconfigured(signErr) {
 		t.Errorf("expected IsServiceMisconfigured, got %v", signErr)
@@ -54,13 +57,13 @@ func TestMisconfiguredIsNotRetried(t *testing.T) {
 	// Still a service error, and still not the caller's fault to fix: the
 	// classification narrows what to do about it, it does not move the blame.
 	if !IsServiceError(signErr) {
-		t.Error("a misconfigured 503 is a service error")
+		t.Error("a misconfigured 500 is a service error")
 	}
 	if IsServiceDegraded(signErr) {
 		t.Error("SERVICE_MISCONFIGURED is not SERVICE_DEGRADED; the two answer 'retry?' oppositely")
 	}
 	if IsAuthError(signErr) {
-		t.Error("a misconfigured 503 is not an authentication failure")
+		t.Error("a misconfigured 500 is not an authentication failure")
 	}
 
 	guidance, ok := GuidanceFor(signErr)
@@ -77,7 +80,8 @@ func TestMisconfiguredIsNotRetried(t *testing.T) {
 
 // The neighbouring 503 must be unaffected. A policy that read "no Retry-After"
 // as "do not retry" would also stop retrying every intermediary's bare 502, so
-// this pins that the distinction is the code and nothing else.
+// this pins that the distinction is the code and nothing else — the status is
+// how the *proxies in between* tell them apart, not how this client does.
 func TestDegradedWithoutARetryAfterIsStillRetried(t *testing.T) {
 	attempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -144,12 +148,17 @@ func TestShouldRetryReadsThePermanentCode(t *testing.T) {
 		err  error
 		want bool
 	}{
-		{"permanent 503", &ServiceError{Code: ErrCodeMisconfigured, StatusCode: 503}, false},
+		{"permanent 500", &ServiceError{Code: ErrCodeMisconfigured, StatusCode: 500}, false},
 		{"transient 503", &ServiceError{Code: ErrCodeDegraded, StatusCode: 503}, true},
 		// The header says nothing either way: a permanent fault carrying one is
 		// still permanent, and a transient one carrying none is still transient.
-		{"permanent 503 that carried a wait anyway", &ServiceError{Code: ErrCodeMisconfigured, StatusCode: 503, RetryAfter: time.Minute}, false},
-		{"500", &ServiceError{Code: ErrCodeInternalError, StatusCode: 500}, true},
+		{"permanent 500 that carried a wait anyway", &ServiceError{Code: ErrCodeMisconfigured, StatusCode: 500, RetryAfter: time.Minute}, false},
+		// Nor does the status. This service pairs the permanent code with 500 and
+		// the transient one with 503, but the code is what shouldRetry reads, so
+		// a deployment or an intermediary that pairs them differently still gets
+		// the right answer.
+		{"permanent code on a 503", &ServiceError{Code: ErrCodeMisconfigured, StatusCode: 503}, false},
+		{"an ordinary 500", &ServiceError{Code: ErrCodeInternalError, StatusCode: 500}, true},
 		{"no code at all", &ServiceError{StatusCode: 502}, true},
 	}
 

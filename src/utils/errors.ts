@@ -149,11 +149,10 @@ export function serviceDegraded(
 /**
  * The service's "this one is ours, and it will not pass".
  *
- * Same 503 and same "nothing on your side is wrong" as `serviceDegraded`, and a
- * different code, because the only thing a caller does with a 503 is decide
- * whether to try again and these two answer that oppositely. This one is a
- * fault in the deployment's own configuration: it answers identically until an
- * operator edits a variable, so every retry is a slower failure.
+ * Same "nothing on your side is wrong" as `serviceDegraded`, and the opposite
+ * answer to the only question a caller asks of a 5xx: try again, or stop? This
+ * one is a fault in the deployment's own configuration. It answers identically
+ * until an operator edits a variable, so every retry is a slower failure.
  *
  * That distinction used to be carried by *omitting* `Retry-After`, which is not
  * a channel any client reads as "stop". The Go retrier tries any 5xx and the
@@ -161,8 +160,22 @@ export function serviceDegraded(
  * was attempted four times and the missing header only cost it the interval.
  * A code puts the classification in a value both can branch on.
  *
- * Never carries a `Retry-After`, and there is no parameter for one: a caller
- * given both this code and an interval would have to guess which to believe.
+ * 500, not 503, and the status is doing real work here rather than decoration.
+ * RFC 9110 defines 503 as a condition "which will likely be alleviated after
+ * some delay" — the exact claim this code exists to deny — and intermediaries
+ * act on that reading: `retry_on: gateway-error`, `proxy_next_upstream
+ * http_503`, outlier detection. A proxy in front would re-run the retry loop
+ * one layer up, where the code cannot be read at all, and an ejecting one
+ * would answer its own bare 502, losing the envelope that is this whole
+ * feature. 500's "unexpected condition that prevented it from fulfilling the
+ * request" is also the truer shape: one bad `ALLOWED_ISSUERS` entry breaks that
+ * issuer's callers while everyone else keeps signing, so the *service* is not
+ * unavailable.
+ *
+ * Between the two the status also says what it can on its own, for the reader
+ * who has only a `curl -i`: `serviceDegraded`'s 503 carries a `Retry-After`,
+ * this 500 carries none. Hence no parameter for one here — a caller given both
+ * this code and an interval would have to guess which to believe.
  *
  * Logged at error, unlike `serviceDegraded`'s warn. A dependency being briefly
  * away is that function working; a URL this service will never fetch is a
@@ -178,7 +191,7 @@ export function serviceMisconfigured(c: Context, message: string, details: { hin
 
 	logger.error(message, undefined, {
 		code: "SERVICE_MISCONFIGURED",
-		status: HTTP.ServiceUnavailable,
+		status: HTTP.InternalServerError,
 		...(requestId && { requestId }),
 	});
 
@@ -189,7 +202,7 @@ export function serviceMisconfigured(c: Context, message: string, details: { hin
 			...(requestId && { requestId }),
 			...(details.hint && { hint: details.hint }),
 		},
-		HTTP.ServiceUnavailable,
+		HTTP.InternalServerError,
 	);
 }
 

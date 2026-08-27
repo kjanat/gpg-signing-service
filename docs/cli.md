@@ -216,11 +216,13 @@ store, so the request was never judged. Those are retried automatically, and the
 retrier waits the `Retry-After` the service sent instead of guessing.
 
 `client.IsServiceMisconfigured(err)` is the fourth, and the one to stop on: the
-same `503` shape, but the cause is the deployment's own configuration, so it
-answers identically until an operator changes it. It is the only `5xx` the
-retrier declines — and it declines it on the `code`, not on the absent
-`Retry-After`, since a missing header is what plenty of retryable failures also
-send.
+same "nothing about your request is wrong", but the cause is the deployment's
+own configuration, so it answers identically until an operator changes it. It
+arrives as a `500` rather than its neighbour's `503` — `503` is the status the
+proxies in between retry on their own account, and none of them can read a
+`code`. It is the only `5xx` the retrier declines, and it declines it on the
+`code`, not on the absent `Retry-After`, since a missing header is what plenty
+of retryable failures also send.
 
 The command refuses to rewrite commits that already carry a signature. It
 prints what it would do to each and exits non-zero:

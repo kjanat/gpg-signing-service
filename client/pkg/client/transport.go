@@ -176,11 +176,11 @@ func decodesAsErrorEnvelope(statusCode int, body []byte) bool {
 //
 // Only the 429 used to be, on the reasoning that it was the one status this
 // service attaches a delay to. That stopped being true in the release that
-// added SERVICE_DEGRADED, and it left both halves of a 503 unreadable from
+// added SERVICE_DEGRADED, and it left both halves of a 5xx unreadable from
 // where they are acted on: the interval, so the retrier backed off blind
 // against the one failure that had told it how long to wait, and the code, so
 // SERVICE_MISCONFIGURED — which the service sends precisely to say "this will
-// not clear" — was indistinguishable from any other 503 and got retried four
+// not clear" — was indistinguishable from any other 500 and got retried four
 // times.
 //
 // The code is taken from the body alone. Unlike the interval it has no header

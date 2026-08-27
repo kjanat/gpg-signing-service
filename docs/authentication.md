@@ -334,8 +334,10 @@ on this path worth repeating.
 
 A URL the SSRF guard refuses to fetch is the exception: the deployment cannot
 reach that issuer and never will, so it answers
-[`503 SERVICE_MISCONFIGURED`](errors.md#service_misconfigured) with no
-`Retry-After`. Still not the credential's fault; still not worth repeating.
+[`500 SERVICE_MISCONFIGURED`](errors.md#service_misconfigured) with no
+`Retry-After`. Still not the credential's fault; still not worth repeating —
+which is why it is a `500` and not the `503` its neighbour uses, since a `503`
+is what the proxies in between retry on their own account.
 
 ### GitHub Actions
 

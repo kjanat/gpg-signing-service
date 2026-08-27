@@ -8,7 +8,7 @@ import { KeyStorage } from "#durable-objects/key-storage";
 import { RateLimiter } from "#durable-objects/rate-limiter";
 import app from "#gpg-signing-service";
 import { logAuditEvent } from "#utils/audit";
-import { serviceMisconfigured } from "#utils/errors";
+import { serviceDegraded, serviceMisconfigured } from "#utils/errors";
 import * as signingUtils from "#utils/signing";
 
 const parseJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
@@ -572,7 +572,7 @@ rxgkrugpagY=
 			expect(info.algorithm).toBe("Unknown(99)");
 		});
 
-		// The permanent 503 driven directly, without the requestId middleware and
+		// The permanent 500 driven directly, without the requestId middleware and
 		// without a hint. Both are optional and neither is optional at the one
 		// place that calls it today, so the route tests reach only the shape where
 		// they are present — and a helper that throws on a missing requestId would
@@ -583,7 +583,7 @@ rxgkrugpagY=
 
 			const response = await bare.request("/");
 
-			expect(response.status).toBe(503);
+			expect(response.status).toBe(500);
 			// No Retry-After, ever: there is no parameter for one. A caller handed
 			// both this code and an interval would have to guess which to believe.
 			expect(response.headers.get("Retry-After")).toBeNull();
@@ -591,6 +591,29 @@ rxgkrugpagY=
 				error: "SSRF protection: URL resolves to a private address",
 				code: "SERVICE_MISCONFIGURED",
 			});
+		});
+
+		// The half of the split a caller who cannot read the code still gets: of
+		// these two, the transient one says how long to wait and the permanent one
+		// does not. While both shared 503 the header's presence varied within one
+		// status, which is the ambiguity nobody should have been reading policy
+		// from — and a proxy, or a `curl -i` in a CI log, had nothing to go on.
+		//
+		// Not a claim about every 503 this service sends: RATE_LIMIT_ERROR is one
+		// too and carries no interval. It is a claim about this pair, which is
+		// where somebody is being asked to tell two opposite answers apart.
+		it("pairs the degraded 503 with a wait hint and the permanent 500 with none", async () => {
+			const bare = new Hono();
+			bare.get("/degraded", (c) => serviceDegraded(c, "Issuer unreachable", { retryAfter: 30 }));
+			bare.get("/misconfigured", (c) => serviceMisconfigured(c, "SSRF protection: blocked"));
+
+			const degraded = await bare.request("/degraded");
+			const misconfigured = await bare.request("/misconfigured");
+
+			expect(degraded.status).toBe(503);
+			expect(degraded.headers.get("Retry-After")).toBe("30");
+			expect(misconfigured.status).toBe(500);
+			expect(misconfigured.headers.get("Retry-After")).toBeNull();
 		});
 	});
 });

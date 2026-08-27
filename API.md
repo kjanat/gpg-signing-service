@@ -517,7 +517,7 @@ change; `401`s carry the `subject` that was presented.
 | `NOT_FOUND`              | `404` | Endpoint not found                                                    |
 | `INTERNAL_ERROR`         | `500` | Unexpected server error                                               |
 | `SERVICE_DEGRADED`       | `503` | A dependency was unreachable; the request was never judged            |
-| `SERVICE_MISCONFIGURED`  | `503` | The deployment's own configuration stopped it; retrying will not help |
+| `SERVICE_MISCONFIGURED`  | `500` | The deployment's own configuration stopped it; retrying will not help |
 
 ---
 

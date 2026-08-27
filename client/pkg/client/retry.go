@@ -78,17 +78,21 @@ func (r *Retrier) Do(ctx context.Context, fn func() error) error {
 // operation returns.
 //
 // The 429 branch is gated on retryOnRateLimit because WithoutRateLimitRetry
-// stops that retry before this is reached at all; the 503 branch below is not,
+// stops that retry before this is reached at all; the 5xx branch below is not,
 // for the reason given there.
 func (r *Retrier) waitBefore(attempt int, err error) time.Duration {
 	var rateLimitErr *RateLimitError
 	if r.retryOnRateLimit && errors.As(err, &rateLimitErr) && rateLimitErr.RetryAfter > 0 {
 		return r.capped(rateLimitErr.RetryAfter)
 	}
-	// A 503 carries one too, and unlike a rate limit's it is not something this
-	// client could have estimated: SERVICE_DEGRADED means a dependency is away,
-	// and only the service has any idea for how long. Ignoring it meant backing
-	// off blind against the one failure that had told us what to do.
+	// A SERVICE_DEGRADED 503 carries one too, and unlike a rate limit's it is not
+	// something this client could have estimated: a dependency is away and only
+	// the service has any idea for how long. Ignoring it meant backing off blind
+	// against the one failure that had told us what to do.
+	//
+	// Guarded on the interval rather than the status, so the SERVICE_MISCONFIGURED
+	// 500 — which never carries one — falls through to the backoff. Not that it
+	// reaches here: shouldRetry declines it first.
 	//
 	// Not gated on retryOnRateLimit — that option is about throttling, and
 	// switching it off should not also discard an outage's wait hint.
@@ -117,11 +121,12 @@ func (r *Retrier) shouldRetry(err error) bool {
 
 	// Retry service errors (5xx), except the one that says it is permanent.
 	//
-	// SERVICE_MISCONFIGURED is a 503 the service will answer identically until
+	// SERVICE_MISCONFIGURED is a 500 the service will answer identically until
 	// an operator edits a variable — an ALLOWED_ISSUERS entry pointing at a URL
 	// it refuses to fetch. Retrying it spends the caller's whole budget to be
 	// told the same thing four times, and this is the only place that can know,
-	// because from the outside it is a 503 like any other.
+	// because from the outside it is a 500 like any other: an intermediary's
+	// unattributed 500 is worth another go and wears the same status.
 	//
 	// Read off the code rather than off a missing Retry-After. That absence was
 	// the service's original way of saying "permanent" and it does not work as
@@ -317,7 +322,7 @@ func retryHintFrom(ctx context.Context) *retryHint {
 // the one 5xx the service says will never clear. Callers still receive the full
 // error the operation maps once the attempts are spent.
 //
-// Both were previously dropped for anything but a 429. That left the 503 half
+// Both were previously dropped for anything but a 429. That left the 5xx half
 // of each: a SERVICE_DEGRADED interval reached the mapped error and never the
 // wait between attempts, and SERVICE_MISCONFIGURED had nowhere to be seen at
 // all, so the fault that could never clear was attempted four times.

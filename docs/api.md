@@ -73,13 +73,13 @@ See [Authentication](authentication.md) for token acquisition and policy.
 
 ## Response headers
 
-| Header                          | On                   | Meaning                                     |
-| ------------------------------- | -------------------- | ------------------------------------------- |
-| `X-Request-ID`                  | every response       | Correlation id; quote it when reporting     |
-| `X-RateLimit-Remaining`         | when a limiter ruled | Signatures left in the bucket that answered |
-| `X-RateLimit-Reset`             | when a limiter ruled | Epoch seconds when that bucket has a token  |
-| `Retry-After`                   | on a `503`           | Whole seconds to wait before calling again  |
-| `Access-Control-Expose-Headers` | every response       | The subset of the above a browser may read  |
+| Header                          | On                    | Meaning                                     |
+| ------------------------------- | --------------------- | ------------------------------------------- |
+| `X-Request-ID`                  | every response        | Correlation id; quote it when reporting     |
+| `X-RateLimit-Remaining`         | when a limiter ruled  | Signatures left in the bucket that answered |
+| `X-RateLimit-Reset`             | when a limiter ruled  | Epoch seconds when that bucket has a token  |
+| `Retry-After`                   | on `SERVICE_DEGRADED` | Whole seconds to wait before calling again  |
+| `Access-Control-Expose-Headers` | every response        | The subset of the above a browser may read  |
 
 A `429` carries the rate-limit pair too, describing the budget that refused —
 which on `/sign` may be the per-row ceiling rather than the caller's own bucket.
@@ -126,16 +126,16 @@ Every `401` also carries a `WWW-Authenticate: Bearer` challenge.
 
 Common status codes:
 
-| Status | Meaning                                               |
-| ------ | ----------------------------------------------------- |
-| `400`  | Invalid body, query, header, or identifier            |
-| `401`  | Missing, invalid, or untrusted credential             |
-| `403`  | Service token cannot use the selected key             |
-| `404`  | Route, key, or token not found                        |
-| `409`  | Duplicate service-token name                          |
-| `429`  | Rate-limit bucket exhausted                           |
-| `500`  | Key processing, signing, storage, or database failure |
-| `503`  | Rate limiter or dependency unavailable                |
+| Status | Meaning                                                                           |
+| ------ | --------------------------------------------------------------------------------- |
+| `400`  | Invalid body, query, header, or identifier                                        |
+| `401`  | Missing, invalid, or untrusted credential                                         |
+| `403`  | Service token cannot use the selected key                                         |
+| `404`  | Route, key, or token not found                                                    |
+| `409`  | Duplicate service-token name                                                      |
+| `429`  | Rate-limit bucket exhausted                                                       |
+| `500`  | Key, signing, storage or database failure; or this deployment's own configuration |
+| `503`  | Rate limiter or dependency unavailable                                            |
 
 A `503` carrying `code: "SERVICE_DEGRADED"` is the one refusal a caller is
 invited to repeat: the service could not reach the issuer's JWKS or its
@@ -144,12 +144,16 @@ authorization store, so nothing about the request was judged. It carries a
 declares no `retryAfter` — and waiting is the whole fix. See
 [`SERVICE_DEGRADED`](errors.md#service_degraded).
 
-The other `503` is [`SERVICE_MISCONFIGURED`](errors.md#service_misconfigured),
-and it is the one to **stop** on. Same "nothing about your request is wrong",
-opposite answer: the cause is this deployment's configuration, so it answers
-identically until an operator changes it. Branch on the `code`, not on whether
-a `Retry-After` came back — a missing header means "no interval offered", which
-plenty of retryable `5xx` also mean.
+Its opposite number is [`SERVICE_MISCONFIGURED`](errors.md#service_misconfigured),
+a `500`, and it is the one to **stop** on. Same "nothing about your request is
+wrong", opposite answer: the cause is this deployment's configuration, so it
+answers identically until an operator changes it. Branch on the `code`, not on
+whether a `Retry-After` came back — a missing header means "no interval
+offered", which plenty of retryable `5xx` also mean.
+
+The two statuses are the version of that a proxy can read, since a proxy cannot
+read the code: the transient one is a `503` **with** a `Retry-After`, the
+permanent one a `500` **without**.
 
 ## Regeneration
 

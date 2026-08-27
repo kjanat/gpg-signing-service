@@ -218,17 +218,18 @@ client.IsKeyNotFound(err)       // true if key not found
 client.IsValidationError(err)   // true if validation error
 client.IsServiceError(err)      // true if 5xx error
 client.IsServiceDegraded(err)   // true if a dependency was unreachable (503)
-client.IsServiceMisconfigured(err) // true if the deployment's own config stopped it (503)
+client.IsServiceMisconfigured(err) // true if the deployment's own config stopped it (500)
 ```
 
-The two `503`s are the ones worth acting on differently from their neighbours,
-and from each other. A `500` is a fault to report with the request id. A
-`SERVICE_DEGRADED` `503` means the service could not reach the issuer's JWKS or
-its authorization store, so the request was never judged — nothing about it was
-wrong. It is retried automatically, and the retrier honours the `Retry-After`
-the service sends rather than backing off blind.
+These two are worth acting on differently from their neighbours and from each
+other, and a plain `INTERNAL_ERROR` `500` is a fault to report with the request
+id rather than either of them. A `SERVICE_DEGRADED` `503` means the service
+could not reach the issuer's JWKS or its authorization store, so the request was
+never judged — nothing about it was wrong. It is retried automatically, and the
+retrier honours the `Retry-After` the service sends rather than backing off
+blind.
 
-A `SERVICE_MISCONFIGURED` `503` is the same "not your fault" with the opposite
+A `SERVICE_MISCONFIGURED` `500` is the same "not your fault" with the opposite
 answer: the cause is the deployment's own configuration — an `ALLOWED_ISSUERS`
 entry pointing at a URL it refuses to fetch — so it will answer identically
 until an operator changes it. It is the one `5xx` this client does **not**
@@ -236,6 +237,12 @@ retry, and the only reliable way to say so is the code. The service used to
 express "permanent" by omitting `Retry-After`, which nothing reads as a signal:
 plenty of retryable `5xx` carry no header either, so the fault that could never
 clear was attempted four times.
+
+Test the code and not the status. `SERVICE_MISCONFIGURED` wears a `500` because
+`503` is the status intermediaries retry on their own account, and a retry loop
+one layer up cannot read a code — but an intermediary's own `500` carries no
+code at all, and that one _is_ worth another go. `IsServiceMisconfigured` is
+false for it, correctly.
 
 #### Example
 

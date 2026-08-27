@@ -127,7 +127,7 @@ Every entry must be a public host. Discovery and JWKS URLs go through SSRF
 validation, so an issuer on a private address, a loopback or a metadata
 endpoint is refused before it is fetched — and every request for that issuer
 then answers
-[`503 SERVICE_MISCONFIGURED`](errors.md#service_misconfigured) rather than
+[`500 SERVICE_MISCONFIGURED`](errors.md#service_misconfigured) rather than
 timing out. Clients stop on that code instead of retrying, so it shows up as a
 fast, repeatable failure rather than a slow one.
 

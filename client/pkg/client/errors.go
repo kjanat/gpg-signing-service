@@ -36,9 +36,8 @@ const (
 	ErrCodeAuthSubjectUntrusted = "AUTH_SUBJECT_UNTRUSTED"
 	// ErrCodeDegraded means the service could not reach something it needs — the
 	// issuer's JWKS, the authorization store — and so could not decide the
-	// request either way. Answered 503, usually with a Retry-After, and it is the
-	// one code here a caller is invited to retry: nothing about the request is
-	// wrong.
+	// request either way. Answered 503 with a Retry-After, and it is the one code
+	// here a caller is invited to retry: nothing about the request is wrong.
 	//
 	// This used to be a constant nothing on the wire ever carried, while the
 	// failures it names arrived as AUTH_INVALID — which IsAuthError reports true
@@ -46,7 +45,7 @@ const (
 	// fixes was the one wearing the code that forbids it. TestErrorCodesExistOnTheWire
 	// is what keeps this list and the service's enum from drifting apart again.
 	ErrCodeDegraded = "SERVICE_DEGRADED"
-	// ErrCodeMisconfigured is the other half of that 503: the service could not
+	// ErrCodeMisconfigured is the other half of that: the service could not
 	// decide the request either, and the cause is its own configuration, so it
 	// will answer identically until an operator changes something. An
 	// ALLOWED_ISSUERS entry whose discovery URL the service refuses to fetch is
@@ -57,6 +56,14 @@ const (
 	// omitting Retry-After, and nothing reads a missing header as "stop":
 	// shouldRetry attempts every 5xx, so the fault that could never clear was
 	// tried the full four times.
+	//
+	// Answered 500, where ErrCodeDegraded is 503, so the two are told apart by
+	// something an intermediary can also read. The code is still what this
+	// package branches on — proxies rewrite statuses and drop bodies both — but
+	// 503 is the status proxies retry on their own account, and a retry loop run
+	// one layer up cannot be reasoned with. Between the two the status says what
+	// it can on its own: the transient one is a 503 carrying a Retry-After, the
+	// permanent one a 500 carrying none.
 	ErrCodeMisconfigured  = "SERVICE_MISCONFIGURED"
 	ErrCodeKeyNotFound    = "KEY_NOT_FOUND"
 	ErrCodeKeyNotAllowed  = "KEY_NOT_ALLOWED"
@@ -282,10 +289,14 @@ func IsServiceDegraded(err error) bool {
 // an operator changes it.
 //
 // The distinction IsServiceDegraded cannot make, and the one that decides
-// whether waiting is a strategy: both are 503 and neither is the caller's
-// fault, but a JWKS blip clears and an ALLOWED_ISSUERS entry pointing at a
-// private address does not. shouldRetry declines this one for exactly that
-// reason; a caller running its own retry loop wants the same test.
+// whether waiting is a strategy: neither is the caller's fault, but a JWKS blip
+// clears and an ALLOWED_ISSUERS entry pointing at a private address does not.
+// shouldRetry declines this one for exactly that reason; a caller running its
+// own retry loop wants the same test.
+//
+// Test the code, not the 500. IsServiceError is true for both halves, and an
+// intermediary's own 500 carries no code at all — which is the answer this
+// returns false for, correctly: an unattributed 5xx is worth another go.
 func IsServiceMisconfigured(err error) bool {
 	var se *ServiceError
 	return errors.As(err, &se) && se.Code == ErrCodeMisconfigured

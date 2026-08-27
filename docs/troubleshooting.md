@@ -70,9 +70,9 @@ verified token still needs a trusted subject. Check all of:
 Discovery and JWKS reachability is _not_ on that list any more: a deployment
 that cannot reach the issuer now answers
 [`503 SERVICE_DEGRADED`](errors.md#service_degraded) — or
-[`SERVICE_MISCONFIGURED`](errors.md#service_misconfigured), when the URL is one
-it refuses to fetch at all — not a `401`. If you are reading a `401`, the issuer
-was reached.
+[`500 SERVICE_MISCONFIGURED`](errors.md#service_misconfigured), when the URL is
+one it refuses to fetch at all — not a `401`. If you are reading a `401`, the
+issuer was reached.
 
 The `code` separates these, and the split matters because the fixes do:
 
@@ -266,12 +266,14 @@ fix:
   `401 AUTH_INVALID`, which sent people to rotate a perfectly good token and
   told every Go client not to retry the one auth failure a retry fixes.
 
-- **[`SERVICE_MISCONFIGURED`](errors.md#service_misconfigured)** — the same
-  "not yours to fix" with the opposite answer. An entry in `ALLOWED_ISSUERS`
-  points at a URL this deployment refuses to fetch — a private address, a
-  metadata endpoint — so it will answer identically forever and carries no
-  `Retry-After`. That one is the operator's, and clients stop on it rather than
-  retrying.
+- **[`SERVICE_MISCONFIGURED`](errors.md#service_misconfigured)** — a `500`,
+  and the same "not yours to fix" with the opposite answer. An entry in
+  `ALLOWED_ISSUERS` points at a URL this deployment refuses to fetch — a private
+  address, a metadata endpoint — so it will answer identically forever and
+  carries no `Retry-After`. That one is the operator's, and clients stop on it
+  rather than retrying. The status is the half of that a proxy can read, since a
+  proxy cannot read the code: the transient one is a `503` with a `Retry-After`,
+  this one a `500` without.
 
   This was `SERVICE_DEGRADED` with the header left off, which sounds like a
   signal and is not one: nothing reads a missing `Retry-After` as "stop", so the

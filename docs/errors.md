@@ -265,11 +265,11 @@ is the only code in this reference a caller is invited to retry.
 | `Authorization store unavailable`               | The D1 lookup of the caller's trust failed — trusted subjects, or service tokens. Check `task db:migrate` and `gpg-sign health`. |
 
 Every row carries a `Retry-After`, and the JWKS is cached for five minutes once
-it is read, so a fleet that all hit a blip together recovers together.
-
-A 503 that will **not** clear on its own is a different code —
-[`SERVICE_MISCONFIGURED`](#service_misconfigured) — rather than this one without
-a `Retry-After`. See there for why.
+it is read, so a fleet that all hit a blip together recovers together. Every 503
+this service sends is this code, and every one of them carries a `Retry-After`;
+the fault that will **not** clear on its own is
+[`SERVICE_MISCONFIGURED`](#service_misconfigured), and it is a 500. See there for
+why.
 
 These used to be answered `401 AUTH_INVALID`, which sent the caller to a table
 of seven token faults, none of which they had, and told every Go client not to
@@ -277,7 +277,7 @@ retry.
 
 ### SERVICE_MISCONFIGURED
 
-**503.** The same shape as [`SERVICE_DEGRADED`](#service_degraded) — this
+**500.** The same shape as [`SERVICE_DEGRADED`](#service_degraded) — this
 deployment could not decide the request, and nothing about the request is wrong
 — except that the cause is this deployment's own configuration, so **it will
 answer identically until an operator changes something**. No `Retry-After`, and
@@ -306,13 +306,35 @@ be reached from a Worker, and pointing `ALLOWED_ISSUERS` at it will produce this
 code on every request rather than a timeout.
 
 **Why a separate code and not `SERVICE_DEGRADED` with no `Retry-After`.** The
-only thing a caller does with a 503 is decide whether to try again, and a
+only thing a caller does with a 5xx is decide whether to try again, and a
 missing header is not something any client reads as "stop": the Go client
 retries every 5xx, and this reference's own bash example retried a 503
 unconditionally. So the permanent fault was attempted four times and the absent
 header cost it nothing but the interval. `SERVICE_MISCONFIGURED` puts the
 classification in a value — `IsServiceMisconfigured(err)` in the Go client, a
 `case` in a shell script — instead of in the absence of one.
+
+**Why 500 and not 503.** Branch on the code, not the status — but the status
+still has to not lie, because things between you and this service read it and
+cannot read the code. RFC 9110 defines 503 as a condition "which will likely be
+alleviated after some delay", which is the exact claim this code exists to deny,
+and intermediaries act on that reading: Envoy's `retry_on: gateway-error`,
+nginx's `proxy_next_upstream http_503`, outlier detection and health-check
+ejection all key on 503 far more often than on 500. A proxy in front would run
+the retry loop again one layer up, where nothing can tell it to stop, and an
+ejecting one would answer its own bare 502 — losing the `code`, `hint` and
+`docs` this whole reference is about, at the one moment they matter.
+
+500 is also the truer shape. One bad entry in `ALLOWED_ISSUERS` breaks that
+issuer's callers while everybody else keeps signing, so the _service_ is not
+unavailable; 500's "unexpected condition that prevented it from fulfilling the
+request" is request-scoped, which is what this is.
+
+Between them the pair gives a caller who cannot read the code — a proxy, a
+`curl -i` in a CI log — a rule that holds across the two: **the transient one is
+a 503 and carries a `Retry-After`; the permanent one is a 500 and never does.**
+Neither half is safe to read on its own — plenty of retryable `5xx` elsewhere
+carry no header either — but together they are what a status alone can say.
 
 ## Looking a refusal up
 

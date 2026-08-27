@@ -1879,7 +1879,12 @@ describe("Security Headers Middleware", () => {
 			// Retry-After. The code is what carries "permanent": a missing header
 			// is not a signal any client reads, and while this was SERVICE_DEGRADED
 			// without one the Go retrier attempted it four times.
-			expect(response.status).toBe(503);
+			//
+			// 500 rather than 503, which is the timeouts' status two tests up. The
+			// proxies between here and the caller cannot read the code, and 503 is
+			// the status they retry — so the permanent fault would have run the
+			// loop again one layer up, where nothing can tell it to stop.
+			expect(response.status).toBe(500);
 			const body = await parseJson<{ error: string; code: string; hint: string; docs: string }>(response);
 			expect(body.error).toContain("SSRF protection");
 			expect(body.code).toBe("SERVICE_MISCONFIGURED");
@@ -1919,7 +1924,7 @@ describe("Security Headers Middleware", () => {
 				},
 			);
 
-			expect(response.status).toBe(503);
+			expect(response.status).toBe(500);
 			const body = await parseJson<{ error: string; code: string }>(response);
 			expect(body.error).toContain("SSRF protection: Invalid URL");
 			expect(body.code).toBe("SERVICE_MISCONFIGURED");
@@ -1955,7 +1960,7 @@ describe("Security Headers Middleware", () => {
 				body: "commit data",
 			});
 
-			expect(response.status).toBe(503);
+			expect(response.status).toBe(500);
 			const body = await parseJson<{ error: string; code: string }>(response);
 			expect(body.error).toContain("SSRF protection");
 			expect(body.code).toBe("SERVICE_MISCONFIGURED");
@@ -1985,7 +1990,7 @@ describe("Security Headers Middleware", () => {
 				body: "commit data",
 			});
 
-			expect(response.status).toBe(503);
+			expect(response.status).toBe(500);
 			const body = await parseJson<{ error: string; code: string }>(response);
 			expect(body.error).toContain("SSRF protection: Invalid URL");
 			expect(body.code).toBe("SERVICE_MISCONFIGURED");

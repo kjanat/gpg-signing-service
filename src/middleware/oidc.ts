@@ -47,15 +47,18 @@ const REVOKED_REUSE_METER = "oidc-revoked-reuse";
  * `transient` separates the two ways this happens. A timeout or a 5xx from the
  * issuer clears on its own and is worth another attempt; a URL blocked by SSRF
  * validation is this deployment's `ALLOWED_ISSUERS` pointing somewhere it will
- * never fetch from, which no amount of waiting resolves. Both are 503 — neither
- * is the caller's to fix — and they carry different codes: `SERVICE_DEGRADED`
- * with a `Retry-After`, `SERVICE_MISCONFIGURED` without one, because telling a
- * caller to try again for a fault that is permanent until an operator edits a
- * variable is just a slower failure.
+ * never fetch from, which no amount of waiting resolves. Neither is the
+ * caller's to fix, and they are answered differently all the way down: the
+ * transient one is `SERVICE_DEGRADED`, 503, with a `Retry-After`; the permanent
+ * one is `SERVICE_MISCONFIGURED`, 500, with none. Telling a caller to try again
+ * for a fault that is permanent until an operator edits a variable is just a
+ * slower failure.
  *
  * The code is what carries that, and the missing `Retry-After` deliberately is
  * not: a header's absence is not a channel any client reads as "stop", so
  * expressing it that way left the permanent fault being attempted four times.
+ * The status is not the channel either — `shouldRetry` reads `>= 500` — but it
+ * is read by every proxy in between, and 503 is the one they retry.
  */
 export class IssuerUnavailableError extends Error {
 	constructor(
@@ -339,7 +342,7 @@ export const oidcAuth: MiddlewareHandler<{
 		if (error instanceof IssuerUnavailableError) {
 			// The two halves of `transient` get two codes, not one code and a
 			// missing header. Retryability is the only thing a caller does with a
-			// 503, and no client reads the absence of `Retry-After` as "stop" — the
+			// 5xx, and no client reads the absence of `Retry-After` as "stop" — the
 			// Go retrier attempts any 5xx — so expressing "permanent" that way had
 			// the SSRF fault tried four times and only cost it the interval.
 			if (!error.transient) {
