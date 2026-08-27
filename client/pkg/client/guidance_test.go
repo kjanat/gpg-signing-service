@@ -254,3 +254,55 @@ func TestGuidanceSurvivesAnUndeclaredRateLimit(t *testing.T) {
 		t.Errorf("request id: got %q", rateErr.RequestID)
 	}
 }
+
+// ValidationError was the one refusal type that dropped the request id.
+//
+// /sign answers 400 *with* one — `No commit data provided` and `Invalid key ID
+// format` both do — so this was not a symmetry argument: the field arrived and
+// was discarded. The same status also disagreed with itself, because an
+// undeclared 400 goes through newStatusError and lands on a *ServiceError,
+// which has always carried an id. Whether the id survived depended on which of
+// the two paths the response happened to take.
+func TestValidationErrorKeepsTheRequestID(t *testing.T) {
+	const requestID = "3f8b0c4e-1d2a-4f6b-9c8d-0e1f2a3b4c5d"
+	body := fmt.Sprintf(
+		`{"error":"Invalid key ID format: nope","code":"INVALID_REQUEST","requestId":%q,`+
+			`"docs":"https://sign.test/e/INVALID_REQUEST"}`, requestID)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Request-ID", requestID)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprint(w, body)
+	}))
+	defer server.Close()
+
+	c, err := New(server.URL, WithMaxRetries(0))
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+
+	_, signErr := c.Sign(context.Background(), "commit data", "")
+
+	var valErr *ValidationError
+	if !errors.As(signErr, &valErr) {
+		t.Fatalf("expected a *ValidationError, got %T (%v)", signErr, signErr)
+	}
+	if valErr.RequestID != requestID {
+		t.Errorf("RequestID = %q, want %q", valErr.RequestID, requestID)
+	}
+	// Printed, not merely stored: this is the id docs/troubleshooting.md asks an
+	// operator to quote, and the error string is where they read it.
+	if want := "validation error: Invalid key ID format: nope (request " + requestID + ")"; valErr.Error() != want {
+		t.Errorf("Error() = %q, want %q", valErr.Error(), want)
+	}
+}
+
+// No envelope id and no header: nothing to print, and no empty "(request )".
+func TestValidationErrorWithoutAnIDPrintsNoneVals(t *testing.T) {
+	e := &ValidationError{Code: "INVALID_REQUEST", Message: "No commit data provided"}
+
+	if got, want := e.Error(), "validation error: No commit data provided"; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+}

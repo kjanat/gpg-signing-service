@@ -135,6 +135,26 @@ describe("the middleware leaves alone what it cannot improve", () => {
 		expect(await got.text()).toBe("<html>gateway error</html>");
 	});
 
+	it("leaves a foreign code unlinked rather than minting a link that 404s", async () => {
+		// The case this describe block exists for: a body this service did not
+		// author. An intermediary answering with its own envelope has a `code`,
+		// but not one `/e/:code` will honour — and the route refuses it, so a
+		// `docs` field here would cost the caller a round trip to discover the
+		// documentation does not exist. Nothing else about the response changes.
+		const got = await answer(
+			new Response(JSON.stringify({ error: "upstream timed out", code: "UPSTREAM_TIMEOUT" }), {
+				status: 504,
+				headers: { "content-type": "application/json" },
+			}),
+		);
+
+		expect(await got.json()).toEqual({ error: "upstream timed out", code: "UPSTREAM_TIMEOUT" });
+
+		// The other half of the same claim, stated where it can fail: the route
+		// really does refuse that code, so an emitted link would have been dead.
+		expect((await request("/e/UPSTREAM_TIMEOUT")).status).toBe(404);
+	});
+
 	it("passes through JSON that is not an envelope", async () => {
 		for (const payload of ["[]", '"just a string"', "null", "42"]) {
 			const got = await answer(new Response(payload, { status: 500, headers: { "content-type": "application/json" } }));
@@ -241,6 +261,19 @@ describe("GET /e/:code", () => {
 		const response = await request("/e/SIGN_ERROR", {}, { ERROR_DOCS_URL: "https://docs.example/errors/" });
 
 		expect(response.headers.get("Location")).toBe("https://docs.example/errors#sign_error");
+	});
+
+	it("ignores an ERROR_DOCS_URL that is not an absolute http(s) URL", async () => {
+		// This value becomes the `Location` of a 302 the service sends, which is a
+		// stronger reason to validate it than SERVICE_BASE_URL had — that one only
+		// fills a field. Falling back to the default keeps the redirect landing on
+		// real documentation.
+		for (const bad of ["docs/errors.md", "javascript:alert(1)", "not a url at all"]) {
+			const response = await request("/e/SIGN_ERROR", {}, { ERROR_DOCS_URL: bad });
+
+			expect(response.status).toBe(302);
+			expect(response.headers.get("Location")).toBe(`${DEFAULT_ERROR_DOCS_URL}#sign_error`);
+		}
 	});
 
 	it("says an unknown code is unknown instead of landing somewhere plausible", async () => {

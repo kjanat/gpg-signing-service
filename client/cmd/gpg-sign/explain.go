@@ -74,6 +74,7 @@ func requestIDOf(err error) string {
 	var authErr *client.AuthError
 	var rateErr *client.RateLimitError
 	var svcErr *client.ServiceError
+	var valErr *client.ValidationError
 	switch {
 	case errors.As(err, &authErr):
 		return authErr.RequestID
@@ -81,6 +82,8 @@ func requestIDOf(err error) string {
 		return rateErr.RequestID
 	case errors.As(err, &svcErr):
 		return svcErr.RequestID
+	case errors.As(err, &valErr):
+		return valErr.RequestID
 	}
 	return ""
 }

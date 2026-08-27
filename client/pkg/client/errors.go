@@ -117,10 +117,25 @@ type ServiceError struct {
 }
 
 func (e *ServiceError) Error() string {
-	if e.RequestID != "" {
-		return fmt.Sprintf("%s: %s (status %d, request %s)", e.Code, e.Message, e.StatusCode, e.RequestID)
+	// One parenthesis with the detail comma-joined inside it, rather than a run
+	// of them: the existing `(status 500, request req-123)` is what callers and
+	// this package's own tests read, and the wait joins that list instead of
+	// starting a second bracket after it.
+	//
+	// The wait is printed for the same reason RateLimitError prints its own:
+	// once the retries are spent the error string is the whole of what a human
+	// sees, and on a SERVICE_DEGRADED 503 the interval is the only actionable
+	// part — nothing about the request is wrong, so how long to wait is the
+	// entire answer. Reading the header into the struct and never printing it
+	// left that answer reachable from Go code and nowhere else.
+	detail := fmt.Sprintf("status %d", e.StatusCode)
+	if e.RetryAfter > 0 {
+		detail += fmt.Sprintf(", retry after %v", e.RetryAfter)
 	}
-	return fmt.Sprintf("%s: %s (status %d)", e.Code, e.Message, e.StatusCode)
+	if e.RequestID != "" {
+		detail += fmt.Sprintf(", request %s", e.RequestID)
+	}
+	return fmt.Sprintf("%s: %s (%s)", e.Code, e.Message, detail)
 }
 
 // AuthError represents authentication failures.
@@ -180,10 +195,20 @@ type ValidationError struct {
 	Guidance
 	Code    string
 	Message string
+	// RequestID is the server's request identifier when the response carried
+	// one. /sign answers 400 *with* one — `No commit data provided` and
+	// `Invalid key ID format` both do — so this was the one refusal type that
+	// dropped an id the service had actually sent. An intermediary's 400 carries
+	// no envelope, and then the echoed X-Request-ID header is the only source.
+	RequestID string
 }
 
 func (e *ValidationError) Error() string {
-	return fmt.Sprintf("validation error: %s", e.Message)
+	msg := fmt.Sprintf("validation error: %s", e.Message)
+	if e.RequestID != "" {
+		msg += fmt.Sprintf(" (request %s)", e.RequestID)
+	}
+	return msg
 }
 
 // IsKeyNotFound returns true if the error indicates a key was not found.

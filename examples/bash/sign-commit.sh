@@ -6,6 +6,14 @@ set -euo pipefail
 BASE_URL="${BASE_URL:-https://gpg.kajkowalski.nl}"
 OIDC_TOKEN="${OIDC_TOKEN:-}"
 MAX_RETRIES="${MAX_RETRIES:-3}"
+# Ceiling on a wait the *server* chose. Both retry branches below take an
+# interval off the response — `retryAfter` in a 429's body, `Retry-After` on a
+# 503 — and neither value is this script's. An unbounded one parks a CI job for
+# as long as whatever answered feels like: a misconfigured origin, an
+# intermediary with its own idea of a maintenance window, or simply a typo'd
+# variable. The Go client clamps the same two hints to its own retryWaitMax for
+# this reason; this is the shell equivalent.
+MAX_RETRY_WAIT="${MAX_RETRY_WAIT:-120}"
 
 # Functions
 log_info() {
@@ -40,6 +48,26 @@ log_service_error() {
 			log_error "  ${field}: ${value}"
 		fi
 	done
+}
+
+# Clamp a server-chosen wait to MAX_RETRY_WAIT, and reject anything that is not
+# a plain number of seconds.
+#
+# `Retry-After` also has an HTTP-date form that intermediaries emit freely, and
+# the reader below yields an empty string for one rather than trying to parse a
+# date in portable shell — so a non-numeric value lands on the default here
+# instead of reaching `sleep` as a word it would refuse.
+clamp_wait() {
+	local wait="$1" fallback="$2"
+
+	# Zero is "no hint", not "immediately" — the same reading the Go client's
+	# retryAfterSeconds takes. Sleeping 0 turns the retry loop into a tight one
+	# against a dependency that has just failed.
+	[[ ${wait} =~ ^[0-9]+$ && ${wait} -gt 0 ]] || wait="${fallback}"
+	if ((wait > MAX_RETRY_WAIT)); then
+		wait="${MAX_RETRY_WAIT}"
+	fi
+	echo "${wait}"
 }
 
 check_requirements() {
@@ -136,6 +164,7 @@ sign_commit() {
 			429)
 				local retry_after
 				retry_after=$(echo "${body}" | jq -r '.retryAfter // 30')
+				retry_after=$(clamp_wait "${retry_after}" 30)
 				log_info "Rate limited, waiting ${retry_after}s..."
 				last_code="${http_code}" last_body="${body}"
 				sleep "${retry_after}"
@@ -150,7 +179,7 @@ sign_commit() {
 				# declares no `retryAfter`.
 				local degraded_wait
 				degraded_wait=$(sed -n 's/^[Rr]etry-[Aa]fter: *\([0-9]*\).*/\1/p' <<<"${headers}" | tail -1)
-				degraded_wait="${degraded_wait:-30}"
+				degraded_wait=$(clamp_wait "${degraded_wait:-30}" 30)
 				log_info "Service degraded, waiting ${degraded_wait}s..."
 				last_code="${http_code}" last_body="${body}"
 				sleep "${degraded_wait}"

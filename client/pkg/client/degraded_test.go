@@ -106,3 +106,57 @@ func TestServiceRetryAfterSurvivesRateLimitRetryBeingOff(t *testing.T) {
 		t.Errorf("expected the server's hint, got %v", got)
 	}
 }
+
+// The wait a 503 sends is only useful if it reaches somebody who can act on it,
+// and there are two of those: the retrier, which reads it off the struct, and
+// the human reading the last error after the retries are spent, who reads it
+// off Error(). The struct field was wired up and the string was not, so the
+// interval — the one actionable part of a SERVICE_DEGRADED, since nothing about
+// the request is wrong — stopped at the Go API.
+func TestDegradedErrorStringSaysHowLongToWait(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "42")
+		w.Header().Set("X-Request-ID", "req-degraded")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = fmt.Fprint(w, degradedBody)
+	}))
+	defer server.Close()
+
+	c, err := New(server.URL, WithMaxRetries(0))
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+
+	_, signErr := c.Sign(context.Background(), "commit data", "")
+	if signErr == nil {
+		t.Fatal("expected an error")
+	}
+
+	var svcErr *ServiceError
+	if !errors.As(signErr, &svcErr) {
+		t.Fatalf("expected a *ServiceError, got %T", signErr)
+	}
+	if svcErr.RetryAfter != 42*time.Second {
+		t.Errorf("RetryAfter = %v, want 42s", svcErr.RetryAfter)
+	}
+
+	// One bracket, comma-joined, so the existing `(status 503, request …)` shape
+	// is unchanged and the wait joins it rather than trailing a second one.
+	const want = "SERVICE_DEGRADED: Could not reach the OIDC configuration at " +
+		"https://issuer.example/.well-known/openid-configuration: Request to https://issuer.example " +
+		"timed out after 10000ms (status 503, retry after 42s, request req-degraded)"
+	if got := svcErr.Error(); got != want {
+		t.Errorf("Error() =\n  %q\nwant\n  %q", got, want)
+	}
+}
+
+// A 500 carries no Retry-After, and the message must not grow a clause about a
+// wait that was never offered.
+func TestServiceErrorWithoutRetryAfterIsUnchanged(t *testing.T) {
+	e := &ServiceError{Code: "INTERNAL_ERROR", Message: "boom", StatusCode: 500, RequestID: "req-1"}
+
+	if got, want := e.Error(), "INTERNAL_ERROR: boom (status 500, request req-1)"; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+}

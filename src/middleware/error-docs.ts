@@ -17,6 +17,7 @@
  */
 
 import type { MiddlewareHandler } from "hono";
+import { isErrorCode } from "#schemas/errors";
 import type { Env, Variables } from "#types";
 import { HTTP } from "#types";
 import { errorDocsUrl } from "#utils/error-docs";
@@ -58,7 +59,17 @@ export const errorDocs: MiddlewareHandler<{
 	const envelope = body as Record<string, unknown>;
 	// No code, nothing to link to. `docs` already present means a handler had
 	// something more specific to say than the code alone; do not overwrite it.
-	if (typeof envelope.code !== "string" || !envelope.code || typeof envelope.docs === "string") {
+	//
+	// `isErrorCode`, not any non-empty string: the link has to be one `/e/:code`
+	// will honour, and that route validates against the same enum before it
+	// redirects. Nothing inside this service can trip the difference — every
+	// `c.json` site is `satisfies ErrorCode` — but this middleware is written to
+	// tolerate bodies it did not author, and there is a test for exactly that: an
+	// upstream proxy answering `{"error":"…","code":"UPSTREAM_TIMEOUT"}` under a
+	// JSON content type. Stamping that with a `docs` field promises documentation
+	// this service does not have, and a code whose link 404s is worse than no
+	// link, because the caller spends the trip finding that out.
+	if (typeof envelope.code !== "string" || !isErrorCode(envelope.code) || typeof envelope.docs === "string") {
 		return;
 	}
 

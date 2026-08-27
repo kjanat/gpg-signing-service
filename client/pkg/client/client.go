@@ -553,10 +553,15 @@ func buildAuditParams(filter AuditFilter) *api.GetAdminAuditParams {
 func mapSignResponseError(resp *api.PostSignResponse) error {
 	switch {
 	case resp.JSON400 != nil:
+		envelopeID := ""
+		if resp.JSON400.RequestId != nil {
+			envelopeID = resp.JSON400.RequestId.String()
+		}
 		return &ValidationError{
-			Guidance: guidanceFromResponse(resp.JSON400),
-			Code:     string(resp.JSON400.Code),
-			Message:  resp.JSON400.Error,
+			Guidance:  guidanceFromResponse(resp.JSON400),
+			Code:      string(resp.JSON400.Code),
+			Message:   resp.JSON400.Error,
+			RequestID: requestIDFrom(envelopeID, resp.HTTPResponse.Header),
 		}
 	case resp.JSON401 != nil:
 		// The refusal a first-time caller actually hits: an unregistered subject
@@ -636,21 +641,30 @@ func mapServerError(resp *api.PostSignResponse) *ServiceError {
 		statusCode = 503
 	}
 
-	serviceErr := &ServiceError{
+	envelopeID := ""
+	if errResp.RequestId != nil {
+		envelopeID = errResp.RequestId.String()
+	}
+
+	return &ServiceError{
 		Guidance:   guidanceFromResponse(errResp),
 		Code:       string(errResp.Code),
 		Message:    errResp.Error,
 		StatusCode: statusCode,
+		// Through requestIDFrom rather than off the envelope alone, which is how
+		// every other constructor here reads it. The envelope is preferred and is
+		// what this service sends; the echoed X-Request-ID header is the fallback,
+		// and it is the only source for the responder this branch also has to
+		// handle — a 5xx that decodes into the typed body without filling it, or a
+		// deployment older than the release that put requestId in that envelope.
+		// Dropping it there loses the one value docs/troubleshooting.md asks an
+		// operator to quote, on the status where they are most likely to need it.
+		RequestID: requestIDFrom(envelopeID, resp.HTTPResponse.Header),
 		// A SERVICE_DEGRADED 503 says how long to wait, and this is the only place
 		// the typed path could pick it up: ErrorResponse declares no retryAfter
 		// field, so the header is the whole source.
 		RetryAfter: retryAfterFrom(0, resp.HTTPResponse.Header),
 	}
-	if errResp.RequestId != nil {
-		serviceErr.RequestID = errResp.RequestId.String()
-	}
-
-	return serviceErr
 }
 
 func parseRateLimitHeaders(resp *api.PostSignResponse, result *SignResult) {

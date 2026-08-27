@@ -127,6 +127,13 @@ export function errorDocsUrl(c: DocsContext, code: string): string {
  * @returns Absolute URL into the error reference
  */
 export function errorDocsTarget(env: DocsEnv | undefined, code?: ErrorCode): string {
-	const base = withoutTrailingSlash(env?.ERROR_DOCS_URL || DEFAULT_ERROR_DOCS_URL);
+	// Validated for the same reason SERVICE_BASE_URL is, and with more at stake:
+	// that one only fills a field a reader may click, while this one is the
+	// `Location` of a 302 the service sends. A relative or non-http(s) value here
+	// makes `/e/<CODE>` — the link printed into every error — redirect somewhere
+	// no browser should follow. Falling back to the default keeps the redirect
+	// landing on real documentation, which is the point of the route.
+	const configured = env?.ERROR_DOCS_URL;
+	const base = withoutTrailingSlash(configured && isAbsoluteHttpUrl(configured) ? configured : DEFAULT_ERROR_DOCS_URL);
 	return code ? `${base}#${code.toLowerCase()}` : base;
 }
