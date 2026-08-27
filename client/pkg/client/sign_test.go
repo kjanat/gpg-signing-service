@@ -489,7 +489,7 @@ func TestSignUntrustedSubject(t *testing.T) {
 	if !errors.As(err, &ae) {
 		t.Fatalf("expected an *AuthError, got %T", err)
 	}
-	if ae.Message != "Subject is not trusted for signing" {
+	if ae.Message != testMsgUntrusted {
 		t.Errorf("server message was discarded: %q", ae.Message)
 	}
 	if ae.Code != testCodeAuthInvalid {
@@ -641,10 +641,13 @@ func TestSignRetriesRealStatusResponses(t *testing.T) {
 			wantErr:      true,
 		},
 		{
-			name:         "a refusal the caller cannot fix is not retried",
-			failures:     99,
-			status:       http.StatusUnauthorized,
-			body:         `{"error":"Subject is not trusted for signing","code":"AUTH_INVALID"}`,
+			name:     "a refusal the caller cannot fix is not retried",
+			failures: 99,
+			status:   http.StatusUnauthorized,
+			// The code this refusal actually carries. Pairing the untrusted-subject
+			// message with AUTH_INVALID is the combination the split removed from
+			// the wire, and this case is named for the semantic the split created.
+			body:         `{"error":"Subject is not trusted for signing","code":"` + ErrCodeAuthSubjectUntrusted + `"}`,
 			wantRequests: 1,
 			wantErr:      true,
 		},

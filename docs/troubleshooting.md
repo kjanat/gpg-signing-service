@@ -1,5 +1,23 @@
 # Troubleshooting
 
+## Start with the error itself
+
+Every error the service returns names its own documentation:
+
+```json
+{
+  "error": "…",
+  "code": "AUTH_SUBJECT_UNTRUSTED",
+  "hint": "…",
+  "docs": "https://gpg.kajkowalski.nl/e/AUTH_SUBJECT_UNTRUSTED"
+}
+```
+
+Open the `docs` link, or look the `code` up in the
+[error reference](errors.md) — every code has a section there naming the fix.
+This page covers the failures that are not a single error code: installer
+problems, environment issues, and the checks worth running first.
+
 ## Start with health and the contract
 
 ```bash
@@ -39,21 +57,36 @@ The likely cause on a first call is authorization, not authentication: a
 verified token still needs a trusted subject. Check all of:
 
 - the calling repository's `sub` matches a live row in `GET /admin/subjects` —
-  a body of `Subject is not trusted for signing` means the credential verified
-  and nothing trusts it, and an empty table denies everyone (see
+  a code of `AUTH_SUBJECT_UNTRUSTED` means the credential verified and nothing
+  trusts it, and an empty table denies everyone (see
   [trusted OIDC subjects](authentication.md#trusted-oidc-subjects));
 - the job grants `id-token: write`;
 - the token was requested with audience `gpg-signing-service`, or the configured
   `EXPECTED_AUDIENCE`;
 - `ALLOWED_ISSUERS` contains
   `https://token.actions.githubusercontent.com`;
-- the token has not expired; and
-- discovery and JWKS endpoints are reachable.
+- the token has not expired.
 
-The response body separates these: `AUTH_MISSING` is no usable credential at
-all, `Issuer not allowed: <iss>` an unlisted issuer, `Subject is not trusted for
-signing` an unregistered caller, and any other `AUTH_INVALID` a verification
-failure. `gpg-sign` prints that body, so read it before working down the list.
+Discovery and JWKS reachability is _not_ on that list any more: a deployment
+that cannot reach the issuer now answers
+[`503 SERVICE_DEGRADED`](errors.md#service_degraded), not a `401`. If you are
+reading a `401`, the issuer was reached.
+
+The `code` separates these, and the split matters because the fixes do:
+
+- `AUTH_MISSING` — no usable credential reached the service.
+- `AUTH_INVALID` — a credential was presented and **the credential** was
+  refused: unlisted issuer, wrong audience, expired, bad signature, an
+  unaccepted `alg`. Fix the token. It never means the service had trouble
+  reaching the issuer; that is a `503`.
+- [`AUTH_SUBJECT_UNTRUSTED`](errors.md#auth_subject_untrusted) — the token
+  verified and **the identity is not authorized**. Nothing about the workflow's
+  OIDC setup will change this; add a trust rule. The response echoes the
+  `subject` it refused, which is the value to compare against
+  `GET /admin/subjects`.
+
+`gpg-sign` prints the message, the subject, the hint and the docs link on
+separate lines, so read those before working down the list.
 
 `AUTH_MISSING` has two messages, and the second is the one that misleads. The
 prefix test is for the word `Bearer` _followed by a space_, so a header that is
@@ -71,7 +104,8 @@ JWT in `.value`, not `.token`.
 ### `401` with GitLab
 
 Check the project's `sub` matches a live row in `GET /admin/subjects` first;
-`Subject is not trusted for signing` is a verified token that nothing trusts.
+`AUTH_SUBJECT_UNTRUSTED` is a verified token that nothing trusts, and the
+response tells you which `subject` it refused.
 
 Then declare `id_tokens` and set `aud` to the configured expected audience.
 Legacy `CI_JOB_JWT` examples do not establish that audience.
@@ -118,8 +152,11 @@ stored as a row that would match nothing. Use the trailing-delimiter form —
 
 ### The subject was created but signing still returns `401`
 
-The row exists and does not match. Compare the failing run's `sub` against
-`GET /admin/subjects` character by character:
+Confirm the code is [`AUTH_SUBJECT_UNTRUSTED`](errors.md#auth_subject_untrusted)
+first — an `AUTH_INVALID` here is the token, not the row, and nothing below
+applies. If it is, the row exists and does not match. The response echoes the
+`subject` it refused; compare that against `GET /admin/subjects` character by
+character:
 
 - the prefix must match from the **start** of the subject and end on a `:`, `@`
   or `/` boundary — `repo:owner/svc` never admits `repo:owner/svc-two`;
@@ -162,6 +199,24 @@ Key IDs must be exactly 16 hexadecimal characters. Names such as
 The service supports detached PKCS#7, but the current high-level CLI and Go
 wrapper require PGP response markers. Use the HTTP API or generated raw client.
 
+### `no verified commit in HEAD; pass base explicitly`
+
+`sign-commit` could not work out where the range to sign should start, so it
+refused rather than guessing — guessing low rewrites history nobody asked it to
+touch.
+
+It happens when no `--base` was given, you are on the default branch, and the
+backward scan found no commit this key already verifies. That is expected the
+first time a repository signs with a key, and on any branch older than the key.
+
+Pass the bound explicitly: `--base` is the **exclusive** lower bound, so
+`--base=origin/master` signs everything after the branch point and
+`--base=<sha>` signs everything after that commit. See
+[what `--base` is](cli.md#what---base-is).
+
+This failure ends the run before any request is made. A `401` later in the same
+job is a separate problem, not a consequence of this one.
+
 ### Signature file does not make the commit signed
 
 A detached signature must be embedded in a reconstructed commit object. That
@@ -196,6 +251,26 @@ only place it appears.
 
 The service fails closed when rate limiting or a required dependency is
 unavailable. Check Worker logs plus Durable Object and D1 health.
+
+Read the `code` before doing any of that, because one of the two is not yours to
+fix:
+
+- **`SERVICE_DEGRADED`** — the service could not reach the issuer's discovery or
+  JWKS endpoint, or its own authorization store, so **the request was never
+  judged**. Nothing about the token or the trust list is implicated. It carries
+  a `Retry-After` header — a header, not an envelope field — and waiting is the
+  whole fix. `gpg-sign` and the Go package retry it automatically and honour
+  that header; the bash example does too. These used to arrive as
+  `401 AUTH_INVALID`, which sent people to rotate a perfectly good token and
+  told every Go client not to retry the one auth failure a retry fixes.
+
+  The exception is `SSRF protection: …`, which is the same code with no
+  `Retry-After`: an entry in `ALLOWED_ISSUERS` points at a URL this deployment
+  refuses to fetch, and it will answer identically forever. That one is the
+  operator's.
+
+- **`RATE_LIMIT_ERROR`** — the limiter itself was unreachable, and the service
+  refused rather than signing unmetered. Check the Durable Object.
 
 ## Request IDs
 

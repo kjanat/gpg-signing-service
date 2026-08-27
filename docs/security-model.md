@@ -97,7 +97,8 @@ failure does not fail the primary operation.
 The service does not audit every rejected request, but it does record the two
 refusals that carry signal. A denied key selection is written as
 `KEY_NOT_ALLOWED` on both auth paths, and a revoked OIDC trust being presented is
-written as `AUTH_INVALID` with a `metadata.reason` of `revoked_trust_presented`.
+written as `AUTH_SUBJECT_UNTRUSTED` with a `metadata.reason` of
+`revoked_trust_presented`.
 Both writes are rate limited, so neither refusal can be used to flood the table
 it is recorded in.
 

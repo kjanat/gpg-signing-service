@@ -277,6 +277,27 @@ func TestRunRefusesWhenNoCommitVerifies(t *testing.T) {
 	if !strings.Contains(err.Error(), "the last 5 commit(s)") {
 		t.Errorf("expected the scan bound named in the error, got: %v", err)
 	}
+	// Naming the fault is not the same as saying what to do about it. The reader
+	// of this line has never met `base`, and the message is the only place they
+	// are going to learn what it bounds or what a working value looks like.
+	if !strings.Contains(err.Error(), "exclusive lower bound of the range to sign") {
+		t.Errorf("expected the error to say what base means, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "--base=<sha>") {
+		t.Errorf("expected the error to suggest a concrete value, got: %v", err)
+	}
+	// The one value that cannot be right where this prints. lastSigned is only
+	// reachable with an empty base *on the default branch*, so origin/master is
+	// this branch's own remote tip: the range from it is the unpushed commits,
+	// usually none, which is reportEmptyRange rather than a fix.
+	if strings.Contains(err.Error(), "--base=origin/master") {
+		t.Errorf("expected no origin/<default> suggestion on the default branch, got: %v", err)
+	}
+	// And it says the failure is terminal here, so a later 401 in the same job
+	// reads as the separate thing it is.
+	if !strings.Contains(err.Error(), "before any request is made") {
+		t.Errorf("expected the error to say it ends the run, got: %v", err)
+	}
 }
 
 // A scan limit only means something when the base is being scanned for, so a

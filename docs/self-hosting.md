@@ -78,12 +78,36 @@ protection.
 
 Update `[vars]` in `wrangler.toml`:
 
-| Variable            | Purpose                                                  |
-| ------------------- | -------------------------------------------------------- |
-| `KEY_ID`            | Default 16-character hexadecimal signing key ID          |
-| `ALLOWED_ISSUERS`   | Comma-separated OIDC issuer URLs                         |
-| `EXPECTED_AUDIENCE` | Optional JWT audience; defaults to `gpg-signing-service` |
-| `ALLOWED_ORIGINS`   | Browser CORS allowlist; unset grants no origin anything  |
+| Variable                  | Purpose                                                                                     |
+| ------------------------- | ------------------------------------------------------------------------------------------- |
+| `KEY_ID`                  | Default 16-character hexadecimal signing key ID                                             |
+| `ALLOWED_ISSUERS`         | Comma-separated OIDC issuer URLs                                                            |
+| `EXPECTED_AUDIENCE`       | Optional JWT audience; defaults to `gpg-signing-service`                                    |
+| `ALLOWED_ORIGINS`         | Browser CORS allowlist; unset grants no origin anything                                     |
+| `SERVICE_BASE_URL`        | Public origin for the `docs` link on errors; defaults to the request's own origin           |
+| `ERROR_DOCS_URL`          | Optional target for `/e/<CODE>`; defaults to this repository's [error reference](errors.md) |
+| `DISCLOSE_TRUST_PATTERNS` | Optional `"true"` to name the trust list and the accepted issuers in a `401` hint           |
+
+`SERVICE_BASE_URL` is worth setting on any deployment with a name of its own.
+Unset, the `docs` link is built from the origin the request arrived on — which
+is the caller's `Host` header, so a request that forges it gets a link back on a
+hostname of its sender's choosing. Nothing reaches a third party that way, and
+Cloudflare routing constrains which hostnames arrive at all, but `docs` is the
+one field a human is invited to click, and one line in `[vars]` makes it say the
+same thing on every request. A value that is not an absolute `http`/`https` URL
+is ignored and the request's origin used instead.
+
+`DISCLOSE_TRUST_PATTERNS` covers two hints, both off by default:
+
+- the untrusted-subject `401` appends the rule counts for the issuer and the
+  active subject prefixes;
+- the `Issuer not allowed` `401` appends the contents of `ALLOWED_ISSUERS`.
+
+Both are readable by strangers when the issuer is a shared one — anyone who can
+run a GitHub Actions workflow can obtain a verified token — and the issuer hint
+is reachable with no valid credential at all, since the issuer check runs before
+the signature is ever verified. Turn it on where the trust list is not a secret:
+a private issuer, or a deployment whose tenants are public knowledge.
 
 Example:
 

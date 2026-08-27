@@ -306,7 +306,14 @@ describe("Branch Coverage Helpers", () => {
 
 			await import("#middleware/oidc").then(({ oidcAuth }) => oidcAuth(context as any, () => Promise.resolve()));
 
-			expect(json).toHaveBeenCalledWith({ error: "Missing token", code: "AUTH_MISSING" }, 401);
+			expect(json).toHaveBeenCalledWith(
+				{
+					error: "Missing token",
+					code: "AUTH_MISSING",
+					hint: expect.stringContaining("`Bearer ` with nothing after it"),
+				},
+				401,
+			);
 			// RFC 9110 §11.6.1: a 401 without a challenge tells the caller it was
 			// refused but not what to present next.
 			expect(header).toHaveBeenCalledWith("WWW-Authenticate", 'Bearer realm="gpg-signing-service"');

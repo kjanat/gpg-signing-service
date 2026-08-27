@@ -1,0 +1,94 @@
+/**
+ * Puts a `docs` link on every error this service answers.
+ *
+ * Done as a middleware rather than at each `c.json` call site for one reason:
+ * "every error" has to survive the next person adding a route. There are two
+ * dozen refusal sites across the routes, the auth middlewares, the 404 handler
+ * and `onError`, and a helper they are each *supposed* to call is a rule that
+ * holds until someone writes `c.json({ error, code }, 400)` from memory — which
+ * is what the existing code does everywhere, and what reads naturally. Filling
+ * the field in on the way out makes the guarantee structural: a body with a
+ * `code` gets a link whether or not its author thought about it.
+ *
+ * Only JSON bodies at 4xx/5xx that already carry a `code` are touched, so
+ * signatures (`text/plain`), armored keys and every success response pass
+ * through untouched — including the streamed ones, which are never buffered
+ * here because the content-type check comes first.
+ */
+
+import type { MiddlewareHandler } from "hono";
+import { isErrorCode } from "#schemas/errors";
+import type { Env, Variables } from "#types";
+import { HTTP } from "#types";
+import { errorDocsUrl } from "#utils/error-docs";
+
+/** Smallest status this middleware considers an error. */
+const FIRST_ERROR_STATUS = HTTP.BadRequest;
+
+/** Does this response carry a JSON body? */
+function isJson(response: Response): boolean {
+	return response.headers.get("content-type")?.includes("application/json") ?? false;
+}
+
+export const errorDocs: MiddlewareHandler<{
+	Bindings: Env;
+	Variables: Variables;
+}> = async (c, next) => {
+	await next();
+
+	const response = c.res;
+	if (response.status < FIRST_ERROR_STATUS || !isJson(response)) {
+		return;
+	}
+
+	// A body that is not an object, or not JSON at all despite the header, is
+	// left exactly as it was. This middleware exists to add a field, never to
+	// change what a caller receives beyond that.
+	let body: unknown;
+	const cloned = response.clone();
+	try {
+		body = await cloned.json();
+	} catch {
+		return;
+	}
+
+	if (typeof body !== "object" || body === null || Array.isArray(body)) {
+		return;
+	}
+
+	const envelope = body as Record<string, unknown>;
+	// No code, nothing to link to. `docs` already present means a handler had
+	// something more specific to say than the code alone; do not overwrite it.
+	//
+	// `isErrorCode`, not any non-empty string: the link has to be one `/e/:code`
+	// will honour, and that route validates against the same enum before it
+	// redirects. Nothing inside this service can trip the difference — every
+	// `c.json` site is `satisfies ErrorCode` — but this middleware is written to
+	// tolerate bodies it did not author, and there is a test for exactly that: an
+	// upstream proxy answering `{"error":"…","code":"UPSTREAM_TIMEOUT"}` under a
+	// JSON content type. Stamping that with a `docs` field promises documentation
+	// this service does not have, and a code whose link 404s is worse than no
+	// link, because the caller spends the trip finding that out.
+	if (typeof envelope.code !== "string" || !isErrorCode(envelope.code) || typeof envelope.docs === "string") {
+		return;
+	}
+
+	// Carried over so nothing else about the response changes — the rate-limit
+	// headers on a 429, the `WWW-Authenticate` challenge on a 401. `content-length`
+	// is the exception: the body just grew by the length of the link, and a stale
+	// value there truncates the response at the client.
+	const headers = new Headers(response.headers);
+	headers.delete("content-length");
+
+	// Cleared first because Hono's `set res` merges the *old* response's headers
+	// over the new one whenever `c.res` is already populated (context.ts:120) —
+	// which would put the stale `content-length` straight back and truncate the
+	// body at the client. Nulling it makes the assignment below take the headers
+	// as written.
+	c.res = undefined;
+	c.res = new Response(JSON.stringify({ ...envelope, docs: errorDocsUrl(c, envelope.code) }), {
+		status: response.status,
+		statusText: response.statusText,
+		headers,
+	});
+};

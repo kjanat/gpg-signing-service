@@ -15,22 +15,82 @@ import (
 
 // Error codes returned by the service in the `code` field of an error response.
 //
-// AuthError.Code carries one of the two AUTH_ values on every 401 the document
-// declares, and the pair is the whole reason the code is surfaced rather than
-// the prose: AUTH_MISSING means no usable credential was presented and retrying
-// with the same configuration cannot help, while AUTH_INVALID means one was
-// presented and refused — a rotated admin token, an unlisted issuer, a subject
-// holding no trusted row. Exported so callers branch on these rather than on
-// string literals the service is free to reword.
+// AuthError.Code carries one of the three AUTH_ values on every 401 the
+// document declares, and the set is the whole reason the code is surfaced
+// rather than the prose. Each names a different fix: AUTH_MISSING means no
+// usable credential was presented and retrying with the same configuration
+// cannot help; AUTH_INVALID means one was presented and the credential was
+// refused — a rotated admin token, an unlisted issuer, a stale token;
+// AUTH_SUBJECT_UNTRUSTED means the credential was fine and the identity is not
+// authorized. Exported so callers branch on these rather than on string
+// literals the service is free to reword.
 const (
-	ErrCodeAuthMissing    = "AUTH_MISSING"
-	ErrCodeAuthInvalid    = "AUTH_INVALID"
+	ErrCodeAuthMissing = "AUTH_MISSING"
+	ErrCodeAuthInvalid = "AUTH_INVALID"
+	// ErrCodeAuthSubjectUntrusted means the credential verified and the identity
+	// it proves is not authorized to sign. Split out of AUTH_INVALID because the
+	// fixes have nothing in common: AUTH_INVALID is answered by mending the
+	// token, this one by adding a trust rule for the subject. A caller that
+	// cannot tell them apart retries the first fix for both, which is how a
+	// missing trust rule reads as a broken OIDC setup.
+	ErrCodeAuthSubjectUntrusted = "AUTH_SUBJECT_UNTRUSTED"
+	// ErrCodeDegraded means the service could not reach something it needs — the
+	// issuer's JWKS, the authorization store — and so could not decide the
+	// request either way. Answered 503, usually with a Retry-After, and it is the
+	// one code here a caller is invited to retry: nothing about the request is
+	// wrong.
+	//
+	// This used to be a constant nothing on the wire ever carried, while the
+	// failures it names arrived as AUTH_INVALID — which IsAuthError reports true
+	// for and shouldRetry refuses to retry, so the one auth-path failure a retry
+	// fixes was the one wearing the code that forbids it. TestErrorCodesExistOnTheWire
+	// is what keeps this list and the service's enum from drifting apart again.
 	ErrCodeDegraded       = "SERVICE_DEGRADED"
 	ErrCodeKeyNotFound    = "KEY_NOT_FOUND"
 	ErrCodeKeyNotAllowed  = "KEY_NOT_ALLOWED"
 	ErrCodeInvalidRequest = "INVALID_REQUEST"
 	ErrCodeInternalError  = "INTERNAL_ERROR"
 )
+
+// Guidance is the actionable half of an error response: not what went wrong,
+// which the message already says, but what to change and where to read more.
+//
+// Carried by every error type in this package rather than formatted into the
+// message, because the two are consumed differently. `Error()` has to stay one
+// line — it gets wrapped by callers, logged, compared in tests — while a hint
+// worth reading is a sentence or two and a docs link is only useful whole. The
+// CLI prints these on their own lines; a library caller reads the fields.
+type Guidance struct {
+	// Hint is what to change, in prose. Empty when the service offered none.
+	Hint string
+	// Docs links to the reference section for this error's code. Short by
+	// construction (`<service>/e/<CODE>`) so it survives a wrapped CI log.
+	Docs string
+	// Subject is the `sub` claim the caller presented, echoed back on an
+	// authorization refusal. Empty on every other kind of error.
+	Subject string
+}
+
+// guidanceOf satisfies the interface GuidanceFor looks for. Unexported: the
+// data is reached through the embedded struct's fields, and the method exists
+// only so errors.As can find a wrapped error that carries any.
+func (g Guidance) guidanceOf() Guidance { return g }
+
+// GuidanceFor digs the guidance out of err, however deeply it is wrapped.
+//
+// Reports false when the error carries none — a transport failure, a locally
+// constructed error, or a service too old to send the fields.
+func GuidanceFor(err error) (Guidance, bool) {
+	var carrier interface{ guidanceOf() Guidance }
+	if !errors.As(err, &carrier) {
+		return Guidance{}, false
+	}
+	guidance := carrier.guidanceOf()
+	if guidance == (Guidance{}) {
+		return Guidance{}, false
+	}
+	return guidance, true
+}
 
 // ErrUnexpectedStatus is a sentinel error returned when the server responds with an unexpected status code.
 var (
@@ -39,21 +99,48 @@ var (
 
 // ServiceError represents an API error response.
 type ServiceError struct {
+	Guidance
 	Code       string
 	Message    string
 	StatusCode int
 	RequestID  string
+	// RetryAfter is how long the response asked the caller to wait, from the
+	// `Retry-After` header. Zero when it carried none.
+	//
+	// Only a 429 used to carry one, so only RateLimitError read it. A
+	// SERVICE_DEGRADED 503 carries one too, and it is the more useful of the two:
+	// a rate limit is the caller's own budget refilling on a schedule the client
+	// could estimate, while a JWKS outage clears when it clears, and the header
+	// is the only thing that knows. Without this the retrier backed off blind
+	// against the one failure the service had told it how to wait for.
+	RetryAfter time.Duration
 }
 
 func (e *ServiceError) Error() string {
-	if e.RequestID != "" {
-		return fmt.Sprintf("%s: %s (status %d, request %s)", e.Code, e.Message, e.StatusCode, e.RequestID)
+	// One parenthesis with the detail comma-joined inside it, rather than a run
+	// of them: the existing `(status 500, request req-123)` is what callers and
+	// this package's own tests read, and the wait joins that list instead of
+	// starting a second bracket after it.
+	//
+	// The wait is printed for the same reason RateLimitError prints its own:
+	// once the retries are spent the error string is the whole of what a human
+	// sees, and on a SERVICE_DEGRADED 503 the interval is the only actionable
+	// part — nothing about the request is wrong, so how long to wait is the
+	// entire answer. Reading the header into the struct and never printing it
+	// left that answer reachable from Go code and nowhere else.
+	detail := fmt.Sprintf("status %d", e.StatusCode)
+	if e.RetryAfter > 0 {
+		detail += fmt.Sprintf(", retry after %v", e.RetryAfter)
 	}
-	return fmt.Sprintf("%s: %s (status %d)", e.Code, e.Message, e.StatusCode)
+	if e.RequestID != "" {
+		detail += fmt.Sprintf(", request %s", e.RequestID)
+	}
+	return fmt.Sprintf("%s: %s (%s)", e.Code, e.Message, detail)
 }
 
 // AuthError represents authentication failures.
 type AuthError struct {
+	Guidance
 	Code    string
 	Message string
 	// RequestID is the server's request identifier when the response carried
@@ -80,6 +167,7 @@ func (e *AuthError) Error() string {
 
 // RateLimitError represents the rate limit having been exceeded.
 type RateLimitError struct {
+	Guidance
 	Message string
 	// RequestID is the server's request identifier when the response carried
 	// one. On a 429 that is usually the echoed X-Request-ID header and nothing
@@ -104,12 +192,23 @@ func (e *RateLimitError) Error() string {
 
 // ValidationError represents invalid request data.
 type ValidationError struct {
+	Guidance
 	Code    string
 	Message string
+	// RequestID is the server's request identifier when the response carried
+	// one. /sign answers 400 *with* one — `No commit data provided` and
+	// `Invalid key ID format` both do — so this was the one refusal type that
+	// dropped an id the service had actually sent. An intermediary's 400 carries
+	// no envelope, and then the echoed X-Request-ID header is the only source.
+	RequestID string
 }
 
 func (e *ValidationError) Error() string {
-	return fmt.Sprintf("validation error: %s", e.Message)
+	msg := fmt.Sprintf("validation error: %s", e.Message)
+	if e.RequestID != "" {
+		msg += fmt.Sprintf(" (request %s)", e.RequestID)
+	}
+	return msg
 }
 
 // IsKeyNotFound returns true if the error indicates a key was not found.
@@ -132,6 +231,17 @@ func IsAuthError(err error) bool {
 	return errors.As(err, &ae)
 }
 
+// IsSubjectUntrusted returns true if the credential was accepted and the
+// identity it proves holds no active trust rule.
+//
+// The distinction IsAuthError cannot make, and the one that decides what to do
+// next: nothing about the token or the workflow's OIDC configuration will
+// change this answer, only a trust rule for the subject will.
+func IsSubjectUntrusted(err error) bool {
+	var ae *AuthError
+	return errors.As(err, &ae) && ae.Code == ErrCodeAuthSubjectUntrusted
+}
+
 // IsRateLimitError returns true if the error indicates rate limit exceeded.
 func IsRateLimitError(err error) bool {
 	var re *RateLimitError
@@ -142,6 +252,17 @@ func IsRateLimitError(err error) bool {
 func IsValidationError(err error) bool {
 	var ve *ValidationError
 	return errors.As(err, &ve)
+}
+
+// IsServiceDegraded returns true if the service could not reach a dependency it
+// needs and said so, rather than refusing the request on its merits.
+//
+// The distinction IsServiceError cannot make: a 500 is a fault to report with
+// the request id, this is a fault to wait out. Both are 5xx and both are
+// retried, but only one of them is worth telling a human about.
+func IsServiceDegraded(err error) bool {
+	var se *ServiceError
+	return errors.As(err, &se) && se.Code == ErrCodeDegraded
 }
 
 // IsServiceError returns true if the error is a service-side error (5xx).
@@ -269,10 +390,42 @@ func newAuthErrorFromResponse(body *api.ErrorResponse, header http.Header) error
 		envelopeID = body.RequestId.String()
 	}
 	return &AuthError{
+		Guidance:  guidanceFromResponse(body),
 		Code:      string(body.Code),
 		Message:   body.Error,
 		RequestID: requestIDFrom(envelopeID, header),
 	}
+}
+
+// deref reads an optional document field, absent meaning "nothing to say".
+func deref(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+// guidanceOfBody reads the actionable fields off a hand-parsed envelope, for
+// the statuses the document does not declare a typed body for.
+func guidanceOfBody(body apiErrorBody) Guidance {
+	return Guidance{Hint: body.Hint, Docs: body.Docs, Subject: body.Subject}
+}
+
+// guidanceFromResponse reads the actionable fields off a typed envelope.
+//
+// All three are optional in the document: an older deployment sends none of
+// them, and an intermediary's error carries whatever it likes. Absent fields
+// become empty strings, which every consumer treats as "nothing to say" rather
+// than printing an empty line.
+func guidanceFromResponse(body *api.ErrorResponse) Guidance {
+	guidance := Guidance{}
+	if body == nil {
+		return guidance
+	}
+	guidance.Hint = deref(body.Hint)
+	guidance.Docs = deref(body.Docs)
+	guidance.Subject = deref(body.Subject)
+	return guidance
 }
 
 func newUnexpectedStatusError(code int) error {
@@ -287,6 +440,9 @@ type apiErrorBody struct {
 	Error     string `json:"error"`
 	Code      string `json:"code"`
 	RequestID string `json:"requestId"`
+	Hint      string `json:"hint"`
+	Docs      string `json:"docs"`
+	Subject   string `json:"subject"`
 	// RetryAfter is the delay in seconds a 429 asks for. Declared by
 	// RateLimitErrorSchema; absent, and so zero, on every other status.
 	RetryAfter int `json:"retryAfter"`
@@ -303,13 +459,18 @@ type apiErrorBody struct {
 // whose body carries neither field: no `error`, so Error() printed a bare
 // "rate limited: ", and no `retryAfter`, so a Retry-After header sitting on the
 // same response was discarded.
-func newRateLimitError(envelopeMessage string, envelopeSeconds int, envelopeRequestID string, header http.Header) *RateLimitError {
+func newRateLimitError(envelopeMessage string, envelopeSeconds int, envelopeRequestID string, guidance Guidance, header http.Header) *RateLimitError {
 	message := envelopeMessage
 	if message == "" {
 		// Otherwise Error() prints a bare "rate limited: ".
 		message = http.StatusText(http.StatusTooManyRequests)
 	}
 	return &RateLimitError{
+		// A 429 carries the same actionable fields every other refusal does —
+		// the middleware fills `docs` in on the way out for any body with a
+		// `code` — so the guidance is threaded through here rather than being
+		// the one error type that drops it.
+		Guidance:   guidance,
 		Message:    message,
 		RequestID:  requestIDFrom(envelopeRequestID, header),
 		RetryAfter: retryAfterFrom(envelopeSeconds, header),
@@ -343,7 +504,7 @@ func newStatusError(statusCode int, body []byte, header http.Header) error {
 	// it was written for. A rate limit the document does not declare is still a
 	// rate limit, and so is one this service did not write.
 	if statusCode == http.StatusTooManyRequests {
-		return newRateLimitError(parsed.Error, parsed.RetryAfter, parsed.RequestID, header)
+		return newRateLimitError(parsed.Error, parsed.RetryAfter, parsed.RequestID, guidanceOfBody(parsed), header)
 	}
 
 	if !ok {
@@ -352,8 +513,11 @@ func newStatusError(statusCode int, body []byte, header http.Header) error {
 
 	requestID := requestIDFrom(parsed.RequestID, header)
 
+	guidance := guidanceOfBody(parsed)
+
 	if statusCode == http.StatusUnauthorized {
 		return &AuthError{
+			Guidance:  guidance,
 			Code:      parsed.Code,
 			Message:   parsed.Error,
 			RequestID: requestID,
@@ -361,10 +525,14 @@ func newStatusError(statusCode int, body []byte, header http.Header) error {
 	}
 
 	return &ServiceError{
+		Guidance:   guidance,
 		Code:       parsed.Code,
 		Message:    parsed.Error,
 		StatusCode: statusCode,
 		RequestID:  requestID,
+		// Read on every status, not just 5xx: RFC 9110 permits Retry-After on any
+		// response, and reading it costs nothing where it is absent.
+		RetryAfter: retryAfterFrom(parsed.RetryAfter, header),
 	}
 }
 
