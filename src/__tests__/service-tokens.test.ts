@@ -144,6 +144,35 @@ describe("caller auth on /sign", () => {
 		expect(body.code).toBe("AUTH_INVALID");
 	});
 
+	it("answers a token-store outage 503 SERVICE_DEGRADED, not 500", async () => {
+		// The same fault the OIDC branch of this middleware answers
+		// SERVICE_DEGRADED for, reached through the other branch. `verifyServiceToken`
+		// does its D1 read unguarded, so an outage used to throw past `callerAuth`
+		// into `onError` and come back INTERNAL_ERROR — "an unhandled fault, worth
+		// reporting with the requestId" for what is a dependency to wait out. One
+		// database, two callers, two different instructions.
+		const realPrepare = env.AUDIT_DB.prepare.bind(env.AUDIT_DB);
+		const spy = vi.spyOn(env.AUDIT_DB, "prepare").mockImplementation((query: string) => {
+			if (query.includes("FROM service_tokens")) {
+				throw new Error("D1_ERROR: no such table: service_tokens: SQLITE_ERROR");
+			}
+			return realPrepare(query);
+		});
+
+		const response = await request("/sign", "gst_whatever", { method: "POST", body: "data" });
+		spy.mockRestore();
+
+		expect(response.status).toBe(503);
+		const body = (await response.json()) as { code: string; error: string; hint: string };
+		expect(body.code).toBe("SERVICE_DEGRADED");
+		expect(body.hint).toContain("Nothing about the token is wrong");
+		expect(Number(response.headers.get("Retry-After"))).toBeGreaterThan(0);
+		// The store's shape is not the caller's business, and INTERNAL_ERROR's
+		// message was the raw D1 string.
+		expect(body.error).not.toContain("service_tokens");
+		expect(body.error).not.toContain("SQLITE");
+	});
+
 	it("enforces the token key allowlist before any signing work", async () => {
 		const token = generateToken();
 		await insertServiceToken(env.AUDIT_DB, {

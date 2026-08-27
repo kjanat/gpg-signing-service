@@ -11,4 +11,6 @@ export const HEADERS = {
 	RATE_LIMIT_RESET: "X-RateLimit-Reset",
 	/** Rate limit maximum requests header */
 	RATE_LIMIT_LIMIT: "X-RateLimit-Limit",
+	/** RFC 9110 §10.2.3 wait hint, sent with a 429 or a 503 */
+	RETRY_AFTER: "Retry-After",
 } as const;

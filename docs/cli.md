@@ -153,11 +153,76 @@ HEAD now points at 4e6dcb82. Nothing was pushed; publishing this rewrite needs a
 `reparent` is a commit rewritten only to follow a rewritten parent; the middle
 one here was committed by an identity this key does not cover.
 
-Without `--base`, the range starts at the last commit this key already verifies
-when you are on `--default-branch`, and at the merge base with
-`origin/<default-branch>` otherwise. `--scan-limit` bounds that backward scan.
-It is ignored when `--base` pins the range and when you are on another branch,
-because the scan does not run in either case.
+#### What `--base` is
+
+`--base` is the **exclusive** lower bound of the range to sign: the commit
+_after_ which everything gets rewritten. `--base=X` signs `X..HEAD` and leaves
+`X` itself alone. It takes anything `git rev-parse` accepts — a branch
+(`origin/master`), a tag, a SHA, `HEAD~5`.
+
+Getting it wrong is not a no-op. Too low a base rewrites history you did not
+mean to touch, and every rewritten commit changes SHA.
+
+You do not normally pass it. Without `--base` the range starts:
+
+- at the last commit this key already verifies, when you are on
+  `--default-branch` — the point the branch was last left in a good state; or
+- at the merge base with `origin/<default-branch>`, on any other branch.
+
+`--scan-limit` bounds that backward scan. It is ignored when `--base` pins the
+range and when you are on another branch, because the scan does not run in
+either case.
+
+The scan can come up empty, which is when you have to pass it:
+
+```text
+Error: sign-commit failed: no verified commit in HEAD; pass base explicitly:
+base is the exclusive lower bound of the range to sign, so --base=origin/master
+signs every commit after the branch point, and --base=<sha> signs everything
+after that commit (nothing this key signed was found in HEAD, which is expected
+on a branch that has never been signed with it)
+```
+
+This is normal the first time a repository signs with a given key, and on any
+branch whose history predates it. It ends the run **before any request is
+made** — so if a `401` appears in the same job, the two are independent
+failures, not cause and effect.
+
+Pick the base by what you want rewritten. `--base=origin/master` on a topic
+branch signs your commits and nothing already published. A `--base=<sha>` of the
+oldest commit you want left alone is the general answer.
+
+#### Reading a failure
+
+`gpg-sign` prints the service's own explanation underneath the error, one field
+per line, instead of dumping the JSON envelope:
+
+```text
+Error: sign failed: authentication failed: AUTH_SUBJECT_UNTRUSTED: Subject is not trusted for signing (request 628c9a74-…)
+  subject: repo:kjanat/kjanat:ref:refs/heads/master
+  hint:    No active trust rule matches this subject. Trust rules exist for this issuer, but none of them covers this subject. …
+  docs:    https://gpg.kajkowalski.nl/e/AUTH_SUBJECT_UNTRUSTED
+  request: 628c9a74-c46d-403c-84c6-9c873298a17f
+```
+
+`docs` is a short redirect into the [error reference](errors.md); every code has
+a section. Go callers read the same fields off `client.GuidanceFor(err)`, and
+branch on `client.IsSubjectUntrusted(err)` to tell "this token is not
+authorized" from "this token is broken".
+
+A third case is neither: `client.IsServiceDegraded(err)` reports the `503` the
+service answers when it could not reach the issuer or its own authorization
+store, so the request was never judged. Those are retried automatically, and the
+retrier waits the `Retry-After` the service sent instead of guessing.
+
+`client.IsServiceMisconfigured(err)` is the fourth, and the one to stop on: the
+same "nothing about your request is wrong", but the cause is the deployment's
+own configuration, so it answers identically until an operator changes it. It
+arrives as a `500` rather than its neighbour's `503` — `503` is the status the
+proxies in between retry on their own account, and none of them can read a
+`code`. It is the only `5xx` the retrier declines, and it declines it on the
+`code`, not on the absent `Retry-After`, since a missing header is what plenty
+of retryable failures also send.
 
 The command refuses to rewrite commits that already carry a signature. It
 prints what it would do to each and exits non-zero:

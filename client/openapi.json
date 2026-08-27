@@ -87,6 +87,16 @@
           "requestId": {
             "type": "string",
             "format": "uuid"
+          },
+          "docs": {
+            "type": "string",
+            "format": "uri"
+          },
+          "hint": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
           }
         },
         "required": [
@@ -99,6 +109,7 @@
         "enum": [
           "AUTH_MISSING",
           "AUTH_INVALID",
+          "AUTH_SUBJECT_UNTRUSTED",
           "KEY_NOT_FOUND",
           "KEY_NOT_ALLOWED",
           "KEY_PROCESSING_ERROR",
@@ -111,7 +122,9 @@
           "INVALID_REQUEST",
           "AUDIT_ERROR",
           "NOT_FOUND",
-          "INTERNAL_ERROR"
+          "INTERNAL_ERROR",
+          "SERVICE_DEGRADED",
+          "SERVICE_MISCONFIGURED"
         ]
       },
       "SignResponse": {
@@ -132,6 +145,13 @@
             "type": "integer",
             "minimum": 0,
             "exclusiveMinimum": true
+          },
+          "docs": {
+            "type": "string",
+            "format": "uri"
+          },
+          "hint": {
+            "type": "string"
           }
         },
         "required": [

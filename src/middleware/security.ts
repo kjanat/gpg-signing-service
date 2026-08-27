@@ -37,8 +37,23 @@ export const DOCS_CSP = [
 /** Paths that render the interactive API documentation. */
 const DOCS_UI_PATHS = new Set(["/ui"]);
 
-/** Rate-limit headers a cross-origin reader may see, when the response has them. */
-const RATE_LIMIT_HEADERS = [HEADERS.RATE_LIMIT_LIMIT, HEADERS.RATE_LIMIT_REMAINING, HEADERS.RATE_LIMIT_RESET] as const;
+/**
+ * Headers a cross-origin reader may see, when the response actually has them.
+ *
+ * `Retry-After` sits with the rate-limit pair rather than in the unconditional
+ * list because it is genuinely testable here: `serviceDegraded` sets it through
+ * `c.header` before building the body, so it is on `c.res` by the time this
+ * middleware runs. It belongs on the list for the same reason those do — a `503
+ * SERVICE_DEGRADED` says *wait this long*, in a header rather than in the
+ * envelope, and a browser caller that cannot read it is left with a refusal
+ * whose hint names a value the fetch layer hid from it.
+ */
+const CONDITIONAL_HEADERS = [
+	HEADERS.RATE_LIMIT_LIMIT,
+	HEADERS.RATE_LIMIT_REMAINING,
+	HEADERS.RATE_LIMIT_RESET,
+	HEADERS.RETRY_AFTER,
+] as const;
 
 /**
  * Headers named unconditionally, because presence cannot be tested for here.
@@ -71,11 +86,11 @@ export const securityHeaders: MiddlewareHandler<{ Bindings: Env }> = async (c, n
 	c.res.headers.delete("Server");
 	c.res.headers.delete("X-Powered-By");
 
-	// Advertise the always-present headers plus only the rate-limit ones this
+	// Advertise the always-present headers plus only the conditional ones this
 	// response actually carries. The list used to be hardcoded, so it named
 	// X-RateLimit-Limit — which nothing in the service ever sets — on every
 	// rate-limited response, and named nothing at all on every other response.
-	const exposed = [...ALWAYS_EXPOSED_HEADERS, ...RATE_LIMIT_HEADERS.filter((name) => c.res.headers.has(name))];
+	const exposed = [...ALWAYS_EXPOSED_HEADERS, ...CONDITIONAL_HEADERS.filter((name) => c.res.headers.has(name))];
 	c.header("Access-Control-Expose-Headers", exposed.join(", "));
 };
 

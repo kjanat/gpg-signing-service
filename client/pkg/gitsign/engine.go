@@ -293,5 +293,27 @@ func (s *session) lastSigned(ctx context.Context, head string) (string, error) {
 	if s.opts.ScanLimit > 0 {
 		scope = fmt.Sprintf("the last %d commit(s) on HEAD", s.opts.ScanLimit)
 	}
-	return "", fmt.Errorf("no verified commit in %s; pass base explicitly", scope)
+	// The old message named the fault and stopped there, which left three
+	// questions in the reader's way: what base *is*, what a correct value looks
+	// like, and whether this failure is why the signing call further down also
+	// failed. It is not — this one ends the run before any request is made — and
+	// saying what the flag means is the difference between one edit and a round
+	// of guessing.
+	//
+	// The suggested value is a sha, not `origin/<default>`. This function is
+	// reachable from one place — resolveBase, under `Base == "" && branch ==
+	// DefaultBranch` — so the reader is standing *on* the default branch and
+	// there is no branch point to borrow. `origin/<default>` there is this
+	// branch's own remote tip, and `origin/<default>..HEAD` is whatever has not
+	// been pushed yet: usually empty, which lands them in reportEmptyRange and a
+	// second round of guessing. The merge-base idea belongs to the
+	// `branch != DefaultBranch` path two lines below, which never reaches here.
+	return "", fmt.Errorf(
+		"no verified commit in %s; pass base explicitly: base is the exclusive lower bound of the range to sign, "+
+			"so --base=<sha> signs every commit after that one — pick the commit just before the first one you "+
+			"want signed, from `git log --oneline`. There is no branch point to use here: %s is the default "+
+			"branch, so origin/%s is its own remote tip rather than a fork point. Nothing this key signed was "+
+			"found in %s, which is expected on a branch that has never been signed with it, and this ends the run "+
+			"before any request is made",
+		scope, s.opts.DefaultBranch, s.opts.DefaultBranch, scope)
 }

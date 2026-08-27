@@ -41,9 +41,37 @@ export interface OIDCSubjectPolicy {
  */
 export type OIDCSubjectResolution =
 	| { status: "trusted"; policy: OIDCSubjectPolicy }
-	| { status: "unknown" }
-	| { status: "revoked"; id: string; name: string; revokedAt: string }
-	| { status: "expired"; id: string; name: string; expiresAt: string };
+	| ({ status: "unknown" } & RefusalContext)
+	| ({ status: "revoked"; id: string; name: string; revokedAt: string } & RefusalContext)
+	| ({ status: "expired"; id: string; name: string; expiresAt: string } & RefusalContext);
+
+/**
+ * What was checked, carried on every refusal so the 401 can say more than "no".
+ *
+ * A caller staring at `Subject is not trusted for signing` cannot tell an empty
+ * trust list from a full one that its subject misses — and those are opposite
+ * problems: the first is "the service was never configured", the second is
+ * "this ref/repo is not the one that was authorized". Which of the two it is, is
+ * the only part a caller can act on, and `issuerRuleCount === 0` is the whole of
+ * that distinction.
+ *
+ * Nothing here reaches a response unless the deployment opts in with
+ * `DISCLOSE_TRUST_PATTERNS`. Both issuers this service accepts are shared with
+ * every repository on their platform, so anyone who can run a workflow can
+ * obtain a verified token and read whatever the refusal says — and that 401 is
+ * answered before any rate limiter is consulted and writes no audit row, so
+ * whatever it discloses is disclosed unmetered and leaves no trace. The
+ * prefixes are the org and repository names of everyone who signs here; the
+ * counts are those same names counted, which polled over a week is an
+ * add/revoke/expire feed for the trust list. Neither is worth more than the
+ * binary above, and both are behind the flag.
+ */
+export interface RefusalContext {
+	/** How many rows exist for this issuer, live or not. */
+	issuerRuleCount: number;
+	/** Prefixes for this issuer that could authorize someone right now. */
+	activePrefixes: string[];
+}
 
 /** A stored subject as returned to admins. */
 export interface OIDCSubjectRecord {
@@ -198,18 +226,26 @@ export async function resolveOIDCSubject(db: D1Database, issuer: string, sub: st
 
 	const row = matches.find(isLive);
 	if (!row) {
+		// Built here rather than above the branch: it is only ever read on a
+		// refusal, and this function sits on the critical path of every signed
+		// commit — the success path should not walk the issuer's rules twice.
+		const context: RefusalContext = {
+			issuerRuleCount: results.length,
+			activePrefixes: results.filter(isLive).map((candidate) => candidate.subject_prefix),
+		};
+
 		// No live row. Report the most specific dead match so the log names the
 		// credential actually being presented, preferring a revoked row over an
 		// expired one: expiry is routine, revocation was a decision.
 		const revoked = matches.find((candidate) => candidate.revoked_at);
 		if (revoked?.revoked_at) {
-			return { status: "revoked", id: revoked.id, name: revoked.name, revokedAt: revoked.revoked_at };
+			return { status: "revoked", id: revoked.id, name: revoked.name, revokedAt: revoked.revoked_at, ...context };
 		}
 		const expired = matches[0];
 		if (expired?.expires_at) {
-			return { status: "expired", id: expired.id, name: expired.name, expiresAt: expired.expires_at };
+			return { status: "expired", id: expired.id, name: expired.name, expiresAt: expired.expires_at, ...context };
 		}
-		return { status: "unknown" };
+		return { status: "unknown", ...context };
 	}
 
 	// Best-effort usage stamp, deferred rather than awaited: this sits on the

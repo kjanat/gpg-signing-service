@@ -325,6 +325,53 @@ describe("Security Headers Middleware", () => {
 			expect(response.headers.get("Access-Control-Expose-Headers")).toBe("X-Request-ID");
 		});
 
+		it("exposes Retry-After on the 503 whose whole answer is Retry-After", async () => {
+			// SERVICE_DEGRADED puts the wait in a header, because ErrorResponse
+			// declares no `retryAfter` field — and its own hint tells the reader to
+			// "wait the interval in `Retry-After`". A cross-origin caller reads
+			// response headers through the CORS filter, so a header the service
+			// sends but does not expose is a header that caller does not have: the
+			// hint names a value the fetch layer hid from it.
+			setAllowedOrigins("https://allowed.com");
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			// Unsigned on purpose: the discovery fetch happens before the signature
+			// is verified, so this reaches the degraded branch without a key.
+			const encode = (value: unknown) =>
+				btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+			const token = [
+				encode({ alg: "RS256", kid: "unreachable" }),
+				encode({
+					iss: "https://token.actions.githubusercontent.com",
+					sub: "repo:test/expose:ref:refs/heads/main",
+					aud: "gpg-signing-service",
+					exp: Math.floor(Date.now() / 1000) + 3600,
+				}),
+				"signature",
+			].join(".");
+			middlewareFetchMock.mockRejectedValue(new Error("connection timed out"));
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}`, Origin: "https://allowed.com" },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(503);
+			expect(response.headers.get("Retry-After")).toBeTruthy();
+			expect(response.headers.get("Access-Control-Expose-Headers")).toContain("Retry-After");
+		});
+
+		it("does not name Retry-After on a response that carries none", async () => {
+			// The conditional half stays conditional: the list describes this
+			// response, not every response the service can produce.
+			setAllowedOrigins("https://allowed.com");
+
+			const response = await corsRequest("https://allowed.com");
+
+			expect(response.headers.get("Retry-After")).toBeNull();
+			expect(response.headers.get("Access-Control-Expose-Headers")).not.toContain("Retry-After");
+		});
+
 		it("names X-Request-ID in Access-Control-Allow-Headers and exposes it back", async () => {
 			// Both directions, on the same deployment: a browser may *send* the header
 			// (the preflight allows it) and may *read* it back (the actual response
@@ -472,8 +519,15 @@ describe("Security Headers Middleware", () => {
 			spy.mockRestore();
 
 			expect(response.status).toBe(503);
-			const body = await parseJson<{ error: string; code: string }>(response);
-			expect(body.code).toBe("INTERNAL_ERROR");
+			const body = await parseJson<{ error: string; code: string; hint: string }>(response);
+			// Not INTERNAL_ERROR. The status was always right; the code sent the
+			// reader to a section about migrations and unhandled faults for what is
+			// usually D1 being briefly away, and the Go client had nothing to tell
+			// it this one is worth waiting on.
+			expect(body.code).toBe("SERVICE_DEGRADED");
+			expect(response.headers.get("Retry-After")).toBeTruthy();
+			expect(Number(response.headers.get("Retry-After"))).toBeGreaterThan(0);
+			expect(body.hint).toContain("Nothing about the token is wrong");
 			expect(body.error).not.toContain("oidc_subjects");
 			expect(body.error).not.toContain("SQLITE");
 		});
@@ -508,12 +562,192 @@ describe("Security Headers Middleware", () => {
 			});
 
 			expect(response.status).toBe(401);
-			const body = await parseJson<{ error: string; code: string }>(response);
+			const body = await parseJson<{ error: string; code: string; subject: string; hint: string; docs: string }>(
+				response,
+			);
 			expect(body.error).toContain("not trusted");
-			expect(body.code).toBe("AUTH_INVALID");
+			// Its own code: the token is fine, the identity is not authorized, and
+			// the fix is to the trust list rather than to the credential.
+			expect(body.code).toBe("AUTH_SUBJECT_UNTRUSTED");
+			// The subject the caller presented, echoed back. It came from a token
+			// they hold, so this discloses nothing — and without it the only way to
+			// see which claim was refused was another workflow run.
+			expect(body.subject).toBe("repo:attacker/evil:ref:refs/heads/main");
+			// The table was cleared, so the hint has to say the list is empty rather
+			// than imply this particular subject was the problem.
+			expect(body.hint).toContain("No trust rules are configured");
+			// Short enough to survive a wrapped, truncated CI log, and derived from
+			// the origin the request arrived on so a fresh deployment needs no
+			// configuration to emit a working one.
+			expect(body.docs).toBe("http://localhost/e/AUTH_SUBJECT_UNTRUSTED");
+			// The prefixes are not disclosed unless the deployment opts in.
+			expect(body.hint).not.toContain("repo:");
 
 			// Restore the fixture for the rest of the suite.
 			await seedTrustedSubjects(env.AUDIT_DB);
+		});
+
+		it("separates an unconfigured trust list from a subject that misses a configured one", async () => {
+			// The two are opposite problems with the same old message. Nothing
+			// configured means the service was never set up for this issuer;
+			// something configured means this particular ref or repository is not
+			// the one that was authorized, which is where to look next.
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await seedTrustedSubjects(env.AUDIT_DB);
+
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "near-miss-key";
+			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const token = await new jose.SignJWT({
+				iss: issuer,
+				sub: "repo:test/other-svc:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "ES256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(401);
+			const payload = await parseJson<{ code: string; hint: string; subject: string }>(response);
+			expect(payload.code).toBe("AUTH_SUBJECT_UNTRUSTED");
+			expect(payload.subject).toBe("repo:test/other-svc:ref:refs/heads/main");
+			expect(payload.hint).toContain("No active trust rule matches this subject");
+			// Rules exist, so the hint says so — that is the whole distinction a
+			// caller can act on, and it is the opposite of the sentence the empty
+			// table gets.
+			expect(payload.hint).toContain("Trust rules exist for this issuer");
+			expect(payload.hint).not.toContain("No trust rules are configured");
+			// Which prefixes those are is not free to hand out: this issuer is
+			// shared with every repository on GitHub Actions, so anyone who can run
+			// a workflow could read the list of everyone who signs here.
+			expect(payload.hint).not.toContain("repo:test/svc");
+			// Nor is *how many* there are. This 401 is answered before any limiter
+			// is consulted and writes no audit row, so a live count here is an
+			// unmetered, untraceable oracle on the trust table — and 4 versus 40
+			// changes nothing the caller can do.
+			expect(payload.hint).not.toMatch(/\d/);
+		});
+
+		it("names the trusted prefixes only where the deployment opted in", async () => {
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await seedTrustedSubjects(env.AUDIT_DB);
+
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "disclosing-key";
+			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const token = await new jose.SignJWT({
+				iss: issuer,
+				sub: "repo:test/other-svc:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "ES256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const response = await makeRequest(
+				"/sign",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{ DISCLOSE_TRUST_PATTERNS: "true" },
+			);
+
+			const payload = await parseJson<{ hint: string }>(response);
+			expect(payload.hint).toContain("Active prefixes:");
+			expect(payload.hint).toContain("repo:test/svc");
+			// The counts moved behind the same flag as the prefixes they count.
+			expect(payload.hint).toContain("rule(s) exist for issuer");
+		});
+
+		it("names no prefixes when the opted-in deployment has none left alive", async () => {
+			// Every rule for the issuer revoked: the counts still separate "never
+			// configured" from "configured and all dead", and there is no empty
+			// "Active prefixes:" tail to read past.
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await clearTrustedSubjects(env.AUDIT_DB);
+
+			const issuer = "https://token.actions.githubusercontent.com";
+			const id = await insertOIDCSubject(env.AUDIT_DB, {
+				name: "all-revoked-fixture",
+				issuer,
+				subjectPrefix: "repo:someone/else",
+				keyIds: [],
+				expiresAt: null,
+			});
+			await revokeOIDCSubject(env.AUDIT_DB, id);
+
+			const kid = "all-dead-key";
+			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const token = await new jose.SignJWT({
+				iss: issuer,
+				sub: "repo:test/svc:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "ES256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const response = await makeRequest(
+				"/sign",
+				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				{ DISCLOSE_TRUST_PATTERNS: "true" },
+			);
+
+			const payload = await parseJson<{ hint: string }>(response);
+			expect(payload.hint).toContain("1 rule(s) exist for issuer");
+			expect(payload.hint).toContain("0 of them active");
+			expect(payload.hint).not.toContain("Active prefixes:");
+
+			await seedTrustedSubjects(env.AUDIT_DB);
+		});
+
+		it("says what to change when the credential itself was refused", async () => {
+			// A token problem and an authorization problem now carry different
+			// codes, and the token problem's hint names the knob rather than the
+			// symptom — "Invalid token audience" does not tell anyone where the
+			// audience is set.
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await seedTrustedSubjects(env.AUDIT_DB);
+
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "wrong-audience-key";
+			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const token = await new jose.SignJWT({
+				iss: issuer,
+				sub: "repo:test/svc:ref:refs/heads/main",
+				aud: "some-other-service",
+			})
+				.setProtectedHeader({ alg: "ES256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(401);
+			const payload = await parseJson<{ code: string; hint: string; docs: string }>(response);
+			expect(payload.code).toBe("AUTH_INVALID");
+			expect(payload.hint).toContain("gpg-signing-service");
+			expect(payload.docs).toBe("http://localhost/e/AUTH_INVALID");
 		});
 
 		it("distinguishes a revoked trust still in use from an unknown subject", async () => {
@@ -557,17 +791,20 @@ describe("Security Headers Middleware", () => {
 			// The response must not differ from the stranger's.
 			expect(await parseJson<{ error: string }>(reused)).toMatchObject({
 				error: "Subject is not trusted for signing",
-				code: "AUTH_INVALID",
+				code: "AUTH_SUBJECT_UNTRUSTED",
 			});
 			expect(warnSpy).toHaveBeenCalledWith(
 				"Revoked OIDC trust presented",
-				expect.objectContaining({ subjectId, subjectPolicy: "ci/killed" }),
+				// `requestId` too: the response deliberately does not say which of
+				// the three refusals it was, so the id it hands back is the only
+				// route from a pasted CI log to the reason.
+				expect.objectContaining({ subjectId, subjectPolicy: "ci/killed", requestId: expect.any(String) }),
 			);
 			// A killed credential still in use outlives the log store's retention,
 			// so it gets a durable row too — unlike the unknown-subject arm, which
 			// anyone can trigger and which stays log-only.
 			const reuseEvents = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
-			const recorded = reuseEvents.find((event) => event.errorCode === "AUTH_INVALID");
+			const recorded = reuseEvents.find((event) => event.errorCode === "AUTH_SUBJECT_UNTRUSTED");
 			expect(recorded).toBeDefined();
 			expect(JSON.parse(recorded?.metadata ?? "{}")).toMatchObject({
 				reason: "revoked_trust_presented",
@@ -583,7 +820,13 @@ describe("Security Headers Middleware", () => {
 				body: "commit data",
 			});
 			expect(stranger.status).toBe(401);
-			expect(warnSpy).toHaveBeenCalledWith("Rejected untrusted OIDC subject", expect.any(Object));
+			expect(warnSpy).toHaveBeenCalledWith(
+				"Rejected untrusted OIDC subject",
+				expect.objectContaining({
+					requestId: expect.any(String),
+					subject: "repo:some-rando/thing:ref:refs/heads/main",
+				}),
+			);
 			expect(warnSpy).not.toHaveBeenCalledWith("Revoked OIDC trust presented", expect.any(Object));
 			// No durable row for the unknown arm: anyone holding any token the
 			// issuer will mint can reach it.
@@ -637,7 +880,7 @@ describe("Security Headers Middleware", () => {
 			expect(response.status).toBe(401);
 
 			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
-			const recorded = events.find((event) => event.errorCode === "AUTH_INVALID");
+			const recorded = events.find((event) => event.errorCode === "AUTH_SUBJECT_UNTRUSTED");
 			expect(recorded).toBeDefined();
 			expect(recorded?.requestId).not.toBe(forged);
 			// Replaced with a real one rather than dropped, so the row still
@@ -657,7 +900,7 @@ describe("Security Headers Middleware", () => {
 			const second = vi
 				.mocked(logAuditEvent)
 				.mock.calls.map(([, event]) => event)
-				.find((event) => event.errorCode === "AUTH_INVALID");
+				.find((event) => event.errorCode === "AUTH_SUBJECT_UNTRUSTED");
 			expect(second?.requestId).toBe(supplied);
 
 			await seedTrustedSubjects(env.AUDIT_DB);
@@ -905,9 +1148,15 @@ describe("Security Headers Middleware", () => {
 				body: "commit data",
 			});
 
-			expect(response.status).toBe(401);
-			const body = (await response.json()) as { error: string };
+			// 503, not 401. This deployment could not reach the issuer, which is not
+			// a fault in the credential and is the one auth-path failure a retry
+			// fixes — the Go client refuses to retry an *AuthError.
+			expect(response.status).toBe(503);
+			const body = (await response.json()) as { error: string; code: string; hint: string };
 			expect(body.error).toContain("Failed to fetch OIDC config");
+			expect(body.code).toBe("SERVICE_DEGRADED");
+			expect(Number(response.headers.get("Retry-After"))).toBeGreaterThan(0);
+			expect(body.hint).toContain("Nothing about the token is wrong");
 		});
 
 		it("should handle JWKS fetch failure", async () => {
@@ -936,9 +1185,82 @@ describe("Security Headers Middleware", () => {
 				body: "commit data",
 			});
 
-			expect(response.status).toBe(401);
-			const body = (await response.json()) as { error: string };
+			expect(response.status).toBe(503);
+			const body = (await response.json()) as { error: string; code: string };
 			expect(body.error).toContain("Failed to fetch JWKS");
+			expect(body.code).toBe("SERVICE_DEGRADED");
+			expect(Number(response.headers.get("Retry-After"))).toBeGreaterThan(0);
+		});
+
+		/**
+		 * The four ways reaching the issuer fails without anyone answering with a
+		 * status: a dead socket or a timeout on either hop, and a 200 whose body is
+		 * not the document. All of them used to arrive as `401 AUTH_INVALID`, which
+		 * is both wrong about whose fault it is and the one code the Go client
+		 * refuses to retry.
+		 */
+		it.each([
+			{
+				name: "a discovery fetch that never completes",
+				impl: async () => {
+					throw new Error("Request to https://token.actions.githubusercontent.com timed out after 10000ms");
+				},
+				expected: "Could not reach the OIDC configuration",
+			},
+			{
+				name: "a discovery response that is not the document",
+				impl: async () => new Response("<html>captive portal</html>"),
+				expected: "was not readable JSON",
+			},
+			{
+				name: "a JWKS fetch that never completes",
+				impl: async (url: string) => {
+					if (url.endsWith("/.well-known/openid-configuration")) {
+						return new Response(JSON.stringify({ jwks_uri: "https://token.actions.githubusercontent.com/jwks" }));
+					}
+					throw new Error("Request to https://token.actions.githubusercontent.com/jwks timed out after 10000ms");
+				},
+				expected: "Could not reach the JWKS",
+			},
+			{
+				name: "a JWKS response that is not JSON",
+				impl: async (url: string) => {
+					if (url.endsWith("/.well-known/openid-configuration")) {
+						return new Response(JSON.stringify({ jwks_uri: "https://token.actions.githubusercontent.com/jwks" }));
+					}
+					return new Response("not json at all");
+				},
+				expected: "was not readable JSON",
+			},
+		])("answers 503 for $name", async ({ impl, expected }) => {
+			const issuer = "https://token.actions.githubusercontent.com";
+			await env.JWKS_CACHE.delete(`jwks:${issuer}`);
+			middlewareFetchMock.mockImplementation(impl);
+
+			const { privateKey } = await jose.generateKeyPair("ES256");
+			const token = await new jose.SignJWT({ iss: issuer, sub: "repo:test/svc", aud: "gpg-signing-service" })
+				.setProtectedHeader({ alg: "ES256", kid: "unreachable-key" })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(503);
+			const body = await parseJson<{ error: string; code: string; hint: string; docs: string }>(response);
+			expect(body.code).toBe("SERVICE_DEGRADED");
+			expect(body.error).toContain(expected);
+			// And it is an error response like any other, so the middleware links it
+			// — the reference section is where "retry this" is written down.
+			expect(body.docs).toBe("http://localhost/e/SERVICE_DEGRADED");
+			// Transient, so the caller is told how long to wait rather than left to
+			// guess or to give up.
+			expect(Number(response.headers.get("Retry-After"))).toBeGreaterThan(0);
+			expect(body.hint).toContain("Nothing about the token is wrong");
 		});
 
 		it("should handle cache put failure", async () => {
@@ -1144,8 +1466,12 @@ describe("Security Headers Middleware", () => {
 			});
 
 			expect(response.status).toBe(401);
-			const body = (await response.json()) as { error: string };
+			const body = await parseJson<{ error: string; hint: string }>(response);
 			expect(body.error).toContain("Algorithm not allowed");
+			// Missing from the reference's table until now, which meant the docs
+			// link — the whole point of the field — landed on a page that did not
+			// mention the fault the reader had.
+			expect(body.hint).toContain("RS256");
 		});
 
 		it("should reject token from disallowed issuer", async () => {
@@ -1169,6 +1495,68 @@ describe("Security Headers Middleware", () => {
 			expect(response.status).toBe(401);
 			const body = (await response.json()) as { error: string };
 			expect(body.error).toContain("Issuer not allowed");
+		});
+
+		it("does not enumerate the accepted issuers to a caller who presented no credential", async () => {
+			// The issuer check runs before the timing check, the audience check and
+			// the JWKS fetch, so this token — a header and a payload, signature a
+			// literal — reaches it. Nothing was verified and nothing ever will be,
+			// which makes the hint the weakest possible disclosure gate: naming
+			// every issuer this deployment accepts would hand a self-hoster's
+			// internal Keycloak hostname to anyone who can reach the worker.
+			const unsigned = `${btoa(JSON.stringify({ alg: "RS256", kid: "x" }))}.${btoa(
+				JSON.stringify({ iss: "https://whatever.example", sub: "repo:x/y", aud: "gpg-signing-service" }),
+			)}.not-a-signature`;
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${unsigned}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(401);
+			const body = await parseJson<{ error: string; code: string; hint: string }>(response);
+			expect(body.code).toBe("AUTH_INVALID");
+			// The refused issuer is the caller's own value and stays in the message.
+			expect(body.error).toContain("https://whatever.example");
+			// The knob is named; the values behind it are not.
+			expect(body.hint).toContain("ALLOWED_ISSUERS");
+			expect(body.hint).not.toContain("token.actions.githubusercontent.com");
+			expect(body.hint).not.toContain("gitlab.com");
+		});
+
+		it("names the accepted issuers only where the deployment opted in", async () => {
+			const unsigned = `${btoa(JSON.stringify({ alg: "RS256", kid: "x" }))}.${btoa(
+				JSON.stringify({ iss: "https://whatever.example", sub: "repo:x/y", aud: "gpg-signing-service" }),
+			)}.not-a-signature`;
+
+			const response = await makeRequest(
+				"/sign",
+				{ method: "POST", headers: { Authorization: `Bearer ${unsigned}` }, body: "commit data" },
+				{ DISCLOSE_TRUST_PATTERNS: "true" },
+			);
+
+			const body = await parseJson<{ hint: string }>(response);
+			expect(body.hint).toContain("ALLOWED_ISSUERS");
+			expect(body.hint).toContain("https://token.actions.githubusercontent.com");
+		});
+
+		it("has nothing to name when the opted-in deployment accepts no issuers", async () => {
+			// An empty ALLOWED_ISSUERS refuses everyone, and "It currently accepts:
+			// ." is a worse sentence than the one that names only the knob.
+			const unsigned = `${btoa(JSON.stringify({ alg: "RS256", kid: "x" }))}.${btoa(
+				JSON.stringify({ iss: "https://whatever.example", sub: "repo:x/y", aud: "gpg-signing-service" }),
+			)}.not-a-signature`;
+
+			const response = await makeRequest(
+				"/sign",
+				{ method: "POST", headers: { Authorization: `Bearer ${unsigned}` }, body: "commit data" },
+				{ DISCLOSE_TRUST_PATTERNS: "true", ALLOWED_ISSUERS: "" as Env["ALLOWED_ISSUERS"] },
+			);
+
+			const body = await parseJson<{ hint: string }>(response);
+			expect(body.hint).toContain("ALLOWED_ISSUERS");
+			expect(body.hint).not.toContain("It currently accepts");
 		});
 
 		it("should reject expired token", async () => {
@@ -1485,9 +1873,30 @@ describe("Security Headers Middleware", () => {
 				{ ALLOWED_ISSUERS: "https://10.0.0.1" as Env["ALLOWED_ISSUERS"] },
 			);
 
-			expect(response.status).toBe(401);
-			const body = await parseJson<{ error: string }>(response);
+			// A configured issuer whose discovery URL this deployment refuses to
+			// fetch is a deployment fault, not a credential one — and unlike the
+			// timeouts above it is permanent, so it gets its own code and no
+			// Retry-After. The code is what carries "permanent": a missing header
+			// is not a signal any client reads, and while this was SERVICE_DEGRADED
+			// without one the Go retrier attempted it four times.
+			//
+			// 500 rather than 503, which is the timeouts' status two tests up. The
+			// proxies between here and the caller cannot read the code, and 503 is
+			// the status they retry — so the permanent fault would have run the
+			// loop again one layer up, where nothing can tell it to stop.
+			expect(response.status).toBe(500);
+			const body = await parseJson<{ error: string; code: string; hint: string; docs: string }>(response);
 			expect(body.error).toContain("SSRF protection");
+			expect(body.code).toBe("SERVICE_MISCONFIGURED");
+			expect(response.headers.get("Retry-After")).toBeNull();
+			expect(body.hint).toContain("ALLOWED_ISSUERS");
+			// The hint says the thing the code says, for the human who is reading a
+			// CI log rather than branching on a field.
+			expect(body.hint).toContain("same answer every time");
+			// And the link lands on the section that explains why this one is not
+			// worth retrying, rather than on SERVICE_DEGRADED's "wait and call
+			// again".
+			expect(body.docs).toBe("http://localhost/e/SERVICE_MISCONFIGURED");
 		});
 
 		it("should block SSRF in OIDC wellKnown URL with non-Error", async () => {
@@ -1515,9 +1924,10 @@ describe("Security Headers Middleware", () => {
 				},
 			);
 
-			expect(response.status).toBe(401);
-			const body = await parseJson<{ error: string }>(response);
+			expect(response.status).toBe(500);
+			const body = await parseJson<{ error: string; code: string }>(response);
 			expect(body.error).toContain("SSRF protection: Invalid URL");
+			expect(body.code).toBe("SERVICE_MISCONFIGURED");
 		});
 
 		it("should block SSRF in JWKS URI with Error object", async () => {
@@ -1550,9 +1960,11 @@ describe("Security Headers Middleware", () => {
 				body: "commit data",
 			});
 
-			expect(response.status).toBe(401);
-			const body = await parseJson<{ error: string }>(response);
+			expect(response.status).toBe(500);
+			const body = await parseJson<{ error: string; code: string }>(response);
 			expect(body.error).toContain("SSRF protection");
+			expect(body.code).toBe("SERVICE_MISCONFIGURED");
+			expect(response.headers.get("Retry-After")).toBeNull();
 		});
 
 		it("should block SSRF in JWKS URI with non-Error", async () => {
@@ -1578,9 +1990,10 @@ describe("Security Headers Middleware", () => {
 				body: "commit data",
 			});
 
-			expect(response.status).toBe(401);
-			const body = await parseJson<{ error: string }>(response);
+			expect(response.status).toBe(500);
+			const body = await parseJson<{ error: string; code: string }>(response);
 			expect(body.error).toContain("SSRF protection: Invalid URL");
+			expect(body.code).toBe("SERVICE_MISCONFIGURED");
 		});
 	});
 });

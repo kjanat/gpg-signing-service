@@ -188,7 +188,7 @@ typed response; anything the document does not describe is read from the error
 envelope directly. A `401` on `Sign` therefore reads
 
 ```text
-authentication failed: AUTH_INVALID: Subject is not trusted for signing (request 0e2a8f3c-6b41-4d7e-9a55-1c8d0f6b2e77)
+authentication failed: AUTH_SUBJECT_UNTRUSTED: Subject is not trusted for signing (request 0e2a8f3c-6b41-4d7e-9a55-1c8d0f6b2e77)
 ```
 
 rather than a bare status number — that particular message means the credential
@@ -211,12 +211,38 @@ as a JSON decoding error with no status in it.
 #### Helper Functions
 
 ```go
-client.IsAuthError(err)        // true if authentication error
-client.IsRateLimitError(err)   // true if rate limited
-client.IsKeyNotFound(err)      // true if key not found
-client.IsValidationError(err)  // true if validation error
-client.IsServiceError(err)     // true if 5xx error
+client.IsAuthError(err)         // true if authentication error
+client.IsSubjectUntrusted(err)  // true if the credential verified and is not authorized
+client.IsRateLimitError(err)    // true if rate limited
+client.IsKeyNotFound(err)       // true if key not found
+client.IsValidationError(err)   // true if validation error
+client.IsServiceError(err)      // true if 5xx error
+client.IsServiceDegraded(err)   // true if a dependency was unreachable (503)
+client.IsServiceMisconfigured(err) // true if the deployment's own config stopped it (500)
 ```
+
+These two are worth acting on differently from their neighbours and from each
+other, and a plain `INTERNAL_ERROR` `500` is a fault to report with the request
+id rather than either of them. A `SERVICE_DEGRADED` `503` means the service
+could not reach the issuer's JWKS or its authorization store, so the request was
+never judged — nothing about it was wrong. It is retried automatically, and the
+retrier honours the `Retry-After` the service sends rather than backing off
+blind.
+
+A `SERVICE_MISCONFIGURED` `500` is the same "not your fault" with the opposite
+answer: the cause is the deployment's own configuration — an `ALLOWED_ISSUERS`
+entry pointing at a URL it refuses to fetch — so it will answer identically
+until an operator changes it. It is the one `5xx` this client does **not**
+retry, and the only reliable way to say so is the code. The service used to
+express "permanent" by omitting `Retry-After`, which nothing reads as a signal:
+plenty of retryable `5xx` carry no header either, so the fault that could never
+clear was attempted four times.
+
+Test the code and not the status. `SERVICE_MISCONFIGURED` wears a `500` because
+`503` is the status intermediaries retry on their own account, and a retry loop
+one layer up cannot read a code — but an intermediary's own `500` carries no
+code at all, and that one _is_ worth another go. `IsServiceMisconfigured` is
+false for it, correctly.
 
 #### Example
 

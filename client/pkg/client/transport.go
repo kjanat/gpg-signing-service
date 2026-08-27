@@ -171,12 +171,25 @@ func decodesAsErrorEnvelope(statusCode int, body []byte) bool {
 // alone. A no-op when no sink is on the context, which is every request Health
 // makes and every request a caller drives through the raw client.
 //
-// Only a 429 is recorded. It is the one status this client has a hint type for,
-// the one WithoutRateLimitRetry governs, and the only one this service attaches
-// a delay to.
+// A 429 and every 5xx are recorded; nothing else is, because nothing else is a
+// status the policy will consider retrying.
+//
+// Only the 429 used to be, on the reasoning that it was the one status this
+// service attaches a delay to. That stopped being true in the release that
+// added SERVICE_DEGRADED, and it left both halves of a 5xx unreadable from
+// where they are acted on: the interval, so the retrier backed off blind
+// against the one failure that had told it how long to wait, and the code, so
+// SERVICE_MISCONFIGURED — which the service sends precisely to say "this will
+// not clear" — was indistinguishable from any other 500 and got retried four
+// times.
+//
+// The code is taken from the body alone. Unlike the interval it has no header
+// form, so a response this transport declined to buffer contributes none — and
+// that is the safe direction: an unreadable body leaves the code empty, and an
+// empty code is not ErrCodeMisconfigured, so the policy falls back to retrying.
 func recordRetryHint(ctx context.Context, statusCode int, body []byte, header http.Header) {
 	sink := retryHintFrom(ctx)
-	if sink == nil || statusCode != http.StatusTooManyRequests {
+	if sink == nil || (statusCode != http.StatusTooManyRequests && statusCode < http.StatusInternalServerError) {
 		return
 	}
 
@@ -187,6 +200,7 @@ func recordRetryHint(ctx context.Context, statusCode int, body []byte, header ht
 		// anyway is the same call newStatusError's 429 branch makes.
 		parsed, _ := parseAPIErrorBody(body)
 		envelopeSeconds = parsed.RetryAfter
+		sink.code = parsed.Code
 	}
 	sink.retryAfter = retryAfterFrom(envelopeSeconds, header)
 }

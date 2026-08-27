@@ -54,6 +54,24 @@ export interface Env {
 	ALLOWED_ORIGINS?: string;
 	/** Optional: expected JWT audience (defaults to "gpg-signing-service") */
 	EXPECTED_AUDIENCE?: string;
+	/**
+	 * Optional: public origin to build the `docs` links on error responses from.
+	 * Defaults to the origin the request arrived on, which is right everywhere
+	 * except behind a proxy that rewrites the host.
+	 */
+	SERVICE_BASE_URL?: string;
+	/**
+	 * Optional: document that `GET /e/:code` redirects into. Defaults to the
+	 * error reference in this repository.
+	 */
+	ERROR_DOCS_URL?: string;
+	/**
+	 * Optional: set to "true" to name the trusted subject prefixes in an
+	 * untrusted-subject 401. Off by default — the issuers this service accepts
+	 * are shared with every repository on their platform, so that list would be
+	 * readable by anyone who can run a workflow. See `RefusalContext`.
+	 */
+	DISCLOSE_TRUST_PATTERNS?: string;
 
 	/** Secrets */
 	/** Passphrase for private key */
