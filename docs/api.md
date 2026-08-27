@@ -136,6 +136,13 @@ Common status codes:
 | `500`  | Key processing, signing, storage, or database failure |
 | `503`  | Rate limiter or dependency unavailable                |
 
+A `503` carrying `code: "SERVICE_DEGRADED"` is the one refusal a caller is
+invited to repeat: the service could not reach the issuer's JWKS or its
+authorization store, so nothing about the request was judged. It carries a
+`Retry-After` header — a header, not an envelope field, since `ErrorResponse`
+declares no `retryAfter` — and waiting is the whole fix. See
+[`SERVICE_DEGRADED`](errors.md#service_degraded).
+
 ## Regeneration
 
 After changing route or schema definitions:

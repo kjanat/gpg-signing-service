@@ -200,7 +200,7 @@ per line, instead of dumping the JSON envelope:
 ```text
 Error: sign failed: authentication failed: AUTH_SUBJECT_UNTRUSTED: Subject is not trusted for signing (request 628c9a74-…)
   subject: repo:kjanat/kjanat:ref:refs/heads/master
-  hint:    No active trust rule matches this subject. 4 rule(s) exist for issuer https://token.actions.githubusercontent.com, 4 of them active. …
+  hint:    No active trust rule matches this subject. Trust rules exist for this issuer, but none of them covers this subject. …
   docs:    https://gpg.kajkowalski.nl/e/AUTH_SUBJECT_UNTRUSTED
   request: 628c9a74-c46d-403c-84c6-9c873298a17f
 ```
@@ -209,6 +209,11 @@ Error: sign failed: authentication failed: AUTH_SUBJECT_UNTRUSTED: Subject is no
 a section. Go callers read the same fields off `client.GuidanceFor(err)`, and
 branch on `client.IsSubjectUntrusted(err)` to tell "this token is not
 authorized" from "this token is broken".
+
+A third case is neither: `client.IsServiceDegraded(err)` reports the `503` the
+service answers when it could not reach the issuer or its own authorization
+store, so the request was never judged. Those are retried automatically, and the
+retrier waits the `Retry-After` the service sent instead of guessing.
 
 The command refuses to rewrite commits that already carry a signature. It
 prints what it would do to each and exits non-zero:

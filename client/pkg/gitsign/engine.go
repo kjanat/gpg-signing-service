@@ -300,14 +300,20 @@ func (s *session) lastSigned(ctx context.Context, head string) (string, error) {
 	// saying what the flag means is the difference between one edit and a round
 	// of guessing.
 	//
-	// The suggested value is the branch point, because that is what the scan was
-	// standing in for: it looks for the newest commit this key already verifies
-	// so it can sign only what came after, and when there is none, the range has
-	// to be pinned by hand.
+	// The suggested value is a sha, not `origin/<default>`. This function is
+	// reachable from one place — resolveBase, under `Base == "" && branch ==
+	// DefaultBranch` — so the reader is standing *on* the default branch and
+	// there is no branch point to borrow. `origin/<default>` there is this
+	// branch's own remote tip, and `origin/<default>..HEAD` is whatever has not
+	// been pushed yet: usually empty, which lands them in reportEmptyRange and a
+	// second round of guessing. The merge-base idea belongs to the
+	// `branch != DefaultBranch` path two lines below, which never reaches here.
 	return "", fmt.Errorf(
 		"no verified commit in %s; pass base explicitly: base is the exclusive lower bound of the range to sign, "+
-			"so --base=%s signs every commit after the branch point, and --base=<sha> signs everything after that "+
-			"commit (nothing this key signed was found in %s, which is expected on a branch that has never been "+
-			"signed with it)",
-		scope, "origin/"+s.opts.DefaultBranch, scope)
+			"so --base=<sha> signs every commit after that one — pick the commit just before the first one you "+
+			"want signed, from `git log --oneline`. There is no branch point to use here: %s is the default "+
+			"branch, so origin/%s is its own remote tip rather than a fork point. Nothing this key signed was "+
+			"found in %s, which is expected on a branch that has never been signed with it, and this ends the run "+
+			"before any request is made",
+		scope, s.opts.DefaultBranch, s.opts.DefaultBranch, scope)
 }

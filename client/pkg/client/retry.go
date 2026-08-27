@@ -82,12 +82,29 @@ func (r *Retrier) Do(ctx context.Context, fn func() error) error {
 func (r *Retrier) waitBefore(attempt int, err error) time.Duration {
 	var rateLimitErr *RateLimitError
 	if r.retryOnRateLimit && errors.As(err, &rateLimitErr) && rateLimitErr.RetryAfter > 0 {
-		if rateLimitErr.RetryAfter > r.retryWaitMax {
-			return r.retryWaitMax
-		}
-		return rateLimitErr.RetryAfter
+		return r.capped(rateLimitErr.RetryAfter)
+	}
+	// A 503 carries one too, and unlike a rate limit's it is not something this
+	// client could have estimated: SERVICE_DEGRADED means a dependency is away,
+	// and only the service has any idea for how long. Ignoring it meant backing
+	// off blind against the one failure that had told us what to do.
+	//
+	// Not gated on retryOnRateLimit — that option is about throttling, and
+	// switching it off should not also discard an outage's wait hint.
+	var serviceErr *ServiceError
+	if errors.As(err, &serviceErr) && serviceErr.RetryAfter > 0 {
+		return r.capped(serviceErr.RetryAfter)
 	}
 	return r.backoff(attempt)
+}
+
+// capped clamps a server-supplied wait to this retrier's ceiling, so a
+// misconfigured or hostile hint cannot park a caller for hours.
+func (r *Retrier) capped(wait time.Duration) time.Duration {
+	if wait > r.retryWaitMax {
+		return r.retryWaitMax
+	}
+	return wait
 }
 
 func (r *Retrier) shouldRetry(err error) bool {

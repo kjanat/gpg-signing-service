@@ -24,9 +24,13 @@ export const ERROR_DOC_PREFIX = "/e/";
 /**
  * Where `/e/:code` sends a caller when the deployment names no other target.
  *
- * A permalink into the repository rather than a docs site: this service is
- * deployed by whoever runs it, and the reference travels with the source. Set
- * `ERROR_DOCS_URL` to point at your own copy.
+ * A link into the repository rather than a docs site: this service is deployed
+ * by whoever runs it, and the reference travels with the source. `master`
+ * rather than a pinned SHA for the same reason — the reference is meant to move
+ * with the code that emits the codes. Durability is the redirect's job, not this
+ * value's: only `/e/<CODE>` is ever printed into a log, so this can change
+ * without stranding anything already archived. Set `ERROR_DOCS_URL` to point at
+ * your own copy.
  */
 export const DEFAULT_ERROR_DOCS_URL = "https://github.com/kjanat/gpg-signing-service/blob/master/docs/errors.md";
 
@@ -61,19 +65,43 @@ function withoutTrailingSlash(url: string): string {
  *
  * Derived from the request by default, so a fresh deployment emits working
  * links with nothing configured — including `*.workers.dev` previews, which no
- * static setting would have named. `SERVICE_BASE_URL` overrides it for the case
- * the request cannot answer: a proxy that terminates TLS under a different
- * hostname, where `c.req.url` is the internal one.
+ * static setting would have named.
+ *
+ * That default is the caller's `Host`, though, and `docs` is the one field in
+ * the envelope that a human is invited to click. A request with a forged `Host`
+ * gets back a link on a hostname of its sender's choosing. Cloudflare routing
+ * constrains which hostnames reach a Worker at all, and the response goes back
+ * to the sender that forged it rather than to anyone else — so this is not a
+ * way to attack a third party. It is still a wrong link in a log, and
+ * `SERVICE_BASE_URL` is the way to make the field say the same thing on every
+ * request no matter what arrives in the header. Set it on any deployment with a
+ * name of its own; it costs one line in `wrangler.toml`.
+ *
+ * A configured value that is not an absolute http(s) URL is ignored rather than
+ * emitted: `docs` is declared `z.url()` and a relative or `javascript:` value
+ * would either fail the schema or ship a link nobody should click. Falling back
+ * to the request loses the pinning and keeps the field correct, which is the
+ * right way round for a field that only ever advises.
  *
  * @param c - Request context
  * @returns Origin with no trailing slash, e.g. `https://gpg.kajkowalski.nl`
  */
 export function serviceBaseUrl(c: DocsContext): string {
 	const configured = c.env?.SERVICE_BASE_URL;
-	if (configured) {
+	if (configured && isAbsoluteHttpUrl(configured)) {
 		return withoutTrailingSlash(configured);
 	}
 	return new URL(c.req.url).origin;
+}
+
+/** Does `value` parse as an absolute `http:` or `https:` URL? */
+function isAbsoluteHttpUrl(value: string): boolean {
+	try {
+		const parsed = new URL(value);
+		return parsed.protocol === "http:" || parsed.protocol === "https:";
+	} catch {
+		return false;
+	}
 }
 
 /**

@@ -325,6 +325,13 @@ The Worker:
 8. resolves `iss` and `sub` to a trusted subject, refusing the request when
    none matches and applying that subject's key allowlist.
 
+Steps 1–4, 7 and 8 refuse with a `401`. Step 5 and the store read in step 8 can
+fail without judging the token at all — a discovery or JWKS endpoint that timed
+out, a `D1` that was briefly away — and those answer
+[`503 SERVICE_DEGRADED`](errors.md#service_degraded) with a `Retry-After`
+instead. Nothing about the credential is implicated, and it is the one refusal
+on this path worth repeating.
+
 ### GitHub Actions
 
 The job needs `id-token: write`. Request the audience expected by the service:

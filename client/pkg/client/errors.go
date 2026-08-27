@@ -34,11 +34,22 @@ const (
 	// cannot tell them apart retries the first fix for both, which is how a
 	// missing trust rule reads as a broken OIDC setup.
 	ErrCodeAuthSubjectUntrusted = "AUTH_SUBJECT_UNTRUSTED"
-	ErrCodeDegraded             = "SERVICE_DEGRADED"
-	ErrCodeKeyNotFound          = "KEY_NOT_FOUND"
-	ErrCodeKeyNotAllowed        = "KEY_NOT_ALLOWED"
-	ErrCodeInvalidRequest       = "INVALID_REQUEST"
-	ErrCodeInternalError        = "INTERNAL_ERROR"
+	// ErrCodeDegraded means the service could not reach something it needs — the
+	// issuer's JWKS, the authorization store — and so could not decide the
+	// request either way. Answered 503, usually with a Retry-After, and it is the
+	// one code here a caller is invited to retry: nothing about the request is
+	// wrong.
+	//
+	// This used to be a constant nothing on the wire ever carried, while the
+	// failures it names arrived as AUTH_INVALID — which IsAuthError reports true
+	// for and shouldRetry refuses to retry, so the one auth-path failure a retry
+	// fixes was the one wearing the code that forbids it. TestErrorCodesExistOnTheWire
+	// is what keeps this list and the service's enum from drifting apart again.
+	ErrCodeDegraded       = "SERVICE_DEGRADED"
+	ErrCodeKeyNotFound    = "KEY_NOT_FOUND"
+	ErrCodeKeyNotAllowed  = "KEY_NOT_ALLOWED"
+	ErrCodeInvalidRequest = "INVALID_REQUEST"
+	ErrCodeInternalError  = "INTERNAL_ERROR"
 )
 
 // Guidance is the actionable half of an error response: not what went wrong,
@@ -93,6 +104,16 @@ type ServiceError struct {
 	Message    string
 	StatusCode int
 	RequestID  string
+	// RetryAfter is how long the response asked the caller to wait, from the
+	// `Retry-After` header. Zero when it carried none.
+	//
+	// Only a 429 used to carry one, so only RateLimitError read it. A
+	// SERVICE_DEGRADED 503 carries one too, and it is the more useful of the two:
+	// a rate limit is the caller's own budget refilling on a schedule the client
+	// could estimate, while a JWKS outage clears when it clears, and the header
+	// is the only thing that knows. Without this the retrier backed off blind
+	// against the one failure the service had told it how to wait for.
+	RetryAfter time.Duration
 }
 
 func (e *ServiceError) Error() string {
@@ -206,6 +227,17 @@ func IsRateLimitError(err error) bool {
 func IsValidationError(err error) bool {
 	var ve *ValidationError
 	return errors.As(err, &ve)
+}
+
+// IsServiceDegraded returns true if the service could not reach a dependency it
+// needs and said so, rather than refusing the request on its merits.
+//
+// The distinction IsServiceError cannot make: a 500 is a fault to report with
+// the request id, this is a fault to wait out. Both are 5xx and both are
+// retried, but only one of them is worth telling a human about.
+func IsServiceDegraded(err error) bool {
+	var se *ServiceError
+	return errors.As(err, &se) && se.Code == ErrCodeDegraded
 }
 
 // IsServiceError returns true if the error is a service-side error (5xx).
@@ -473,6 +505,9 @@ func newStatusError(statusCode int, body []byte, header http.Header) error {
 		Message:    parsed.Error,
 		StatusCode: statusCode,
 		RequestID:  requestID,
+		// Read on every status, not just 5xx: RFC 9110 permits Retry-After on any
+		// response, and reading it costs nothing where it is absent.
+		RetryAfter: retryAfterFrom(parsed.RetryAfter, header),
 	}
 }
 

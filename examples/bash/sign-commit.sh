@@ -89,6 +89,10 @@ sign_commit() {
 	local commit_ref="${1:-HEAD}"
 	local keyid="${2:-}"
 	local retry_count=0
+	# The last refusal the retry loop swallowed. A 429 and a 503 both carry the
+	# same actionable fields every other refusal does, and both are printed at
+	# most once — after the retries run out — rather than on every attempt.
+	local last_code="" last_body=""
 
 	log_info "Signing commit: ${commit_ref}"
 
@@ -106,13 +110,19 @@ sign_commit() {
 	while [[ ${retry_count} -lt ${MAX_RETRIES} ]]; do
 		log_info "Signing attempt $((retry_count + 1))/${MAX_RETRIES}..."
 
-		local response http_code body request_id
+		local response http_code body request_id headers headers_file
 		request_id=$(uuidgen) || true
-		response=$(curl -sw "\n%{http_code}" -X POST \
+		# Headers to a file, not just the body: `Retry-After` on a 503 is a header
+		# and has no field in the envelope, so a body-only read cannot see the one
+		# thing that response is telling the caller.
+		headers_file=$(mktemp)
+		response=$(curl -sw "\n%{http_code}" -D "${headers_file}" -X POST \
 			-H "Authorization: Bearer ${OIDC_TOKEN}" \
 			-H "X-Request-ID: ${request_id}" \
 			--data-raw "${commit_data}" \
 			"${request_url}")
+		headers=$(cat "${headers_file}")
+		rm -f "${headers_file}"
 
 		http_code="$(echo "${response}" | tail -1)"
 		body="$(echo "${response}" | head -n -1)"
@@ -127,7 +137,23 @@ sign_commit() {
 				local retry_after
 				retry_after=$(echo "${body}" | jq -r '.retryAfter // 30')
 				log_info "Rate limited, waiting ${retry_after}s..."
+				last_code="${http_code}" last_body="${body}"
 				sleep "${retry_after}"
+				retry_count=$((retry_count + 1))
+				;;
+			503)
+				# SERVICE_DEGRADED: the service could not reach something it needs
+				# — the issuer's JWKS, its authorization store — so nothing about
+				# this request was judged. It is the one refusal the service invites
+				# a caller to repeat, and the only one where waiting is the whole
+				# fix. Retry-After is a header here, not a body field: ErrorResponse
+				# declares no `retryAfter`.
+				local degraded_wait
+				degraded_wait=$(sed -n 's/^[Rr]etry-[Aa]fter: *\([0-9]*\).*/\1/p' <<<"${headers}" | tail -1)
+				degraded_wait="${degraded_wait:-30}"
+				log_info "Service degraded, waiting ${degraded_wait}s..."
+				last_code="${http_code}" last_body="${body}"
+				sleep "${degraded_wait}"
 				retry_count=$((retry_count + 1))
 				;;
 			401)
@@ -147,6 +173,12 @@ sign_commit() {
 	done
 
 	log_error "Signing failed after ${MAX_RETRIES} retries"
+	# Without this the run ends on that one line and everything the service sent
+	# — which code it was, what to change, where to read about it — is discarded
+	# by the loop that was supposed to be handling it.
+	if [[ -n ${last_body} ]]; then
+		log_service_error "${last_code}" "${last_body}"
+	fi
 	return 1
 }
 

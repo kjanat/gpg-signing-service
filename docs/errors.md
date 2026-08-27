@@ -8,7 +8,7 @@ section here:
   "error": "Subject is not trusted for signing",
   "code": "AUTH_SUBJECT_UNTRUSTED",
   "subject": "repo:kjanat/kjanat:ref:refs/heads/master",
-  "hint": "No active trust rule matches this subject. 4 rule(s) exist for issuer https://token.actions.githubusercontent.com, 4 of them active. …",
+  "hint": "No active trust rule matches this subject. Trust rules exist for this issuer, but none of them covers this subject. …",
   "docs": "https://gpg.kajkowalski.nl/e/AUTH_SUBJECT_UNTRUSTED",
   "requestId": "628c9a74-c46d-403c-84c6-9c873298a17f"
 }
@@ -66,11 +66,22 @@ message names which check failed:
 | `Invalid token signature` / `Key not found`       | The issuer's JWKS does not verify the token. Usually a forged or truncated token; occasionally a key rotation the cache has not caught up with.                                |
 | `Invalid service token`                           | A `gst_` token that is unknown, revoked or expired. `GET /admin/tokens` lists the live ones; mint a replacement with `POST /admin/tokens`.                                     |
 | `Invalid admin token`                             | The bearer did not match the deployment's `ADMIN_TOKEN` secret.                                                                                                                |
+| `Algorithm not allowed: <alg>`                    | The token's `alg` header is not one of RS256, RS384, RS512, ES256, ES384. An `alg` of `none` or a symmetric one is refused before any key is fetched.                          |
+| `Key not intended for signatures`                 | The issuer's JWKS names the token's `kid` with a `use` other than `sig`. Issuer-side metadata, not the token's.                                                                |
 
 This code does **not** cover "the token is fine but this identity may not sign"
 — that is [`AUTH_SUBJECT_UNTRUSTED`](#auth_subject_untrusted). The two used to
 share a code, which meant the two fixes (mend the credential; edit the trust
 list) were indistinguishable from the response.
+
+It also does **not** cover this deployment failing to reach the issuer — a JWKS
+fetch that timed out or came back 5xx. That is
+[`SERVICE_DEGRADED`](#service_degraded), answered 503. It used to arrive here,
+which was the worst of both: the fault was not the caller's, and `AUTH_INVALID`
+is precisely the code the Go client refuses to retry, for the one authentication
+failure a retry does fix.
+
+**Retrying with the same token cannot change any answer in this section.**
 
 ### AUTH_SUBJECT_UNTRUSTED
 
@@ -115,18 +126,25 @@ curl --fail-with-body --silent \
   "$GPG_SIGN_URL/admin/subjects"
 ```
 
-The `hint` says how many rules exist for the issuer. **Zero** means nobody was
-ever authorized on this deployment for that issuer — an empty table denies
-everyone rather than admitting everyone. **More than zero** means this
-particular subject is not among them, so look at the ref or repository part of
-the claim.
+The `hint` separates the two situations a caller can act on differently. **No
+rules at all for this issuer** means nobody was ever authorized on this
+deployment for it — an empty table denies everyone rather than admitting
+everyone. **Rules exist but none covers this subject** means the ref or
+repository part of the claim is not the one that was authorized.
 
-The hint does not name the trusted prefixes by default. Both issuers this
-service accepts are shared with every repository on their platform, so any
-stranger who can run a workflow can obtain a verified token and read whatever a
-refusal says — and the list of prefixes is the list of everyone who signs here.
+The hint stops there by default: it names no prefixes and no counts. Both
+issuers this service accepts are shared with every repository on their platform,
+so any stranger who can run a workflow can obtain a verified token and read
+whatever a refusal says — and this 401 is answered before any rate limiter is
+consulted and writes no audit row, so whatever it discloses is disclosed
+unmetered and leaves no trace. The prefixes are the list of everyone who signs
+here; the counts are that same list counted, and polled over a week their delta
+is an add/revoke/expire feed for the trust table. Neither is something a caller
+can act on once they have the distinction above.
+
 Operators who run a private issuer, or who consider that list public, can set
-`DISCLOSE_TRUST_PATTERNS=true` to have the active prefixes named in the hint.
+`DISCLOSE_TRUST_PATTERNS=true`. The hint then appends the rule counts and the
+active prefixes for the issuer.
 
 Three different situations answer with this same code and message: the subject
 matches nothing, it matches a **revoked** rule, and it matches an **expired**
@@ -224,12 +242,41 @@ run `task db:migrate`.
 
 ### INTERNAL_ERROR
 
-**500**, or **503** for `Authorization store unavailable`.
+**500.** An unhandled fault. Worth reporting with the `requestId`.
 
-The 503 form is worth separating: it means the D1 lookup of trusted subjects
-failed. That is _not_ a credential problem — reporting it as a 401 would point
-an operator at credentials on the day the real cause is an unapplied migration.
-Run `task db:migrate` and check `gpg-sign health`.
+The `Authorization store unavailable` 503 used to carry this code; it is now
+[`SERVICE_DEGRADED`](#service_degraded), because the fix is to wait rather than
+to read a stack trace.
+
+### SERVICE_DEGRADED
+
+**503.** This deployment could not reach something it needs, so it could not
+decide the request either way. **Nothing about the request is wrong**, and this
+is the only code in this reference a caller is invited to retry.
+
+| Message                                         | What failed                                                                              |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `Could not reach the OIDC configuration at …`   | The issuer's `/.well-known/openid-configuration` timed out or the socket died.           |
+| `Failed to fetch OIDC config from … (status)`   | The issuer answered discovery with a non-2xx.                                            |
+| `OIDC configuration at … was not readable JSON` | A 200 that was not the document — a captive portal, a proxy's error page.                |
+| `Could not reach the JWKS at …`                 | Same, one hop further in.                                                                |
+| `Failed to fetch JWKS from … (status)`          | The issuer answered its JWKS endpoint with a non-2xx.                                    |
+| `JWKS at … was not readable JSON`               | Same.                                                                                    |
+| `SSRF protection: …`                            | This deployment refuses to fetch that issuer's URL. **Not transient** — see below.       |
+| `Authorization store unavailable`               | The D1 lookup of trusted subjects failed. Check `task db:migrate` and `gpg-sign health`. |
+
+Everything but the SSRF row carries a `Retry-After`, and the JWKS is cached for
+five minutes once it is read, so a fleet that all hit a blip together recovers
+together.
+
+The SSRF row is the exception on purpose: it means an entry in this deployment's
+`ALLOWED_ISSUERS` points at a URL the service will not fetch — a private
+address, a metadata endpoint — so it answers identically forever and gets no
+`Retry-After`. That is an operator's to fix, not a caller's to wait out.
+
+These used to be answered `401 AUTH_INVALID`, which sent the caller to a table
+of seven token faults, none of which they had, and told every Go client not to
+retry.
 
 ## Looking a refusal up
 

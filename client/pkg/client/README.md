@@ -211,12 +211,21 @@ as a JSON decoding error with no status in it.
 #### Helper Functions
 
 ```go
-client.IsAuthError(err)        // true if authentication error
-client.IsRateLimitError(err)   // true if rate limited
-client.IsKeyNotFound(err)      // true if key not found
-client.IsValidationError(err)  // true if validation error
-client.IsServiceError(err)     // true if 5xx error
+client.IsAuthError(err)         // true if authentication error
+client.IsSubjectUntrusted(err)  // true if the credential verified and is not authorized
+client.IsRateLimitError(err)    // true if rate limited
+client.IsKeyNotFound(err)       // true if key not found
+client.IsValidationError(err)   // true if validation error
+client.IsServiceError(err)      // true if 5xx error
+client.IsServiceDegraded(err)   // true if a dependency was unreachable (503)
 ```
+
+`IsServiceDegraded` is the one worth acting on differently from its neighbours.
+A `500` is a fault to report with the request id; a `SERVICE_DEGRADED` `503`
+means the service could not reach the issuer's JWKS or its authorization store,
+so the request was never judged — nothing about it was wrong. It is retried
+automatically, and the retrier honours the `Retry-After` the service sends
+rather than backing off blind.
 
 #### Example
 

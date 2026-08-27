@@ -516,6 +516,7 @@ change; `401`s carry the `subject` that was presented.
 | `AUDIT_ERROR`            | `500` | Failed to retrieve audit logs                                    |
 | `NOT_FOUND`              | `404` | Endpoint not found                                               |
 | `INTERNAL_ERROR`         | `500` | Unexpected server error                                          |
+| `SERVICE_DEGRADED`       | `503` | A dependency was unreachable; the request was never judged       |
 
 ---
 

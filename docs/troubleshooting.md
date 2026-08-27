@@ -65,15 +65,20 @@ verified token still needs a trusted subject. Check all of:
   `EXPECTED_AUDIENCE`;
 - `ALLOWED_ISSUERS` contains
   `https://token.actions.githubusercontent.com`;
-- the token has not expired; and
-- discovery and JWKS endpoints are reachable.
+- the token has not expired.
+
+Discovery and JWKS reachability is _not_ on that list any more: a deployment
+that cannot reach the issuer now answers
+[`503 SERVICE_DEGRADED`](errors.md#service_degraded), not a `401`. If you are
+reading a `401`, the issuer was reached.
 
 The `code` separates these, and the split matters because the fixes do:
 
 - `AUTH_MISSING` — no usable credential reached the service.
 - `AUTH_INVALID` — a credential was presented and **the credential** was
-  refused: unlisted issuer, wrong audience, expired, bad signature. Fix the
-  token.
+  refused: unlisted issuer, wrong audience, expired, bad signature, an
+  unaccepted `alg`. Fix the token. It never means the service had trouble
+  reaching the issuer; that is a `503`.
 - [`AUTH_SUBJECT_UNTRUSTED`](errors.md#auth_subject_untrusted) — the token
   verified and **the identity is not authorized**. Nothing about the workflow's
   OIDC setup will change this; add a trust rule. The response echoes the
@@ -246,6 +251,26 @@ only place it appears.
 
 The service fails closed when rate limiting or a required dependency is
 unavailable. Check Worker logs plus Durable Object and D1 health.
+
+Read the `code` before doing any of that, because one of the two is not yours to
+fix:
+
+- **`SERVICE_DEGRADED`** — the service could not reach the issuer's discovery or
+  JWKS endpoint, or its own authorization store, so **the request was never
+  judged**. Nothing about the token or the trust list is implicated. It carries
+  a `Retry-After` header — a header, not an envelope field — and waiting is the
+  whole fix. `gpg-sign` and the Go package retry it automatically and honour
+  that header; the bash example does too. These used to arrive as
+  `401 AUTH_INVALID`, which sent people to rotate a perfectly good token and
+  told every Go client not to retry the one auth failure a retry fixes.
+
+  The exception is `SSRF protection: …`, which is the same code with no
+  `Retry-After`: an entry in `ALLOWED_ISSUERS` points at a URL this deployment
+  refuses to fetch, and it will answer identically forever. That one is the
+  operator's.
+
+- **`RATE_LIMIT_ERROR`** — the limiter itself was unreachable, and the service
+  refused rather than signing unmetered. Check the Durable Object.
 
 ## Request IDs
 

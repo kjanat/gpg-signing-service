@@ -51,16 +51,20 @@ export type OIDCSubjectResolution =
  * A caller staring at `Subject is not trusted for signing` cannot tell an empty
  * trust list from a full one that its subject misses — and those are opposite
  * problems: the first is "the service was never configured", the second is
- * "this ref/repo is not the one that was authorized". The counts separate them
- * without naming anything.
+ * "this ref/repo is not the one that was authorized". Which of the two it is, is
+ * the only part a caller can act on, and `issuerRuleCount === 0` is the whole of
+ * that distinction.
  *
- * `activePrefixes` is the full answer, and the middleware only puts it in a
- * response when the deployment opts in: both issuers this service accepts are
- * shared with every repository on their platform, so anyone who can run a
- * workflow can obtain a verified token and read whatever the refusal says. That
- * makes the list of trusted prefixes — the org and repository names of everyone
- * who signs here — readable by strangers. Operators who run a private issuer,
- * or who consider that list public anyway, can turn it on.
+ * Nothing here reaches a response unless the deployment opts in with
+ * `DISCLOSE_TRUST_PATTERNS`. Both issuers this service accepts are shared with
+ * every repository on their platform, so anyone who can run a workflow can
+ * obtain a verified token and read whatever the refusal says — and that 401 is
+ * answered before any rate limiter is consulted and writes no audit row, so
+ * whatever it discloses is disclosed unmetered and leaves no trace. The
+ * prefixes are the org and repository names of everyone who signs here; the
+ * counts are those same names counted, which polled over a week is an
+ * add/revoke/expire feed for the trust list. Neither is worth more than the
+ * binary above, and both are behind the flag.
  */
 export interface RefusalContext {
 	/** How many rows exist for this issuer, live or not. */

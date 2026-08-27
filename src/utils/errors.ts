@@ -6,7 +6,7 @@ import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { WWW_AUTHENTICATE } from "#lib/openapi";
 import type { ErrorCode } from "#schemas/errors";
-import { HTTP } from "#types";
+import { HEADERS, HTTP } from "#types";
 import { logger } from "#utils/logger";
 
 interface ErrorOptions {
@@ -88,6 +88,61 @@ export function unauthorized(
 			...(details.hint && { hint: details.hint }),
 		},
 		HTTP.Unauthorized,
+	);
+}
+
+/**
+ * The service's "this one is ours, and it may pass".
+ *
+ * A 503 that says so in the `code`, because the two neighbouring codes both
+ * send the caller somewhere useless. `INTERNAL_ERROR` reads as a bug to report
+ * and its reference section is about migrations; `AUTH_INVALID` reads as a
+ * credential to mend. Neither is true of a JWKS fetch that timed out, and a
+ * caller acting on either wastes a round of CI on a fault that had already
+ * cleared.
+ *
+ * The `Retry-After` is the load-bearing half. The Go client retries any 5xx, so
+ * this is already the one refusal it will try again — the header is what stops
+ * it choosing the interval blind, and what a caller reading the response by
+ * hand needs in order to know that waiting is the whole fix.
+ *
+ * Logged at warn, not error: a dependency being briefly unreachable is this
+ * function working. Volume here follows the dependency, not the caller.
+ *
+ * @param c - Request context
+ * @param message - What could not be reached; never names stored state
+ * @param details - `hint` says what an operator would check, for the case the
+ *   outage is this deployment's own configuration rather than the issuer's;
+ *   `retryAfter` is whole seconds, omitted when nothing sensible can be guessed
+ */
+export function serviceDegraded(
+	c: Context,
+	message: string,
+	details: { hint?: string | undefined; retryAfter?: number | undefined } = {},
+) {
+	const requestId = c.get("requestId");
+
+	logger.warn(message, {
+		code: "SERVICE_DEGRADED",
+		status: HTTP.ServiceUnavailable,
+		...(requestId && { requestId }),
+	});
+
+	// Floored at one: RFC 9110 delay-seconds is a non-negative integer, and a
+	// `Retry-After: 0` reads as "immediately", which is the one thing a caller
+	// should not do to a dependency that just failed.
+	if (details.retryAfter !== undefined && details.retryAfter > 0) {
+		c.header(HEADERS.RETRY_AFTER, String(Math.max(1, Math.ceil(details.retryAfter))));
+	}
+
+	return c.json(
+		{
+			error: message,
+			code: "SERVICE_DEGRADED" as const satisfies ErrorCode,
+			...(requestId && { requestId }),
+			...(details.hint && { hint: details.hint }),
+		},
+		HTTP.ServiceUnavailable,
 	);
 }
 

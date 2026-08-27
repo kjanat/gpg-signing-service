@@ -641,6 +641,10 @@ func mapServerError(resp *api.PostSignResponse) *ServiceError {
 		Code:       string(errResp.Code),
 		Message:    errResp.Error,
 		StatusCode: statusCode,
+		// A SERVICE_DEGRADED 503 says how long to wait, and this is the only place
+		// the typed path could pick it up: ErrorResponse declares no retryAfter
+		// field, so the header is the whole source.
+		RetryAfter: retryAfterFrom(0, resp.HTTPResponse.Header),
 	}
 	if errResp.RequestId != nil {
 		serviceErr.RequestID = errResp.RequestId.String()

@@ -36,6 +36,16 @@ export const ErrorCodeSchema = z
 		"AUDIT_ERROR",
 		"NOT_FOUND",
 		"INTERNAL_ERROR",
+		/**
+		 * This deployment could not reach something it needs — the issuer's JWKS,
+		 * the authorization store — and so could not decide the request either way.
+		 *
+		 * Answered 503, and the only refusal in this enum a caller is *invited* to
+		 * retry: nothing about the request is wrong. Split out of INTERNAL_ERROR
+		 * and out of AUTH_INVALID because both of those tell the caller to go and
+		 * change something, and there is nothing on their side to change.
+		 */
+		"SERVICE_DEGRADED",
 	])
 	.openapi("ErrorCode");
 

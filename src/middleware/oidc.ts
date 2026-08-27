@@ -6,7 +6,7 @@ import { createIdentity, HEADERS, HTTP, markClaimsAsValidated, TIME } from "#typ
 import { logAuditEvent } from "#utils/audit";
 import { CACHE_TTL } from "#utils/constants";
 import { fetchRateLimiter } from "#utils/durable-objects";
-import { unauthorized } from "#utils/errors";
+import { serviceDegraded, unauthorized } from "#utils/errors";
 import { scheduleBackgroundTask } from "#utils/execution";
 import { fetchWithTimeout } from "#utils/fetch";
 import { logger } from "#utils/logger";
@@ -27,6 +27,51 @@ import { validateUrl } from "#utils/url-validation";
  * that reached the point of naming a bucket.
  */
 const REVOKED_REUSE_METER = "oidc-revoked-reuse";
+
+/**
+ * This deployment could not reach the issuer, as distinct from the issuer
+ * refusing the token.
+ *
+ * `validateOIDCToken` throws a plain Error for every way a *credential* can be
+ * wrong, and `oidcAuth` echoes those as 401 `AUTH_INVALID`. Five of the things
+ * it could throw were never credential faults at all: a discovery or JWKS fetch
+ * that failed or timed out, and a URL this deployment refuses to fetch. They
+ * arrived at the caller wearing a code whose reference section is a table of
+ * seven token faults, none of which they had — and whose whole meaning to the
+ * Go client is "do not retry this", when a JWKS blip is the one auth failure a
+ * retry does fix.
+ *
+ * Carrying its own type is what lets the catch tell them apart, since both
+ * kinds surface from the same call.
+ *
+ * `transient` separates the two ways this happens. A timeout or a 5xx from the
+ * issuer clears on its own and is worth another attempt; a URL blocked by SSRF
+ * validation is this deployment's `ALLOWED_ISSUERS` pointing somewhere it will
+ * never fetch from, which no amount of waiting resolves. Both are 503 — neither
+ * is the caller's to fix — but only the first gets a `Retry-After`, because
+ * telling a caller to try again for a fault that is permanent until an operator
+ * edits a variable is just a slower failure.
+ */
+export class IssuerUnavailableError extends Error {
+	constructor(
+		message: string,
+		readonly transient: boolean,
+		options?: { cause?: unknown },
+	) {
+		super(message, options);
+		this.name = "IssuerUnavailableError";
+	}
+}
+
+/**
+ * What a caller is asked to wait when the issuer could not be reached.
+ *
+ * Shorter than the JWKS cache's five minutes on purpose: nothing was cached, so
+ * this is a guess at how long an upstream blip lasts, and the cost of guessing
+ * low is one more request against a dependency that is already answering again
+ * by then.
+ */
+const ISSUER_RETRY_AFTER_SECONDS = 30;
 
 /**
  * Write a durable record of a revoked trust being presented, if the caller is
@@ -123,15 +168,55 @@ function tokenHint(message: string, env: Env): string | undefined {
 		return `Request the token with audience "${env.EXPECTED_AUDIENCE || "gpg-signing-service"}" — for GitHub Actions, core.getIDToken(audience) or the audience input of the OIDC step.`;
 	}
 	if (message.startsWith("Issuer not allowed")) {
-		return `This deployment accepts tokens from: ${env.ALLOWED_ISSUERS.split(",")
+		// The list is behind the same flag the trusted prefixes are, and for a
+		// stronger reason. This check runs before the timing check, the audience
+		// check and the JWKS fetch, so an unsigned JWT assembled by hand reaches
+		// it — no credential is presented, and none is ever verified. Naming every
+		// issuer this deployment accepts to that caller hands a self-hoster's
+		// internal Keycloak hostname to anyone who can reach the worker. The
+		// message already names the issuer that was refused, which is the caller's
+		// half; the knob is the operator's half, and it is the same sentence
+		// whether or not the values are printed.
+		const base =
+			"The `iss` in this token is not one this deployment accepts. The operator sets that list in `ALLOWED_ISSUERS`.";
+		if (env.DISCLOSE_TRUST_PATTERNS !== "true") {
+			return base;
+		}
+		const issuers = env.ALLOWED_ISSUERS.split(",")
 			.map((issuer) => issuer.trim())
-			.filter(Boolean)
-			.join(", ")}.`;
+			.filter(Boolean);
+		return issuers.length > 0 ? `${base} It currently accepts: ${issuers.join(", ")}.` : base;
 	}
 	if (message === "Invalid token format" || message === "Invalid token encoding") {
 		return "The Authorization header did not carry a JWT. A common cause is an unset variable expanding to an empty string, so the header reads `Bearer ` with nothing after it.";
 	}
+	if (message.startsWith("Algorithm not allowed")) {
+		// Named because the reference's table is the caller's only account of what
+		// AUTH_INVALID means, and a fault missing from it reads as a fault the
+		// documentation does not know about.
+		return "The token's `alg` header is not one this service verifies. It accepts RS256, RS384, RS512, ES256 and ES384 — an `alg` of `none`, or a symmetric one, is refused before any key is fetched.";
+	}
+	if (message === "Key not intended for signatures") {
+		return "The issuer's JWKS names this key with `use` set to something other than `sig`, so it is not a signing key. This is the issuer's metadata, not the token's — if it persists, it is one for the issuer's operator.";
+	}
 	return undefined;
+}
+
+/**
+ * What to check when the *deployment* could not reach the issuer.
+ *
+ * Split by `transient` because the two have opposite audiences. A timeout is
+ * the caller's to wait out and nobody's to fix; a blocked URL is an operator's
+ * to correct and waiting will not help. Saying "retry" for the second is how a
+ * pipeline burns its retry budget on a variable that is simply wrong.
+ *
+ * @param error - The failure to reach the issuer
+ */
+function issuerUnavailableHint(error: IssuerUnavailableError): string {
+	if (error.transient) {
+		return "This deployment could not reach the issuer to verify the token, so it could not decide the request either way. Nothing about the token is wrong and nothing in the workflow needs changing — wait the interval in `Retry-After` and call again. If it persists, check the issuer's status and this deployment's egress.";
+	}
+	return "This deployment refuses to fetch from the URL that issuer's discovery points at, so no token from it can ever be verified here. That is a deployment fault, not a credential one: the operator should check the entry in `ALLOWED_ISSUERS` resolves to a public host.";
 }
 
 /**
@@ -158,17 +243,30 @@ function untrustedSubjectHint(issuer: string, context: RefusalContext, env: Env)
 	}
 
 	const active = context.activePrefixes.length;
+	// No figures in the default hint. The branch above already carried the whole
+	// actionable half — *is this deployment configured for my issuer at all* —
+	// and by the time a reader is on this line they have their answer. Whether
+	// the number is 4 or 40 changes nothing they can do, which puts the exact
+	// counts in the same category as the prefixes themselves: not actionable, and
+	// not free. This 401 is answered before the identity is set and before any
+	// limiter is consulted, and the `unknown` arm deliberately writes no audit
+	// row, so a live count here is an unmetered, unrecorded oracle on the trust
+	// table for anyone who can mint a token on a shared issuer — poll it and the
+	// delta is an add/revoke/expire feed.
 	let hint =
-		`No active trust rule matches this subject. ${context.issuerRuleCount} rule(s) exist for issuer ${issuer}, ` +
-		`${active} of them active. A subject must fall under a stored prefix at a ":", "@" or "/" boundary, so a rule ` +
-		`for one ref does not cover another — compare the ref part of the subject above with GET /admin/subjects, ` +
-		`then add or widen a rule with POST /admin/subjects.`;
+		`No active trust rule matches this subject. Trust rules exist for this issuer, but none of them covers ` +
+		`this subject. A subject must fall under a stored prefix at a ":", "@" or "/" boundary, so a rule for one ` +
+		`ref does not cover another — compare the ref part of the subject above with GET /admin/subjects, then add ` +
+		`or widen a rule with POST /admin/subjects.`;
 
-	// Off by default; see RefusalContext for why the prefixes are not free to
+	// Off by default; see RefusalContext for why the trust list is not free to
 	// hand out. `=== "true"` rather than truthiness so an operator who sets it to
 	// "false" gets what they asked for.
-	if (env.DISCLOSE_TRUST_PATTERNS === "true" && active > 0) {
-		hint += ` Active prefixes for this issuer: ${context.activePrefixes.join(", ")}.`;
+	if (env.DISCLOSE_TRUST_PATTERNS === "true") {
+		hint += ` ${context.issuerRuleCount} rule(s) exist for issuer ${issuer}, ${active} of them active.`;
+		if (active > 0) {
+			hint += ` Active prefixes: ${context.activePrefixes.join(", ")}.`;
+		}
 	}
 	return hint;
 }
@@ -226,6 +324,17 @@ export const oidcAuth: MiddlewareHandler<{
 	try {
 		payload = await validateOIDCToken(token, c.env);
 	} catch (error) {
+		// Not every throw from there is a bad credential. A discovery or JWKS
+		// fetch that failed is this deployment failing to reach the issuer, and
+		// answering it 401 told the caller to go and mend a token that was fine —
+		// while handing the Go client the one code its retry policy refuses to
+		// retry, for the one auth failure a retry actually fixes.
+		if (error instanceof IssuerUnavailableError) {
+			return serviceDegraded(c, error.message, {
+				hint: issuerUnavailableHint(error),
+				...(error.transient && { retryAfter: ISSUER_RETRY_AFTER_SECONDS }),
+			});
+		}
 		const message = error instanceof Error ? error.message : "Invalid token";
 		return unauthorized(c, message, "AUTH_INVALID", { hint: tokenHint(message, c.env) });
 	}
@@ -246,7 +355,15 @@ export const oidcAuth: MiddlewareHandler<{
 			issuer: payload.iss,
 			error: error instanceof Error ? error.message : String(error),
 		});
-		return c.json({ error: "Authorization store unavailable", code: "INTERNAL_ERROR" }, HTTP.ServiceUnavailable);
+		// SERVICE_DEGRADED rather than INTERNAL_ERROR. The status was always 503,
+		// but the code said "internal fault" — whose reference section is about
+		// migrations and unhandled exceptions — for what is usually D1 being
+		// briefly unavailable. The caller's move is to wait, and only a code that
+		// says so gets them there.
+		return serviceDegraded(c, "Authorization store unavailable", {
+			hint: "The trusted-subject lookup failed, so this request could not be authorized either way. Nothing about the token is wrong. Retry after the interval in Retry-After; if it persists, the operator should check D1 and that `task db:migrate` has been applied.",
+			retryAfter: ISSUER_RETRY_AFTER_SECONDS,
+		});
 	}
 
 	if (resolution.status !== "trusted") {
@@ -564,16 +681,44 @@ async function getJWKS(issuer: string, env: Env, expectedKid?: string): Promise<
 			url: wellKnownUrl,
 			error: message,
 		});
-		throw new Error(`SSRF protection: ${message}`, { cause: error });
+		// Not transient, and not the caller's: an issuer in ALLOWED_ISSUERS whose
+		// discovery URL this deployment refuses to fetch is a deployment that was
+		// configured wrong, and it will answer identically forever.
+		throw new IssuerUnavailableError(`SSRF protection: ${message}`, false, { cause: error });
 	}
 
-	const configResponse = await fetchWithTimeout(wellKnownUrl, {}, 10000);
+	// Everything from here to the parsed JWKS is "can this deployment reach the
+	// issuer", and every way it fails is a 503 rather than a refused credential.
+	let configResponse: Response;
+	try {
+		configResponse = await fetchWithTimeout(wellKnownUrl, {}, 10000);
+	} catch (error) {
+		// fetchWithTimeout throws on the timeout and on a dead socket alike.
+		throw new IssuerUnavailableError(
+			`Could not reach the OIDC configuration at ${wellKnownUrl}: ${error instanceof Error ? error.message : String(error)}`,
+			true,
+			{ cause: error },
+		);
+	}
 
 	if (!configResponse.ok) {
-		throw new Error(`Failed to fetch OIDC config from ${wellKnownUrl}`);
+		throw new IssuerUnavailableError(
+			`Failed to fetch OIDC config from ${wellKnownUrl} (status ${configResponse.status})`,
+			true,
+		);
 	}
 
-	const config = (await configResponse.json()) as { jwks_uri: string };
+	let config: { jwks_uri: string };
+	try {
+		config = (await configResponse.json()) as { jwks_uri: string };
+	} catch (error) {
+		// A 200 whose body is not the document the issuer is supposed to serve —
+		// a captive portal, a proxy's error page under a 200. Still "we could not
+		// read the issuer", not "your token is bad".
+		throw new IssuerUnavailableError(`OIDC configuration at ${wellKnownUrl} was not readable JSON`, true, {
+			cause: error,
+		});
+	}
 
 	// SSRF Protection: Validate JWKS URI before fetching
 	try {
@@ -585,16 +730,33 @@ async function getJWKS(issuer: string, env: Env, expectedKid?: string): Promise<
 			jwks_uri: config.jwks_uri,
 			error: message,
 		});
-		throw new Error(`SSRF protection: ${message}`, { cause: error });
+		throw new IssuerUnavailableError(`SSRF protection: ${message}`, false, { cause: error });
 	}
 
-	const jwksResponse = await fetchWithTimeout(config.jwks_uri, {}, 10000);
+	let jwksResponse: Response;
+	try {
+		jwksResponse = await fetchWithTimeout(config.jwks_uri, {}, 10000);
+	} catch (error) {
+		throw new IssuerUnavailableError(
+			`Could not reach the JWKS at ${config.jwks_uri}: ${error instanceof Error ? error.message : String(error)}`,
+			true,
+			{ cause: error },
+		);
+	}
 
 	if (!jwksResponse.ok) {
-		throw new Error(`Failed to fetch JWKS from ${config.jwks_uri}`);
+		throw new IssuerUnavailableError(
+			`Failed to fetch JWKS from ${config.jwks_uri} (status ${jwksResponse.status})`,
+			true,
+		);
 	}
 
-	const jwks = (await jwksResponse.json()) as LegacyJWKSResponse;
+	let jwks: LegacyJWKSResponse;
+	try {
+		jwks = (await jwksResponse.json()) as LegacyJWKSResponse;
+	} catch (error) {
+		throw new IssuerUnavailableError(`JWKS at ${config.jwks_uri} was not readable JSON`, true, { cause: error });
+	}
 
 	// Cache for 5 minutes (non-critical, don't fail on cache errors)
 	try {

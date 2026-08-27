@@ -275,6 +275,19 @@ describe("error-docs helpers", () => {
 		);
 	});
 
+	it("ignores a SERVICE_BASE_URL that is not an absolute http(s) URL", () => {
+		// `docs` is declared `z.url()` and is the one field a human is invited to
+		// click. A relative value would not parse; a `javascript:` one should not
+		// be handed to anybody. Falling back to the request keeps the link correct
+		// and only loses the pinning, which is the right way round.
+		expect(serviceBaseUrl({ env: { SERVICE_BASE_URL: "gpg.example" }, req: { url: "https://b.test/x" } })).toBe(
+			"https://b.test",
+		);
+		expect(serviceBaseUrl({ env: { SERVICE_BASE_URL: "javascript:alert(1)" }, req: { url: "https://b.test/x" } })).toBe(
+			"https://b.test",
+		);
+	});
+
 	it("points at the reference's top when no code is named", () => {
 		expect(errorDocsTarget(undefined)).toBe(DEFAULT_ERROR_DOCS_URL);
 		expect(errorDocsTarget({ ERROR_DOCS_URL: "" })).toBe(DEFAULT_ERROR_DOCS_URL);

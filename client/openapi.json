@@ -122,7 +122,8 @@
           "INVALID_REQUEST",
           "AUDIT_ERROR",
           "NOT_FOUND",
-          "INTERNAL_ERROR"
+          "INTERNAL_ERROR",
+          "SERVICE_DEGRADED"
         ]
       },
       "SignResponse": {
