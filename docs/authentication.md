@@ -392,6 +392,11 @@ Service tokens support arbitrary CI systems and local automation. They:
 
 An omitted or empty key list permits every stored key.
 
+A token is looked up in `D1` on every call, so a `D1` that is briefly away
+answers [`503 SERVICE_DEGRADED`](errors.md#service_degraded) with a
+`Retry-After` here too, rather than reporting the token as invalid. Same
+reasoning as step 5 above: the credential was never judged.
+
 ### Create
 
 ```bash

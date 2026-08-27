@@ -162,9 +162,24 @@ sign_commit() {
 				return 0
 				;;
 			429)
+				# `|| true`, and `empty` rather than a jq-side default: a 429 is the
+				# one refusal that needs no envelope to be understood, and the
+				# responder most likely to answer one is an edge throttle in front
+				# of this service, which sends an HTML page and a `Retry-After`
+				# header. jq exits non-zero on that body, and under `set -e` an
+				# assignment taking its status ended the whole script right here —
+				# before the clamp, before `last_body` was recorded, and so before
+				# anything at all was printed about the refusal. Same failure the
+				# `if` in log_service_error exists to prevent.
+				#
+				# The header is the fallback for exactly that responder, read the
+				# same way the 503 branch reads its own.
 				local retry_after
-				retry_after=$(echo "${body}" | jq -r '.retryAfter // 30')
-				retry_after=$(clamp_wait "${retry_after}" 30)
+				retry_after=$(jq -r '.retryAfter // empty' <<<"${body}" 2>/dev/null) || retry_after=""
+				if [[ -z ${retry_after} ]]; then
+					retry_after=$(sed -n 's/^[Rr]etry-[Aa]fter: *\([0-9]*\).*/\1/p' <<<"${headers}" | tail -1)
+				fi
+				retry_after=$(clamp_wait "${retry_after:-30}" 30)
 				log_info "Rate limited, waiting ${retry_after}s..."
 				last_code="${http_code}" last_body="${body}"
 				sleep "${retry_after}"

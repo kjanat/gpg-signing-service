@@ -78,6 +78,7 @@ See [Authentication](authentication.md) for token acquisition and policy.
 | `X-Request-ID`                  | every response       | Correlation id; quote it when reporting     |
 | `X-RateLimit-Remaining`         | when a limiter ruled | Signatures left in the bucket that answered |
 | `X-RateLimit-Reset`             | when a limiter ruled | Epoch seconds when that bucket has a token  |
+| `Retry-After`                   | on a `503`           | Whole seconds to wait before calling again  |
 | `Access-Control-Expose-Headers` | every response       | The subset of the above a browser may read  |
 
 A `429` carries the rate-limit pair too, describing the budget that refused —

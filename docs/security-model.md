@@ -138,8 +138,11 @@ origin-dependent response carries `Vary: Origin` so a shared cache cannot hand
 one origin another's grant.
 
 A granted origin may read `X-Request-ID` — the id to quote when reporting a
-refusal — plus whichever rate-limit headers the response carries;
-`Access-Control-Expose-Headers` names exactly those and nothing else. See
+refusal — plus whichever rate-limit headers and `Retry-After` the response
+carries; `Access-Control-Expose-Headers` names exactly those and nothing else.
+`Retry-After` is on the list because a `503 SERVICE_DEGRADED` carries the wait
+in a header rather than in the envelope, so withholding it leaves a browser
+caller reading a hint that names a value its fetch layer hid. See
 [Response headers](api.md#response-headers).
 
 Security headers include HSTS, CSP, frame denial, MIME sniffing prevention, and

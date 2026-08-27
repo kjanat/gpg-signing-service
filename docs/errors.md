@@ -254,16 +254,16 @@ to read a stack trace.
 decide the request either way. **Nothing about the request is wrong**, and this
 is the only code in this reference a caller is invited to retry.
 
-| Message                                         | What failed                                                                              |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `Could not reach the OIDC configuration at …`   | The issuer's `/.well-known/openid-configuration` timed out or the socket died.           |
-| `Failed to fetch OIDC config from … (status)`   | The issuer answered discovery with a non-2xx.                                            |
-| `OIDC configuration at … was not readable JSON` | A 200 that was not the document — a captive portal, a proxy's error page.                |
-| `Could not reach the JWKS at …`                 | Same, one hop further in.                                                                |
-| `Failed to fetch JWKS from … (status)`          | The issuer answered its JWKS endpoint with a non-2xx.                                    |
-| `JWKS at … was not readable JSON`               | Same.                                                                                    |
-| `SSRF protection: …`                            | This deployment refuses to fetch that issuer's URL. **Not transient** — see below.       |
-| `Authorization store unavailable`               | The D1 lookup of trusted subjects failed. Check `task db:migrate` and `gpg-sign health`. |
+| Message                                         | What failed                                                                                                                      |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `Could not reach the OIDC configuration at …`   | The issuer's `/.well-known/openid-configuration` timed out or the socket died.                                                   |
+| `Failed to fetch OIDC config from … (status)`   | The issuer answered discovery with a non-2xx.                                                                                    |
+| `OIDC configuration at … was not readable JSON` | A 200 that was not the document — a captive portal, a proxy's error page.                                                        |
+| `Could not reach the JWKS at …`                 | Same, one hop further in.                                                                                                        |
+| `Failed to fetch JWKS from … (status)`          | The issuer answered its JWKS endpoint with a non-2xx.                                                                            |
+| `JWKS at … was not readable JSON`               | Same.                                                                                                                            |
+| `SSRF protection: …`                            | This deployment refuses to fetch that issuer's URL. **Not transient** — see below.                                               |
+| `Authorization store unavailable`               | The D1 lookup of the caller's trust failed — trusted subjects, or service tokens. Check `task db:migrate` and `gpg-sign health`. |
 
 Everything but the SSRF row carries a `Retry-After`, and the JWKS is cached for
 five minutes once it is read, so a fleet that all hit a blip together recovers

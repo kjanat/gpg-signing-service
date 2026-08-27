@@ -325,6 +325,53 @@ describe("Security Headers Middleware", () => {
 			expect(response.headers.get("Access-Control-Expose-Headers")).toBe("X-Request-ID");
 		});
 
+		it("exposes Retry-After on the 503 whose whole answer is Retry-After", async () => {
+			// SERVICE_DEGRADED puts the wait in a header, because ErrorResponse
+			// declares no `retryAfter` field — and its own hint tells the reader to
+			// "wait the interval in `Retry-After`". A cross-origin caller reads
+			// response headers through the CORS filter, so a header the service
+			// sends but does not expose is a header that caller does not have: the
+			// hint names a value the fetch layer hid from it.
+			setAllowedOrigins("https://allowed.com");
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			// Unsigned on purpose: the discovery fetch happens before the signature
+			// is verified, so this reaches the degraded branch without a key.
+			const encode = (value: unknown) =>
+				btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+			const token = [
+				encode({ alg: "RS256", kid: "unreachable" }),
+				encode({
+					iss: "https://token.actions.githubusercontent.com",
+					sub: "repo:test/expose:ref:refs/heads/main",
+					aud: "gpg-signing-service",
+					exp: Math.floor(Date.now() / 1000) + 3600,
+				}),
+				"signature",
+			].join(".");
+			middlewareFetchMock.mockRejectedValue(new Error("connection timed out"));
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}`, Origin: "https://allowed.com" },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(503);
+			expect(response.headers.get("Retry-After")).toBeTruthy();
+			expect(response.headers.get("Access-Control-Expose-Headers")).toContain("Retry-After");
+		});
+
+		it("does not name Retry-After on a response that carries none", async () => {
+			// The conditional half stays conditional: the list describes this
+			// response, not every response the service can produce.
+			setAllowedOrigins("https://allowed.com");
+
+			const response = await corsRequest("https://allowed.com");
+
+			expect(response.headers.get("Retry-After")).toBeNull();
+			expect(response.headers.get("Access-Control-Expose-Headers")).not.toContain("Retry-After");
+		});
+
 		it("names X-Request-ID in Access-Control-Allow-Headers and exposes it back", async () => {
 			// Both directions, on the same deployment: a browser may *send* the header
 			// (the preflight allows it) and may *read* it back (the actual response
