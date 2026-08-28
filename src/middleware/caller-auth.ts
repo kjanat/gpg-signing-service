@@ -3,11 +3,21 @@ import type { MiddlewareHandler } from "hono";
 import { oidcAuth } from "#middleware/oidc";
 import type { Env, OIDCClaims, Variables } from "#types";
 import { createIdentity, markClaimsAsValidated } from "#types";
-import { unauthorized } from "#utils/errors";
+import { serviceDegraded, unauthorized } from "#utils/errors";
+import { logger } from "#utils/logger";
 import { SERVICE_TOKEN_PREFIX, verifyServiceToken } from "#utils/service-tokens";
 
 /** Synthetic issuer for service-token callers in audit trails. */
 export const SERVICE_TOKEN_ISSUER = "urn:gpg-signing-service:token";
+
+/**
+ * What a caller is asked to wait when the token store could not be read.
+ *
+ * The same interval the OIDC path uses for the same database, deliberately: one
+ * D1 outage should not hand two callers two different answers about how long it
+ * lasts. See `ISSUER_RETRY_AFTER_SECONDS` in `middleware/oidc.ts`.
+ */
+const STORE_RETRY_AFTER_SECONDS = 30;
 
 /**
  * Caller authentication for the signing endpoint. A bearer starting with
@@ -21,7 +31,9 @@ export const callerAuth: MiddlewareHandler<{
 	const authHeader = c.req.header("Authorization");
 
 	if (!authHeader?.startsWith("Bearer ")) {
-		return unauthorized(c, "Missing authorization header", "AUTH_MISSING");
+		return unauthorized(c, "Missing authorization header", "AUTH_MISSING", {
+			hint: "Send `Authorization: Bearer <token>` with either an OIDC token minted for this service's audience or a service token starting with `gst_`.",
+		});
 	}
 
 	const token = authHeader.slice(7);
@@ -29,9 +41,31 @@ export const callerAuth: MiddlewareHandler<{
 		return oidcAuth(c, next);
 	}
 
-	const policy = await verifyServiceToken(c.env.AUDIT_DB, token);
+	// The same argument the OIDC path makes one file over: a store this
+	// deployment cannot read is not a credential fault. `verifyServiceToken` does
+	// its D1 read unguarded, so a brief D1 outage threw straight past this
+	// middleware into `onError` and came back `500 INTERNAL_ERROR` — a code whose
+	// reference says "an unhandled fault, worth reporting with the requestId" for
+	// what is the *same* outage the OIDC branch answers `503 SERVICE_DEGRADED`
+	// with a `Retry-After`. Two callers of one database, told two different
+	// things about one failure, and only one of them told to wait.
+	let policy: Awaited<ReturnType<typeof verifyServiceToken>>;
+	try {
+		policy = await verifyServiceToken(c.env.AUDIT_DB, token);
+	} catch (error) {
+		logger.error("Service token lookup failed", {
+			error: error instanceof Error ? error.message : String(error),
+		});
+		return serviceDegraded(c, "Authorization store unavailable", {
+			hint: "The service-token lookup failed, so this request could not be authorized either way. Nothing about the token is wrong. Retry after the interval in Retry-After; if it persists, the operator should check D1 and that `task db:migrate` has been applied.",
+			retryAfter: STORE_RETRY_AFTER_SECONDS,
+		});
+	}
+
 	if (!policy) {
-		return unauthorized(c, "Invalid service token", "AUTH_INVALID");
+		return unauthorized(c, "Invalid service token", "AUTH_INVALID", {
+			hint: "The token is unknown, revoked or expired. List the live ones with GET /admin/tokens, and mint a replacement with POST /admin/tokens.",
+		});
 	}
 
 	// Synthetic claims keep the sign route and audit trail uniform across

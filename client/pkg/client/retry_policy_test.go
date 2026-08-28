@@ -113,12 +113,14 @@ func TestRecordRetryHint(t *testing.T) {
 		body       string
 		header     http.Header
 		want       time.Duration
+		wantCode   string
 	}{
 		{
 			name:       "the envelope this service actually sends",
 			statusCode: http.StatusTooManyRequests,
 			body:       `{"error":"slow down","code":"RATE_LIMITED","retryAfter":7}`,
 			want:       7 * time.Second,
+			wantCode:   "RATE_LIMITED",
 		},
 		{
 			name:       "the header, for a throttle that sent no envelope",
@@ -136,14 +138,44 @@ func TestRecordRetryHint(t *testing.T) {
 			name:       "a 429 with neither leaves the backoff in charge",
 			statusCode: http.StatusTooManyRequests,
 			body:       `{"error":"slow down","code":"RATE_LIMITED"}`,
+			wantCode:   "RATE_LIMITED",
 		},
 		{
-			// 503 is the only other status that may carry Retry-After, and it
-			// is deliberately not read: the retrier has no hint type for it and
-			// WithoutRateLimitRetry does not govern it.
-			name:       "a 503 is not a rate limit",
+			// A 503 is the other status that carries Retry-After, and it used to
+			// be dropped here on the reasoning that the retrier had no hint type
+			// for it. It has had one since ServiceError grew RetryAfter, and
+			// dropping it left the wait reaching the mapped error but never the
+			// pause between attempts.
+			name:       "a 503's wait is read too",
 			statusCode: http.StatusServiceUnavailable,
 			header:     http.Header{headerRetryAfter: []string{"12"}},
+			body:       `{"error":"issuer away","code":"SERVICE_DEGRADED"}`,
+			want:       12 * time.Second,
+			wantCode:   "SERVICE_DEGRADED",
+		},
+		{
+			// The code is the whole reason a 5xx body is read at all: it is what
+			// tells shouldRetry that this one will never clear.
+			name:       "a permanent 500 carries its code and no wait",
+			statusCode: http.StatusInternalServerError,
+			body:       `{"error":"SSRF protection: private address","code":"SERVICE_MISCONFIGURED"}`,
+			wantCode:   "SERVICE_MISCONFIGURED",
+		},
+		{
+			// No body form of the code exists, so an unreadable one leaves it
+			// empty — and empty is the retrying answer, which is the safe way
+			// round for an intermediary's bare 502.
+			name:       "an unreadable 5xx records nothing to branch on",
+			statusCode: http.StatusBadGateway,
+			body:       "<html>502</html>",
+		},
+		{
+			// Nothing below 500 that is not a 429 is a status the policy will
+			// consider, so nothing is recorded for one.
+			name:       "a 404 is not the policy's business",
+			statusCode: http.StatusNotFound,
+			header:     http.Header{headerRetryAfter: []string{"12"}},
+			body:       `{"error":"nope","code":"NOT_FOUND"}`,
 		},
 	}
 
@@ -160,6 +192,9 @@ func TestRecordRetryHint(t *testing.T) {
 
 			if sink.retryAfter != tt.want {
 				t.Errorf("recorded %v, want %v", sink.retryAfter, tt.want)
+			}
+			if sink.code != tt.wantCode {
+				t.Errorf("recorded code %q, want %q", sink.code, tt.wantCode)
 			}
 		})
 	}

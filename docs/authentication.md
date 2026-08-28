@@ -250,15 +250,21 @@ against `oidc_subjects`.
 
 Every `sign` failure lands in `audit_logs` with `success: false` and one of:
 
-| `errorCode`       | Meaning                                                                                                                                                       |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `KEY_NOT_ALLOWED` | A live, trusted row asked for a key its `keyIds` grant does not cover — a misconfigured workflow, or a trust being used by something that should not hold it. |
-| `KEY_NOT_FOUND`   | The caller was authorized and the requested key is not stored.                                                                                                |
-| `SIGN_ERROR`      | The caller was authorized and signing itself failed.                                                                                                          |
-| `AUTH_INVALID`    | A **revoked** trust was presented. `metadata.reason` is `revoked_trust_presented`, with the row's `subjectId`, `subjectPolicy` and `revokedAt`.               |
+| `errorCode`              | Meaning                                                                                                                                                       |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `KEY_NOT_ALLOWED`        | A live, trusted row asked for a key its `keyIds` grant does not cover — a misconfigured workflow, or a trust being used by something that should not hold it. |
+| `KEY_NOT_FOUND`          | The caller was authorized and the requested key is not stored.                                                                                                |
+| `SIGN_ERROR`             | The caller was authorized and signing itself failed.                                                                                                          |
+| `AUTH_SUBJECT_UNTRUSTED` | A **revoked** trust was presented. `metadata.reason` is `revoked_trust_presented`, with the row's `subjectId`, `subjectPolicy` and `revokedAt`.               |
 
-The two to alert on are `KEY_NOT_ALLOWED` and `AUTH_INVALID`: both require a
-credential this service either trusts now or trusted deliberately in the past.
+The two to alert on are `KEY_NOT_ALLOWED` and `AUTH_SUBJECT_UNTRUSTED`: both
+require a credential this service either trusts now or trusted deliberately in
+the past.
+
+> [!NOTE]
+> Revoked-trust rows written before `AUTH_SUBJECT_UNTRUSTED` existed carry
+> `AUTH_INVALID` instead. Nothing rewrites them, so a query over history should
+> match `metadata.reason = "revoked_trust_presented"` rather than the code.
 
 Refusals before the route are metered before they are written, so a caller
 cannot flood the table that shares a database with the authorization store. If
@@ -279,9 +285,12 @@ structured logs:
 > alert on from these two lines has to be shipped off-platform first. The
 > durable events are the `audit_logs` rows above.
 
-Every refusal returns the same `401 Subject is not trusted for signing` body
-regardless of which of the three it was: telling a caller that its subject
-matches a revoked row would confirm the row exists. The `revoked` arm does cost
+Every refusal returns the same `401 AUTH_SUBJECT_UNTRUSTED` body regardless of
+which of the three it was: telling a caller that its subject matches a revoked
+row would confirm the row exists. The body does echo the `subject` presented and
+a `hint` saying how many rules exist for the issuer — neither of which
+distinguishes the three — and the `requestId` ties it to the log line that
+does. The `revoked` arm does cost
 a rate-limiter round-trip and a token of the caller's budget where the other two
 cost neither, so the three are not indistinguishable by timing — only by
 content. The audience for that difference is bounded to whoever can match a
@@ -315,6 +324,20 @@ The Worker:
 7. verifies the JWT signature and signing-key usage; and
 8. resolves `iss` and `sub` to a trusted subject, refusing the request when
    none matches and applying that subject's key allowlist.
+
+Steps 1–4, 7 and 8 refuse with a `401`. Step 5 and the store read in step 8 can
+fail without judging the token at all — a discovery or JWKS endpoint that timed
+out, a `D1` that was briefly away — and those answer
+[`503 SERVICE_DEGRADED`](errors.md#service_degraded) with a `Retry-After`
+instead. Nothing about the credential is implicated, and it is the one refusal
+on this path worth repeating.
+
+A URL the SSRF guard refuses to fetch is the exception: the deployment cannot
+reach that issuer and never will, so it answers
+[`500 SERVICE_MISCONFIGURED`](errors.md#service_misconfigured) with no
+`Retry-After`. Still not the credential's fault; still not worth repeating —
+which is why it is a `500` and not the `503` its neighbour uses, since a `503`
+is what the proxies in between retry on their own account.
 
 ### GitHub Actions
 
@@ -375,6 +398,11 @@ Service tokens support arbitrary CI systems and local automation. They:
 - are returned in plaintext only when created.
 
 An omitted or empty key list permits every stored key.
+
+A token is looked up in `D1` on every call, so a `D1` that is briefly away
+answers [`503 SERVICE_DEGRADED`](errors.md#service_degraded) with a
+`Retry-After` here too, rather than reporting the token as invalid. Same
+reasoning as step 5 above: the credential was never judged.
 
 ### Create
 

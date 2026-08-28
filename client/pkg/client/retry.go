@@ -77,17 +77,39 @@ func (r *Retrier) Do(ctx context.Context, fn func() error) error {
 // exactly that, and the true hint still reaches them on the RateLimitError the
 // operation returns.
 //
-// Gated on retryOnRateLimit only because a 429 is the sole failure that carries
-// a hint at all; WithoutRateLimitRetry stops the retry before this is reached.
+// The 429 branch is gated on retryOnRateLimit because WithoutRateLimitRetry
+// stops that retry before this is reached at all; the 5xx branch below is not,
+// for the reason given there.
 func (r *Retrier) waitBefore(attempt int, err error) time.Duration {
 	var rateLimitErr *RateLimitError
 	if r.retryOnRateLimit && errors.As(err, &rateLimitErr) && rateLimitErr.RetryAfter > 0 {
-		if rateLimitErr.RetryAfter > r.retryWaitMax {
-			return r.retryWaitMax
-		}
-		return rateLimitErr.RetryAfter
+		return r.capped(rateLimitErr.RetryAfter)
+	}
+	// A SERVICE_DEGRADED 503 carries one too, and unlike a rate limit's it is not
+	// something this client could have estimated: a dependency is away and only
+	// the service has any idea for how long. Ignoring it meant backing off blind
+	// against the one failure that had told us what to do.
+	//
+	// Guarded on the interval rather than the status, so the SERVICE_MISCONFIGURED
+	// 500 — which never carries one — falls through to the backoff. Not that it
+	// reaches here: shouldRetry declines it first.
+	//
+	// Not gated on retryOnRateLimit — that option is about throttling, and
+	// switching it off should not also discard an outage's wait hint.
+	var serviceErr *ServiceError
+	if errors.As(err, &serviceErr) && serviceErr.RetryAfter > 0 {
+		return r.capped(serviceErr.RetryAfter)
 	}
 	return r.backoff(attempt)
+}
+
+// capped clamps a server-supplied wait to this retrier's ceiling, so a
+// misconfigured or hostile hint cannot park a caller for hours.
+func (r *Retrier) capped(wait time.Duration) time.Duration {
+	if wait > r.retryWaitMax {
+		return r.retryWaitMax
+	}
+	return wait
 }
 
 func (r *Retrier) shouldRetry(err error) bool {
@@ -97,10 +119,22 @@ func (r *Retrier) shouldRetry(err error) bool {
 		return r.retryOnRateLimit
 	}
 
-	// Retry service errors (5xx)
+	// Retry service errors (5xx), except the one that says it is permanent.
+	//
+	// SERVICE_MISCONFIGURED is a 500 the service will answer identically until
+	// an operator edits a variable — an ALLOWED_ISSUERS entry pointing at a URL
+	// it refuses to fetch. Retrying it spends the caller's whole budget to be
+	// told the same thing four times, and this is the only place that can know,
+	// because from the outside it is a 500 like any other: an intermediary's
+	// unattributed 500 is worth another go and wears the same status.
+	//
+	// Read off the code rather than off a missing Retry-After. That absence was
+	// the service's original way of saying "permanent" and it does not work as
+	// one: plenty of retryable 5xx carry no header either, so a client inferring
+	// the policy from it would stop retrying every intermediary's bare 502.
 	var serviceErr *ServiceError
 	if errors.As(err, &serviceErr) && serviceErr.StatusCode >= 500 {
-		return true
+		return serviceErr.Code != ErrCodeMisconfigured
 	}
 
 	// Don't retry auth, validation, or not found errors
@@ -245,6 +279,13 @@ func (s *retrySignalError) Unwrap() error { return s.inner }
 // calls RoundTrip synchronously, so that ordering needs no synchronisation.
 type retryHint struct {
 	retryAfter time.Duration
+	// code is the envelope's `code`, when the response carried a readable one.
+	//
+	// Here for the same reason retryAfter is: the policy sees a response type
+	// exposing StatusCode() and nothing else, and a bare 503 does not say
+	// whether waiting is a strategy. SERVICE_MISCONFIGURED does, and this is the
+	// only point in a call where the body is in hand.
+	code string
 }
 
 // retryHintKey is the context key for a *retryHint. Unexported struct type, so
@@ -274,29 +315,39 @@ func retryHintFrom(ctx context.Context) *retryHint {
 // retryWaitMin/Max governed nothing at all. Returning the classification here
 // is what connects the policy to responses.
 //
-// The values are skeletal apart from retryAfter, which is the one thing the
-// retrier acts on beyond the type: waitBefore prefers it over the backoff, so a
-// 429 costs the wait the server asked for rather than an exponential guess over
-// it. Callers still receive the full hint on the mapped RateLimitError the
-// operation returns once the attempts are spent.
+// The values are skeletal apart from retryAfter and code, which are the two
+// things the retrier acts on beyond the type: waitBefore prefers the interval
+// over the backoff, so a failure costs the wait the server asked for rather
+// than an exponential guess over it, and shouldRetry reads the code to decline
+// the one 5xx the service says will never clear. Callers still receive the full
+// error the operation maps once the attempts are spent.
+//
+// Both were previously dropped for anything but a 429. That left the 5xx half
+// of each: a SERVICE_DEGRADED interval reached the mapped error and never the
+// wait between attempts, and SERVICE_MISCONFIGURED had nowhere to be seen at
+// all, so the fault that could never clear was attempted four times.
 //
 // Not every 5xx qualifies. shouldRetry's ServiceError branch tests `>= 500`
 // because a caller reaching it has already decided the error is worth another
 // go; deciding it here from a bare status has to be narrower, because 501 and
 // 505 describe what the server will never do rather than what it could not do
 // this time. Repeating those only spends the caller's timeout budget.
-func retryStatusSignal(statusCode int, retryAfter time.Duration) error {
+func retryStatusSignal(statusCode int, hint retryHint) error {
 	switch statusCode {
 	case http.StatusTooManyRequests:
 		return &retrySignalError{inner: &RateLimitError{
 			Message:    "rate limited",
-			RetryAfter: retryAfter,
+			RetryAfter: hint.retryAfter,
 		}}
 	case http.StatusInternalServerError,
 		http.StatusBadGateway,
 		http.StatusServiceUnavailable,
 		http.StatusGatewayTimeout:
-		return &retrySignalError{inner: &ServiceError{StatusCode: statusCode}}
+		return &retrySignalError{inner: &ServiceError{
+			StatusCode: statusCode,
+			Code:       hint.code,
+			RetryAfter: hint.retryAfter,
+		}}
 	}
 	return nil
 }
@@ -323,7 +374,7 @@ func executeWithRetry[T statusCoder](
 	ctx = withRetryHint(ctx, hint)
 
 	err := r.Do(ctx, func() error {
-		hint.retryAfter = 0
+		*hint = retryHint{}
 		got, execErr := call(ctx)
 		if execErr != nil {
 			// resp is deliberately left alone. A transport fault on a later
@@ -332,7 +383,7 @@ func executeWithRetry[T statusCoder](
 			return execErr
 		}
 		resp, attempted = got, true
-		return retryStatusSignal(resp.StatusCode(), hint.retryAfter)
+		return retryStatusSignal(resp.StatusCode(), *hint)
 	})
 
 	var signal *retrySignalError

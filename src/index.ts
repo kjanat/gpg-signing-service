@@ -4,6 +4,7 @@ import { logger } from "hono/logger";
 import * as openpgp from "openpgp";
 import { createOpenAPIApp, openApiConfig, registerSecuritySchemes } from "#lib/openapi";
 import { callerAuth } from "#middleware/caller-auth";
+import { errorDocs } from "#middleware/error-docs";
 import { adminAuth } from "#middleware/oidc";
 import { requestIdMiddleware } from "#middleware/request-id";
 import { adminRateLimit, productionCors, securityHeaders } from "#middleware/security";
@@ -12,9 +13,11 @@ import subjectRoutes from "#routes/oidc-subjects";
 import signRoutes from "#routes/sign";
 import tokenRoutes from "#routes/tokens";
 import { ErrorResponseSchema, HealthResponseSchema, PublicKeyQuerySchema, PublicKeyResponseSchema } from "#schemas";
+import { isErrorCode } from "#schemas/errors";
 import type { HealthResponse } from "#schemas/health";
 import { HTTP, MediaType } from "#types";
 import { fetchKeyStorage } from "#utils/durable-objects";
+import { errorDocsTarget } from "#utils/error-docs";
 import { logger as customLogger } from "#utils/logger";
 
 // Export Durable Objects
@@ -28,6 +31,11 @@ const app = createOpenAPIApp();
 // pipeline and every response echoes X-Request-ID. The value is the caller's
 // only when it is a UUID — it reaches audit_logs.request_id, declared z.uuid().
 app.use("*", requestIdMiddleware);
+// Directly after the request id, and before everything that can refuse: it runs
+// on the way *out*, so the outermost registration is the one that sees every
+// error body — including the 401s the auth middlewares answer without ever
+// reaching a route, and whatever `onError` produces.
+app.use("*", errorDocs);
 app.use("*", logger());
 app.use("*", securityHeaders);
 app.use("*", productionCors);
@@ -139,6 +147,48 @@ app.openapi(publicKeyRoute, async (c) => {
 		});
 		return c.json({ error: "Key processing error", code: "KEY_PROCESSING_ERROR" }, HTTP.InternalServerError);
 	}
+});
+
+/**
+ * The short link every error response carries.
+ *
+ * `GET /e/AUTH_SUBJECT_UNTRUSTED` -> the reference section for that code.
+ *
+ * It exists so the `docs` field can be short. A link is read off a wrapped,
+ * truncated CI log and retyped by hand often enough that length is a
+ * correctness property, and this form puts the only thing that has to be right
+ * — the code, which the response already got right — at the end of a
+ * six-character path. Because it is a redirect, the documentation can move
+ * without invalidating links printed into logs that are already archived.
+ *
+ * Unauthenticated on purpose: a caller holding a refusal has, by construction,
+ * no credential that works, and the target is public documentation.
+ *
+ * Registered with `app.get` rather than through the OpenAPI router because it
+ * is for humans following a link, not for the generated clients — declaring it
+ * would put a redirect-following method on every one of them for no caller.
+ */
+app.get("/e/:code", (c) => {
+	// Uppercased so the lowercase form from a URL bar works. Codes are uppercase
+	// by convention and the anchor is derived by lowercasing again, so this only
+	// ever widens what is accepted.
+	const code = c.req.param("code").toUpperCase();
+
+	if (!isErrorCode(code)) {
+		// Deliberately not a redirect to the reference's top: silently landing
+		// somewhere plausible is how a typo'd code turns into "the docs don't
+		// mention my error". Say the code is unknown, and hand over the index.
+		return c.json(
+			{
+				error: `Unknown error code: ${code}`,
+				code: "NOT_FOUND" as const,
+				hint: `No error in this service carries that code. The full list is at ${errorDocsTarget(c.env)}.`,
+			},
+			HTTP.NotFound,
+		);
+	}
+
+	return c.redirect(errorDocsTarget(c.env, code), HTTP.Found);
 });
 
 // Sign endpoint: OIDC or service-token auth
