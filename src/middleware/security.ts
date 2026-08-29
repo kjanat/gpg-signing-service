@@ -4,7 +4,7 @@ import type { ErrorCode } from "#schemas/errors";
 import type { Env, RateLimitResult } from "#types";
 import { HEADERS, HTTP, TIME } from "#types";
 import { logger } from "#utils/logger";
-import { rateLimitDeniedHeaders } from "#utils/rate-limit";
+import { rateLimitExceeded } from "#utils/rate-limit";
 
 /**
  * Default CSP: every API route returns JSON, so nothing may be loaded at all.
@@ -242,15 +242,7 @@ export const adminRateLimit: MiddlewareHandler<{ Bindings: Env }> = async (c, ne
 			// against `RateLimitErrorSchema`, and ignored by the Go client, which only
 			// honours a positive hint. Mirrors the sign route's `retryAfterSeconds`.
 			const retryAfter = Math.max(1, Math.ceil((rateLimit.resetAt - Date.now()) / TIME.SECOND));
-			return c.json(
-				{
-					error: "Rate limit exceeded",
-					code: "RATE_LIMITED" as const satisfies ErrorCode,
-					retryAfter,
-				},
-				HTTP.TooManyRequests,
-				rateLimitDeniedHeaders(retryAfter),
-			);
+			return rateLimitExceeded(c, retryAfter);
 		}
 
 		// Add rate limit headers

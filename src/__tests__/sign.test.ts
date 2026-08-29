@@ -881,6 +881,143 @@ describe("Sign Route", () => {
 		});
 	});
 
+	describe("the 429 contract, on every branch that emits one", () => {
+		// Four branches answer 429: the per-caller bucket and the row ceiling, each
+		// on the signing path and on the key-scope path. Two of them were written
+		// separately and shipped without the rate-limit headers, so what a caller
+		// received depended on which one fired — the response where a caller most
+		// needs the budget was the one response that sometimes omitted it. Driven
+		// from a table rather than asserted branch by branch so a fifth refusal has
+		// to be added here to be added at all.
+
+		/** A limiter that refuses the per-caller bucket and allows the row ceiling. */
+		function perCallerExhausted(resetAt: number): DurableObjectNamespace {
+			return {
+				idFromName: () => ({}) as DurableObjectId,
+				get: () => ({
+					fetch: async (request: Request) => {
+						const identity = new URL(request.url).searchParams.get("identity") ?? "";
+						const allowed = identity.startsWith("oidc-subject-row:");
+						return limiterResponse({ allowed, remaining: allowed ? 999 : 0, resetAt });
+					},
+				}),
+			} as unknown as DurableObjectNamespace;
+		}
+
+		/** The mirror image: the caller is under budget, its trusted row is not. */
+		function rowCeilingReached(resetAt: number): DurableObjectNamespace {
+			return {
+				idFromName: () => ({}) as DurableObjectId,
+				get: () => ({
+					fetch: async (request: Request) => {
+						const identity = new URL(request.url).searchParams.get("identity") ?? "";
+						const allowed = !identity.startsWith("oidc-subject-row:");
+						// 99 remaining on the tier that allowed: if a refusal ever reported
+						// the allowing bucket's budget, this is the number that would
+						// surface, and `X-RateLimit-Remaining: 99` beside a 429 tells the
+						// caller it may retry immediately.
+						return limiterResponse({ allowed, remaining: allowed ? 99 : 0, resetAt });
+					},
+				}),
+			} as unknown as DurableObjectNamespace;
+		}
+
+		/**
+		 * One refusal branch: what it takes to reach it, and the request that does.
+		 *
+		 * `scope` is the key-scope pair — a trusted row whose grant does not cover
+		 * the requested key, which refuses before the D1 write rather than on the
+		 * signing path.
+		 */
+		const branches = [
+			{
+				name: "the signing path, refused by the caller's own bucket",
+				scope: false,
+				limiter: perCallerExhausted,
+			},
+			{
+				name: "the signing path, refused by the trusted row's ceiling",
+				scope: false,
+				limiter: rowCeilingReached,
+			},
+			{
+				name: "the key-scope denial, refused by the caller's own bucket",
+				scope: true,
+				limiter: perCallerExhausted,
+			},
+			{
+				name: "the key-scope denial, refused by the trusted row's ceiling",
+				scope: true,
+				limiter: rowCeilingReached,
+			},
+		] as const;
+
+		for (const [index, branch] of branches.entries()) {
+			it(`carries the refusing budget's headers: ${branch.name}`, async () => {
+				// Unique per branch so the trusted rows cannot collide across runs.
+				const slug = `contract${index}`;
+				let token: string;
+				if (branch.scope) {
+					await insertOIDCSubject(env.AUDIT_DB, {
+						name: `ci/${slug}`,
+						issuer,
+						subjectPrefix: `repo:${slug}/svc`,
+						keyIds: ["AAAAAAAAAAAAAAAA"],
+						expiresAt: null,
+					});
+					await setupJWKSMock();
+					token = await createToken({ sub: `repo:${slug}/svc:ref:refs/heads/main` });
+				} else {
+					await setupJWKSMock();
+					token = await createToken();
+				}
+
+				// The row-ceiling scope denial logs a warn by design; silenced, not
+				// asserted — the branch that owns that line asserts it.
+				const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+				const resetAt = Date.now() + 30_000;
+				// No key upload: every one of these refusals returns before the key
+				// response is read, which is the point of enforcing the limit first.
+				const keyId = branch.scope ? "BBBBBBBBBBBBBBBB" : "A1B2C3D4E5F67890";
+				const before = Math.ceil(Date.now() / 1000);
+				const response = await makeRequest(
+					`/sign?keyId=${keyId}`,
+					{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+					{ RATE_LIMITER: branch.limiter(resetAt) },
+				);
+				warnSpy.mockRestore();
+
+				expect(response.status).toBe(429);
+				const body = await parseJson<{ code: string; retryAfter: number }>(response);
+				expect(body.code).toBe("RATE_LIMITED");
+				expect(Number.isInteger(body.retryAfter)).toBe(true);
+				expect(body.retryAfter).toBeGreaterThan(0);
+
+				// Zero by definition: whichever tier refused has nothing left, and the
+				// budget of a tier that allowed would read as room to retry.
+				expect(response.headers.get("X-RateLimit-Remaining")).toBe("0");
+				// Derived from the same hint the body carries, so header and body name
+				// the same instant however the two are computed.
+				const reset = Number(response.headers.get("X-RateLimit-Reset"));
+				expect(reset).toBeGreaterThanOrEqual(before + body.retryAfter);
+				expect(reset).toBeLessThanOrEqual(Math.ceil(Date.now() / 1000) + body.retryAfter);
+
+				// `docs/errors.md` tells callers a `Retry-After` on a 429 from this
+				// host came from an intermediary, not from the service — it is how they
+				// tell a proxy's refusal from ours. Emitting one for symmetry with the
+				// 503s would take that away, and the wait is already in the body.
+				expect(response.headers.has("Retry-After")).toBe(false);
+
+				// The headers being set is only half of it: `securityHeaders` advertises
+				// exactly the ones present, so a browser caller reading the budget
+				// through CORS sees nothing unless they are on the response.
+				expect(response.headers.get("Access-Control-Expose-Headers")).toBe(
+					"X-Request-ID, X-RateLimit-Remaining, X-RateLimit-Reset",
+				);
+			});
+		}
+	});
+
 	describe("Audit Logging Catch Handlers", () => {
 		it("should log audit failures via catch handler on sign success", async () => {
 			await setupJWKSMock();

@@ -18,7 +18,7 @@ import { logAuditEvent } from "#utils/audit";
 import { fetchKeyStorage, fetchRateLimiter } from "#utils/durable-objects";
 import { scheduleBackgroundTask } from "#utils/execution";
 import { logger } from "#utils/logger";
-import { rateLimitDeniedHeaders } from "#utils/rate-limit";
+import { rateLimitExceeded } from "#utils/rate-limit";
 import { signCommitData } from "#utils/signing";
 import { signCommitDataX509 } from "#utils/x509";
 
@@ -286,14 +286,7 @@ app.openapi(signRoute, async (c) => {
 		// table it is recorded in.
 		const decision = await resolveRateLimit(rateLimitPromise, requestId);
 		if (decision.kind === "limited") {
-			return c.json(
-				{
-					error: "Rate limit exceeded",
-					code: "RATE_LIMITED" as const satisfies ErrorCode,
-					retryAfter: decision.retryAfter,
-				},
-				HTTP.TooManyRequests,
-			);
+			return rateLimitExceeded(c, decision.retryAfter);
 		}
 
 		if (decision.kind === "ok") {
@@ -320,14 +313,7 @@ app.openapi(signRoute, async (c) => {
 					subject: claims.sub,
 					keyId: keyIdParam,
 				});
-				return c.json(
-					{
-						error: "Rate limit exceeded",
-						code: "RATE_LIMITED" as const satisfies ErrorCode,
-						retryAfter: scopeRowRetryAfter,
-					},
-					HTTP.TooManyRequests,
-				);
+				return rateLimitExceeded(c, scopeRowRetryAfter);
 			}
 
 			await scheduleBackgroundTask(
@@ -402,15 +388,7 @@ app.openapi(signRoute, async (c) => {
 		// Enforce rate limit BEFORE processing key
 		if (!rateLimit.allowed) {
 			const retryAfter = retryAfterSeconds(rateLimit.resetAt);
-			return c.json(
-				{
-					error: "Rate limit exceeded",
-					code: "RATE_LIMITED" as const satisfies ErrorCode,
-					retryAfter,
-				},
-				HTTP.TooManyRequests,
-				rateLimitDeniedHeaders(retryAfter),
-			);
+			return rateLimitExceeded(c, retryAfter);
 		}
 
 		// The row ceiling, consulted only now that the per-caller tier has allowed.
@@ -424,18 +402,10 @@ app.openapi(signRoute, async (c) => {
 				subjectPolicy: c.get("subjectPolicyName"),
 				subjectPolicyId,
 			});
-			return c.json(
-				{
-					error: "Rate limit exceeded",
-					code: "RATE_LIMITED" as const satisfies ErrorCode,
-					retryAfter: rowRetryAfter,
-				},
-				HTTP.TooManyRequests,
-				// The row ceiling refused, so the headers describe *it*, not the
-				// per-caller bucket that allowed a moment ago. Reporting that bucket's
-				// remaining budget alongside a 429 would tell the caller it had room.
-				rateLimitDeniedHeaders(rowRetryAfter),
-			);
+			// The row ceiling refused, so the headers describe *it*, not the
+			// per-caller bucket that allowed a moment ago. Reporting that bucket's
+			// remaining budget alongside a 429 would tell the caller it had room.
+			return rateLimitExceeded(c, rowRetryAfter);
 		}
 
 		// Process key response
