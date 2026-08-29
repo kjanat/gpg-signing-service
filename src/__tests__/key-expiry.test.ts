@@ -306,7 +306,9 @@ describe("resolveActiveKeys", () => {
 		// It is what this environment signs with the moment anyone is trusted
 		// again, so its lapsing is still news.
 		const scope = resolveActiveKeys({ storedKeyIds: [PRODUCTION_KEY_ID], defaultKey, grants: [], now: NOW });
-		expect(scope.keys).toEqual([{ keyId: PRODUCTION_KEY_ID, reasons: ["default"], grants: [], stored: true }]);
+		expect(scope.keys).toEqual([
+			{ keyId: PRODUCTION_KEY_ID, reasons: ["default"], grants: [], anyKeyGrants: [], stored: true },
+		]);
 	});
 
 	it("marks a granted key the deployment does not hold as unstored", () => {
@@ -321,6 +323,7 @@ describe("resolveActiveKeys", () => {
 			keyId: STORED_A,
 			reasons: ["grant"],
 			grants: ["service-token:stale"],
+			anyKeyGrants: [],
 			stored: false,
 		});
 	});
@@ -352,6 +355,9 @@ describe("resolveActiveKeys", () => {
 			keyId: PRODUCTION_KEY_ID,
 			reasons: ["default", "grant", "unrestricted-grant"],
 			grants: ["oidc-subject:repo:kjanat/svc", "service-token:anything"],
+			// The any-key grant is recorded apart from the scoped one, so the
+			// report can say which of the two reached this key how.
+			anyKeyGrants: ["service-token:anything"],
 			stored: true,
 		});
 	});
@@ -374,6 +380,7 @@ describe("describeActivation", () => {
 		keyId: PRODUCTION_KEY_ID,
 		reasons: [],
 		grants: [],
+		anyKeyGrants: [],
 		stored: true,
 		...over,
 	});
@@ -388,10 +395,29 @@ describe("describeActivation", () => {
 		);
 	});
 
+	it("does not describe an any-key grant as if it were scoped to the key", () => {
+		// A grant is scoped or unscoped as a property of the grant, so a key that
+		// a scoped grant names *and* an any-key grant sweeps up has to show both.
+		// Reporting only the scoped list printed `service-token:broad` under
+		// "granted to" on this row while the very next row called the same
+		// credential an any-key grant.
+		expect(
+			describeActivation(
+				key({
+					reasons: ["grant", "unrestricted-grant"],
+					grants: ["service-token:broad", "service-token:ci"],
+					anyKeyGrants: ["service-token:broad"],
+				}),
+			),
+		).toBe("granted to `service-token:ci`; any-key grant `service-token:broad`");
+	});
+
 	it("says when a key is only reachable through an any-key grant", () => {
-		expect(describeActivation(key({ reasons: ["unrestricted-grant"], grants: ["service-token:ci"] }))).toBe(
-			"any-key grant `service-token:ci`",
-		);
+		expect(
+			describeActivation(
+				key({ reasons: ["unrestricted-grant"], grants: ["service-token:ci"], anyKeyGrants: ["service-token:ci"] }),
+			),
+		).toBe("any-key grant `service-token:ci`");
 	});
 
 	it("falls back to a dash when nothing explains the key", () => {
@@ -659,6 +685,7 @@ describe("missingKeyRow", () => {
 		keyId: PRODUCTION_KEY_ID,
 		reasons: [],
 		grants: [],
+		anyKeyGrants: [],
 		stored: false,
 		...over,
 	});
@@ -732,6 +759,7 @@ describe("renderReport", () => {
 					keyId: row.keyId,
 					reasons: ["default"] as ActiveKey["reasons"],
 					grants: [],
+					anyKeyGrants: [],
 					stored: row.state !== "missing",
 				})),
 				retainedInactive: [],
@@ -803,11 +831,12 @@ describe("renderReport", () => {
 			rows,
 			contextFor(rows, {
 				keys: [
-					{ keyId: "DEFAULTKEY000000", reasons: ["default"], grants: [], stored: true },
+					{ keyId: "DEFAULTKEY000000", reasons: ["default"], grants: [], anyKeyGrants: [], stored: true },
 					{
 						keyId: "GRANTEDKEY000000",
 						reasons: ["unrestricted-grant"],
 						grants: ["service-token:ci"],
+						anyKeyGrants: ["service-token:ci"],
 						stored: true,
 					},
 				],
@@ -930,9 +959,14 @@ describe("renderReport", () => {
 		expect(report).toContain("- `BROKEN0000000000`: ❓ unknown (—) — revoked");
 	});
 
-	it("reports a deployment with no active keys without crashing", () => {
+	it("says nothing was checked, not that everything is clear, when the set is empty", () => {
+		// "No key is expiring" and "no key was looked at" are opposite pieces of
+		// news. Rendering the all-clear line here hands out a green light earned
+		// by an empty set, which is the one report a monitor must never produce.
 		const report = renderReport([], contextFor([]));
+
 		expect(report).toContain("Monitored 0 active signing keys");
-		expect(report).toContain("No active signing key expires within 60 days.");
+		expect(report).toContain("**No key was checked.**");
+		expect(report).not.toContain("No active signing key expires within 60 days.");
 	});
 });

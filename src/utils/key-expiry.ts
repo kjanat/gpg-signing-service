@@ -191,6 +191,16 @@ export interface ActiveKey {
 	reasons: ActivationReason[];
 	/** Live credentials that reach it, `kind:name`, sorted */
 	grants: string[];
+	/**
+	 * The subset of {@link grants} that pins no key ids, so reaches this key
+	 * only because it reaches every stored key.
+	 *
+	 * Kept apart from the scoped ones because the report has to tell them
+	 * apart per row: a grant is scoped or unscoped as a property of the grant,
+	 * not of the key, so the same credential can be the reason one key is
+	 * narrowly reachable and another is reachable at all.
+	 */
+	anyKeyGrants: string[];
 	/** Whether the deployment actually holds it */
 	stored: boolean;
 }
@@ -247,11 +257,11 @@ export function resolveActiveKeys(input: {
 	const live = input.grants.filter((grant) => isGrantLive(grant, input.now));
 	const unrestricted = live.filter((grant) => grant.keyIds === null);
 
-	const active = new Map<string, { reasons: Set<ActivationReason>; grants: Set<string> }>();
+	const active = new Map<string, { reasons: Set<ActivationReason>; grants: Set<string>; anyKeyGrants: Set<string> }>();
 	const entryFor = (keyId: string) => {
 		let entry = active.get(keyId);
 		if (!entry) {
-			entry = { reasons: new Set(), grants: new Set() };
+			entry = { reasons: new Set(), grants: new Set(), anyKeyGrants: new Set() };
 			active.set(keyId, entry);
 		}
 		return entry;
@@ -266,6 +276,7 @@ export function resolveActiveKeys(input: {
 			const entry = entryFor(keyId);
 			entry.reasons.add("unrestricted-grant");
 			entry.grants.add(label(grant));
+			entry.anyKeyGrants.add(label(grant));
 		}
 	}
 
@@ -289,6 +300,7 @@ export function resolveActiveKeys(input: {
 			keyId,
 			reasons: [...entry.reasons].sort(),
 			grants: [...entry.grants].sort(),
+			anyKeyGrants: [...entry.anyKeyGrants].sort(),
 			stored: stored.has(keyId),
 		}))
 		.sort((a, b) => a.keyId.localeCompare(b.keyId));
@@ -535,12 +547,22 @@ function summarizeGrants(grants: readonly string[]): string {
  * Stated per key rather than once at the top because the answer differs per
  * key, and it is the difference that is actionable: a key held only by an
  * unrestricted grant is one scoped grant away from leaving the report.
+ *
+ * The two kinds of grant are rendered separately, and both are rendered when a
+ * key has both. Collapsing them the other way — showing only the scoped list
+ * once any scoped grant exists — printed an any-key grant's name under
+ * "granted to", so the same credential was described as scoped on one row and
+ * unscoped on the next, and the column stopped answering the question it
+ * exists to answer.
  */
 export function describeActivation(key: ActiveKey): string {
 	const parts: string[] = [];
 	if (key.reasons.includes("default")) parts.push("`KEY_ID` default");
-	if (key.reasons.includes("grant")) parts.push(`granted to ${summarizeGrants(key.grants)}`);
-	else if (key.reasons.includes("unrestricted-grant")) parts.push(`any-key grant ${summarizeGrants(key.grants)}`);
+
+	const scoped = key.grants.filter((grant) => !key.anyKeyGrants.includes(grant));
+	if (scoped.length > 0) parts.push(`granted to ${summarizeGrants(scoped)}`);
+	if (key.anyKeyGrants.length > 0) parts.push(`any-key grant ${summarizeGrants(key.anyKeyGrants)}`);
+
 	return parts.join("; ") || "—";
 }
 
@@ -584,7 +606,16 @@ export function renderReport(rows: readonly KeyExpiryRow[], context: ReportConte
 
 	lines.push("");
 
-	if (actionable.length === 0) {
+	if (sorted.length === 0) {
+		// "Nothing expiring" and "nothing checked" are opposite pieces of news and
+		// must not render the same. A run that resolved no active key at all has
+		// verified nothing, so saying every key is clear would be a green light
+		// earned by an empty set.
+		lines.push(
+			"⚠️ **No key was checked.** This deployment resolved no active signing key, so nothing " +
+				"about expiry was verified — see the scope note below for why the set came out empty.",
+		);
+	} else if (actionable.length === 0) {
 		lines.push(`No active signing key expires within ${plural(context.warnDays, "day")}.`);
 	} else {
 		lines.push("### Action required", "");
