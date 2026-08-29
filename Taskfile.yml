@@ -49,6 +49,7 @@ tasks:
       - bun run test
       - task: test:signing-shim
       - task: test:sign-commits
+      - task: test:sign-commit-example
 
   test:signing-shim:
     desc: Test the Git commit signing shim credential paths
@@ -57,6 +58,10 @@ tasks:
   test:sign-commits:
     desc: Test commit re-signing behavior
     cmd: bash .github/scripts/test-sign-commits.sh
+
+  test:sign-commit-example:
+    desc: Test the Bash example's retry, clamping and transport handling
+    cmd: bash .github/scripts/test-sign-commit-example.sh
 
   test:coverage:
     desc: Run tests with coverage
@@ -69,6 +74,7 @@ tasks:
       - bun run test:coverage
       - task: test:signing-shim
       - task: test:sign-commits
+      - task: test:sign-commit-example
 
   test:watch:
     desc: Run tests in watch mode
