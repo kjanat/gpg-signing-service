@@ -883,6 +883,102 @@ describe("Security Headers Middleware", () => {
 			expect(Number(leftover?.n)).toBe(0);
 		});
 
+		it("logs bounded counts rather than the trust list when the subject is unknown", async () => {
+			// This refusal is the unmetered one — answered before any limiter and
+			// writing no audit row — so the record it emits is the one thing a
+			// stranger can make the deployment pay for as often as it likes. While
+			// it logged `activePrefixes`, the size of that record grew with the
+			// trust table: every org signing here copied into every refusal, at a
+			// rate the caller picks. The counts carry the same diagnosis at a fixed
+			// size, and the prefixes stay behind GET /admin/subjects.
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "bounded-log-key";
+
+			// Installed before anything this test owns is mutated, so the
+			// `finally` below covers the setup too, not just the assertions. A
+			// `logger.warn` left mocked would silently swallow the next test's
+			// records: `vi.resetAllMocks()` in `afterEach` clears the
+			// implementation but leaves the spy installed, so only `mockRestore`
+			// puts the real logger back.
+			const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+			try {
+				await env.JWKS_CACHE.delete(`jwks:${issuer}`);
+				await clearTrustedSubjects(env.AUDIT_DB);
+
+				const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+				await setupJWKSMock(issuer, kid, publicKey);
+
+				// Several live rules plus a dead one, so the two counts are distinct
+				// numbers and a test that confused them would fail.
+				const livePrefixes = ["repo:acme/alpha", "repo:acme/beta", "repo:contoso/gamma"];
+				for (const prefix of livePrefixes) {
+					await insertOIDCSubject(env.AUDIT_DB, {
+						name: `bounded|${prefix}`,
+						issuer,
+						subjectPrefix: prefix,
+						keyIds: [],
+						expiresAt: null,
+					});
+				}
+				const revokedId = await insertOIDCSubject(env.AUDIT_DB, {
+					name: "bounded|revoked",
+					issuer,
+					subjectPrefix: "repo:acme/delta",
+					keyIds: [],
+					expiresAt: null,
+				});
+				await revokeOIDCSubject(env.AUDIT_DB, revokedId);
+
+				const token = await new jose.SignJWT({
+					iss: issuer,
+					sub: "repo:stranger/thing:ref:refs/heads/main",
+					aud: "gpg-signing-service",
+				})
+					.setProtectedHeader({ alg: "ES256", kid })
+					.setIssuedAt()
+					.setExpirationTime("1h")
+					.sign(privateKey);
+
+				const response = await makeRequest("/sign", {
+					method: "POST",
+					headers: { Authorization: `Bearer ${token}` },
+					body: "commit data",
+				});
+				expect(response.status).toBe(401);
+
+				const logged = warnSpy.mock.calls.find(([message]) => message === "Rejected untrusted OIDC subject")?.[1] as
+					| Record<string, unknown>
+					| undefined;
+				expect(logged).toBeDefined();
+				// Correlation is the whole point of keeping anything here: the 401 does
+				// not say which of the three refusals it was, so the id is the only
+				// route from a pasted CI log back to this line.
+				expect(logged).toMatchObject({
+					requestId: expect.any(String),
+					issuer,
+					subject: "repo:stranger/thing:ref:refs/heads/main",
+					issuerRuleCount: 4,
+					activePrefixCount: 3,
+				});
+				expect(logged).not.toHaveProperty("activePrefixes");
+				// Serialized, so a prefix reintroduced under any other key or nested in
+				// any other field fails this too — the array coming back is the
+				// regression, whatever it is called.
+				const serialized = JSON.stringify(logged);
+				for (const prefix of [...livePrefixes, "repo:acme/delta"]) {
+					expect(serialized).not.toContain(prefix);
+				}
+			} finally {
+				warnSpy.mockRestore();
+				// `seedTrustedSubjects` only inserts, so reseeding alone would leave
+				// this test's four `bounded|*` rows in the table — clear first, then
+				// put the fixture back. `afterEach` resets the fetch mocks and drops
+				// the JWKS cache entry, so the key material needs nothing here.
+				await clearTrustedSubjects(env.AUDIT_DB);
+				await seedTrustedSubjects(env.AUDIT_DB);
+			}
+		});
+
 		it("does not let the caller choose the revoked-reuse row's request id", async () => {
 			// This row is written from the middleware, which answers before the
 			// route's header validator runs, so X-Request-ID arrives unchecked here
