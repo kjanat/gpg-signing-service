@@ -60,6 +60,13 @@ FPR="$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr/{print $10; exit}')
 gpg --batch --quiet --armor --export-secret-keys "$FPR" >"$WORK/secret.asc"
 
 # --- a real commit, signed by git itself --------------------------------------
+# The ambient git configuration is discarded, not just overridden. A contributor
+# whose ~/.gitconfig sets `gpg.format = ssh` — an increasingly common default —
+# would otherwise have `git commit -S` reach for an SSH key and abort with
+# "Couldn't load public key <fingerprint>", failing `task test` on a machine
+# where nothing is actually wrong. The same goes for a global `core.hooksPath`
+# or `gpg.openpgp.program`, neither of which a per-repo `git config` can undo.
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 export GIT_DIR="$WORK/repo/.git" GIT_WORK_TREE="$WORK/repo"
 mkdir -p "$WORK/repo"
 git init --quiet "$WORK/repo"
@@ -101,7 +108,10 @@ gpg --batch --quiet --verify "$WORK/service.asc" "$WORK/payload" 2>/dev/null \
 ok "gpg verifies the service signature against the exact commit bytes"
 
 # A canonical-text signature survives this mutation; a binary one must not.
-sed 's/$/\r/' "$WORK/payload" >"$WORK/payload.crlf"
+# awk rather than `sed 's/$/\r/'`: BSD sed does not read `\r` as a carriage
+# return, so on macOS that appends a literal "r" and the check degrades into
+# "any mutation is rejected" — which a canonical-text signature also passes.
+awk '{ printf "%s\r\n", $0 }' "$WORK/payload" >"$WORK/payload.crlf"
 if gpg --batch --quiet --verify "$WORK/service.asc" "$WORK/payload.crlf" 2>/dev/null; then
 	fail "signature also verified against a CRLF-rewritten payload — that is a canonical-text signature"
 fi
