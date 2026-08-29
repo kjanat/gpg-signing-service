@@ -8,7 +8,7 @@ security certification.
 The deployment operator and Cloudflare infrastructure are trusted with:
 
 - uploaded private-key material;
-- `KEY_PASSPHRASE` and `ADMIN_TOKEN`;
+- `KEY_PASSPHRASE`, `ADMIN_TOKEN` and `ADMIN_READONLY_TOKEN`;
 - data submitted for signing;
 - generated signatures;
 - audit records; and
@@ -62,10 +62,54 @@ deployment credentials. There is no private-key export endpoint.
 - Service tokens support expiration, revocation, and optional key allowlists.
 - Trusted OIDC subjects support the same three, managed at runtime through
   `/admin/subjects` rather than by redeploying.
-- The static admin token is compared in constant time.
+- Both static admin tokens are compared in constant time, and both
+  comparisons run on every request so which one matched is not
+  observable by timing.
 
 Service-token hashes are not a substitute for high entropy. An attacker who
 obtains a plaintext `gst_` token can use it until expiration or revocation.
+
+## The two admin credentials
+
+`/admin/*` accepts two bearers, and they differ only in which HTTP methods they
+may use.
+
+| Secret                 | Accepted on                   | Refused on                                                           |
+| ---------------------- | ----------------------------- | -------------------------------------------------------------------- |
+| `ADMIN_TOKEN`          | every admin route             | —                                                                    |
+| `ADMIN_READONLY_TOKEN` | `GET` and `HEAD` admin routes | every state-changing admin route, with `403 AUTH_SCOPE_INSUFFICIENT` |
+
+Concretely, the read-only credential may call `GET /admin/keys`,
+`GET /admin/keys/{keyId}/public`, `GET /admin/subjects`, `GET /admin/tokens` and
+`GET /admin/audit`. It may not upload a key, delete a key, mint or revoke a
+service token, or trust or revoke an OIDC subject.
+
+The boundary is drawn on the method rather than on a list of paths, and that is
+a deliberate safety property rather than brevity: a route added later is denied
+to the read-only credential unless it is a `GET`, so forgetting this file cannot
+widen the credential. A path allowlist would fail the other way.
+
+`ADMIN_READONLY_TOKEN` exists for the scheduled key-expiry monitor, which needs
+four `GET`s and nothing else. Without it, a repository secret readable by that
+workflow would also carry the authority to delete the signing key. What it does
+_not_ reduce is read exposure: the credential can enumerate every key id,
+fingerprint, trust rule, service-token name and audit record. Treat it as
+sensitive; it is narrower in authority, not in disclosure.
+
+Two constraints the service enforces rather than documents:
+
+- An unset or empty `ADMIN_READONLY_TOKEN` means the credential does not exist,
+  and no bearer obtains the read-only scope.
+- Setting it to the same value as `ADMIN_TOKEN` is refused. The comparison
+  cannot tell two identical secrets apart, so the "read-only" holder would
+  silently be a full administrator — the exact outcome the split exists to
+  prevent, and one that is invisible from the outside because every call the
+  monitor makes still succeeds. The whole admin surface answers `500
+  SERVICE_MISCONFIGURED` until they differ.
+
+Neither credential is scoped by key, and neither writes an audit row for a
+refusal on the scope boundary; a refused mutation is a warn-level log line
+carrying the request id.
 
 ## Rate limiting
 
@@ -171,7 +215,11 @@ Before relying on the service for protected production branches, account for:
   bound a trusted row;
 - no HSM or external key-management boundary;
 - no private-key backup or restoration workflow;
-- no automated passphrase, admin-token, or key rotation;
+- no automated passphrase, admin-token, or key rotation — including
+  `ADMIN_READONLY_TOKEN`, which is rotated by hand like the rest;
+- a read-only admin credential that is narrower in _authority_ than
+  `ADMIN_TOKEN` but not in _disclosure_: it still reads every key id,
+  trust rule, token name and audit record;
 - no audit retention or alert configuration;
 - PGP-only behavior in the high-level CLI and Go wrapper; and
 - Git history rewriting when a detached signature is attached after commit

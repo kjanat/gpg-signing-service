@@ -110,6 +110,7 @@
           "AUTH_MISSING",
           "AUTH_INVALID",
           "AUTH_SUBJECT_UNTRUSTED",
+          "AUTH_SCOPE_INSUFFICIENT",
           "KEY_NOT_FOUND",
           "KEY_NOT_ALLOWED",
           "KEY_PROCESSING_ERROR",
@@ -1063,6 +1064,25 @@
               }
             }
           },
+          "403": {
+            "description": "Read-only admin credential; uploading a key needs the full ADMIN_TOKEN",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer challenge carrying RFC 6750 `error=\"insufficient_scope\"`.",
+                "schema": {
+                  "type": "string",
+                  "example": "Bearer realm=\"gpg-signing-service\", error=\"insufficient_scope\", error_description=\"This admin credential may only read\""
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "500": {
             "description": "Internal server error",
             "content": {
@@ -1174,6 +1194,25 @@
                 "schema": {
                   "type": "string",
                   "example": "Bearer realm=\"gpg-signing-service\""
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Read-only admin credential; uploading a key needs the full ADMIN_TOKEN",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer challenge carrying RFC 6750 `error=\"insufficient_scope\"`.",
+                "schema": {
+                  "type": "string",
+                  "example": "Bearer realm=\"gpg-signing-service\", error=\"insufficient_scope\", error_description=\"This admin credential may only read\""
                 }
               }
             },
@@ -1315,6 +1354,25 @@
                 "schema": {
                   "type": "string",
                   "example": "Bearer realm=\"gpg-signing-service\""
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Read-only admin credential; deleting a key needs the full ADMIN_TOKEN",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer challenge carrying RFC 6750 `error=\"insufficient_scope\"`.",
+                "schema": {
+                  "type": "string",
+                  "example": "Bearer realm=\"gpg-signing-service\", error=\"insufficient_scope\", error_description=\"This admin credential may only read\""
                 }
               }
             },
@@ -1520,6 +1578,25 @@
               }
             }
           },
+          "403": {
+            "description": "Read-only admin credential; minting a token needs the full ADMIN_TOKEN",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer challenge carrying RFC 6750 `error=\"insufficient_scope\"`.",
+                "schema": {
+                  "type": "string",
+                  "example": "Bearer realm=\"gpg-signing-service\", error=\"insufficient_scope\", error_description=\"This admin credential may only read\""
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "409": {
             "description": "Token name already exists",
             "content": {
@@ -1643,6 +1720,25 @@
               }
             }
           },
+          "403": {
+            "description": "Read-only admin credential; revoking a token needs the full ADMIN_TOKEN",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer challenge carrying RFC 6750 `error=\"insufficient_scope\"`.",
+                "schema": {
+                  "type": "string",
+                  "example": "Bearer realm=\"gpg-signing-service\", error=\"insufficient_scope\", error_description=\"This admin credential may only read\""
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Token not found or already revoked",
             "content": {
@@ -1714,6 +1810,25 @@
                 "schema": {
                   "type": "string",
                   "example": "Bearer realm=\"gpg-signing-service\""
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Read-only admin credential; trusting a subject needs the full ADMIN_TOKEN",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer challenge carrying RFC 6750 `error=\"insufficient_scope\"`.",
+                "schema": {
+                  "type": "string",
+                  "example": "Bearer realm=\"gpg-signing-service\", error=\"insufficient_scope\", error_description=\"This admin credential may only read\""
                 }
               }
             },
@@ -1837,6 +1952,25 @@
                 "schema": {
                   "type": "string",
                   "example": "Bearer realm=\"gpg-signing-service\""
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Read-only admin credential; revoking a subject needs the full ADMIN_TOKEN",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Bearer challenge carrying RFC 6750 `error=\"insufficient_scope\"`.",
+                "schema": {
+                  "type": "string",
+                  "example": "Bearer realm=\"gpg-signing-service\", error=\"insufficient_scope\", error_description=\"This admin credential may only read\""
                 }
               }
             },

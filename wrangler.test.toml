@@ -42,3 +42,8 @@ ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.co
 KEY_ID          = "62E75E54497815DD"
 ADMIN_TOKEN     = "test-admin-token"
 KEY_PASSPHRASE  = "test-passphrase"
+
+# The read-only admin credential the monitoring workflow holds. Distinct from
+# ADMIN_TOKEN on purpose — equal values are a refused configuration, and
+# `admin-scope.test.ts` pins that refusal.
+ADMIN_READONLY_TOKEN = "test-readonly-admin-token"

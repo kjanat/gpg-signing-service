@@ -30,7 +30,23 @@ export interface Variables {
 	 * which is already metered per credential.
 	 */
 	subjectPolicyId?: string;
+	/**
+	 * Which admin credential authorized this request. Set by `adminAuth` only,
+	 * so it is absent on every non-admin route.
+	 */
+	adminScope?: AdminScope;
 }
+
+/**
+ * What an authenticated admin caller may do.
+ *
+ * `full` is the deployment's `ADMIN_TOKEN`: every admin route. `readonly` is
+ * `ADMIN_READONLY_TOKEN`, permitted on safe methods and refused on everything
+ * else — the credential a monitoring job holds so that reading key expiry does
+ * not also carry the authority to delete a key, mint a service token or change
+ * who is trusted.
+ */
+export type AdminScope = "full" | "readonly";
 
 /** Cloudflare Workers environment bindings */
 export interface Env {
@@ -78,6 +94,20 @@ export interface Env {
 	KEY_PASSPHRASE: string;
 	/** Admin token for authentication */
 	ADMIN_TOKEN: string;
+	/**
+	 * Optional: a second admin bearer that may only read.
+	 *
+	 * Presented the same way as `ADMIN_TOKEN`, and accepted on `GET`/`HEAD`
+	 * admin routes only; every state-changing admin route answers 403
+	 * `AUTH_SCOPE_INSUFFICIENT` for it. Unset means the credential does not
+	 * exist on this deployment and no bearer can obtain the read-only scope.
+	 *
+	 * Must differ from `ADMIN_TOKEN`. Setting them equal is refused rather than
+	 * tolerated: the two would be indistinguishable at the comparison, so the
+	 * "read-only" holder would silently be a full administrator, which is the
+	 * one outcome this binding exists to prevent.
+	 */
+	ADMIN_READONLY_TOKEN?: string;
 }
 
 /** Hono context with env bindings and variables */

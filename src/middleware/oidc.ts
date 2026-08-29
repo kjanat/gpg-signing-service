@@ -1,12 +1,12 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { createLocalJWKSet, jwtVerify } from "jose";
 import { getRequestId } from "#middleware/request-id";
-import type { Env, LegacyJWKSResponse, OIDCClaims, RateLimitResult, Variables } from "#types";
+import type { AdminScope, Env, LegacyJWKSResponse, OIDCClaims, RateLimitResult, Variables } from "#types";
 import { createIdentity, HEADERS, HTTP, markClaimsAsValidated, TIME } from "#types";
 import { logAuditEvent } from "#utils/audit";
 import { CACHE_TTL } from "#utils/constants";
 import { fetchRateLimiter } from "#utils/durable-objects";
-import { serviceDegraded, serviceMisconfigured, unauthorized } from "#utils/errors";
+import { insufficientScope, serviceDegraded, serviceMisconfigured, unauthorized } from "#utils/errors";
 import { scheduleBackgroundTask } from "#utils/execution";
 import { fetchWithTimeout } from "#utils/fetch";
 import { logger } from "#utils/logger";
@@ -494,11 +494,43 @@ export const oidcAuth: MiddlewareHandler<{
 };
 
 /**
- * Admin token auth for management endpoints.
+ * The methods the read-only admin credential may use.
  *
- * Typed with `Variables` so the 401s can read `requestId` off the context the
- * global middleware populated — the same id `X-Request-ID` echoes and
- * `audit_logs.request_id` stores.
+ * This set, and not a list of paths, is the whole authorization boundary — for
+ * one reason worth stating plainly: the router already sorts admin routes into
+ * reads and writes, and every read is a `GET` while every write is a `POST` or
+ * a `DELETE`. A path allowlist would be a second copy of that split, and copies
+ * drift. Worse, they drift in the unsafe direction: a new mutation route is
+ * denied here by construction, whereas an allowlist only denies it if whoever
+ * added the route remembered this file existed.
+ *
+ * `HEAD` rides along because Workers answers it from the `GET` handler, so
+ * excluding it would refuse a request that returns nothing but headers for a
+ * body the credential may read in full.
+ *
+ * `OPTIONS` is deliberately absent even though RFC 9110 calls it safe. CORS
+ * preflight is answered upstream by `productionCors` and never arrives here; an
+ * `OPTIONS` that does reach this point is not a read, and failing it closed
+ * costs a caller nothing.
+ */
+const READ_ONLY_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD"]);
+
+/**
+ * Admin auth for management endpoints, and the scope boundary between the two
+ * admin credentials.
+ *
+ * Two bearers reach this: `ADMIN_TOKEN`, which may do anything, and the
+ * optional `ADMIN_READONLY_TOKEN`, which may only read. The second exists
+ * because a scheduled key-expiry monitor needs four `GET`s and nothing else,
+ * and holding `ADMIN_TOKEN` to get them means a repository secret that can also
+ * delete a signing key, mint a service token and rewrite the trust list. The
+ * monitor was already least-privileged at the Actions permission layer; this is
+ * the same claim at the service layer.
+ *
+ * Typed with `Variables` so the refusals can read `requestId` off the context
+ * the global middleware populated — the same id `X-Request-ID` echoes and
+ * `audit_logs.request_id` stores — and so the resolved scope can be handed
+ * downstream.
  */
 export const adminAuth: MiddlewareHandler<{
 	Bindings: Env;
@@ -518,6 +550,26 @@ export const adminAuth: MiddlewareHandler<{
 			{ error: "Admin authentication is not configured", code: "INTERNAL_ERROR" },
 			HTTP.InternalServerError,
 		);
+	}
+
+	// Empty is "not provisioned", by the same argument as above: an unset
+	// wrangler secret and a `""` are the same thing to a caller, and the compare
+	// below would hand the read-only scope to a bare `Bearer `.
+	const readOnlyToken = c.env.ADMIN_READONLY_TOKEN || undefined;
+
+	// Two identical secrets are a silent privilege escalation, not a typo to
+	// tolerate: the comparison cannot tell them apart, so whichever matches
+	// first wins and the credential labelled read-only is a full administrator.
+	// That is precisely the outcome the second secret exists to prevent, and it
+	// is invisible from the outside — the monitor's calls all succeed. Refuse
+	// the whole admin surface instead, loudly, with the fix in the message. A
+	// plain `===` is right here: both values are this deployment's own, neither
+	// is attacker-supplied, and there is no secret to leak by timing.
+	if (readOnlyToken !== undefined && readOnlyToken === c.env.ADMIN_TOKEN) {
+		logger.error("ADMIN_READONLY_TOKEN equals ADMIN_TOKEN; refusing every admin request");
+		return serviceMisconfigured(c, "Admin authentication is misconfigured", {
+			hint: "ADMIN_READONLY_TOKEN is set to the same value as ADMIN_TOKEN, which would make the read-only credential a full administrator. Put a distinct value with `wrangler secret put ADMIN_READONLY_TOKEN`.",
+		});
 	}
 
 	const authHeader = c.req.header("Authorization");
@@ -541,11 +593,30 @@ export const adminAuth: MiddlewareHandler<{
 		});
 	}
 
-	// Use constant-time comparison to prevent timing attacks
-	const isValid = await timingSafeEqual(token, c.env.ADMIN_TOKEN);
-	if (!isValid) {
+	// Both comparisons run, and both are awaited before either is read: a
+	// short-circuit here would make "which secret did you match" — and, for a
+	// non-matching bearer, "is a read-only credential provisioned at all" —
+	// observable as one extra constant-time compare. Cheap to avoid, so avoided.
+	const [isFullAdmin, isReadOnly] = await Promise.all([
+		timingSafeEqual(token, c.env.ADMIN_TOKEN),
+		readOnlyToken === undefined ? Promise.resolve(false) : timingSafeEqual(token, readOnlyToken),
+	]);
+
+	if (!isFullAdmin && !isReadOnly) {
 		return unauthorized(c, "Invalid admin token", "AUTH_INVALID", {
-			hint: "The bearer did not match this deployment's ADMIN_TOKEN secret. Rotate it with `wrangler secret put ADMIN_TOKEN` if it has been lost.",
+			hint: "The bearer did not match this deployment's ADMIN_TOKEN secret, or its ADMIN_READONLY_TOKEN if one is set. Rotate with `wrangler secret put ADMIN_TOKEN` if it has been lost.",
+		});
+	}
+
+	// `full` wins a tie it can no longer have — the equality guard above already
+	// refused the only way both could match — but ordering it this way keeps the
+	// safe reading if that guard is ever weakened.
+	const scope: AdminScope = isFullAdmin ? "full" : "readonly";
+	c.set("adminScope", scope);
+
+	if (scope === "readonly" && !READ_ONLY_METHODS.has(c.req.method)) {
+		return insufficientScope(c, "This admin credential may only read", {
+			hint: `ADMIN_READONLY_TOKEN is accepted on ${[...READ_ONLY_METHODS].join(" and ")} admin routes only. ${c.req.method} ${c.req.path} changes state and needs ADMIN_TOKEN.`,
 		});
 	}
 
