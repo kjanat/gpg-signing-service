@@ -90,7 +90,7 @@ func (s *session) classify(ctx context.Context, commits []string) (*workset, err
 //
 // The service reads the request body as text: routes/sign.ts calls
 // c.req.text(), which is a UTF-8 decode with U+FFFD replacement, and hands the
-// resulting string to openpgp.createMessage({text}), which re-encodes it. Any
+// resulting string to signCommitData, which UTF-8 encodes it again. Any
 // byte that is not valid UTF-8 therefore comes back signed as U+FFFD, so the
 // signature covers different bytes than the commit does. git records a commit
 // message verbatim and labels its charset with an "encoding" header, so a

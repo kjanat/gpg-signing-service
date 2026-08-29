@@ -11,6 +11,12 @@ export type { ParsedKeyInfo, SigningResult };
 // Safe in Workers: each isolate has its own instance
 const decryptedKeyCache = new DecryptedKeyCache();
 
+/**
+ * Produce an ASCII-armored *binary* detached OpenPGP signature (signature type
+ * 0x00) over the exact bytes of `commitData` — the artifact Git expects from a
+ * `gpg.program`. `commitData` is the unsigned commit object as received; it is
+ * UTF-8 encoded and signed without any line-ending canonicalization.
+ */
 export async function signCommitData(
 	commitData: string,
 	storedKey: StoredKey,
@@ -35,8 +41,17 @@ export async function signCommitData(
 		decryptedKeyCache.set(storedKey.keyId, decryptedKey);
 	}
 
-	// Create message from commit data
-	const message = await openpgp.createMessage({ text: commitData });
+	// Sign the raw commit bytes, never `{ text }`. A text message makes openpgp.js
+	// emit a canonical-text signature (sigclass 0x01), which hashes the payload
+	// with every line ending rewritten to CRLF. Git signs with `gpg -bsa` and no
+	// `--textmode`, so a real Git signature is sigclass 0x00 over the commit
+	// object byte for byte. The difference is not cosmetic: under 0x01 a commit
+	// ending its lines in LF and the same commit ending them in CRLF hash
+	// identically, so one signature stays valid across two distinct commit
+	// objects. 0x00 binds the signature to exactly these bytes.
+	const message = await openpgp.createMessage({
+		binary: new TextEncoder().encode(commitData),
+	});
 
 	// Create detached signature
 	const signature = await openpgp.sign({
