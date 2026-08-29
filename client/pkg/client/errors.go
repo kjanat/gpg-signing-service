@@ -36,8 +36,14 @@ const (
 	ErrCodeAuthSubjectUntrusted = "AUTH_SUBJECT_UNTRUSTED"
 	// ErrCodeDegraded means the service could not reach something it needs — the
 	// issuer's JWKS, the authorization store — and so could not decide the
-	// request either way. Answered 503 with a Retry-After, and it is the one code
-	// here a caller is invited to retry: nothing about the request is wrong.
+	// request either way. Answered 503, and a caller is invited to retry it:
+	// nothing about the request is wrong.
+	//
+	// The only code that carries a Retry-After, which waitBefore prefers over its
+	// own backoff. RATE_LIMIT_ERROR is the service's other retryable 503 and
+	// sends none — the limiter never answered, so there is no interval to quote —
+	// so a missing header is not a "stop" signal. ErrCodeMisconfigured is, and it
+	// says so in the code rather than in an absence.
 	//
 	// This used to be a constant nothing on the wire ever carried, while the
 	// failures it names arrived as AUTH_INVALID — which IsAuthError reports true
@@ -332,6 +338,20 @@ func requestIDFrom(envelope string, header http.Header) string {
 	return header.Get(headerRequestID)
 }
 
+// envelopeRequestID reads the request id off a typed envelope, absent meaning
+// "nothing to prefer" so requestIDFrom falls through to the echoed header.
+//
+// `requestId` is optional in the document and typed as a UUID, so every mapped
+// status has the same two-step to do before it can call requestIDFrom. Spelling
+// it once keeps a branch from quietly skipping the fallback, which is how the
+// typed 403 and 404 came to disagree with the 400 beside them.
+func envelopeRequestID(body *api.ErrorResponse) string {
+	if body == nil || body.RequestId == nil {
+		return ""
+	}
+	return body.RequestId.String()
+}
+
 // retryAfterFrom returns how long a 429 asks the caller to wait, preferring the
 // envelope's `retryAfter` seconds and falling back to the `Retry-After` header.
 //
@@ -422,15 +442,11 @@ func newAuthErrorFromResponse(body *api.ErrorResponse, header http.Header) error
 		return newUnexpectedStatusError(http.StatusUnauthorized)
 	}
 
-	envelopeID := ""
-	if body.RequestId != nil {
-		envelopeID = body.RequestId.String()
-	}
 	return &AuthError{
 		Guidance:  guidanceFromResponse(body),
 		Code:      string(body.Code),
 		Message:   body.Error,
-		RequestID: requestIDFrom(envelopeID, header),
+		RequestID: requestIDFrom(envelopeRequestID(body), header),
 	}
 }
 

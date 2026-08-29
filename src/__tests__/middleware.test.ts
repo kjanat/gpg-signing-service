@@ -428,11 +428,22 @@ describe("Security Headers Middleware", () => {
 
 		afterEach(async () => {
 			vi.resetAllMocks();
+			// Spies on shared bindings (`AUDIT_DB.prepare`, `JWKS_CACHE.get`, the
+			// logger) get their originals back here rather than at the end of the
+			// test body, so a failed assertion cannot hand the rest of the file a
+			// database that throws.
+			vi.restoreAllMocks();
 			middlewareFetchMock.mockReset();
 			validateUrlMock.mockReset();
 			// Clean up real KV cache to prevent test pollution
 			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
 			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com/unique-test-issuer");
+			// Same argument for the trusted-subject table: tests here clear it and
+			// insert their own rows, and reseeding at the end of the body only
+			// happens when the body got that far. Restore the `beforeAll` fixture
+			// from teardown instead.
+			await clearTrustedSubjects(env.AUDIT_DB);
+			await seedTrustedSubjects(env.AUDIT_DB);
 		});
 
 		async function setupJWKSMock(issuer: string, kid: string, publicKey: CryptoKey) {
@@ -503,6 +514,7 @@ describe("Security Headers Middleware", () => {
 				.setExpirationTime("1h")
 				.sign(privateKey);
 
+			const originalPrepare = env.AUDIT_DB.prepare;
 			const realPrepare = env.AUDIT_DB.prepare.bind(env.AUDIT_DB);
 			const spy = vi.spyOn(env.AUDIT_DB, "prepare").mockImplementation((query: string) => {
 				if (query.includes("FROM oidc_subjects")) {
@@ -510,13 +522,24 @@ describe("Security Headers Middleware", () => {
 				}
 				return realPrepare(query);
 			});
+			const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+			const requestId = crypto.randomUUID();
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
-				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
-			});
-			spy.mockRestore();
+			let response: Response;
+			try {
+				response = await makeRequest("/sign", {
+					method: "POST",
+					headers: { Authorization: `Bearer ${token}`, "X-Request-ID": requestId },
+					body: "commit data",
+				});
+			} finally {
+				// A rejected request used to skip this line and leave every later
+				// test reading `oidc_subjects` through a spy that throws.
+				spy.mockRestore();
+			}
+			// The store is back for whatever runs next, restored by the `finally`
+			// rather than by getting this far.
+			expect(env.AUDIT_DB.prepare).toBe(originalPrepare);
 
 			expect(response.status).toBe(503);
 			const body = await parseJson<{ error: string; code: string; hint: string }>(response);
@@ -530,6 +553,20 @@ describe("Security Headers Middleware", () => {
 			expect(body.hint).toContain("Nothing about the token is wrong");
 			expect(body.error).not.toContain("oidc_subjects");
 			expect(body.error).not.toContain("SQLITE");
+
+			// The same shape the service-token branch is asserted to write, for the
+			// same outage: the caught value in `logger.error`'s error slot, and the
+			// id the caller was handed back in context. Folded into context instead,
+			// the entry came out `{"error":{"issuer":...,"error":"D1_ERROR..."}}`
+			// with nothing to correlate it against.
+			expect(errorSpy).toHaveBeenCalledWith(
+				"OIDC subject lookup failed",
+				expect.any(Error),
+				expect.objectContaining({ requestId, issuer }),
+			);
+			const [, loggedError, loggedContext] = errorSpy.mock.calls[0] as [string, unknown, { requestId?: string }];
+			expect((loggedError as Error).message).toContain("no such table: oidc_subjects");
+			expect(loggedContext.requestId).toBe(response.headers.get("X-Request-ID"));
 		});
 
 		it("rejects a cryptographically valid token whose subject is not trusted", async () => {
@@ -582,9 +619,6 @@ describe("Security Headers Middleware", () => {
 			expect(body.docs).toBe("http://localhost/e/AUTH_SUBJECT_UNTRUSTED");
 			// The prefixes are not disclosed unless the deployment opts in.
 			expect(body.hint).not.toContain("repo:");
-
-			// Restore the fixture for the rest of the suite.
-			await seedTrustedSubjects(env.AUDIT_DB);
 		});
 
 		it("separates an unconfigured trust list from a subject that misses a configured one", async () => {
@@ -710,8 +744,6 @@ describe("Security Headers Middleware", () => {
 			expect(payload.hint).toContain("1 rule(s) exist for issuer");
 			expect(payload.hint).toContain("0 of them active");
 			expect(payload.hint).not.toContain("Active prefixes:");
-
-			await seedTrustedSubjects(env.AUDIT_DB);
 		});
 
 		it("says what to change when the credential itself was refused", async () => {
@@ -831,9 +863,120 @@ describe("Security Headers Middleware", () => {
 			// No durable row for the unknown arm: anyone holding any token the
 			// issuer will mint can reach it.
 			expect(vi.mocked(logAuditEvent).mock.calls).toHaveLength(0);
-			warnSpy.mockRestore();
+		});
 
-			await seedTrustedSubjects(env.AUDIT_DB);
+		it("hands the next test the seeded trust fixture, not the previous one's leftovers", async () => {
+			// Runs straight after the test above, which cleared `oidc_subjects` and
+			// inserted its own revoked `ci/killed` row. Vitest runs this file
+			// serially, so this is the assertion that the `afterEach` clear-and-reseed
+			// actually happened — the old per-test reseed sat after the assertions
+			// and so only ran when the test passed, and it seeded without clearing,
+			// leaving the revoked row behind either way.
+			const live = await env.AUDIT_DB.prepare(
+				"SELECT COUNT(*) AS n FROM oidc_subjects WHERE revoked_at IS NULL",
+			).first<{ n: number }>();
+			expect(Number(live?.n)).toBeGreaterThan(0);
+
+			const leftover = await env.AUDIT_DB.prepare("SELECT COUNT(*) AS n FROM oidc_subjects WHERE name = ?")
+				.bind("ci/killed")
+				.first<{ n: number }>();
+			expect(Number(leftover?.n)).toBe(0);
+		});
+
+		it("logs bounded counts rather than the trust list when the subject is unknown", async () => {
+			// This refusal is the unmetered one — answered before any limiter and
+			// writing no audit row — so the record it emits is the one thing a
+			// stranger can make the deployment pay for as often as it likes. While
+			// it logged `activePrefixes`, the size of that record grew with the
+			// trust table: every org signing here copied into every refusal, at a
+			// rate the caller picks. The counts carry the same diagnosis at a fixed
+			// size, and the prefixes stay behind GET /admin/subjects.
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "bounded-log-key";
+
+			// Installed before anything this test owns is mutated, so the
+			// `finally` below covers the setup too, not just the assertions. A
+			// `logger.warn` left mocked would silently swallow the next test's
+			// records: `vi.resetAllMocks()` in `afterEach` clears the
+			// implementation but leaves the spy installed, so only `mockRestore`
+			// puts the real logger back.
+			const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+			try {
+				await env.JWKS_CACHE.delete(`jwks:${issuer}`);
+				await clearTrustedSubjects(env.AUDIT_DB);
+
+				const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+				await setupJWKSMock(issuer, kid, publicKey);
+
+				// Several live rules plus a dead one, so the two counts are distinct
+				// numbers and a test that confused them would fail.
+				const livePrefixes = ["repo:acme/alpha", "repo:acme/beta", "repo:contoso/gamma"];
+				for (const prefix of livePrefixes) {
+					await insertOIDCSubject(env.AUDIT_DB, {
+						name: `bounded|${prefix}`,
+						issuer,
+						subjectPrefix: prefix,
+						keyIds: [],
+						expiresAt: null,
+					});
+				}
+				const revokedId = await insertOIDCSubject(env.AUDIT_DB, {
+					name: "bounded|revoked",
+					issuer,
+					subjectPrefix: "repo:acme/delta",
+					keyIds: [],
+					expiresAt: null,
+				});
+				await revokeOIDCSubject(env.AUDIT_DB, revokedId);
+
+				const token = await new jose.SignJWT({
+					iss: issuer,
+					sub: "repo:stranger/thing:ref:refs/heads/main",
+					aud: "gpg-signing-service",
+				})
+					.setProtectedHeader({ alg: "ES256", kid })
+					.setIssuedAt()
+					.setExpirationTime("1h")
+					.sign(privateKey);
+
+				const response = await makeRequest("/sign", {
+					method: "POST",
+					headers: { Authorization: `Bearer ${token}` },
+					body: "commit data",
+				});
+				expect(response.status).toBe(401);
+
+				const logged = warnSpy.mock.calls.find(([message]) => message === "Rejected untrusted OIDC subject")?.[1] as
+					| Record<string, unknown>
+					| undefined;
+				expect(logged).toBeDefined();
+				// Correlation is the whole point of keeping anything here: the 401 does
+				// not say which of the three refusals it was, so the id is the only
+				// route from a pasted CI log back to this line.
+				expect(logged).toMatchObject({
+					requestId: expect.any(String),
+					issuer,
+					subject: "repo:stranger/thing:ref:refs/heads/main",
+					issuerRuleCount: 4,
+					activePrefixCount: 3,
+				});
+				expect(logged).not.toHaveProperty("activePrefixes");
+				// Serialized, so a prefix reintroduced under any other key or nested in
+				// any other field fails this too — the array coming back is the
+				// regression, whatever it is called.
+				const serialized = JSON.stringify(logged);
+				for (const prefix of [...livePrefixes, "repo:acme/delta"]) {
+					expect(serialized).not.toContain(prefix);
+				}
+			} finally {
+				warnSpy.mockRestore();
+				// `seedTrustedSubjects` only inserts, so reseeding alone would leave
+				// this test's four `bounded|*` rows in the table — clear first, then
+				// put the fixture back. `afterEach` resets the fetch mocks and drops
+				// the JWKS cache entry, so the key material needs nothing here.
+				await clearTrustedSubjects(env.AUDIT_DB);
+				await seedTrustedSubjects(env.AUDIT_DB);
+			}
 		});
 
 		it("does not let the caller choose the revoked-reuse row's request id", async () => {
@@ -902,8 +1045,6 @@ describe("Security Headers Middleware", () => {
 				.mock.calls.map(([, event]) => event)
 				.find((event) => event.errorCode === "AUTH_SUBJECT_UNTRUSTED");
 			expect(second?.requestId).toBe(supplied);
-
-			await seedTrustedSubjects(env.AUDIT_DB);
 		});
 
 		it("meters the revoked-reuse row per revoked row, not per subject the caller mints", async () => {
@@ -961,8 +1102,8 @@ describe("Security Headers Middleware", () => {
 				expect(metered).toEqual([`oidc-revoked-reuse:${subjectId}`, `oidc-revoked-reuse:${subjectId}`]);
 				expect(metered.join(" ")).not.toContain("refs/heads");
 			} finally {
-				// `beforeEach` resets mocks and KV but does not reseed, so a failed
-				// assertion here would leave the table cleared for the rest of the file.
+				// The `afterEach` reseed covers a failed assertion here too; this
+				// block keeps the intent local to the loop it guards.
 				await seedTrustedSubjects(env.AUDIT_DB);
 			}
 		});
@@ -1034,9 +1175,6 @@ describe("Security Headers Middleware", () => {
 				"Could not meter a revoked-trust reuse, so it was not recorded",
 				expect.objectContaining({ error: "down" }),
 			);
-			warnSpy.mockRestore();
-
-			await seedTrustedSubjects(env.AUDIT_DB);
 		});
 
 		it("names an expired trust rather than reporting it as unknown", async () => {
@@ -1090,9 +1228,6 @@ describe("Security Headers Middleware", () => {
 				"Expired OIDC trust presented",
 				expect.objectContaining({ subjectId, subjectPolicy: "ci/lapsed", expiresAt }),
 			);
-			warnSpy.mockRestore();
-
-			await seedTrustedSubjects(env.AUDIT_DB);
 		});
 
 		it("should reject key not intended for signatures", async () => {

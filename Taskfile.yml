@@ -47,8 +47,15 @@ tasks:
     deps: [install:noscripts]
     cmds:
       - bun run test
+      - task: test:gnupg-interop
       - task: test:signing-shim
       - task: test:sign-commits
+      - task: test:sign-commit-example
+
+  test:gnupg-interop:
+    desc: Verify signatures against real gpg and git (skips if gpg is absent)
+    aliases: [interop]
+    cmd: bash scripts/test-gnupg-interop.sh
 
   test:signing-shim:
     desc: Test the Git commit signing shim credential paths
@@ -57,6 +64,10 @@ tasks:
   test:sign-commits:
     desc: Test commit re-signing behavior
     cmd: bash .github/scripts/test-sign-commits.sh
+
+  test:sign-commit-example:
+    desc: Test the Bash example's retry, clamping and transport handling
+    cmd: bash .github/scripts/test-sign-commit-example.sh
 
   test:coverage:
     desc: Run tests with coverage
@@ -67,8 +78,10 @@ tasks:
       # on pre-push and what CLAUDE.md points contributors at, so it has to be a
       # superset of `test` or these two never run outside CI.
       - bun run test:coverage
+      - task: test:gnupg-interop
       - task: test:signing-shim
       - task: test:sign-commits
+      - task: test:sign-commit-example
 
   test:watch:
     desc: Run tests in watch mode

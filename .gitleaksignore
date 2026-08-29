@@ -33,3 +33,8 @@
 21e000ed60165c243ec387af3f14cff0169d1f4e:scripts/key-size.py:private-key:67
 21e000ed60165c243ec387af3f14cff0169d1f4e:scripts/key-size.py:test-fixture-pgp:67
 21e000ed60165c243ec387af3f14cff0169d1f4e:scripts/key-size.py:test-fixture-pgp:93
+
+# Malformed-input fixture: a bare PGP armor header with no key material, posted
+# to POST /admin/keys so the scope suite can prove the read-only credential is
+# refused before the handler parses anything. Nothing to rotate.
+bce1f4a2a9c28ed9e6594704fb415fe508ee501b:src/__tests__/admin-scope.test.ts:private-key:181

@@ -1,12 +1,13 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { createLocalJWKSet, jwtVerify } from "jose";
+import { INSUFFICIENT_SCOPE_MESSAGE } from "#lib/openapi";
 import { getRequestId } from "#middleware/request-id";
 import type { Env, LegacyJWKSResponse, OIDCClaims, RateLimitResult, Variables } from "#types";
 import { createIdentity, HEADERS, HTTP, markClaimsAsValidated, TIME } from "#types";
 import { logAuditEvent } from "#utils/audit";
 import { CACHE_TTL } from "#utils/constants";
 import { fetchRateLimiter } from "#utils/durable-objects";
-import { serviceDegraded, serviceMisconfigured, unauthorized } from "#utils/errors";
+import { insufficientScope, serviceDegraded, serviceMisconfigured, unauthorized } from "#utils/errors";
 import { scheduleBackgroundTask } from "#utils/execution";
 import { fetchWithTimeout } from "#utils/fetch";
 import { logger } from "#utils/logger";
@@ -381,9 +382,16 @@ export const oidcAuth: MiddlewareHandler<{
 	try {
 		resolution = await resolveOIDCSubject(c.env.AUDIT_DB, payload.iss, payload.sub);
 	} catch (error) {
-		logger.error("OIDC subject lookup failed", {
+		// Same three arguments as the service-token branch in `caller-auth.ts`,
+		// for the same outage: the caught value in the error slot the logger
+		// unpacks, and `requestId` in context. This was the one line in this
+		// function's failure block without the id — the three `logger.warn` calls
+		// below all carry it, for the reason stated there, and the caller holding
+		// the 503's id had no entry to match it against on the one arm whose
+		// answer is "wait" rather than "fix your credential".
+		logger.error("OIDC subject lookup failed", error, {
+			requestId,
 			issuer: payload.iss,
-			error: error instanceof Error ? error.message : String(error),
 		});
 		// SERVICE_DEGRADED rather than INTERNAL_ERROR. The status was always 503,
 		// but the code said "internal fault" — whose reference section is about
@@ -427,12 +435,27 @@ export const oidcAuth: MiddlewareHandler<{
 				expiresAt: resolution.expiresAt,
 			});
 		} else {
+			// Counted, not listed. This is the arm no limiter guards and no audit
+			// row records, so anyone who can mint a token on a shared issuer can
+			// reach it as often as they like — and while it logged the array, the
+			// size of each record it produced was a function of how many orgs sign
+			// here. That is trust-table-size amplification into the log store,
+			// paid for by the operator and chosen by the caller.
+			//
+			// The counts keep the diagnosis whole: `issuerRuleCount` is zero when
+			// the deployment was never configured for the issuer, and the active
+			// count separates "configured and all dead" from "configured, live,
+			// and this subject is not among them" — the three states an operator
+			// acts on differently. Which prefixes those are is the same question
+			// `DISCLOSE_TRUST_PATTERNS` gates in the response, and the authorized
+			// answer to it is GET /admin/subjects. `requestId`, `issuer` and
+			// `subject` stay so the pasted CI log still joins to this line.
 			logger.warn("Rejected untrusted OIDC subject", {
 				requestId,
 				issuer: payload.iss,
 				subject: payload.sub,
 				issuerRuleCount: resolution.issuerRuleCount,
-				activePrefixes: resolution.activePrefixes,
+				activePrefixCount: resolution.activePrefixes.length,
 			});
 		}
 		// `unknown` gets no audit_logs row: that arm is reachable by anyone holding
@@ -494,10 +517,54 @@ export const oidcAuth: MiddlewareHandler<{
 };
 
 /**
- * Admin token auth for management endpoints.
+ * The methods the read-only admin credential may use.
  *
- * Typed with `Variables` so the 401s can read `requestId` off the context the
- * global middleware populated — the same id `X-Request-ID` echoes and
+ * This set, and not a list of paths, is the whole authorization boundary — for
+ * one reason worth stating plainly: the router already sorts admin routes into
+ * reads and writes, and every read is a `GET` while every write is a `POST` or
+ * a `DELETE`. A path allowlist would be a second copy of that split, and copies
+ * drift. Worse, they drift in the unsafe direction: a new mutation route is
+ * denied here by construction, whereas an allowlist only denies it if whoever
+ * added the route remembered this file existed.
+ *
+ * The converse is equally true and is the cost of choosing it: a new *read*
+ * route is **granted** to the monitoring credential by construction. Add
+ * `GET /admin/keys/{keyId}/export` and `ADMIN_READONLY_TOKEN` reaches it at
+ * runtime without anyone deciding that it should. Nothing in this file stops
+ * that; what stops it is `admin-scope.test.ts`, which pins the read set
+ * literally and diffs it against the generated OpenAPI document, so widening
+ * the read side fails CI until somebody edits that list on purpose. That is a
+ * review gate rather than a runtime one, and it is where the trade lands:
+ * mutations are closed by code, reads are opened by code and closed by CI. The
+ * posture that makes it acceptable is documented rather than enforced — this
+ * credential is narrower in authority, not in disclosure, and already reads
+ * every key id, trust rule, token name and audit row.
+ *
+ * `HEAD` rides along because Workers answers it from the `GET` handler, so
+ * excluding it would refuse a request that returns nothing but headers for a
+ * body the credential may read in full.
+ *
+ * `OPTIONS` is deliberately absent even though RFC 9110 calls it safe. CORS
+ * preflight is answered upstream by `productionCors` and never arrives here; an
+ * `OPTIONS` that does reach this point is not a read, and failing it closed
+ * costs a caller nothing.
+ */
+const READ_ONLY_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD"]);
+
+/**
+ * Admin auth for management endpoints, and the scope boundary between the two
+ * admin credentials.
+ *
+ * Two bearers reach this: `ADMIN_TOKEN`, which may do anything, and the
+ * optional `ADMIN_READONLY_TOKEN`, which may only read. The second exists
+ * because a scheduled key-expiry monitor needs four `GET`s and nothing else,
+ * and holding `ADMIN_TOKEN` to get them means a repository secret that can also
+ * delete a signing key, mint a service token and rewrite the trust list. The
+ * monitor was already least-privileged at the Actions permission layer; this is
+ * the same claim at the service layer.
+ *
+ * Typed with `Variables` so the refusals can read `requestId` off the context
+ * the global middleware populated — the same id `X-Request-ID` echoes and
  * `audit_logs.request_id` stores.
  */
 export const adminAuth: MiddlewareHandler<{
@@ -518,6 +585,35 @@ export const adminAuth: MiddlewareHandler<{
 			{ error: "Admin authentication is not configured", code: "INTERNAL_ERROR" },
 			HTTP.InternalServerError,
 		);
+	}
+
+	// Empty is "not provisioned", by the same argument as above: an unset
+	// wrangler secret and a `""` are the same thing to a caller, and the compare
+	// below would hand the read-only scope to a bare `Bearer `.
+	const readOnlyToken = c.env.ADMIN_READONLY_TOKEN || undefined;
+
+	// Two identical secrets are a silent privilege escalation, not a typo to
+	// tolerate: the comparison cannot tell them apart, so whichever matches
+	// first wins and the credential labelled read-only is a full administrator.
+	// That is precisely the outcome the second secret exists to prevent, and it
+	// is invisible from the outside — the monitor's calls all succeed. Refuse
+	// the whole admin surface instead. A plain `===` is right here: both values
+	// are this deployment's own, neither is attacker-supplied, and there is no
+	// secret to leak by timing.
+	//
+	// The diagnosis goes to the operator log and not into the body. This guard
+	// runs before the `Authorization` header is even read, so anything put in
+	// the response is handed to unauthenticated callers — and it would be the
+	// most specific configuration statement the service makes, naming both
+	// secrets and describing the exact defect. The `!ADMIN_TOKEN` guard above
+	// already answers its own deployment fault with no hint for that reason;
+	// this one is the same class and gets the same posture. `requestId` ties the
+	// caller's 500 to the log line that says what to fix.
+	if (readOnlyToken !== undefined && readOnlyToken === c.env.ADMIN_TOKEN) {
+		logger.error(
+			"ADMIN_READONLY_TOKEN is set to the same value as ADMIN_TOKEN, which would make the read-only credential a full administrator; refusing every admin request until they differ. Put a distinct value with `wrangler secret put ADMIN_READONLY_TOKEN`.",
+		);
+		return serviceMisconfigured(c, "Admin authentication is misconfigured");
 	}
 
 	const authHeader = c.req.header("Authorization");
@@ -541,11 +637,33 @@ export const adminAuth: MiddlewareHandler<{
 		});
 	}
 
-	// Use constant-time comparison to prevent timing attacks
-	const isValid = await timingSafeEqual(token, c.env.ADMIN_TOKEN);
-	if (!isValid) {
+	// Both comparisons run, and both are awaited before either is read, so which
+	// of the two secrets a valid bearer matched is not observable as one extra
+	// constant-time compare.
+	//
+	// Whether a read-only credential is provisioned at all is *not* hidden: with
+	// `ADMIN_READONLY_TOKEN` unset the second compare is skipped outright rather
+	// than run against a placeholder nothing can present. That is deliberate, and
+	// the reason is that the bit is not a secret — a deployment's own docs say
+	// whether it provisioned the credential. The value is what this compare
+	// protects, and that stays constant-time either way.
+	const [isFullAdmin, isReadOnly] = await Promise.all([
+		timingSafeEqual(token, c.env.ADMIN_TOKEN),
+		readOnlyToken === undefined ? Promise.resolve(false) : timingSafeEqual(token, readOnlyToken),
+	]);
+
+	if (!isFullAdmin && !isReadOnly) {
 		return unauthorized(c, "Invalid admin token", "AUTH_INVALID", {
-			hint: "The bearer did not match this deployment's ADMIN_TOKEN secret. Rotate it with `wrangler secret put ADMIN_TOKEN` if it has been lost.",
+			hint: "The bearer did not match this deployment's ADMIN_TOKEN secret, or its ADMIN_READONLY_TOKEN if one is set. Rotate with `wrangler secret put ADMIN_TOKEN` if it has been lost.",
+		});
+	}
+
+	// `isFullAdmin` wins a tie it can no longer have — the equality guard above
+	// already refused the only way both could match — but reading it this way
+	// keeps the safe outcome if that guard is ever weakened.
+	if (!isFullAdmin && !READ_ONLY_METHODS.has(c.req.method)) {
+		return insufficientScope(c, INSUFFICIENT_SCOPE_MESSAGE, {
+			hint: `ADMIN_READONLY_TOKEN is accepted on ${[...READ_ONLY_METHODS].join(" and ")} admin routes only. ${c.req.method} ${c.req.path} changes state and needs ADMIN_TOKEN.`,
 		});
 	}
 

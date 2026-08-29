@@ -14,6 +14,37 @@ import { HTTP } from "#types";
  */
 export const WWW_AUTHENTICATE = 'Bearer realm="gpg-signing-service"';
 
+/** What a 403 says when an admin credential authenticated and may not do this. */
+export const INSUFFICIENT_SCOPE_MESSAGE = "This admin credential may only read";
+
+/**
+ * The challenge a 403 carries when the credential was good and too small.
+ *
+ * RFC 6750 §3.1 defines `insufficient_scope` for exactly this — a bearer that
+ * authenticated and is not authorized for the operation — and §3 puts the
+ * parameters on the same `WWW-Authenticate` a 401 uses. Sending it here rather
+ * than reusing the bare challenge is what stops a client's generic 401/403
+ * handler treating this as "re-authenticate": the error parameter says the
+ * credential is fine, and re-presenting it will produce this same answer.
+ *
+ * Built from the message rather than repeating it, so the header and the body
+ * cannot disagree: `error_description` is the response's own `error` field, and
+ * a second refusal with a different sentence carries its own.
+ *
+ * @param description - The refusal, verbatim from the response body
+ */
+export function insufficientScopeChallenge(description: string): string {
+	// §3 puts the parameters in RFC 7235 quoted-strings, where a bare `"` or `\`
+	// terminates or escapes the value and hands the caller a header it cannot
+	// parse. Every message today is a literal in this repo with neither, so this
+	// is about the next one.
+	const quotable = description.replace(/[\\"]/g, "");
+	return `Bearer realm="gpg-signing-service", error="insufficient_scope", error_description="${quotable}"`;
+}
+
+/** The challenge for the only refusal that carries it today; the document's example. */
+export const WWW_AUTHENTICATE_INSUFFICIENT_SCOPE = insufficientScopeChallenge(INSUFFICIENT_SCOPE_MESSAGE);
+
 /**
  * OpenAPI configuration
  */
@@ -35,7 +66,8 @@ export const securitySchemes = {
 		type: "http" as const,
 		scheme: "bearer",
 		bearerFormat: "JWT",
-		description: "Admin token for /admin/* endpoints",
+		description:
+			"Admin bearer for /admin/* endpoints. ADMIN_TOKEN reaches every admin route; the optional ADMIN_READONLY_TOKEN is accepted on GET and HEAD only and answers 403 AUTH_SCOPE_INSUFFICIENT on the rest.",
 	},
 	serviceTokenAuth: {
 		type: "http" as const,
@@ -74,6 +106,30 @@ export function unauthorizedResponse(description: string) {
 			"WWW-Authenticate": {
 				description: "Authentication scheme the caller must present.",
 				schema: { type: "string" as const, example: WWW_AUTHENTICATE },
+			},
+		},
+	};
+}
+
+/**
+ * The 403 declaration shared by every admin operation that changes state.
+ *
+ * Separate from `unauthorizedResponse` because the two say opposite things
+ * about the credential — one refuses it, this one accepts it and refuses the
+ * *operation* — and a generated client that cannot see the difference in the
+ * document will not branch on it in code either. Declared on the mutation
+ * routes only: that set *is* the boundary, so the document states it.
+ *
+ * @param description - Which authority this operation needs, in the caller's terms
+ */
+export function forbiddenResponse(description: string) {
+	return {
+		content: { "application/json": { schema: ErrorResponseSchema } },
+		description,
+		headers: {
+			"WWW-Authenticate": {
+				description: 'Bearer challenge carrying RFC 6750 `error="insufficient_scope"`.',
+				schema: { type: "string" as const, example: WWW_AUTHENTICATE_INSUFFICIENT_SCOPE },
 			},
 		},
 	};
