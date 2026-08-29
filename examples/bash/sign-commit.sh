@@ -28,6 +28,10 @@ DEFAULT_RETRY_WAIT=30
 # answers — parks the job indefinitely. That is the same CI time MAX_RETRY_WAIT
 # exists to bound, arriving by the one route the clamp cannot see, and until
 # curl gives up the transport-failure branch below never runs.
+#
+# Every request the script makes takes them, not only the signing one: the token
+# fetch and the key import are the same hang for the same reason, and bounding
+# one call in a script that makes three bounds nothing.
 CONNECT_TIMEOUT_SECONDS=10
 REQUEST_TIMEOUT_SECONDS=60
 
@@ -273,7 +277,10 @@ get_oidc_token() {
 		fi
 
 		log_info "Fetching OIDC token from GitHub Actions..."
-		OIDC_TOKEN=$(curl -s -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+		OIDC_TOKEN=$(curl -s \
+			--connect-timeout "${CONNECT_TIMEOUT_SECONDS}" \
+			--max-time "${REQUEST_TIMEOUT_SECONDS}" \
+			-H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
 			"${ACTIONS_ID_TOKEN_REQUEST_URL:-}&audience=gpg-signing-service" | jq -r '.value')
 	fi
 
@@ -287,7 +294,10 @@ import_public_key() {
 	log_info "Importing public key from signing service..."
 
 	local public_key
-	public_key=$(curl -sf "${BASE_URL}/public-key")
+	public_key=$(curl -sf \
+		--connect-timeout "${CONNECT_TIMEOUT_SECONDS}" \
+		--max-time "${REQUEST_TIMEOUT_SECONDS}" \
+		"${BASE_URL}/public-key")
 
 	if [[ -z ${public_key} ]]; then
 		log_error "Failed to retrieve public key"
