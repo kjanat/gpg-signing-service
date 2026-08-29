@@ -609,7 +609,11 @@ Rules the script follows, and which the shell suite pins:
   `5 seconds` as five, and a malformed header would outrank a perfectly good
   `retryAfter` in the body. A value that is neither form — `soon-ish`, or a
   negative number the delay-seconds grammar does not admit — counts as _no
-  hint_, and the next source answers instead.
+  hint_, and the next source answers instead. The `GMT` §5.6.7 requires on both
+  date forms is matched literally rather than as a zone abbreviation, because
+  `date -d` resolves one: a date five minutes out labelled `CEST` came back as a
+  moment two hours _past_, which under header-first precedence is a hint of zero
+  overruling the body.
 - **A zero-delay header is a hint, not the absence of one.** `Retry-After: 0`
   and a date that has already come round both mean the wait is over, so they
   keep their precedence over a body that disagrees and are not replaced by the
@@ -628,7 +632,11 @@ Rules the script follows, and which the shell suite pins:
 - **A `curl` that never connected is reported as such.** DNS, TLS, a refused
   connection or a timeout produce no HTTP status; the script says no response
   was received and quotes curl's exit code, rather than sorting a `000` through
-  the status branches as though the service had refused.
+  the status branches as though the service had refused. The token fetch and the
+  key import say the same thing for the same failures: both took curl's status
+  into an assignment, where `set -euo pipefail` ended the run before the
+  `log_error` each of them carries for exactly that case, so a bounded request
+  that hit its bound stopped the script with no line saying why.
 - **`MAX_RETRY_WAIT` and `MAX_RETRIES` are validated before any arithmetic.**
   Both come from the environment and both end up inside `(( ))`, where a bare
   word evaluates to zero and an array subscript is evaluated as an expression.

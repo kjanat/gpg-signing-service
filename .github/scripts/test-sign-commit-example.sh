@@ -136,6 +136,22 @@ expect_eq "a bare duration is not an HTTP-date" "" "$(retry_after_seconds "5 sec
 expect_eq "a weekday name alone is not an HTTP-date" "" "$(retry_after_seconds "next friday")"
 expect_eq "an epoch spelling is not an HTTP-date" "" "$(retry_after_seconds "@1735689600")"
 
+# RFC 9110 §5.6.7 spells `GMT` literally in both date forms, and `date -d` reads
+# a zone abbreviation for real: `CEST` is +0200, `EST` is -0500. Accepting one
+# meant a date five minutes out came back as a moment two hours past — a hint of
+# *zero*, which under header-first precedence overruled the body and sent every
+# remaining attempt in at once.
+non_gmt_imf="$(date -u -d '+300 seconds' '+%a, %d %b %Y %H:%M:%S CEST')"
+non_gmt_west="$(date -u -d '+300 seconds' '+%a, %d %b %Y %H:%M:%S EST')"
+non_gmt_rfc850="$(date -u -d '+300 seconds' '+%A, %d-%b-%y %H:%M:%S CEST')"
+
+expect_eq "an IMF-fixdate in a zone that is not GMT is no hint" "" \
+	"$(retry_after_seconds "${non_gmt_imf}")"
+expect_eq "a west-of-GMT abbreviation is no hint either" "" \
+	"$(retry_after_seconds "${non_gmt_west}")"
+expect_eq "an RFC 850 date in a zone that is not GMT is no hint" "" \
+	"$(retry_after_seconds "${non_gmt_rfc850}")"
+
 ### Clamping -----------------------------------------------------------------
 
 MAX_RETRY_WAIT=120
@@ -184,6 +200,17 @@ expect_eq "a header date-ish enough for date(1) does not outrank the body" "5" \
 
 expect_eq "a padded header hint is its value, not the ceiling" "5" \
 	"$(rate_limit_wait "$(crlf_headers 'Retry-After: 0000000005')" "${rate_limited_body}")"
+
+# The same hole `tomorrow` opened, one shape further in: the value is an
+# HTTP-date, it is in the future, and only its zone is wrong. Read as a zero it
+# outranked the body and cost the throttle its wait entirely.
+expect_eq "a future date in a non-GMT zone does not outrank the body" "60" \
+	"$(rate_limit_wait "$(crlf_headers "Retry-After: ${non_gmt_imf}")" "${rate_limited_body}")"
+
+# And on the 503, where there is no body to fall back to, the default is the
+# answer rather than an immediate retry.
+expect_eq "a 503 with a non-GMT date header takes the default" "30" \
+	"$(degraded_wait "$(crlf_headers "Retry-After: ${non_gmt_imf}")")"
 
 # The two zero-delay headers keep their precedence over a body that disagrees.
 # The responder that set the header is the one doing the throttling; a
@@ -551,6 +578,97 @@ output="$(
 expect_eq "an invalid MAX_RETRIES is rejected too" "1" "${status}"
 expect_contains "an invalid MAX_RETRIES is named in the error" \
 	"MAX_RETRIES must be a positive whole number" "${output}"
+
+### Preflight failures ------------------------------------------------------
+
+# The token fetch and the key import make the same request the signing one does
+# and can fail the same three ways. Both took curl's status straight into an
+# assignment, so `set -euo pipefail` ended the run there and the log_error each
+# function carries for exactly this was unreachable: the script stopped after
+# its "[INFO] ..." line with curl's exit status and nothing else. Bounding those
+# requests without reporting the bound turns a hang into a silent stop.
+
+# curl fails; the run must name it rather than exit wordlessly.
+cat >"${stub_dir}/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+printf 'curl %s\n' "$*" >>"${STUB_TRACE}"
+exit 28
+STUB
+chmod +x "${stub_dir}/bin/curl"
+
+: >"${stub_dir}/trace"
+status=0
+output="$(
+	PATH="${stub_dir}/bin:${PATH}" \
+		STUB_TRACE="${stub_dir}/trace" \
+		OIDC_TOKEN=stub-token \
+		BASE_URL=https://signing.example.test \
+		bash "${example}" HEAD 2>&1
+)" || status=$?
+
+expect_eq "a failed key import fails the run" "1" "${status}"
+expect_contains "a failed key import says so" "Failed to retrieve public key" "${output}"
+expect_contains "a failed key import reports curl's exit status" "curl exited 28" "${output}"
+
+# It is the *bounded* request that failed, so the bounds have to be on it.
+import_args="$(cat "${stub_dir}/trace")"
+expect_contains "the key import bounds its connect" "--connect-timeout" "${import_args}"
+expect_contains "the key import bounds its total time" "--max-time" "${import_args}"
+
+# The token fetch, reached only when OIDC_TOKEN is unset.
+: >"${stub_dir}/trace"
+status=0
+output="$(
+	PATH="${stub_dir}/bin:${PATH}" \
+		STUB_TRACE="${stub_dir}/trace" \
+		OIDC_TOKEN="" \
+		ACTIONS_ID_TOKEN_REQUEST_TOKEN=stub-actions-token \
+		ACTIONS_ID_TOKEN_REQUEST_URL=https://token.example.test/x \
+		BASE_URL=https://signing.example.test \
+		bash "${example}" HEAD 2>&1
+)" || status=$?
+
+expect_eq "a failed token fetch fails the run" "1" "${status}"
+expect_contains "a failed token fetch says so" "No response from the Actions token endpoint" "${output}"
+token_args="$(cat "${stub_dir}/trace")"
+expect_contains "the token fetch bounds its connect" "--connect-timeout" "${token_args}"
+expect_contains "the token fetch bounds its total time" "--max-time" "${token_args}"
+
+# A token endpoint that answers, with a body carrying no `.value`: not a
+# transport failure, and not a token either.
+cat >"${stub_dir}/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+printf '{"message":"no id token for you"}\n'
+STUB
+chmod +x "${stub_dir}/bin/curl"
+
+status=0
+output="$(
+	PATH="${stub_dir}/bin:${PATH}" \
+		OIDC_TOKEN="" \
+		ACTIONS_ID_TOKEN_REQUEST_TOKEN=stub-actions-token \
+		ACTIONS_ID_TOKEN_REQUEST_URL=https://token.example.test/x \
+		BASE_URL=https://signing.example.test \
+		bash "${example}" HEAD 2>&1
+)" || status=$?
+
+expect_eq "a token response with no value fails the run" "1" "${status}"
+expect_contains "a token response with no value says so" "Failed to get OIDC token" "${output}"
+
+# An unset request URL is the same "not in Actions" case as an unset token: the
+# concatenation below it made curl fetch the literal `&audience=...`.
+status=0
+output="$(
+	PATH="${stub_dir}/bin:${PATH}" \
+		OIDC_TOKEN="" \
+		ACTIONS_ID_TOKEN_REQUEST_TOKEN=stub-actions-token \
+		BASE_URL=https://signing.example.test \
+		bash "${example}" HEAD 2>&1
+)" || status=$?
+
+expect_eq "a missing token request URL fails the run" "1" "${status}"
+expect_contains "a missing token request URL is reported as not being in Actions" \
+	"not in GitHub Actions" "${output}"
 
 ### ---------------------------------------------------------------------------
 

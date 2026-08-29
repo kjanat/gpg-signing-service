@@ -155,9 +155,17 @@ retry_after_seconds() {
 	# perfectly good `retryAfter: 5` was read as a hint of a day, clamped to
 	# MAX_RETRY_WAIT, and the body never consulted. The Go client's
 	# `http.ParseTime` accepts these three and nothing else; so does this.
+	#
+	# `GMT` is matched literally, not as a zone abbreviation, because §5.6.7
+	# spells it that way and `date -d` does not: it reads `CEST` as +0200 and
+	# `EST` as -0500. A `Retry-After` five minutes out labelled `CEST` came back
+	# as a moment two hours *past* — a hint of zero, which then outranked a
+	# `retryAfter: 60` in the body and sent every remaining attempt in at once,
+	# at a throttle that had just asked for a wait. `http.TimeFormat` has the
+	# same literal for the same reason.
 	local imf_fixdate rfc850 asctime
-	imf_fixdate='^[A-Za-z]{3}, [0-9]{2} [A-Za-z]{3} [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} [A-Za-z]+$'
-	rfc850='^[A-Za-z]{6,9}, [0-9]{2}-[A-Za-z]{3}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} [A-Za-z]+$'
+	imf_fixdate='^[A-Za-z]{3}, [0-9]{2} [A-Za-z]{3} [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT$'
+	rfc850='^[A-Za-z]{6,9}, [0-9]{2}-[A-Za-z]{3}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} GMT$'
 	asctime='^[A-Za-z]{3} [A-Za-z]{3} [ 0-9][0-9] [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4}$'
 	[[ ${value} =~ ${imf_fixdate} || ${value} =~ ${rfc850} || ${value} =~ ${asctime} ]] || return 0
 
@@ -303,19 +311,47 @@ check_requirements() {
 	done
 }
 
+# A curl that fails here has to say so for the same reason the signing one does.
+#
+# `OIDC_TOKEN=$(curl ... | jq ...)` takes the pipeline's status, and under
+# `set -euo pipefail` a refused connect or an expired --max-time ended the whole
+# run on that assignment — before the `[[ -z ${OIDC_TOKEN} ]]` check below,
+# which is what was supposed to report it. The run stopped after "Fetching OIDC
+# token..." with no [ERROR] line and curl's exit status as the script's own.
+# Bounding the request without saying what happened when the bound is hit only
+# turns a hang into a silent stop.
+#
+# Both request variables are checked, not just the token: Actions sets them
+# together, and an empty URL made the curl above fetch the literal
+# `&audience=...`.
 get_oidc_token() {
+	local token_response curl_status
+
 	if [[ -z ${OIDC_TOKEN} ]]; then
-		if [[ -z ${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-} ]]; then
+		if [[ -z ${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-} || -z ${ACTIONS_ID_TOKEN_REQUEST_URL:-} ]]; then
 			log_error "OIDC token not provided and not in GitHub Actions"
 			return 1
 		fi
 
 		log_info "Fetching OIDC token from GitHub Actions..."
-		OIDC_TOKEN=$(curl -s \
+		curl_status=0
+		token_response=$(curl -s \
 			--connect-timeout "${CONNECT_TIMEOUT_SECONDS}" \
 			--max-time "${REQUEST_TIMEOUT_SECONDS}" \
 			-H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-			"${ACTIONS_ID_TOKEN_REQUEST_URL:-}&audience=gpg-signing-service" | jq -r '.value')
+			"${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=gpg-signing-service") || curl_status=$?
+
+		if ((curl_status != 0)); then
+			log_error "No response from the Actions token endpoint: curl exited ${curl_status}" \
+				"(transport failure — DNS, TLS, connection or timeout; nothing was signed)"
+			return 1
+		fi
+
+		# `empty` and a fallback, not a bare `.value`: the endpoint answers a
+		# refusal with a JSON object jq reads fine and with no `.value` in it,
+		# and it answers a proxy's interception with HTML that jq refuses
+		# outright. Both are "no token", and the check below is what says so.
+		OIDC_TOKEN=$(jq -r '.value // empty' <<<"${token_response}" 2>/dev/null) || OIDC_TOKEN=""
 	fi
 
 	if [[ -z ${OIDC_TOKEN} || ${OIDC_TOKEN} == "null" ]]; then
@@ -327,18 +363,29 @@ get_oidc_token() {
 import_public_key() {
 	log_info "Importing public key from signing service..."
 
-	local public_key
+	local public_key curl_status=0
+
+	# `-sf` makes curl exit non-zero on a 4xx or 5xx as well as on a transport
+	# fault, and the assignment takes that status: unhandled, `set -e` ended the
+	# run right here and the `[[ -z ${public_key} ]]` check below — the line that
+	# names the failure — was unreachable for every way of failing except a 200
+	# with an empty body.
 	public_key=$(curl -sf \
 		--connect-timeout "${CONNECT_TIMEOUT_SECONDS}" \
 		--max-time "${REQUEST_TIMEOUT_SECONDS}" \
-		"${BASE_URL}/public-key")
+		"${BASE_URL}/public-key") || curl_status=$?
 
-	if [[ -z ${public_key} ]]; then
-		log_error "Failed to retrieve public key"
+	if ((curl_status != 0)) || [[ -z ${public_key} ]]; then
+		log_error "Failed to retrieve public key from ${BASE_URL}/public-key (curl exited ${curl_status})"
 		return 1
 	fi
 
-	echo "${public_key}" | gpg --import --quiet
+	# Piped, so `pipefail` gives the pipeline gpg's status; without the guard a
+	# key gpg refuses stops the run as wordlessly as the curl above did.
+	if ! gpg --import --quiet <<<"${public_key}"; then
+		log_error "gpg refused the public key served by ${BASE_URL}/public-key"
+		return 1
+	fi
 	log_info "Public key imported successfully"
 }
 
