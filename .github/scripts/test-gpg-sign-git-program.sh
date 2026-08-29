@@ -298,12 +298,21 @@ grep -q 'refusing to delegate to itself' "${tmp_dir}/self-copy-error"
 mkdir "${tmp_dir}/no-gpg"
 ln -s "$(command -v bash)" "${tmp_dir}/no-gpg/bash"
 
-if printf 'signed payload' | env \
+set +e
+printf 'signed payload' | env \
 	-u GPG_SIGN_REAL_GPG \
 	PATH="${tmp_dir}/no-gpg" \
 	"${shim}" --verify /dev/null - \
-	>"${tmp_dir}/no-gpg-output" 2>"${tmp_dir}/no-gpg-error"; then
-	echo 'expected a missing gpg to fail' >&2
+	>"${tmp_dir}/no-gpg-output" 2>"${tmp_dir}/no-gpg-error"
+no_gpg_rc=$?
+set -e
+
+# 127 specifically, not just non-zero: it is what git would have seen had
+# gpg.program been missing outright, it is what the shim's own comment and
+# docs/cloud-session-signing.md promise, and nothing else pins it -- the suite
+# passes with any other code if only failure is asserted.
+if [[ "${no_gpg_rc}" -ne 127 ]]; then
+	echo "expected a missing gpg to exit 127, got ${no_gpg_rc}" >&2
 	exit 1
 fi
 
