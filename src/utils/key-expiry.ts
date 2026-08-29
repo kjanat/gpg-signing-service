@@ -376,13 +376,22 @@ export async function pgpKeyExpiry(armoredKey: string): Promise<KeyExpiry> {
 
 	const primary = await key.getExpirationTime();
 
-	let signing: OpenPgpExpiration = primary;
+	let signing: OpenPgpExpiration;
 	try {
 		const signingKey = await key.getSigningKey(undefined, null);
-		if (signingKey !== key) signing = await signingKey.getExpirationTime();
-	} catch {
-		// No signing-capable (sub)key at all; the primary key's expiry is still
-		// worth reporting, so fall through rather than failing the whole check.
+		signing = signingKey === key ? primary : await signingKey.getExpirationTime();
+	} catch (error) {
+		// Date checks are switched off above, so this lookup does not fail merely
+		// because a key lapsed — an expired key still resolves and still gets its
+		// `expired` row. It fails when there is no signing key to resolve at all:
+		// the signing subkey is revoked, or none was ever bound. Falling back to
+		// the primary key's expiry there reports a healthy date for a key whose
+		// signatures every verifier now rejects, which is the same lie an
+		// unchecked primary-key revocation used to tell one level up.
+		return {
+			kind: "unknown",
+			reason: `no usable signing key: ${error instanceof Error ? error.message : String(error)}`,
+		};
 	}
 
 	return effectiveExpiry(primary, signing);

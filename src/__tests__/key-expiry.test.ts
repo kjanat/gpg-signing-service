@@ -537,6 +537,49 @@ describe("pgpKeyExpiry", () => {
 		});
 	});
 
+	// GnuPG key in the standard offline layout: a certify-only primary key that
+	// expires in 2029, and a signing subkey that has been revoked. openpgp.js
+	// cannot generate a certify-only primary, so this is real `gpg` output —
+	// which is the point, since it is the layout the bug needs.
+	const REVOKED_SIGNING_SUBKEY = `-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+mDMEapNZxxYJKwYBBAHaRw8BAQdAP0rR98D408ENU8GBzH4eZXURIbTwqNO5fWkS
+16ao7ji0LVJldm9rZWQgU2lnbmluZyBTdWJrZXkgPHJldm9rZWQtc3ViQHRlc3Qu
+Y29tPoiZBBMWCgBBFiEEbPMdMrXxwMBf2Ni5R3kFE3J0hgMFAmqTWccCGwEFCQWj
+moAFCwkIBwICIgIGFQoJCAsCBBYCAwECHgcCF4AACgkQR3kFE3J0hgN0KgEAmJvF
+bh2kZ9gZzg5HiqOjqHFIqknb/hr+p1pOUlCxuxgBAPrEbwvnxsGLlscrwDbBjxeF
+t1NRElxYLF0nXeP4oicCuDMEapNZxxYJKwYBBAHaRw8BAQdAeaMOUtly8Up3HBmC
+izQgknayVMlXZ0foVtaa9XomNkeIeAQoFgoAIBYhBGzzHTK18cDAX9jYuUd5BRNy
+dIYDBQJqk1nHAh0CAAoJEEd5BRNydIYDbyQBAI0Ott8sr579QOoJ6DYXPB+k1biN
+btNpNpOIVnMqf+57AQDtp1I4LcYxvK/AdpZ7qehyQ5cUAGs8cVmQZKlrazhFA4j1
+BBgWCgAmFiEEbPMdMrXxwMBf2Ni5R3kFE3J0hgMFAmqTWccCGwIFCQWjmoAAgQkQ
+R3kFE3J0hgN2IAQZFgoAHRYhBFMPgbZjkFc85CeZ9ZpIZNvYd/LOBQJqk1nHAAoJ
+EJpIZNvYd/LOLkYA/jXwYZK1mB6345d92S+LEj3cvplQURWhOhoNR2qUfnlwAQCU
+R+Lw4vqNRyufQAjjgbJ+UayGObaqtpvHDUx6kPTlBouyAQCADlBIfJBe3W7szMlM
+9+aKYI/ib4CPb2XhVhdkpfid5AD8Dv2YWyTqjGfMAU5uw+vy+dPjSoraHk+gJwLR
+SAvgpQI=
+=QTDx
+-----END PGP PUBLIC KEY BLOCK-----`;
+
+	it("refuses to call a key healthy when its signing subkey is revoked", async () => {
+		// The subkey is what signs — that is why its expiry is preferred over the
+		// primary key's above. Revoking it stops verifiers accepting the
+		// signatures just as completely, but leaves the primary key valid and
+		// both expiration subpackets untouched. openpgp then refuses to resolve a
+		// signing key at all, and reading the primary key's 2029 date instead
+		// would report a comfortable `ok` for a key that can no longer sign.
+		const key = await openpgp.readKey({ armoredKey: REVOKED_SIGNING_SUBKEY });
+		// Neither existing check catches it: the primary key is not revoked, and
+		// its own expiration date is years away.
+		expect(await key.isRevoked()).toBe(false);
+		expect(await key.getExpirationTime()).toBeInstanceOf(Date);
+
+		const expiry = await pgpKeyExpiry(REVOKED_SIGNING_SUBKEY);
+		expect(expiry).toMatchObject({ kind: "unknown" });
+		if (expiry.kind === "unknown") expect(expiry.reason).toMatch(/no usable signing key/);
+		expect(classifyExpiry(PRODUCTION_KEY_ID, expiry, NOW, 60).state).toBe("unknown");
+	});
+
 	it("reports unreadable key material as unknown", async () => {
 		const expiry = await pgpKeyExpiry(
 			"-----BEGIN PGP PUBLIC KEY BLOCK-----\nnonsense\n-----END PGP PUBLIC KEY BLOCK-----",
