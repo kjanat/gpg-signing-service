@@ -137,9 +137,10 @@ current="$(git -C "${test_repo}" rev-parse HEAD)"
 grep -Fq 'Nothing to sign' <<<"${rerun}"
 
 # Verification must not consult the caller's gpg.program. A checkout that ran
-# setup-claude-signing points it at the sign-only shim, which exits 1 on
-# --verify, so ambient config would report the commit we just signed as
-# unverified and block the next run on its own output.
+# setup-claude-signing points it at our shim, which delegates --verify to the
+# real gpg -- so this passes both because the verifier is pinned and because the
+# shim is transparent. Keep it: it is the case that fails first if either the
+# pin or the delegation regresses.
 git -C "${test_repo}" config gpg.program \
 	"${repo_root}/.github/scripts/gpg-sign-git-program.sh"
 git -C "${test_repo}" config gpg.format openpgp
