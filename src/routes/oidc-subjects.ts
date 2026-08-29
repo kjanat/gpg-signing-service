@@ -1,5 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { createOpenAPIApp, unauthorizedResponse } from "#lib/openapi";
+import { createOpenAPIApp, forbiddenResponse, unauthorizedResponse } from "#lib/openapi";
 import {
 	ErrorResponseSchema,
 	SubjectCreatedResponseSchema,
@@ -148,6 +148,7 @@ const createSubjectRoute = createRoute({
 			description: "Invalid request",
 		},
 		[HTTP.Unauthorized]: unauthorizedResponse("Missing or invalid admin token"),
+		[HTTP.Forbidden]: forbiddenResponse("Read-only admin credential; trusting a subject needs the full ADMIN_TOKEN"),
 		[HTTP.Conflict]: {
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Subject name, or issuer and prefix pair, already exists",
@@ -321,6 +322,7 @@ const revokeSubjectRoute = createRoute({
 			description: "Subject revoked",
 		},
 		[HTTP.Unauthorized]: unauthorizedResponse("Missing or invalid admin token"),
+		[HTTP.Forbidden]: forbiddenResponse("Read-only admin credential; revoking a subject needs the full ADMIN_TOKEN"),
 		[HTTP.NotFound]: {
 			content: { "application/json": { schema: ErrorResponseSchema } },
 			description: "Subject not found or already revoked",

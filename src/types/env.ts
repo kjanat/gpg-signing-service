@@ -78,6 +78,20 @@ export interface Env {
 	KEY_PASSPHRASE: string;
 	/** Admin token for authentication */
 	ADMIN_TOKEN: string;
+	/**
+	 * Optional: a second admin bearer that may only read.
+	 *
+	 * Presented the same way as `ADMIN_TOKEN`, and accepted on `GET`/`HEAD`
+	 * admin routes only; every state-changing admin route answers 403
+	 * `AUTH_SCOPE_INSUFFICIENT` for it. Unset means the credential does not
+	 * exist on this deployment and no bearer can obtain the read-only scope.
+	 *
+	 * Must differ from `ADMIN_TOKEN`. Setting them equal is refused rather than
+	 * tolerated: the two would be indistinguishable at the comparison, so the
+	 * "read-only" holder would silently be a full administrator, which is the
+	 * one outcome this binding exists to prevent.
+	 */
+	ADMIN_READONLY_TOKEN?: string;
 }
 
 /** Hono context with env bindings and variables */

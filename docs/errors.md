@@ -180,6 +180,29 @@ token that their subject matches a revoked rule confirms the rule exists. They
 _are_ distinguished in the logs, keyed by the `requestId` from the response —
 see [Looking a refusal up](#looking-a-refusal-up).
 
+### AUTH_SCOPE_INSUFFICIENT
+
+**403.** The credential is one this deployment issued, and it is not allowed to
+do _this_. Today that is exactly one case: the read-only admin bearer
+(`ADMIN_READONLY_TOKEN`) on an admin route that changes state.
+
+The response carries `WWW-Authenticate: Bearer …, error="insufficient_scope"`
+(RFC 6750 §3.1) rather than the bare challenge a 401 sends, because the two say
+opposite things about the credential in hand. A 401 means "re-authenticate"; this
+means "the credential is exactly right and too small". Rotating it produces this
+same answer forever.
+
+| The call is                                       | Do this                                                                           |
+| ------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Something a monitor should not be making          | Stop making it. This is the boundary working.                                     |
+| Genuine administration run under the wrong secret | Present `ADMIN_TOKEN` instead.                                                    |
+| A read that should have been allowed              | Check the method — the read-only credential is accepted on `GET` and `HEAD` only. |
+
+The read-only credential is accepted on `GET /admin/keys`,
+`GET /admin/keys/{keyId}/public`, `GET /admin/subjects`, `GET /admin/tokens` and
+`GET /admin/audit`, and refused on every other admin route. See
+[the security model](security-model.md#the-two-admin-credentials).
+
 ### KEY_NOT_ALLOWED
 
 **403.** The credential was accepted and is trusted; its grant does not cover
@@ -348,9 +371,15 @@ deployment could not decide the request, and nothing about the request is wrong
 answer identically until an operator changes something**. No `Retry-After`, and
 retrying is not useful.
 
-| Message              | What failed                                                                  |
-| -------------------- | ---------------------------------------------------------------------------- |
-| `SSRF protection: …` | An entry in `ALLOWED_ISSUERS` points at a URL this service refuses to fetch. |
+| Message                                 | What failed                                                                                                               |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `SSRF protection: …`                    | An entry in `ALLOWED_ISSUERS` points at a URL this service refuses to fetch.                                              |
+| `Admin authentication is misconfigured` | `ADMIN_READONLY_TOKEN` was set to the same value as `ADMIN_TOKEN`. Every `/admin/*` route answers this until they differ. |
+
+The admin message is deliberately unspecific. That check runs before the
+`Authorization` header is read, so its detail would be readable without any
+credential at all; the line naming both secrets and the command that fixes it
+goes to the Workers log instead, under the `requestId` in the response body.
 
 The URL is refused because it resolves somewhere a signing service must not go:
 a private address, a loopback, a cloud metadata endpoint. It is checked before

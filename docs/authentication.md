@@ -2,13 +2,14 @@
 
 ## Access matrix
 
-| Surface                                 | Credential           | Intended caller                                  |
-| --------------------------------------- | -------------------- | ------------------------------------------------ |
-| `/health`, `/public-key`, `/doc`, `/ui` | None                 | Monitoring, verification, API discovery          |
-| `/sign`                                 | OIDC JWT             | GitHub Actions or GitLab CI                      |
-| `/sign`                                 | `gst_` service token | CI systems and automation without supported OIDC |
-| `/admin/*`                              | `ADMIN_TOKEN`        | Deployment operator                              |
-| GitHub installer action                 | GitHub API token     | Release lookup and asset download                |
+| Surface                                 | Credential             | Intended caller                                     |
+| --------------------------------------- | ---------------------- | --------------------------------------------------- |
+| `/health`, `/public-key`, `/doc`, `/ui` | None                   | Monitoring, verification, API discovery             |
+| `/sign`                                 | OIDC JWT               | GitHub Actions or GitLab CI                         |
+| `/sign`                                 | `gst_` service token   | CI systems and automation without supported OIDC    |
+| `/admin/*`                              | `ADMIN_TOKEN`          | Deployment operator                                 |
+| `/admin/*`, `GET`/`HEAD` only           | `ADMIN_READONLY_TOKEN` | Monitoring jobs that read and never change anything |
+| GitHub installer action                 | GitHub API token       | Release lookup and asset download                   |
 
 The install action's `token` input is unrelated to all service credentials.
 
@@ -465,6 +466,38 @@ wrangler secret put ADMIN_TOKEN
 
 Clients expose it as `GPG_SIGN_ADMIN_TOKEN` or `--admin-token`.
 
+## Read-only admin token
+
+`ADMIN_READONLY_TOKEN` is an optional second admin bearer, presented the same
+way, that may only read. It is accepted on `GET` and `HEAD` admin routes and
+refused on every admin route that changes state:
+
+```console
+$ curl -sS -X DELETE "$GPG_SIGN_URL/admin/keys/62E75E54497815DD" \
+    -H "Authorization: Bearer $ADMIN_READONLY_TOKEN" | jq -r .code
+AUTH_SCOPE_INSUFFICIENT
+```
+
+That refusal is a `403`, not a `401`, and it carries RFC 6750's
+`WWW-Authenticate: Bearer …, error="insufficient_scope"`. The distinction is
+what stops a scheduled job responding to it by rotating a credential that is
+working exactly as provisioned — see
+[`AUTH_SCOPE_INSUFFICIENT`](errors.md#auth_scope_insufficient).
+
+| May call                         | May not call                                          |
+| -------------------------------- | ----------------------------------------------------- |
+| `GET /admin/keys`                | `POST /admin/keys`, `POST /admin/keys/x509`           |
+| `GET /admin/keys/{keyId}/public` | `DELETE /admin/keys/{keyId}`                          |
+| `GET /admin/subjects`            | `POST /admin/subjects`, `DELETE /admin/subjects/{id}` |
+| `GET /admin/tokens`              | `POST /admin/tokens`, `DELETE /admin/tokens/{id}`     |
+| `GET /admin/audit`               |                                                       |
+
+Unset means the credential does not exist. Setting it equal to `ADMIN_TOKEN` is
+refused, because the two would be indistinguishable and the read-only holder
+would silently be a full administrator. Provisioning and rotation are in
+[Self-hosting](self-hosting.md#the-read-only-admin-credential); the reasoning
+is in [the security model](security-model.md#the-two-admin-credentials).
+
 ## Credential names
 
 | Name                   | Sent to                                           |
@@ -472,6 +505,7 @@ Clients expose it as `GPG_SIGN_ADMIN_TOKEN` or `--admin-token`.
 | Action input `token`   | GitHub Releases API                               |
 | `GPG_SIGN_TOKEN`       | Signing service `/sign`                           |
 | `GPG_SIGN_ADMIN_TOKEN` | Signing service `/admin/*`                        |
+| `ADMIN_READONLY_TOKEN` | Signing service `/admin/*`, reads only            |
 | `KEY_PASSPHRASE`       | Worker crypto routines; never a client credential |
 
 Never substitute one credential for another.

@@ -51,6 +51,7 @@ design records.
 | Read `/health`, `/public-key`, `/doc`, or `/ui` | None                                      |
 | Call `/sign`                                    | Accepted OIDC JWT or `gst_` service token |
 | Call `/admin/*`                                 | Deployment's static `ADMIN_TOKEN`         |
+| Read `/admin/*` and change nothing              | Optional `ADMIN_READONLY_TOKEN`           |
 
 A verified OIDC token is not an authorized one. `ALLOWED_ISSUERS` is not a
 repository allowlist — every repository on GitHub Actions gets a token from the

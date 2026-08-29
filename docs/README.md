@@ -40,6 +40,7 @@ detached signature does not attach it to a Git commit.
 | Read `/health`, `/public-key`, `/doc`, or `/ui` | Anonymous                                      |
 | Call `/sign`                                    | Accepted OIDC identity or `gst_` service token |
 | Manage keys, tokens, and audit records          | Holder of the deployment's `ADMIN_TOKEN`       |
+| Read keys, trust rules, tokens, and audit rows  | Holder of `ADMIN_READONLY_TOKEN`, reads only   |
 | Operate the service                             | Owner of a Cloudflare deployment               |
 
 An operator controls availability and credentials for their deployment. This

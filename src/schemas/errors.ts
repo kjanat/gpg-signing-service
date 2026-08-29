@@ -22,6 +22,20 @@ export const ErrorCodeSchema = z
 		 * a caller that cannot tell them apart tries the first one for both.
 		 */
 		"AUTH_SUBJECT_UNTRUSTED",
+		/**
+		 * The credential verified and it is one this deployment issued — it is
+		 * simply not allowed to do *this*. Today that is the read-only admin
+		 * bearer (`ADMIN_READONLY_TOKEN`) on a route that changes state.
+		 *
+		 * **403, not 401**, and the distinction is the whole point: a 401 says
+		 * "your credential is wrong", which sends a monitoring job to rotate a
+		 * secret that is working exactly as provisioned. This says "your
+		 * credential is right and too small", whose fix is either to stop making
+		 * the call or to make it with the full `ADMIN_TOKEN` — never to re-mint
+		 * the one in hand. Retrying is pointless in both cases; only one of them
+		 * has an operator action behind it.
+		 */
+		"AUTH_SCOPE_INSUFFICIENT",
 		"KEY_NOT_FOUND",
 		/** Caller is authenticated and trusted, but its grant does not cover this key. */
 		"KEY_NOT_ALLOWED",

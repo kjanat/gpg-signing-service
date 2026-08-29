@@ -153,6 +153,74 @@ in operator secret stores.
 
 For staging, add `--env staging` to both commands.
 
+### The read-only admin credential
+
+`ADMIN_READONLY_TOKEN` is an optional third secret: a bearer accepted on `GET`
+and `HEAD` admin routes and refused, with
+[`403 AUTH_SCOPE_INSUFFICIENT`](errors.md#auth_scope_insufficient), on every
+admin route that changes state. Provision it for anything that only needs to
+_look_ at the deployment — the scheduled key-expiry check is the case it was
+built for, and without it that workflow's repository secret would also be able
+to delete the signing key.
+
+```bash
+# Generate a value unrelated to ADMIN_TOKEN, then put it.
+openssl rand -base64 32 | tr -d '\n' | wrangler secret put ADMIN_READONLY_TOKEN
+```
+
+Leave it unset if nothing needs it: an unset or empty value means the credential
+does not exist and no bearer can obtain the read-only scope. Setting it to the
+same value as `ADMIN_TOKEN` is refused outright — the two would be
+indistinguishable at the comparison, so the credential labelled read-only would
+silently be a full administrator. The whole admin surface answers
+`500 SERVICE_MISCONFIGURED` until they differ, which is loud on purpose: the
+alternative failure is silent and total.
+
+The response body does not say which fault it was — that guard runs before the
+`Authorization` header is read, so its message would go to unauthenticated
+callers. Look in the Workers log for the line naming both secrets:
+
+```bash
+wrangler tail --format pretty | grep ADMIN_READONLY_TOKEN
+```
+
+It reduces authority, not disclosure. The holder can still enumerate every key
+id and fingerprint, every trust rule, every service-token name and the whole
+audit log. Store it like any other secret.
+
+To hand it to the key-expiry workflow, put the same value in the repository
+secret the workflow reads:
+
+```bash
+gh secret set ADMIN_READONLY_TOKEN
+```
+
+#### Rotating it
+
+Rotation is a straight replacement with no coordination window, because nothing
+caches the value and no request spans the change:
+
+```bash
+NEW=$(openssl rand -base64 32 | tr -d '\n')
+printf '%s' "$NEW" | wrangler secret put ADMIN_READONLY_TOKEN
+printf '%s' "$NEW" | gh secret set ADMIN_READONLY_TOKEN
+unset NEW
+```
+
+The Worker picks up the new secret on its next deployment of the secret, which
+`wrangler secret put` performs immediately. Any in-flight request carrying the
+old value gets a `401 AUTH_INVALID`; for a weekly scheduled job that window is
+irrelevant, and re-running the workflow is the whole remedy. Rotate it whenever
+a workflow log, a fork PR or a departing operator could have seen it — it is
+cheaper to rotate than `ADMIN_TOKEN`, so rotate it more readily.
+
+To retire the credential entirely, delete it and the surface reverts to a single
+admin token:
+
+```bash
+wrangler secret delete ADMIN_READONLY_TOKEN
+```
+
 ## 6. Deploy
 
 ```bash
@@ -249,5 +317,9 @@ printf 'smoke test' |
 - Define private-key backup and restoration procedures; no export endpoint
   exists.
 - Define audit retention and monitoring; no cleanup or alert policy is built in.
-- Test key and admin-token rotation.
+- Test key and admin-token rotation, including `ADMIN_READONLY_TOKEN` if
+  it is provisioned.
+- Give scheduled and monitoring workflows `ADMIN_READONLY_TOKEN` rather
+  than `ADMIN_TOKEN`; a job that only reads should not hold the authority
+  to delete a key or mint a service token.
 - Review the [Security model](security-model.md).

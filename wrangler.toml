@@ -51,6 +51,8 @@ KEY_ID          = "62E75E54497815DD"
 # Secrets (set via `wrangler secret put`)
 # - KEY_PASSPHRASE: Passphrase for encrypted private key
 # - ADMIN_TOKEN: Token for admin endpoints
+# - ADMIN_READONLY_TOKEN (optional): Second admin bearer, GET/HEAD only. Must
+#   differ from ADMIN_TOKEN — equal values refuse the whole admin surface.
 
 # =============================================================================
 # STAGING ENVIRONMENT
