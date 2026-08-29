@@ -103,8 +103,8 @@ of the Worker, so `https://gpg.example/service` yields
 dropped rather than spliced into the link. Credentials go the same way: a value
 pasted in whole as `https://ops:secret@gpg.example/` yields
 `https://gpg.example`, so nothing from the setting's userinfo reaches the `docs`
-field that every error body carries into a CI log. A non-default port is kept,
-since that is part of where the service answers.
+field that every [coded error](errors.md#the-envelope) carries into a CI log. A
+non-default port is kept, since that is part of where the service answers.
 
 `DISCLOSE_TRUST_PATTERNS` covers two hints, both off by default:
 
