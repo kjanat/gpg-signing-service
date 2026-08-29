@@ -262,19 +262,32 @@ Use **openpgp.js v6** as the cryptographic library with passphrase-encrypted pri
 **Key Expiry Monitoring**:
 
 Stored keys carry no `expiresAt` field, and adding one would only duplicate a
-fact the key material already states. Expiry is instead read back out of the key
-itself:
+fact the key material already states. Neither is there a manifest of which keys
+are current — that is derivable too, from the authorization state the service
+already keeps. Both are read back out of live data:
 
-1. `GET /admin/keys` enumerates the keys the deployment holds
-2. Every `KEY_ID` in `wrangler.toml` is cross-checked against that list, so a
-   configured key the deployment has lost is reported alongside expiring ones
-3. `GET /admin/keys/{keyId}/public` yields the material, and
-   `src/utils/key-expiry.ts` derives the expiry — the earlier of the PGP primary
-   key's and signing subkey's expiration times, or the X.509 `notAfter`
+1. `GET /admin/keys` enumerates the keys the deployment holds, and
+   `GET /admin/subjects` and `GET /admin/tokens` enumerate the credentials that
+   may use them
+2. `resolveActiveKeys` in `src/utils/key-expiry.ts` reduces those to the set the
+   sign path would accept: the checked environment's `KEY_ID` from
+   `wrangler.toml`, plus every key a live (unrevoked, unexpired) grant permits.
+   A grant with no `keyIds` allowlist means every stored key, matching
+   `routes/sign.ts`; stored keys no live grant reaches are excluded, so a
+   deliberately retained key raises nothing
+3. `GET /admin/keys/{keyId}/public` yields the material, and the same module
+   derives the expiry — the earlier of the PGP primary key's and signing
+   subkey's expiration times, or the X.509 `notAfter` — plus revocation, which
+   openpgp's `getExpirationTime()` does not report
 4. `scripts/check-key-expiry.ts` classifies each key against
-   `KEY_EXPIRY_WARN_DAYS` (default 60) and renders the report
+   `KEY_EXPIRY_WARN_DAYS` (default 60) and renders the report, including a scope
+   note stating how the set was chosen and what it left out
 5. `.github/workflows/key-expiry-check.yml` runs this weekly and opens or
    updates a `key-expiry` GitHub issue
+
+The set is exact only as far as the authorization model allows: one unscoped
+grant makes every stored key genuinely signable, and the report says so rather
+than pretending to a narrower answer.
 
 See [Key rotation](../self-hosting.md#key-rotation) for the rotation procedure
 this check points maintainers at.

@@ -45,3 +45,11 @@ declare module "*.md?raw" {
 	const content: string;
 	export default content;
 }
+
+// Same mechanism for `wrangler.toml`, which the key-expiry suite reads so the
+// active-key rule is asserted against the real deployment config rather than a
+// hand-copied excerpt that can drift away from it.
+declare module "*.toml?raw" {
+	const content: string;
+	export default content;
+}

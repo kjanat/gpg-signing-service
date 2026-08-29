@@ -236,32 +236,75 @@ service itself: nothing in the sign path refuses a key because it is close to
 expiring. `.github/workflows/key-expiry-check.yml` covers that gap. It runs
 weekly, and on demand through **Actions → Key expiry check → Run workflow**.
 
-The check discovers keys rather than reading a list someone maintains by hand:
+### Which keys are checked
 
-1. `GET /admin/keys` returns the keys the deployment actually holds.
-2. Every `KEY_ID` in `wrangler.toml` is cross-checked against that list. A key
-   the Worker is configured to sign with, that the deployment no longer holds,
-   is reported as `missing`.
-3. Each key's expiry is read out of its own material from
-   `GET /admin/keys/{keyId}/public` — the PGP public key's expiration time
-   (whichever of the primary key and the signing subkey lapses first), or the
-   X.509 certificate's `notAfter`. No expiry date is ever transcribed into a
-   config file, so none can drift from the key it describes.
+"Every stored key" would be wrong in both directions, so the set is derived from
+the deployment's own live configuration instead:
 
-Keys inside the threshold, already expired, unreadable or missing are collected
-into a report that is written to the job summary and used to open or update a
-GitHub issue labelled `key-expiry`. The issue is updated rather than duplicated,
-so a key that stays inside the window produces one issue, not one per run.
+- **Stored is not active.** A superseded key kept on purpose is still in
+  `GET /admin/keys`, and warning about it every week is how a monitor gets
+  muted.
+- **`KEY_ID` is not the whole set.** It is only the default for a caller that
+  names no key. `POST /sign?keyId=…` accepts any key the caller's grant permits,
+  so a key nobody configured as the default can still be signing commits today.
 
-| Setting              | Where                                     | Default |
-| -------------------- | ----------------------------------------- | ------- |
-| Warning threshold    | `KEY_EXPIRY_WARN_DAYS` env var            | 60 days |
-| Deployment to check  | `SIGNING_SERVICE_URL` repository variable | —       |
-| Admin credential     | `ADMIN_TOKEN` repository secret           | —       |
-| Notification channel | GitHub issue labelled `key-expiry`        | —       |
+A key is therefore **monitored when this deployment could sign with it right
+now** — the same test `src/routes/sign.ts` applies:
+
+1. The checked environment's `KEY_ID` from `wrangler.toml`, since that is what a
+   caller naming no key gets. One environment, not all of them: aggregating
+   `[env.*.vars]` and then checking a single URL reports the other
+   environment's key as `missing` every week, forever.
+2. Every key a **live** grant permits — a trusted OIDC subject
+   (`GET /admin/subjects`) or a service token (`GET /admin/tokens`) that is
+   neither revoked nor expired, tested exactly as the sign path tests it.
+3. A grant that pins no key ids means _every_ key, in the service's own
+   authorization model. When one exists, storage really is the activation
+   boundary and every stored key is monitored — and the report says so, and says
+   which grant caused it, because scoping that grant is what narrows the report.
+4. Anything else in storage is retained but unreachable. It is listed in the
+   report's scope note and never warned about.
+
+A key that is expected but absent — the environment's `KEY_ID`, or a key a live
+grant names — is reported `missing`, naming which of the two it was, because the
+fixes are opposite: deploy the key, or re-scope the credential.
+
+Each monitored key's expiry is then read out of its own material from
+`GET /admin/keys/{keyId}/public` — the PGP public key's expiration time
+(whichever of the primary key and the signing subkey lapses first), or the X.509
+certificate's `notAfter`. No expiry date is ever transcribed into a config file,
+so none can drift from the key it describes.
+
+**Where the rule is imprecise**, stated in every report rather than only here:
+
+- The set is a snapshot. A grant created after a run is covered by the next one.
+- `KEY_ID` is read from `wrangler.toml` in this repository, which a deployment
+  whose vars were changed elsewhere can disagree with.
+- A grant is trusted to mean what it says, so a key id it names that no longer
+  exists is reported `missing` rather than quietly dropped.
+
+Keys inside the threshold, already expired, revoked, unreadable or missing are
+collected into a report that is written to the job summary and used to open or
+update a GitHub issue labelled `key-expiry`. The issue is updated rather than
+duplicated, so a key that stays inside the window produces one issue, not one
+per run.
+
+### Configuration
+
+| Setting              | Where                                     | Default   |
+| -------------------- | ----------------------------------------- | --------- |
+| Warning threshold    | `KEY_EXPIRY_WARN_DAYS` env var            | 60 days   |
+| Deployment to check  | `SIGNING_SERVICE_URL` repository variable | —         |
+| Admin credential     | `ADMIN_TOKEN` repository secret           | —         |
+| Wrangler environment | `WRANGLER_ENV` env var                    | top-level |
+| Notification channel | GitHub issue labelled `key-expiry`        | —         |
 
 Both `SIGNING_SERVICE_URL` and `ADMIN_TOKEN` are required; without them the
-check fails loudly rather than reporting every key as healthy.
+check fails loudly rather than reporting every key as healthy. Point
+`WRANGLER_ENV` at the environment whose deployment `SIGNING_SERVICE_URL`
+addresses — `staging` for the staging Worker — so the two agree about which
+`KEY_ID` is the default. An unknown name is refused rather than silently falling
+back to production's key.
 
 Run it locally against any deployment:
 
@@ -272,7 +315,15 @@ ADMIN_TOKEN="$GPG_SIGN_ADMIN_TOKEN" KEY_EXPIRY_WARN_DAYS=90 task check:key-expir
 ```
 
 It exits `0` when every key is clear, `1` when at least one needs attention, and
-`2` when the check could not run at all.
+`2` when the check could not run at all — including when the grant lists cannot
+be read, since a report whose scope is unknown is worse than no report.
+
+Checking staging is a second run of the same command:
+
+```bash
+SIGNING_SERVICE_URL="https://staging.gpg.example.com" WRANGLER_ENV=staging \
+  ADMIN_TOKEN="$GPG_SIGN_STAGING_ADMIN_TOKEN" task check:key-expiry
+```
 
 ## Key rotation
 
@@ -287,14 +338,19 @@ the overlap, so in-flight callers keep working.
    GPG keys, and any `gpg --import` step in a consuming pipeline. Signatures
    from the new key are rejected until this lands.
 4. Add the new key ID to the `keyIds` of every trusted subject
-   (`POST /admin/subjects`) and to any service token that pins key IDs.
+   (`POST /admin/subjects`) and to any service token that pins key IDs. This is
+   also what puts the new key under expiry monitoring — the check watches what
+   live grants permit, so a key becomes monitored the moment something is
+   allowed to sign with it.
 5. Point the deployment at the new key: update `KEY_ID` in `wrangler.toml` for
-   each environment, then `task deploy`. The expiry check reads `KEY_ID`, so
-   this step is also what puts the new key under monitoring.
+   each environment, then `task deploy`. Callers that name no key move over
+   here.
 6. Smoke test as in [Smoke test](#8-smoke-test), signing with the new key ID.
-7. Once no caller signs with the old key — check the audit log — remove it with
-   `DELETE /admin/keys/{keyId}` and drop its ID from `wrangler.toml` and from
-   every subject and token allowlist.
+7. Once no caller signs with the old key — check the audit log — drop its ID
+   from `wrangler.toml` and from every subject and token allowlist, then remove
+   it with `DELETE /admin/keys/{keyId}`. Revoking the allowlists first is what
+   takes the old key out of the report; a key that is merely retained in storage
+   raises nothing, but a key a live grant still names does.
 8. Close the `key-expiry` issue, or re-run the check and let it confirm.
 
 Rotating `ADMIN_TOKEN` is separate and immediate: `wrangler secret put
@@ -307,13 +363,16 @@ no overlap period, so every admin caller must be updated at the same time.
   `POST /admin/subjects`. An empty `oidc_subjects` table denies every OIDC
   caller, so signing stays broken until a row exists.
 - Scope each trusted subject prefix as narrowly as the subject shape allows and
-  pin `keyIds`; a prefix authorizes every workflow and ref beneath it.
+  pin `keyIds`; a prefix authorizes every workflow and ref beneath it. A grant
+  that pins no key ids permits _every_ stored key, which also means expiry
+  monitoring cannot narrow its set below "everything in storage".
 - Configure a non-empty `ALLOWED_ORIGINS` when browser access is required.
 - Define private-key backup and restoration procedures; no export endpoint
   exists.
 - Define audit retention and monitoring; no cleanup or alert policy is built in.
 - Set the `SIGNING_SERVICE_URL` variable and `ADMIN_TOKEN` secret so
   [Key expiry monitoring](#key-expiry-monitoring) can reach the deployment, and
-  confirm a manual run reports every key you expect.
+  confirm a manual run reports every key you expect — and, in its scope note,
+  excludes every key you do not.
 - Walk [Key rotation](#key-rotation) once on staging, and rotate the admin token.
 - Review the [Security model](security-model.md).

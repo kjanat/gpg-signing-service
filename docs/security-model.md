@@ -188,24 +188,52 @@ unnoticed expiry breaks every caller at once. A scheduled GitHub Actions check
 (`.github/workflows/key-expiry-check.yml`, weekly plus manual dispatch) closes
 that gap.
 
-The check derives its subjects rather than trusting a hand-written list: it asks
-the deployment for the keys it holds through `GET /admin/keys`, cross-checks
-those against every `KEY_ID` in `wrangler.toml` so a configured-but-absent key is
-reported too, and reads each expiry out of the key material returned by
-`GET /admin/keys/{keyId}/public` — the PGP expiration time, or the X.509
-certificate's `notAfter`. No expiry date is stored anywhere that could drift from
-the key it describes.
+The check derives both halves of the question rather than trusting a hand-written
+list.
+
+**Which keys count** is the deployment's own authorization state, not its
+storage. `GET /admin/keys` says what is held; `GET /admin/subjects` and
+`GET /admin/tokens` say who may use it. A key is monitored when a live
+credential could sign with it right now, plus the checked environment's `KEY_ID`
+default from `wrangler.toml`. This matters in both directions: a superseded key
+kept in storage with no live grant reaching it raises nothing, while a key that
+is signing today under a grant nobody wrote into `KEY_ID` is not missed.
+
+The service's authorization model bounds how precise that can be. A grant with
+no `keyIds` allowlist permits _every_ stored key — `routes/sign.ts` reads a null
+allowlist as unrestricted — so where one live grant is unscoped, storage is the
+activation boundary and the report says so, names the grant, and monitors
+everything. There is no way to narrow it further without changing what the
+service would actually accept, and a monitor that claims a narrower set than the
+sign path honours is worse than a broad one. The report also states its other
+limits inline: the set is a snapshot between runs, `wrangler.toml` can disagree
+with vars edited outside the repository, and a grant naming a key that no longer
+exists is reported `missing` rather than dropped.
+
+**When a key lapses** is read out of the key material returned by
+`GET /admin/keys/{keyId}/public` — the PGP expiration time (whichever of the
+primary key and the signing subkey lapses first) or the X.509 certificate's
+`notAfter`. No expiry date is stored anywhere that could drift from the key it
+describes.
 
 - **Threshold**: `KEY_EXPIRY_WARN_DAYS`, default 60 days. Keys inside the window,
-  already expired, unreadable or missing are all treated as needing action.
+  already expired, revoked, unreadable or missing are all treated as needing
+  action.
 - **Channel**: a GitHub issue labelled `key-expiry`, opened on the first run
   inside the window and updated in place afterwards. The report is also written
   to the workflow job summary.
 - **Credentials**: the workflow reads the `SIGNING_SERVICE_URL` repository
   variable and the `ADMIN_TOKEN` secret. This widens the admin token's blast
   radius to that workflow, which is the cost of checking the live deployment
-  instead of a transcribed date; the token is otherwise unused by CI and should
-  be rotated on the same schedule as any other admin credential.
+  instead of a transcribed date. The check needs read on four routes
+  (`/admin/keys`, `/admin/keys/{keyId}/public`, `/admin/subjects`,
+  `/admin/tokens`); the token it must be given also authorises key deletion,
+  token minting and subject management, because `adminAuth` is all-or-nothing
+  and no read-only admin scope exists. The token is otherwise unused by CI and
+  should be rotated on the same schedule as any other admin credential.
+- **Scope of a run**: one deployment, one wrangler environment (`WRANGLER_ENV`).
+  Checking staging is a second run against staging's URL and token, not a wider
+  read from the production run.
 
 The check reports; it does not rotate. See
 [Key rotation](self-hosting.md#key-rotation) for the procedure it points at.

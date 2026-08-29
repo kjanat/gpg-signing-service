@@ -1,21 +1,29 @@
 import * as openpgp from "openpgp";
 import { describe, expect, it } from "vitest";
 import {
+	type ActiveKey,
+	type ActiveKeySet,
 	actionableRows,
 	classifyExpiry,
 	DEFAULT_WARN_DAYS,
 	daysUntil,
+	describeActivation,
 	effectiveExpiry,
-	extractDeclaredKeyIds,
+	extractDefaultKeyId,
+	isGrantLive,
 	KEY_ROTATION_DOCS_URL,
 	type KeyExpiryRow,
+	type KeyGrant,
 	keyMaterialExpiry,
 	missingKeyRow,
 	parseWarnDays,
 	pgpKeyExpiry,
+	type ReportContext,
 	renderReport,
+	resolveActiveKeys,
 	x509CertificateExpiry,
 } from "#utils/key-expiry";
+import realWranglerToml from "../../wrangler.toml?raw";
 
 /** Fixed clock so every threshold assertion is a pure date comparison */
 const NOW = new Date("2026-08-29T00:00:00.000Z");
@@ -121,31 +129,282 @@ describe("classifyExpiry", () => {
 	});
 });
 
-describe("extractDeclaredKeyIds", () => {
-	it("finds the production key id in the real wrangler.toml layout", () => {
-		const toml = [
+describe("extractDefaultKeyId", () => {
+	/** The shape of the real file: a top-level `[vars]` and a staging one. */
+	const toml = [
+		"#:schema node_modules/wrangler/config-schema.json",
+		'name = "gpg-signing-service"',
+		"",
+		"[vars]",
+		'ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com"',
+		`KEY_ID          = "${PRODUCTION_KEY_ID}"`,
+		'# KEY_ID        = "DEADBEEFDEADBEEF"',
+		"",
+		"[env.staging]",
+		'name = "gpg-signing-service-staging"',
+		"",
+		"[[env.staging.routes]]",
+		'pattern = "staging.gpg.kajkowalski.nl"',
+		"",
+		"[env.staging.vars]",
+		'KEY_ID      = "aaaabbbbccccdddd"',
+		'ENVIRONMENT = "staging"',
+	].join("\n");
+
+	it("reads the top-level environment by default", () => {
+		expect(extractDefaultKeyId(toml)).toEqual({ env: null, keyId: PRODUCTION_KEY_ID, envExists: true });
+	});
+
+	it("reads a named environment's own KEY_ID, not the top-level one", () => {
+		// The whole point of the scoping: checking production must not report
+		// staging's key as missing, week after week, until someone mutes it.
+		expect(extractDefaultKeyId(toml, "staging")).toEqual({
+			env: "staging",
+			keyId: "AAAABBBBCCCCDDDD",
+			envExists: true,
+		});
+	});
+
+	it("ignores commented-out and unrelated declarations", () => {
+		const noisy = [
 			"[vars]",
-			'ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com"',
-			`KEY_ID          = "${PRODUCTION_KEY_ID}"`,
-			"",
-			"[env.staging.vars]",
-			`KEY_ID          = "${PRODUCTION_KEY_ID}"`,
+			'# KEY_ID = "DEADBEEFDEADBEEF"',
+			'OTHER_KEY_ID = "1111222233334444"',
+			`KEY_ID = "${PRODUCTION_KEY_ID}"`,
 		].join("\n");
-
-		expect(extractDeclaredKeyIds(toml)).toEqual([PRODUCTION_KEY_ID]);
+		expect(extractDefaultKeyId(noisy).keyId).toBe(PRODUCTION_KEY_ID);
 	});
 
-	it("normalises case, dedupes and sorts", () => {
-		const toml = ['KEY_ID = "aaaabbbbccccdddd"', "KEY_ID='1111222233334444'", 'KEY_ID="AAAABBBBCCCCDDDD"'].join("\n");
-		expect(extractDeclaredKeyIds(toml)).toEqual(["1111222233334444", "AAAABBBBCCCCDDDD"]);
+	it("does not read KEY_ID from a table that is not the environment's vars", () => {
+		const misplaced = ["[env.staging.vars]", `KEY_ID = "${PRODUCTION_KEY_ID}"`].join("\n");
+		expect(extractDefaultKeyId(misplaced).keyId).toBeNull();
 	});
 
-	it("ignores values that are not 16-hex key ids", () => {
-		const toml = ['KEY_ID = "not-a-key-id"', 'KEY_ID = "62E75E54497815"', 'OTHER_KEY_ID = "AAAABBBBCCCCDDDD"'].join(
-			"\n",
+	it("reports an environment that declares no KEY_ID rather than borrowing one", () => {
+		// Wrangler does not inherit `vars` into named environments, so falling
+		// back to the top-level value would report a key this deployment does not
+		// actually sign with by default.
+		const bare = ["[vars]", `KEY_ID = "${PRODUCTION_KEY_ID}"`, "[env.preview]", 'name = "preview"'].join("\n");
+		expect(extractDefaultKeyId(bare, "preview")).toEqual({ env: "preview", keyId: null, envExists: true });
+	});
+
+	it("flags an environment the file does not define", () => {
+		expect(extractDefaultKeyId(toml, "typo").envExists).toBe(false);
+		expect(extractDefaultKeyId(toml, "staging").envExists).toBe(true);
+	});
+
+	it("finds the production key in the real wrangler.toml", () => {
+		// Against the real file, not an excerpt: the rule is only worth anything
+		// if it holds for the config this repository actually deploys.
+		expect(extractDefaultKeyId(realWranglerToml)).toEqual({ env: null, keyId: PRODUCTION_KEY_ID, envExists: true });
+		expect(extractDefaultKeyId(realWranglerToml, "staging")).toEqual({
+			env: "staging",
+			keyId: PRODUCTION_KEY_ID,
+			envExists: true,
+		});
+		expect(extractDefaultKeyId(realWranglerToml, "production").envExists).toBe(false);
+	});
+});
+
+describe("isGrantLive", () => {
+	const grant = (over: Partial<KeyGrant>): KeyGrant => ({
+		kind: "service-token",
+		name: "ci",
+		keyIds: null,
+		expiresAt: null,
+		revokedAt: null,
+		...over,
+	});
+
+	it("honours a grant with no expiry", () => {
+		expect(isGrantLive(grant({}), NOW)).toBe(true);
+	});
+
+	it("drops a revoked grant even when it has not expired", () => {
+		expect(
+			isGrantLive(grant({ revokedAt: fromNow(-1).toISOString(), expiresAt: fromNow(90).toISOString() }), NOW),
+		).toBe(false);
+	});
+
+	it("drops an expired grant", () => {
+		expect(isGrantLive(grant({ expiresAt: fromNow(-1).toISOString() }), NOW)).toBe(false);
+	});
+
+	it("keeps a grant expiring exactly now, as the sign path does", () => {
+		// `verifyServiceToken` refuses only on `expires_at < now`, so the boundary
+		// instant is still live. A stricter rule here would drop a key the service
+		// would still sign with.
+		expect(isGrantLive(grant({ expiresAt: NOW.toISOString() }), NOW)).toBe(true);
+	});
+
+	it("treats an unparseable expiry as live, mirroring the server", () => {
+		// Date.parse yields NaN and every comparison against it is false, so the
+		// server honours the row. The monitor has to agree or it under-reports.
+		expect(isGrantLive(grant({ expiresAt: "not a date" }), NOW)).toBe(true);
+	});
+});
+
+describe("resolveActiveKeys", () => {
+	const STORED_A = "AAAABBBBCCCCDDDD";
+	const defaultKey = { env: null, keyId: PRODUCTION_KEY_ID, envExists: true };
+	const grant = (over: Partial<KeyGrant>): KeyGrant => ({
+		kind: "service-token",
+		name: "ci",
+		keyIds: null,
+		expiresAt: null,
+		revokedAt: null,
+		...over,
+	});
+
+	it("leaves a retained key alone when no live grant reaches it", () => {
+		// The false-alarm case: an old key kept on purpose, and every credential
+		// scoped away from it. Warning about it teaches people to mute the monitor.
+		const scope = resolveActiveKeys({
+			storedKeyIds: [PRODUCTION_KEY_ID, STORED_A],
+			defaultKey,
+			grants: [grant({ name: "prod-ci", keyIds: [PRODUCTION_KEY_ID] })],
+			now: NOW,
+		});
+
+		expect(scope.keys.map((key) => key.keyId)).toEqual([PRODUCTION_KEY_ID]);
+		expect(scope.retainedInactive).toEqual([STORED_A]);
+	});
+
+	it("treats storage as the boundary only when a live grant pins no key ids", () => {
+		const scope = resolveActiveKeys({
+			storedKeyIds: [PRODUCTION_KEY_ID, STORED_A],
+			defaultKey,
+			grants: [grant({ name: "anything" })],
+			now: NOW,
+		});
+
+		expect(scope.keys.map((key) => key.keyId)).toEqual(
+			[PRODUCTION_KEY_ID, STORED_A].sort((a, b) => a.localeCompare(b)),
 		);
-		// `OTHER_KEY_ID` is a different variable and must not be picked up.
-		expect(extractDeclaredKeyIds(toml)).toEqual([]);
+		expect(scope.unrestrictedGrants).toEqual(["service-token:anything"]);
+		expect(scope.retainedInactive).toEqual([]);
+		expect(scope.keys.find((key) => key.keyId === STORED_A)?.reasons).toEqual(["unrestricted-grant"]);
+	});
+
+	it("ignores revoked and expired grants", () => {
+		const scope = resolveActiveKeys({
+			storedKeyIds: [PRODUCTION_KEY_ID, STORED_A],
+			defaultKey,
+			grants: [
+				grant({ name: "dead", keyIds: [STORED_A], revokedAt: fromNow(-1).toISOString() }),
+				grant({ kind: "oidc-subject", name: "old", expiresAt: fromNow(-1).toISOString() }),
+			],
+			now: NOW,
+		});
+
+		expect(scope.keys.map((key) => key.keyId)).toEqual([PRODUCTION_KEY_ID]);
+		expect(scope.retainedInactive).toEqual([STORED_A]);
+		expect(scope).toMatchObject({ liveGrantCount: 0, totalGrantCount: 2, unrestrictedGrants: [] });
+	});
+
+	it("keeps the configured default even with no live grant at all", () => {
+		// It is what this environment signs with the moment anyone is trusted
+		// again, so its lapsing is still news.
+		const scope = resolveActiveKeys({ storedKeyIds: [PRODUCTION_KEY_ID], defaultKey, grants: [], now: NOW });
+		expect(scope.keys).toEqual([{ keyId: PRODUCTION_KEY_ID, reasons: ["default"], grants: [], stored: true }]);
+	});
+
+	it("marks a granted key the deployment does not hold as unstored", () => {
+		const scope = resolveActiveKeys({
+			storedKeyIds: [PRODUCTION_KEY_ID],
+			defaultKey,
+			grants: [grant({ name: "stale", keyIds: [STORED_A] })],
+			now: NOW,
+		});
+
+		expect(scope.keys.find((key) => key.keyId === STORED_A)).toEqual({
+			keyId: STORED_A,
+			reasons: ["grant"],
+			grants: ["service-token:stale"],
+			stored: false,
+		});
+	});
+
+	it("does not invent an active key when the environment declares none", () => {
+		const scope = resolveActiveKeys({
+			storedKeyIds: [PRODUCTION_KEY_ID],
+			defaultKey: { env: "preview", keyId: null, envExists: true },
+			grants: [],
+			now: NOW,
+		});
+
+		expect(scope.keys).toEqual([]);
+		expect(scope.retainedInactive).toEqual([PRODUCTION_KEY_ID]);
+	});
+
+	it("merges every reason and grant that reaches one key", () => {
+		const scope = resolveActiveKeys({
+			storedKeyIds: [PRODUCTION_KEY_ID],
+			defaultKey,
+			grants: [
+				grant({ kind: "oidc-subject", name: "repo:kjanat/svc", keyIds: [PRODUCTION_KEY_ID] }),
+				grant({ name: "anything" }),
+			],
+			now: NOW,
+		});
+
+		expect(scope.keys[0]).toEqual({
+			keyId: PRODUCTION_KEY_ID,
+			reasons: ["default", "grant", "unrestricted-grant"],
+			grants: ["oidc-subject:repo:kjanat/svc", "service-token:anything"],
+			stored: true,
+		});
+	});
+
+	it("compares key ids case-insensitively across config, grants and storage", () => {
+		const scope = resolveActiveKeys({
+			storedKeyIds: ["aaaabbbbccccdddd"],
+			defaultKey: { env: null, keyId: STORED_A, envExists: true },
+			grants: [grant({ name: "lower", keyIds: ["aaaabbbbccccdddd"] })],
+			now: NOW,
+		});
+
+		expect(scope.keys).toHaveLength(1);
+		expect(scope.keys[0]).toMatchObject({ keyId: STORED_A, stored: true });
+	});
+});
+
+describe("describeActivation", () => {
+	const key = (over: Partial<ActiveKey>): ActiveKey => ({
+		keyId: PRODUCTION_KEY_ID,
+		reasons: [],
+		grants: [],
+		stored: true,
+		...over,
+	});
+
+	it("names the default, the grants, or both", () => {
+		expect(describeActivation(key({ reasons: ["default"] }))).toBe("`KEY_ID` default");
+		expect(describeActivation(key({ reasons: ["grant"], grants: ["service-token:ci"] }))).toBe(
+			"granted to `service-token:ci`",
+		);
+		expect(describeActivation(key({ reasons: ["default", "grant"], grants: ["service-token:ci"] }))).toBe(
+			"`KEY_ID` default; granted to `service-token:ci`",
+		);
+	});
+
+	it("says when a key is only reachable through an any-key grant", () => {
+		expect(describeActivation(key({ reasons: ["unrestricted-grant"], grants: ["service-token:ci"] }))).toBe(
+			"any-key grant `service-token:ci`",
+		);
+	});
+
+	it("falls back to a dash when nothing explains the key", () => {
+		// Defensive: every key in a resolved set carries at least one reason, so
+		// this only fires if that invariant is ever broken.
+		expect(describeActivation(key({}))).toBe("—");
+	});
+
+	it("truncates a long grant list rather than flooding the table", () => {
+		const grants = ["a", "b", "c", "d"].map((name) => `service-token:${name}`);
+		expect(describeActivation(key({ reasons: ["grant"], grants }))).toBe(
+			"granted to `service-token:a`, `service-token:b` +2 more",
+		);
 	});
 });
 
@@ -353,14 +612,45 @@ describe("keyMaterialExpiry", () => {
 });
 
 describe("missingKeyRow", () => {
-	it("marks a declared-but-absent key as actionable", () => {
-		const row = missingKeyRow(PRODUCTION_KEY_ID);
+	const key = (over: Partial<ActiveKey>): ActiveKey => ({
+		keyId: PRODUCTION_KEY_ID,
+		reasons: [],
+		grants: [],
+		stored: false,
+		...over,
+	});
+
+	it("names KEY_ID as the cause when the default is absent", () => {
+		const row = missingKeyRow(key({ reasons: ["default"] }));
 		expect(row).toMatchObject({
 			keyId: PRODUCTION_KEY_ID,
 			state: "missing",
-			detail: expect.stringContaining("wrangler"),
+			detail: "this environment's KEY_ID, but the deployment does not hold it",
 		});
 		expect(actionableRows([row])).toHaveLength(1);
+	});
+
+	it("names the grant when a credential outlived the key it was scoped to", () => {
+		// The two causes need opposite fixes, so the report has to distinguish
+		// them: deploy the key, or re-scope the credential.
+		const row = missingKeyRow(key({ reasons: ["grant"], grants: ["service-token:ci"] }));
+		expect(row.detail).toBe("granted to service-token:ci, but the deployment does not hold it");
+	});
+
+	it("still reads as a sentence when no cause is recorded", () => {
+		// An any-key grant only ever reaches keys the deployment holds, so this
+		// combination cannot arise from `resolveActiveKeys` — the fallback exists
+		// so a future caller cannot render a dangling clause.
+		expect(missingKeyRow(key({ reasons: ["unrestricted-grant"] })).detail).toBe(
+			"expected, but the deployment does not hold it",
+		);
+	});
+
+	it("names both when the default is also granted", () => {
+		const row = missingKeyRow(key({ reasons: ["default", "grant"], grants: ["oidc-subject:repo:kjanat/svc"] }));
+		expect(row.detail).toBe(
+			"this environment's KEY_ID; granted to oidc-subject:repo:kjanat/svc, but the deployment does not hold it",
+		);
 	});
 });
 
@@ -385,56 +675,173 @@ describe("actionableRows", () => {
 });
 
 describe("renderReport", () => {
-	const context = { warnDays: 60, now: NOW, serviceUrl: "https://gpg.example.test" };
+	/**
+	 * A report context whose scope covers exactly the rows being rendered, so a
+	 * test only has to say what it is actually asserting about.
+	 */
+	function contextFor(rows: readonly KeyExpiryRow[], scope: Partial<ActiveKeySet> = {}): ReportContext {
+		return {
+			warnDays: 60,
+			now: NOW,
+			serviceUrl: "https://gpg.example.test",
+			scope: {
+				keys: rows.map((row) => ({
+					keyId: row.keyId,
+					reasons: ["default"] as ActiveKey["reasons"],
+					grants: [],
+					stored: row.state !== "missing",
+				})),
+				retainedInactive: [],
+				unrestrictedGrants: [],
+				liveGrantCount: 1,
+				totalGrantCount: 1,
+				defaultKey: { env: null, keyId: rows[0]?.keyId ?? null, envExists: true },
+				...scope,
+			},
+		};
+	}
+
+	/** Key ids in the order the rendered table lists them */
+	function tableOrder(report: string): (string | undefined)[] {
+		return [...report.matchAll(/\| `([0-9A-Z]{16})` \|/g)].map((match) => match[1]);
+	}
 
 	it("says so plainly when nothing is expiring", () => {
-		const report = renderReport(
-			[{ keyId: PRODUCTION_KEY_ID, state: "ok", expiresAt: fromNow(447).toISOString(), daysRemaining: 447 }],
-			context,
-		);
+		const rows: KeyExpiryRow[] = [
+			{ keyId: PRODUCTION_KEY_ID, state: "ok", expiresAt: fromNow(447).toISOString(), daysRemaining: 447 },
+		];
+		const report = renderReport(rows, contextFor(rows));
 
-		expect(report).toContain("No signing key expires within 60 days.");
+		expect(report).toContain("No active signing key expires within 60 days.");
 		expect(report).not.toContain("### Action required");
-		expect(report).toContain("Checked 1 key on https://gpg.example.test");
+		expect(report).toContain("Monitored 1 active signing key on https://gpg.example.test");
+		expect(report).toContain("wrangler environment `top-level`");
 		expect(report).toContain(`\`${PRODUCTION_KEY_ID}\``);
 	});
 
 	it("lists every affected key under an action heading", () => {
-		const report = renderReport(
-			[
-				{ keyId: "HEALTHY000000000", state: "ok", expiresAt: fromNow(400).toISOString(), daysRemaining: 400 },
-				{ keyId: PRODUCTION_KEY_ID, state: "warning", expiresAt: fromNow(12).toISOString(), daysRemaining: 12 },
-				{ keyId: "LAPSED0000000000", state: "expired", expiresAt: fromNow(-5).toISOString(), daysRemaining: -5 },
-			],
-			context,
-		);
+		const rows: KeyExpiryRow[] = [
+			{ keyId: "HEALTHY000000000", state: "ok", expiresAt: fromNow(400).toISOString(), daysRemaining: 400 },
+			{ keyId: PRODUCTION_KEY_ID, state: "warning", expiresAt: fromNow(12).toISOString(), daysRemaining: 12 },
+			{ keyId: "LAPSED0000000000", state: "expired", expiresAt: fromNow(-5).toISOString(), daysRemaining: -5 },
+		];
+		const report = renderReport(rows, contextFor(rows));
 
 		expect(report).toContain("### Action required");
 		expect(report).toContain(`- \`${PRODUCTION_KEY_ID}\`: ⚠️ expiring (12 days)`);
 		expect(report).toContain("- `LAPSED0000000000`: 🚨 expired (5 days ago)");
-		expect(report).toContain("Checked 3 keys");
+		expect(report).toContain("Monitored 3 active signing keys");
 		// Absolute: a repo-relative path does not resolve in a GitHub issue body.
 		expect(report).toContain(`(${KEY_ROTATION_DOCS_URL})`);
 		expect(KEY_ROTATION_DOCS_URL).toMatch(/^https:\/\/github\.com\/.*#key-rotation$/);
 		// The healthy key is still in the table, just not in the action list.
 		expect(report).toContain("`HEALTHY000000000`");
-		expect(report.split("### Action required")[1]).not.toContain("HEALTHY000000000");
+		expect(report.split("### Action required")[1]?.split("<details>")[0]).not.toContain("HEALTHY000000000");
+	});
+
+	it("pluralises so no row ever reads `1 days`", () => {
+		const rows: KeyExpiryRow[] = [
+			{ keyId: "TOMORROW00000000", state: "warning", expiresAt: fromNow(1).toISOString(), daysRemaining: 1 },
+			{ keyId: "YESTERDAY0000000", state: "expired", expiresAt: fromNow(-1).toISOString(), daysRemaining: -1 },
+		];
+		const report = renderReport(rows, contextFor(rows));
+
+		expect(report).toContain("- `TOMORROW00000000`: ⚠️ expiring (1 day)");
+		expect(report).toContain("- `YESTERDAY0000000`: 🚨 expired (1 day ago)");
+		expect(report).not.toContain("1 days");
+	});
+
+	it("says why each key is being watched", () => {
+		const rows: KeyExpiryRow[] = [
+			{ keyId: "DEFAULTKEY000000", state: "ok", expiresAt: fromNow(400).toISOString(), daysRemaining: 400 },
+			{ keyId: "GRANTEDKEY000000", state: "ok", expiresAt: fromNow(400).toISOString(), daysRemaining: 400 },
+		];
+		const report = renderReport(
+			rows,
+			contextFor(rows, {
+				keys: [
+					{ keyId: "DEFAULTKEY000000", reasons: ["default"], grants: [], stored: true },
+					{
+						keyId: "GRANTEDKEY000000",
+						reasons: ["unrestricted-grant"],
+						grants: ["service-token:ci"],
+						stored: true,
+					},
+				],
+			}),
+		);
+
+		expect(report).toContain("| Key ID | Status | Expires | Remaining | Active because |");
+		expect(report).toContain("`KEY_ID` default");
+		expect(report).toContain("any-key grant `service-token:ci`");
+	});
+
+	it("declares the retained keys it deliberately left out", () => {
+		const rows: KeyExpiryRow[] = [
+			{ keyId: PRODUCTION_KEY_ID, state: "ok", expiresAt: fromNow(400).toISOString(), daysRemaining: 400 },
+		];
+		const report = renderReport(rows, contextFor(rows, { retainedInactive: ["OLDKEY0000000000"] }));
+
+		expect(report).toContain("Which keys count as active");
+		expect(report).toContain("stored but no live grant reaches it: `OLDKEY0000000000`");
+	});
+
+	it("warns that an any-key grant makes storage the boundary", () => {
+		const rows: KeyExpiryRow[] = [
+			{ keyId: PRODUCTION_KEY_ID, state: "ok", expiresAt: fromNow(400).toISOString(), daysRemaining: 400 },
+		];
+		const report = renderReport(
+			rows,
+			contextFor(rows, { unrestrictedGrants: ["service-token:ci"], liveGrantCount: 1, totalGrantCount: 3 }),
+		);
+
+		expect(report).toContain("**every stored key is signable**");
+		expect(report).toContain("`service-token:ci`");
+		expect(report).toContain("Read 3 grants, of which 1 live.");
+	});
+
+	it("warns when the checked environment declares no default key", () => {
+		const report = renderReport([], contextFor([], { defaultKey: { env: "preview", keyId: null, envExists: true } }));
+
+		expect(report).toContain("wrangler environment `preview`");
+		expect(report).toContain("declares no `KEY_ID`");
+	});
+
+	it("renders a row the scope does not explain rather than dropping it", () => {
+		const rows: KeyExpiryRow[] = [
+			{ keyId: "ORPHANED00000000", state: "ok", expiresAt: fromNow(400).toISOString(), daysRemaining: 400 },
+		];
+		const report = renderReport(rows, contextFor(rows, { keys: [] }));
+
+		expect(report).toContain("`ORPHANED00000000`");
+		expect(report).toContain("| 400 days | — |");
+	});
+
+	it("pluralises the scope notes too", () => {
+		const report = renderReport(
+			[],
+			contextFor([], {
+				unrestrictedGrants: ["service-token:a", "service-token:b"],
+				retainedInactive: ["OLD1000000000000", "OLD2000000000000"],
+				liveGrantCount: 2,
+				totalGrantCount: 2,
+			}),
+		);
+
+		expect(report).toContain("2 live grants pin no key ids");
+		expect(report).toContain("no live grant reaches them: `OLD1000000000000`, `OLD2000000000000`");
 	});
 
 	it("sorts worst first so the row that matters is read first", () => {
-		const report = renderReport(
-			[
-				{ keyId: "HEALTHY000000000", state: "ok", expiresAt: fromNow(400).toISOString(), daysRemaining: 400 },
-				{ keyId: "NOEXPIRY00000000", state: "no-expiry", expiresAt: null, daysRemaining: null },
-				{ keyId: "WARNING000000000", state: "warning", expiresAt: fromNow(30).toISOString(), daysRemaining: 30 },
-				{ keyId: "EXPIRED000000000", state: "expired", expiresAt: fromNow(-5).toISOString(), daysRemaining: -5 },
-				{ keyId: "ABSENT0000000000", state: "missing", expiresAt: null, daysRemaining: null },
-			],
-			context,
-		);
+		const rows: KeyExpiryRow[] = [
+			{ keyId: "HEALTHY000000000", state: "ok", expiresAt: fromNow(400).toISOString(), daysRemaining: 400 },
+			{ keyId: "NOEXPIRY00000000", state: "no-expiry", expiresAt: null, daysRemaining: null },
+			{ keyId: "WARNING000000000", state: "warning", expiresAt: fromNow(30).toISOString(), daysRemaining: 30 },
+			{ keyId: "EXPIRED000000000", state: "expired", expiresAt: fromNow(-5).toISOString(), daysRemaining: -5 },
+			{ keyId: "ABSENT0000000000", state: "missing", expiresAt: null, daysRemaining: null },
+		];
 
-		const order = [...report.matchAll(/\| `([0-9A-Z]{16})` \|/g)].map((match) => match[1]);
-		expect(order).toEqual([
+		expect(tableOrder(renderReport(rows, contextFor(rows)))).toEqual([
 			"EXPIRED000000000",
 			"WARNING000000000",
 			"ABSENT0000000000",
@@ -458,8 +865,7 @@ describe("renderReport", () => {
 			[dated, dateless],
 			[dateless, dated],
 		]) {
-			const order = [...renderReport(rows, context).matchAll(/\| `([0-9A-Z]{16})` \|/g)].map((match) => match[1]);
-			expect(order).toEqual(["DATED00000000000", "ABSENT0000000000"]);
+			expect(tableOrder(renderReport(rows, contextFor(rows)))).toEqual(["DATED00000000000", "ABSENT0000000000"]);
 		}
 	});
 
@@ -469,22 +875,21 @@ describe("renderReport", () => {
 			{ keyId: "AAAA000000000000", state: "unknown", expiresAt: null, daysRemaining: null },
 		];
 
-		const order = [...renderReport(rows, context).matchAll(/\| `([0-9A-Z]{16})` \|/g)].map((match) => match[1]);
-		expect(order).toEqual(["AAAA000000000000", "ZZZZ000000000000"]);
+		expect(tableOrder(renderReport(rows, contextFor(rows)))).toEqual(["AAAA000000000000", "ZZZZ000000000000"]);
 	});
 
 	it("renders detail text for keys it could not read", () => {
-		const report = renderReport(
-			[{ keyId: "BROKEN0000000000", state: "unknown", expiresAt: null, daysRemaining: null, detail: "revoked" }],
-			context,
-		);
+		const rows: KeyExpiryRow[] = [
+			{ keyId: "BROKEN0000000000", state: "unknown", expiresAt: null, daysRemaining: null, detail: "revoked" },
+		];
+		const report = renderReport(rows, contextFor(rows));
 
 		expect(report).toContain("- `BROKEN0000000000`: ❓ unknown (—) — revoked");
 	});
 
-	it("reports an empty deployment without crashing", () => {
-		const report = renderReport([], context);
-		expect(report).toContain("Checked 0 keys");
-		expect(report).toContain("No signing key expires within 60 days.");
+	it("reports a deployment with no active keys without crashing", () => {
+		const report = renderReport([], contextFor([]));
+		expect(report).toContain("Monitored 0 active signing keys");
+		expect(report).toContain("No active signing key expires within 60 days.");
 	});
 });
