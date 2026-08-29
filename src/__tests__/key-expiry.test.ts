@@ -7,6 +7,7 @@ import {
 	daysUntil,
 	effectiveExpiry,
 	extractDeclaredKeyIds,
+	KEY_ROTATION_DOCS_URL,
 	type KeyExpiryRow,
 	keyMaterialExpiry,
 	missingKeyRow,
@@ -256,6 +257,27 @@ describe("pgpKeyExpiry", () => {
 		expect(expiry.expiresAt.getTime()).toBe(key.getCreationTime().getTime() + 45 * 24 * 60 * 60 * 1000);
 	});
 
+	it("reports a revoked key rather than passing it off as healthy", async () => {
+		// A revoked key's expiration subpacket is untouched by the revocation, so
+		// reading only `getExpirationTime()` would call this key `ok` while every
+		// verifier rejects its signatures.
+		const { publicKey, revocationCertificate } = await openpgp.generateKey({
+			type: "ecc",
+			curve: "ed25519Legacy",
+			userIDs: [{ name: "Revoked", email: "revoked@test.com" }],
+			keyExpirationTime: 400 * 24 * 60 * 60,
+			format: "object",
+		});
+		const revoked = await openpgp.revokeKey({ key: publicKey, revocationCertificate, format: "object" });
+
+		const expiry = await pgpKeyExpiry(revoked.publicKey.armor());
+		expect(expiry).toEqual({ kind: "revoked" });
+		expect(classifyExpiry(PRODUCTION_KEY_ID, expiry, NOW, 60)).toMatchObject({
+			state: "revoked",
+			detail: "key is revoked",
+		});
+	});
+
 	it("reports unreadable key material as unknown", async () => {
 		const expiry = await pgpKeyExpiry(
 			"-----BEGIN PGP PUBLIC KEY BLOCK-----\nnonsense\n-----END PGP PUBLIC KEY BLOCK-----",
@@ -270,11 +292,11 @@ describe("effectiveExpiry", () => {
 	const late = fromNow(400);
 
 	it("reports a key with no valid self-certification as unknown", () => {
-		// openpgp returns null here for a revoked or malformed primary key. No
-		// key it will read back can produce it, so it is asserted directly.
+		// openpgp returns null here for a malformed primary key. No key it will
+		// read back can produce it, so it is asserted directly.
 		expect(effectiveExpiry(null, soon)).toEqual({
 			kind: "unknown",
-			reason: "PGP primary key has no valid self-certification (revoked or malformed)",
+			reason: "PGP primary key has no valid self-certification (malformed)",
 		});
 		expect(effectiveExpiry(null, null)).toMatchObject({ kind: "unknown" });
 	});
@@ -349,11 +371,12 @@ describe("actionableRows", () => {
 		{ keyId: "WARN", state: "warning", expiresAt: null, daysRemaining: 10 },
 		{ keyId: "GONE", state: "expired", expiresAt: null, daysRemaining: -1 },
 		{ keyId: "HUH", state: "unknown", expiresAt: null, daysRemaining: null },
+		{ keyId: "REVOKED", state: "revoked", expiresAt: null, daysRemaining: null },
 		{ keyId: "ABSENT", state: "missing", expiresAt: null, daysRemaining: null },
 	];
 
 	it("selects only the states that need a human", () => {
-		expect(actionableRows(rows).map((row) => row.keyId)).toEqual(["WARN", "GONE", "HUH", "ABSENT"]);
+		expect(actionableRows(rows).map((row) => row.keyId)).toEqual(["WARN", "GONE", "HUH", "REVOKED", "ABSENT"]);
 	});
 
 	it("returns nothing when every key is healthy", () => {
@@ -390,7 +413,9 @@ describe("renderReport", () => {
 		expect(report).toContain(`- \`${PRODUCTION_KEY_ID}\`: ⚠️ expiring (12 days)`);
 		expect(report).toContain("- `LAPSED0000000000`: 🚨 expired (5 days ago)");
 		expect(report).toContain("Checked 3 keys");
-		expect(report).toContain("docs/self-hosting.md#key-rotation");
+		// Absolute: a repo-relative path does not resolve in a GitHub issue body.
+		expect(report).toContain(`(${KEY_ROTATION_DOCS_URL})`);
+		expect(KEY_ROTATION_DOCS_URL).toMatch(/^https:\/\/github\.com\/.*#key-rotation$/);
 		// The healthy key is still in the table, just not in the action list.
 		expect(report).toContain("`HEALTHY000000000`");
 		expect(report.split("### Action required")[1]).not.toContain("HEALTHY000000000");

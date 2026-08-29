@@ -105,8 +105,22 @@ async function main(): Promise<number> {
 
 	const rows: KeyExpiryRow[] = [];
 	for (const keyId of liveKeyIds) {
-		const material = await (await adminFetch(serviceUrl, `/admin/keys/${keyId}/public`, adminToken)).text();
-		rows.push(classifyExpiry(keyId, await keyMaterialExpiry(material), now, warnDays));
+		// One key the deployment lists but will not serve must not suppress the
+		// warnings for every other key, so it becomes an (actionable) `unknown`
+		// row instead of aborting the run.
+		try {
+			const material = await (await adminFetch(serviceUrl, `/admin/keys/${keyId}/public`, adminToken)).text();
+			rows.push(classifyExpiry(keyId, await keyMaterialExpiry(material), now, warnDays));
+		} catch (error) {
+			rows.push(
+				classifyExpiry(
+					keyId,
+					{ kind: "unknown", reason: error instanceof Error ? error.message : String(error) },
+					now,
+					warnDays,
+				),
+			);
+		}
 	}
 
 	// A key wrangler.toml points the Worker at, that the deployment does not

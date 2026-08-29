@@ -24,6 +24,16 @@ export const DEFAULT_WARN_DAYS = 60;
 export const WARN_DAYS_ENV = "KEY_EXPIRY_WARN_DAYS";
 
 /**
+ * Rotation procedure the report links to.
+ *
+ * Absolute rather than repo-relative: the report is rendered into GitHub issue
+ * bodies and job summaries, and a relative path resolves against the issue or
+ * run URL there rather than against the repository.
+ */
+export const KEY_ROTATION_DOCS_URL =
+	"https://github.com/kjanat/gpg-signing-service/blob/master/docs/self-hosting.md#key-rotation";
+
+/**
  * Outcome of inspecting one key.
  *
  * `missing` is not an expiry state as such — it marks a key that
@@ -31,12 +41,13 @@ export const WARN_DAYS_ENV = "KEY_EXPIRY_WARN_DAYS";
  * kind of "signing is about to break" news as an expiry and belongs in the same
  * report.
  */
-export type KeyExpiryState = "ok" | "warning" | "expired" | "no-expiry" | "unknown" | "missing";
+export type KeyExpiryState = "ok" | "warning" | "expired" | "revoked" | "no-expiry" | "unknown" | "missing";
 
 /** States that mean a human has to do something */
 const ACTIONABLE_STATES: ReadonlySet<KeyExpiryState> = new Set<KeyExpiryState>([
 	"warning",
 	"expired",
+	"revoked",
 	"unknown",
 	"missing",
 ]);
@@ -46,6 +57,12 @@ export type KeyExpiry =
 	| { kind: "date"; expiresAt: Date }
 	/** The key carries no expiration date and never lapses */
 	| { kind: "never" }
+	/**
+	 * The key is revoked. Revocation is not expiry, but it stops verifiers
+	 * accepting the signature just as completely, and an unexpired revoked key
+	 * would otherwise be reported as healthy.
+	 */
+	| { kind: "revoked" }
 	/** The key material parsed but its expiry could not be established */
 	| { kind: "unknown"; reason: string };
 
@@ -119,6 +136,11 @@ export async function pgpKeyExpiry(armoredKey: string): Promise<KeyExpiry> {
 		return { kind: "unknown", reason: `could not read PGP key: ${String(error)}` };
 	}
 
+	// `getExpirationTime()` reads the self-signature's expiration subpacket and
+	// says nothing about revocation, so a revoked key that has not yet reached
+	// its expiry date would otherwise be reported as `ok`.
+	if (await key.isRevoked()) return { kind: "revoked" };
+
 	const primary = await key.getExpirationTime();
 
 	let signing: OpenPgpExpiration = primary;
@@ -140,13 +162,14 @@ export type OpenPgpExpiration = Date | typeof Infinity | null;
  * Reduce a primary key's and its signing key's expirations to one verdict.
  *
  * Split out from {@link pgpKeyExpiry} because openpgp's `null` — no valid
- * self-certification, so the key is revoked or malformed — cannot be produced
- * by any key it will also read back, and a rule this consequential should be
- * asserted directly rather than left to a case no fixture can reach.
+ * self-certification, so the key is malformed — cannot be produced by any key
+ * it will also read back, and a rule this consequential should be asserted
+ * directly rather than left to a case no fixture can reach. Revocation is
+ * handled before this point, by {@link pgpKeyExpiry}.
  */
 export function effectiveExpiry(primary: OpenPgpExpiration, signing: OpenPgpExpiration): KeyExpiry {
 	if (primary === null) {
-		return { kind: "unknown", reason: "PGP primary key has no valid self-certification (revoked or malformed)" };
+		return { kind: "unknown", reason: "PGP primary key has no valid self-certification (malformed)" };
 	}
 
 	const effective = earlier(primary, signing ?? primary);
@@ -186,6 +209,9 @@ export function classifyExpiry(keyId: string, expiry: KeyExpiry, now: Date, warn
 	if (expiry.kind === "never") {
 		return { keyId, state: "no-expiry", expiresAt: null, daysRemaining: null };
 	}
+	if (expiry.kind === "revoked") {
+		return { keyId, state: "revoked", expiresAt: null, daysRemaining: null, detail: "key is revoked" };
+	}
 	if (expiry.kind === "unknown") {
 		return { keyId, state: "unknown", expiresAt: null, daysRemaining: null, detail: expiry.reason };
 	}
@@ -221,6 +247,7 @@ const STATE_LABELS: Record<KeyExpiryState, string> = {
 	ok: "✅ ok",
 	warning: "⚠️ expiring",
 	expired: "🚨 expired",
+	revoked: "🚨 revoked",
 	"no-expiry": "♾️ no expiry",
 	unknown: "❓ unknown",
 	missing: "🚨 missing",
@@ -275,7 +302,7 @@ export function renderReport(rows: readonly KeyExpiryRow[], context: ReportConte
 			const detail = row.detail ? ` — ${row.detail}` : "";
 			lines.push(`- \`${row.keyId}\`: ${STATE_LABELS[row.state]} (${describeRemaining(row)})${detail}`);
 		}
-		lines.push("", "Rotate or extend the affected keys — see [Key rotation](docs/self-hosting.md#key-rotation).");
+		lines.push("", `Rotate or extend the affected keys — see [Key rotation](${KEY_ROTATION_DOCS_URL}).`);
 	}
 
 	return `${lines.join("\n")}\n`;
