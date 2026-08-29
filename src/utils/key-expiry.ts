@@ -332,11 +332,13 @@ export type KeyExpiry =
 	/** The key carries no expiration date and never lapses */
 	| { kind: "never" }
 	/**
-	 * The key is revoked. Revocation is not expiry, but it stops verifiers
-	 * accepting the signature just as completely, and an unexpired revoked key
-	 * would otherwise be reported as healthy.
+	 * The key is revoked, or every subkey it could sign with is. Revocation is
+	 * not expiry, but it stops verifiers accepting the signature just as
+	 * completely, and an unexpired revoked key would otherwise be reported as
+	 * healthy. `detail` names the revoked subkeys when the primary key itself is
+	 * intact, because those two need different fixes.
 	 */
-	| { kind: "revoked" }
+	| { kind: "revoked"; detail?: string }
 	/** The key material parsed but its expiry could not be established */
 	| { kind: "unknown"; reason: string };
 
@@ -355,11 +357,22 @@ export interface KeyExpiryRow {
 /**
  * Effective expiry of an armored PGP public key.
  *
- * A commit is signed by the key's signing (sub)key, which can lapse before the
- * primary key does, so the effective expiry is the earlier of the two. The
- * signing key is looked up with `date: null` to switch off openpgp's validity
- * filtering — an already-expired signing key still has to appear in the report,
- * and the default lookup would refuse to return it.
+ * A commit is signed by the key's signing subkey, not by its primary key, so
+ * the question this answers is about the subkeys — with the primary key's own
+ * lifetime as a cap, since nothing outlives the key that certifies it.
+ *
+ * Asking openpgp for `getSigningKey()` and reading that one key's expiry is not
+ * enough, and the failure is silent in the worst direction. That call returns
+ * the *first acceptable* key: it skips a revoked subkey and falls back to the
+ * next one, or to the primary key, which openpgp's own generator always marks
+ * signing-capable. A deployment whose only signing subkey has been revoked
+ * therefore reports its primary key's distant expiry and reads as `ok`, which
+ * is precisely the state a revocation monitor exists to catch (#90).
+ *
+ * So the signing-capable subkeys are enumerated explicitly and reduced by
+ * {@link signingSubkeyExpiry}. Every check runs with `date: null` to switch off
+ * openpgp's validity filtering — an already-expired signing subkey still has to
+ * reach the report, and the default lookup would refuse to return it.
  */
 export async function pgpKeyExpiry(armoredKey: string): Promise<KeyExpiry> {
 	let key: openpgp.Key;
@@ -371,34 +384,189 @@ export async function pgpKeyExpiry(armoredKey: string): Promise<KeyExpiry> {
 
 	// `getExpirationTime()` reads the self-signature's expiration subpacket and
 	// says nothing about revocation, so a revoked key that has not yet reached
-	// its expiry date would otherwise be reported as `ok`.
+	// its expiry date would otherwise be reported as `ok`. Checked first: a
+	// revoked primary key takes every subkey down with it, so which subkey would
+	// have signed stops mattering.
 	if (await key.isRevoked()) return { kind: "revoked" };
 
-	const primary = await key.getExpirationTime();
-
-	let signing: OpenPgpExpiration = primary;
-	try {
-		const signingKey = await key.getSigningKey(undefined, null);
-		if (signingKey !== key) signing = await signingKey.getExpirationTime();
-	} catch {
-		// No signing-capable (sub)key at all; the primary key's expiry is still
-		// worth reporting, so fall through rather than failing the whole check.
-	}
-
-	return effectiveExpiry(primary, signing);
+	return signingSubkeyExpiry(await key.getExpirationTime(), await collectSigningSubkeys(key));
 }
 
 /** What openpgp's `getExpirationTime()` can hand back */
 export type OpenPgpExpiration = Date | typeof Infinity | null;
 
 /**
+ * One signing-capable subkey, reduced to what the verdict depends on.
+ *
+ * `revoked` and `usable` are separate because they need different words in the
+ * report: a revoked subkey is a decision someone made, while a subkey openpgp
+ * declines for any other reason — a broken binding, a missing embedded
+ * cross-signature — is material that never worked. `revoked` implies `!usable`.
+ */
+export interface SigningSubkey {
+	/** Long key id, lowercase hex, so the report can name the subkey at fault */
+	keyId: string;
+	/** A verified revocation signature covers this subkey */
+	revoked: boolean;
+	/** openpgp would select it for signing, with date checks switched off */
+	usable: boolean;
+	/** Its own expiration, before the primary key's lifetime caps it */
+	expiresAt: OpenPgpExpiration;
+}
+
+/**
+ * Reduce a primary key and its signing subkeys to one verdict.
+ *
+ * The rule is about the *usable* set, not about history. Revoking a subkey is
+ * routine key hygiene — it is what rotation looks like — so "some signing
+ * subkey was once revoked" is not news and a monitor that says it is gets
+ * muted. What is news is that nothing is left to sign with:
+ *
+ * 1. **No signing subkey at all.** The primary key signs directly, so its own
+ *    expiry is the whole answer. This is the shape openpgp's generator produces
+ *    unless a signing subkey is asked for.
+ * 2. **At least one usable signing subkey.** Signing works, and keeps working
+ *    until the last of them lapses — so the *latest* usable expiry is the date
+ *    signing breaks, capped by the primary key's. Taking the earliest instead
+ *    would warn about an outage that a valid replacement subkey already
+ *    prevents, which is the false positive that trains people to ignore this.
+ * 3. **None usable.** Signing is already broken. Reported as revoked when a
+ *    revocation is why, and as unknown when the subkeys are unusable for some
+ *    other reason, because those two need opposite fixes.
+ *
+ * Note what case 3 deliberately does *not* do: fall back to the primary key.
+ * openpgp would, whenever the primary carries the sign flag, and the resulting
+ * signature is made by different key material than the operator configured —
+ * a change worth hearing about, not one worth laundering into an `ok` row.
+ *
+ * Split out as a pure function for the same reason as {@link effectiveExpiry}:
+ * the sets that matter here are awkward to conjure out of real key material,
+ * and a rule this consequential should be assertable directly.
+ */
+export function signingSubkeyExpiry(primary: OpenPgpExpiration, signingSubkeys: readonly SigningSubkey[]): KeyExpiry {
+	if (primary === null) {
+		return { kind: "unknown", reason: "PGP primary key has no valid self-certification (malformed)" };
+	}
+
+	if (signingSubkeys.length === 0) return effectiveExpiry(primary, primary);
+
+	const usable = signingSubkeys.filter((subkey) => subkey.usable);
+	if (usable.length === 0) return noUsableSigningSubkey(signingSubkeys);
+
+	// A subkey whose binding yields no verdict (`null`) is treated as lasting as
+	// long as the primary key: openpgp accepted it for signing, so the report
+	// should not invent an outage the key material does not claim.
+	let latest = usable[0]?.expiresAt ?? primary;
+	for (const subkey of usable.slice(1)) latest = later(latest, subkey.expiresAt ?? primary);
+
+	return effectiveExpiry(primary, latest);
+}
+
+/** Verdict for a key whose every signing subkey is unusable */
+function noUsableSigningSubkey(signingSubkeys: readonly SigningSubkey[]): KeyExpiry {
+	const revoked = signingSubkeys.filter((subkey) => subkey.revoked).map((subkey) => subkey.keyId);
+	const listed = (keyIds: readonly string[]) => keyIds.join(", ");
+
+	// Revocation wins the wording even when other subkeys failed for other
+	// reasons: it is the one cause that names a decision someone can undo or
+	// replace, and it is what the operator needs to read first.
+	if (revoked.length > 0) {
+		return {
+			kind: "revoked",
+			detail: `no usable signing subkey — ${plural(revoked.length, "signing subkey")} revoked (${listed(revoked)})`,
+		};
+	}
+
+	return {
+		kind: "unknown",
+		reason: `no usable signing subkey: openpgp will not sign with ${listed(signingSubkeys.map((s) => s.keyId))}`,
+	};
+}
+
+/**
+ * openpgp's key flag for "may sign data", which is what makes a subkey part of
+ * the signing set rather than an encryption or authentication subkey.
+ */
+const SIGN_DATA_FLAG = openpgp.enums.keyFlags.signData;
+
+/**
+ * openpgp's typings accept `date: null` — "ignore dates" — only on
+ * `getSigningKey`, but the implementation honours it on `Subkey` too, and this
+ * module depends on that: an expired signing subkey has to stay visible instead
+ * of vanishing from the set it is supposed to be reported in. Narrowed once
+ * here rather than cast at each call site.
+ */
+interface DatelessSubkey {
+	isRevoked(signature?: undefined, key?: undefined, date?: Date | null): Promise<boolean>;
+	getExpirationTime(date?: Date | null): Promise<OpenPgpExpiration>;
+}
+
+/** Enumerate the signing-capable subkeys and how the sign path sees each one */
+async function collectSigningSubkeys(key: openpgp.Key): Promise<SigningSubkey[]> {
+	const signingSubkeys: SigningSubkey[] = [];
+
+	for (const subkey of key.getSubkeys()) {
+		if (!bindsSigningCapability(subkey)) continue;
+
+		const dateless = subkey as unknown as DatelessSubkey;
+		const revoked = await dateless.isRevoked(undefined, undefined, null).catch(() => false);
+
+		signingSubkeys.push({
+			keyId: subkey.getKeyID().toHex(),
+			revoked,
+			// openpgp's own selection rules decide usability, pinned to this one
+			// subkey so the answer cannot come from a different key: pinning stops
+			// the fallback that made a revoked subkey invisible in the first place.
+			usable: !revoked && (await canSign(key, subkey)),
+			expiresAt: await dateless.getExpirationTime(null),
+		});
+	}
+
+	return signingSubkeys;
+}
+
+/** Would openpgp sign with exactly this subkey, dates aside? */
+async function canSign(key: openpgp.Key, subkey: openpgp.Subkey): Promise<boolean> {
+	try {
+		await key.getSigningKey(subkey.getKeyID(), null);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Does this subkey's binding say it may sign?
+ *
+ * The newest binding signature decides, not any of them: a subkey re-bound
+ * without the sign flag has left the signing set, and reading every binding
+ * would keep it there forever — and keep its revocation raising alarms about a
+ * signing path that no longer exists.
+ */
+function bindsSigningCapability(subkey: openpgp.Subkey): boolean {
+	const binding = newestSignature(subkey.bindingSignatures);
+	return ((binding?.keyFlags?.[0] ?? 0) & SIGN_DATA_FLAG) !== 0;
+}
+
+/** Latest-created signature, mirroring how openpgp picks among self-signatures */
+function newestSignature(signatures: readonly openpgp.SignaturePacket[]): openpgp.SignaturePacket | undefined {
+	const createdAt = (signature: openpgp.SignaturePacket) => signature.created?.getTime() ?? 0;
+
+	return signatures.reduce<openpgp.SignaturePacket | undefined>(
+		(newest, signature) => (newest === undefined || createdAt(signature) >= createdAt(newest) ? signature : newest),
+		undefined,
+	);
+}
+
+/**
  * Reduce a primary key's and its signing key's expirations to one verdict.
  *
- * Split out from {@link pgpKeyExpiry} because openpgp's `null` — no valid
- * self-certification, so the key is malformed — cannot be produced by any key
- * it will also read back, and a rule this consequential should be asserted
+ * Split out from {@link signingSubkeyExpiry} because openpgp's `null` — no
+ * valid self-certification, so the key is malformed — cannot be produced by any
+ * key it will also read back, and a rule this consequential should be asserted
  * directly rather than left to a case no fixture can reach. Revocation is
- * handled before this point, by {@link pgpKeyExpiry}.
+ * handled before this point, by {@link pgpKeyExpiry} and
+ * {@link signingSubkeyExpiry}.
  */
 export function effectiveExpiry(primary: OpenPgpExpiration, signing: OpenPgpExpiration): KeyExpiry {
 	if (primary === null) {
@@ -443,7 +611,7 @@ export function classifyExpiry(keyId: string, expiry: KeyExpiry, now: Date, warn
 		return { keyId, state: "no-expiry", expiresAt: null, daysRemaining: null };
 	}
 	if (expiry.kind === "revoked") {
-		return { keyId, state: "revoked", expiresAt: null, daysRemaining: null, detail: "key is revoked" };
+		return { keyId, state: "revoked", expiresAt: null, daysRemaining: null, detail: expiry.detail ?? "key is revoked" };
 	}
 	if (expiry.kind === "unknown") {
 		return { keyId, state: "unknown", expiresAt: null, daysRemaining: null, detail: expiry.reason };
@@ -676,4 +844,10 @@ function earlier(a: Date | typeof Infinity, b: Date | typeof Infinity): Date | t
 	if (neverExpires(a)) return b;
 	if (neverExpires(b)) return a;
 	return a.getTime() <= b.getTime() ? a : b;
+}
+
+/** Later of two openpgp expiry values, where `Infinity` outlasts every date */
+function later(a: Date | typeof Infinity, b: Date | typeof Infinity): Date | typeof Infinity {
+	if (neverExpires(a) || neverExpires(b)) return Infinity;
+	return a.getTime() >= b.getTime() ? a : b;
 }

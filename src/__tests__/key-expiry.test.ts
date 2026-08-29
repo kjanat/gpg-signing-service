@@ -21,6 +21,8 @@ import {
 	type ReportContext,
 	renderReport,
 	resolveActiveKeys,
+	type SigningSubkey,
+	signingSubkeyExpiry,
 	x509CertificateExpiry,
 } from "#utils/key-expiry";
 import realWranglerToml from "../../wrangler.toml?raw";
@@ -543,6 +545,274 @@ describe("pgpKeyExpiry", () => {
 		);
 		expect(expiry).toMatchObject({ kind: "unknown" });
 		if (expiry.kind === "unknown") expect(expiry.reason).toMatch(/could not read PGP key/);
+	});
+});
+
+describe("pgpKeyExpiry with revoked signing subkeys", () => {
+	const DAY_SECONDS = 24 * 60 * 60;
+
+	/**
+	 * Real key material with some of its signing subkeys revoked.
+	 *
+	 * openpgp has no "generate this already revoked" switch, so the subkey is
+	 * revoked afterwards and swapped back into the key — which is what applying a
+	 * revocation certificate does to the published key in the first place.
+	 *
+	 * The primary key openpgp generates always carries the sign flag, so every
+	 * fixture here is one where `getSigningKey()` *can* fall back to the primary
+	 * key. That is the point: the fallback is what used to hide the revocation.
+	 */
+	async function keyWithRevokedSubkeys(
+		primaryDays: number,
+		subkeys: openpgp.SubkeyOptions[],
+		revokeIndices: readonly number[],
+	): Promise<string> {
+		const { privateKey } = await openpgp.generateKey({
+			type: "ecc",
+			curve: "ed25519Legacy",
+			userIDs: [{ name: "Rotating", email: "rotating@test.com" }],
+			keyExpirationTime: primaryDays * DAY_SECONDS,
+			subkeys,
+			format: "object",
+		});
+
+		for (const index of revokeIndices) {
+			const subkey = privateKey.subkeys[index];
+			if (!subkey) throw new Error(`fixture has no subkey at index ${index}`);
+			privateKey.subkeys[index] = await subkey.revoke(privateKey.keyPacket as openpgp.SecretKeyPacket);
+		}
+
+		return privateKey.toPublic().armor();
+	}
+
+	/** Days from the key's own creation, which is "now" for a freshly generated key */
+	async function daysFromCreation(armoredKey: string, expiresAt: Date): Promise<number> {
+		const key = await openpgp.readKey({ armoredKey });
+		return Math.round((expiresAt.getTime() - key.getCreationTime().getTime()) / DAY_MS);
+	}
+
+	it("does not report a key whose only signing subkey is revoked as ok", async () => {
+		// The regression from #90: openpgp skips the revoked subkey and hands back
+		// the primary key instead, whose far-off expiry reads as perfectly healthy.
+		const armored = await keyWithRevokedSubkeys(400, [{ sign: true, keyExpirationTime: 300 * DAY_SECONDS }, {}], [0]);
+
+		const expiry = await pgpKeyExpiry(armored);
+		expect(expiry.kind).toBe("revoked");
+		if (expiry.kind !== "revoked") return;
+		expect(expiry.detail).toMatch(/no usable signing subkey/);
+
+		const row = classifyExpiry(PRODUCTION_KEY_ID, expiry, NOW, 60);
+		expect(row.state).toBe("revoked");
+		expect(actionableRows([row])).toHaveLength(1);
+	});
+
+	it("names the revoked subkey so the report says which one to replace", async () => {
+		const armored = await keyWithRevokedSubkeys(400, [{ sign: true }, {}], [0]);
+		const key = await openpgp.readKey({ armoredKey: armored });
+		const revokedId = key.subkeys[0]?.getKeyID().toHex();
+
+		const expiry = await pgpKeyExpiry(armored);
+		expect(expiry.kind).toBe("revoked");
+		if (expiry.kind !== "revoked") return;
+		expect(revokedId).toBeDefined();
+		expect(expiry.detail).toContain(revokedId);
+	});
+
+	it("stays healthy when a valid replacement signing subkey remains", async () => {
+		// Rotation: the old signing subkey is revoked and a new one takes over.
+		// Signing still works, so warning here would be a pure false positive.
+		const armored = await keyWithRevokedSubkeys(
+			400,
+			[{ sign: true, keyExpirationTime: 300 * DAY_SECONDS }, { sign: true, keyExpirationTime: 200 * DAY_SECONDS }, {}],
+			[0],
+		);
+
+		const expiry = await pgpKeyExpiry(armored);
+		expect(expiry.kind).toBe("date");
+		if (expiry.kind !== "date") return;
+
+		// The replacement's own 200 days, not the revoked subkey's 300 and not the
+		// primary key's 400.
+		expect(await daysFromCreation(armored, expiry.expiresAt)).toBe(200);
+		expect(classifyExpiry(PRODUCTION_KEY_ID, expiry, NOW, 60).state).toBe("ok");
+	});
+
+	it("counts the longest-lived usable subkey when several can sign", async () => {
+		// Signing keeps working until the last usable subkey lapses, so the one
+		// that expires in 30 days is not an outage while another covers 400.
+		const armored = await keyWithRevokedSubkeys(
+			500,
+			[{ sign: true, keyExpirationTime: 30 * DAY_SECONDS }, { sign: true, keyExpirationTime: 400 * DAY_SECONDS }, {}],
+			[],
+		);
+
+		const expiry = await pgpKeyExpiry(armored);
+		expect(expiry.kind).toBe("date");
+		if (expiry.kind !== "date") return;
+
+		expect(await daysFromCreation(armored, expiry.expiresAt)).toBe(400);
+		expect(classifyExpiry(PRODUCTION_KEY_ID, expiry, NOW, 60).state).toBe("ok");
+	});
+
+	it("still warns when every usable signing subkey is inside the window", async () => {
+		const armored = await keyWithRevokedSubkeys(
+			500,
+			[{ sign: true, keyExpirationTime: 400 * DAY_SECONDS }, { sign: true, keyExpirationTime: 30 * DAY_SECONDS }, {}],
+			[0],
+		);
+
+		const expiry = await pgpKeyExpiry(armored);
+		expect(expiry.kind).toBe("date");
+		if (expiry.kind !== "date") return;
+
+		expect(await daysFromCreation(armored, expiry.expiresAt)).toBe(30);
+		expect(classifyExpiry(PRODUCTION_KEY_ID, expiry, NOW, 60).state).toBe("warning");
+	});
+
+	it("keeps the primary key's expiry as a cap on its subkeys", async () => {
+		// A subkey cannot outlive the key that binds it, so a 30-day primary key
+		// ends signing regardless of what the usable subkey claims.
+		const armored = await keyWithRevokedSubkeys(30, [{ sign: true, keyExpirationTime: 400 * DAY_SECONDS }, {}], []);
+
+		const expiry = await pgpKeyExpiry(armored);
+		expect(expiry.kind).toBe("date");
+		if (expiry.kind !== "date") return;
+
+		expect(await daysFromCreation(armored, expiry.expiresAt)).toBe(30);
+	});
+
+	it("ignores a revoked encryption subkey, which never signed anything", async () => {
+		// Revoking the encryption subkey has nothing to do with signing, and a
+		// monitor that raises an outage for it is one nobody will read twice.
+		const armored = await keyWithRevokedSubkeys(400, [{ sign: true, keyExpirationTime: 300 * DAY_SECONDS }, {}], [1]);
+
+		const expiry = await pgpKeyExpiry(armored);
+		expect(expiry.kind).toBe("date");
+		if (expiry.kind !== "date") return;
+
+		expect(await daysFromCreation(armored, expiry.expiresAt)).toBe(300);
+		expect(classifyExpiry(PRODUCTION_KEY_ID, expiry, NOW, 60).state).toBe("ok");
+	});
+
+	it("reports a revoked primary key before looking at its subkeys", async () => {
+		// The existing #86 path, re-asserted against a key that also has a
+		// perfectly usable signing subkey: a revoked primary takes it down too.
+		const { privateKey, revocationCertificate } = await openpgp.generateKey({
+			type: "ecc",
+			curve: "ed25519Legacy",
+			userIDs: [{ name: "Dead", email: "dead@test.com" }],
+			keyExpirationTime: 400 * DAY_SECONDS,
+			subkeys: [{ sign: true, keyExpirationTime: 300 * DAY_SECONDS }, {}],
+			format: "object",
+		});
+		const revoked = await openpgp.revokeKey({ key: privateKey, revocationCertificate, format: "object" });
+
+		const expiry = await pgpKeyExpiry(revoked.publicKey.armor());
+		expect(expiry).toEqual({ kind: "revoked" });
+		expect(classifyExpiry(PRODUCTION_KEY_ID, expiry, NOW, 60).detail).toBe("key is revoked");
+	});
+
+	it("keeps an expired signing subkey visible instead of dropping it", async () => {
+		// Date checks are switched off while the set is collected, so a lapsed
+		// signing subkey is still reported rather than silently skipped in favour
+		// of the primary key.
+		const { privateKey } = await openpgp.generateKey({
+			type: "ecc",
+			curve: "ed25519Legacy",
+			userIDs: [{ name: "Lapsed sub", email: "lapsedsub@test.com" }],
+			date: new Date(NOW.getTime() - 400 * DAY_MS),
+			keyExpirationTime: 800 * DAY_SECONDS,
+			subkeys: [{ sign: true, keyExpirationTime: 30 * DAY_SECONDS }, {}],
+			format: "object",
+		});
+
+		const expiry = await pgpKeyExpiry(privateKey.toPublic().armor());
+		expect(expiry.kind).toBe("date");
+		expect(classifyExpiry(PRODUCTION_KEY_ID, expiry, NOW, 60).state).toBe("expired");
+	});
+});
+
+describe("signingSubkeyExpiry", () => {
+	const soon = fromNow(30);
+	const late = fromNow(400);
+
+	function subkey(overrides: Partial<SigningSubkey> = {}): SigningSubkey {
+		return { keyId: "aaaaaaaaaaaaaaaa", revoked: false, usable: true, expiresAt: soon, ...overrides };
+	}
+
+	it("reports a malformed primary key as unknown, subkeys or not", () => {
+		expect(signingSubkeyExpiry(null, [subkey()])).toMatchObject({ kind: "unknown" });
+		expect(signingSubkeyExpiry(null, [])).toMatchObject({ kind: "unknown" });
+	});
+
+	it("falls back to the primary key when nothing signs but it", () => {
+		expect(signingSubkeyExpiry(soon, [])).toEqual({ kind: "date", expiresAt: soon });
+		expect(signingSubkeyExpiry(Infinity, [])).toEqual({ kind: "never" });
+	});
+
+	it("takes the longest-lived usable subkey, not the first or the shortest", () => {
+		const set = [subkey({ keyId: "short", expiresAt: soon }), subkey({ keyId: "long", expiresAt: late })];
+		expect(signingSubkeyExpiry(Infinity, set)).toEqual({ kind: "date", expiresAt: late });
+	});
+
+	it("caps the usable set at the primary key's own expiry", () => {
+		expect(signingSubkeyExpiry(soon, [subkey({ expiresAt: late })])).toEqual({ kind: "date", expiresAt: soon });
+		expect(signingSubkeyExpiry(soon, [subkey({ expiresAt: Infinity })])).toEqual({ kind: "date", expiresAt: soon });
+	});
+
+	it("never expires only when neither the primary key nor a usable subkey does", () => {
+		expect(signingSubkeyExpiry(Infinity, [subkey({ expiresAt: Infinity })])).toEqual({ kind: "never" });
+		expect(signingSubkeyExpiry(Infinity, [subkey({ expiresAt: soon }), subkey({ expiresAt: Infinity })])).toEqual({
+			kind: "never",
+		});
+	});
+
+	it("ignores revoked and unusable subkeys when a usable one remains", () => {
+		const set = [
+			subkey({ keyId: "revoked", revoked: true, usable: false, expiresAt: late }),
+			subkey({ keyId: "broken", usable: false, expiresAt: late }),
+			subkey({ keyId: "live", expiresAt: soon }),
+		];
+		expect(signingSubkeyExpiry(late, set)).toEqual({ kind: "date", expiresAt: soon });
+	});
+
+	it("reports revocation when no usable signing subkey is left", () => {
+		const set = [subkey({ keyId: "dead", revoked: true, usable: false })];
+		expect(signingSubkeyExpiry(late, set)).toEqual({
+			kind: "revoked",
+			detail: "no usable signing subkey — 1 signing subkey revoked (dead)",
+		});
+	});
+
+	it("names every revoked subkey, pluralised", () => {
+		const set = [
+			subkey({ keyId: "one", revoked: true, usable: false }),
+			subkey({ keyId: "two", revoked: true, usable: false }),
+		];
+		expect(signingSubkeyExpiry(late, set)).toMatchObject({
+			detail: "no usable signing subkey — 2 signing subkeys revoked (one, two)",
+		});
+	});
+
+	it("leads with revocation even when other subkeys failed for other reasons", () => {
+		const set = [subkey({ keyId: "broken", usable: false }), subkey({ keyId: "dead", revoked: true, usable: false })];
+		expect(signingSubkeyExpiry(late, set)).toMatchObject({ kind: "revoked", detail: expect.stringContaining("dead") });
+	});
+
+	it("reports unusable-but-unrevoked signing subkeys as unknown, not revoked", () => {
+		// Different cause, different fix: nothing was revoked here, the material
+		// itself is broken, and calling that a revocation sends the wrong person
+		// looking for the wrong certificate.
+		const set = [subkey({ keyId: "broken", usable: false }), subkey({ keyId: "alsobroken", usable: false })];
+		expect(signingSubkeyExpiry(late, set)).toEqual({
+			kind: "unknown",
+			reason: "no usable signing subkey: openpgp will not sign with broken, alsobroken",
+		});
+	});
+
+	it("treats a usable subkey with no verdict as lasting as long as the primary key", () => {
+		expect(signingSubkeyExpiry(soon, [subkey({ expiresAt: null })])).toEqual({ kind: "date", expiresAt: soon });
+		expect(signingSubkeyExpiry(Infinity, [subkey({ expiresAt: null })])).toEqual({ kind: "never" });
 	});
 });
 
