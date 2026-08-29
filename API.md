@@ -168,6 +168,12 @@ Health check for all service dependencies.
 }
 ```
 
+This 503 is a `HealthResponse`, **not an error envelope**: it carries no `code`
+and therefore no `docs`. It reports that a dependency check failed, rather than
+refusing the request you made. `/health` is the only route that answers this
+way — everywhere else a `4xx`/`5xx` JSON body has a `code`. See
+[the error reference](docs/errors.md#the-one-response-that-is-not-an-envelope).
+
 ---
 
 #### GET /public-key
@@ -195,8 +201,14 @@ xjMEZbI4sRYJKwYBBAHaM...
 **Error** (404):
 
 ```json
-{ "error": "Key not found", "code": "KEY_NOT_FOUND" }
+{
+  "error": "Key not found",
+  "code": "KEY_NOT_FOUND",
+  "docs": "https://gpg.kajkowalski.nl/e/KEY_NOT_FOUND"
+}
 ```
+
+No `requestId` in the body on this route; read `X-Request-ID` from the headers.
 
 ---
 
@@ -249,7 +261,8 @@ wpYEAREBAgAGBQJlsji1AAoJEP...
 {
   "error": "No commit data provided",
   "code": "INVALID_REQUEST",
-  "requestId": "550e8400-e29b-41d4-a716-446655440000"
+  "requestId": "550e8400-e29b-41d4-a716-446655440000",
+  "docs": "https://gpg.kajkowalski.nl/e/INVALID_REQUEST"
 }
 ```
 
@@ -269,7 +282,28 @@ wpYEAREBAgAGBQJlsji1AAoJEP...
 **Error** (429 - Rate limited):
 
 ```json
-{ "error": "Rate limit exceeded", "code": "RATE_LIMITED", "retryAfter": 45 }
+{
+  "error": "Rate limit exceeded",
+  "code": "RATE_LIMITED",
+  "retryAfter": 45,
+  "docs": "https://gpg.kajkowalski.nl/e/RATE_LIMITED"
+}
+```
+
+A `429` body carries `retryAfter` and **never a `requestId`** — take the id from
+the `X-Request-ID` response header, which is set on every response. The wait
+hint is in the body only: this service sends no `Retry-After` header on a `429`,
+just `X-RateLimit-Remaining` and `X-RateLimit-Reset`.
+
+**Error** (403 - Key outside this credential's grant):
+
+```json
+{
+  "error": "Token is not allowed to sign with key 62E75E54497815DD",
+  "code": "KEY_NOT_ALLOWED",
+  "requestId": "550e8400-e29b-41d4-a716-446655440000",
+  "docs": "https://gpg.kajkowalski.nl/e/KEY_NOT_ALLOWED"
+}
 ```
 
 **Example Usage**:
@@ -331,7 +365,11 @@ Upload a new signing key.
 **Error** (400 - Validation):
 
 ```json
-{ "error": "Missing armoredPrivateKey or keyId", "code": "INVALID_REQUEST" }
+{
+  "error": "Missing armoredPrivateKey or keyId",
+  "code": "INVALID_REQUEST",
+  "docs": "https://gpg.kajkowalski.nl/e/INVALID_REQUEST"
+}
 ```
 
 **Error** (500 - Processing):
@@ -340,7 +378,8 @@ Upload a new signing key.
 {
   "error": "Invalid key format",
   "code": "KEY_UPLOAD_ERROR",
-  "requestId": "550e8400-e29b-41d4-a716-446655440000"
+  "requestId": "550e8400-e29b-41d4-a716-446655440000",
+  "docs": "https://gpg.kajkowalski.nl/e/KEY_UPLOAD_ERROR"
 }
 ```
 
@@ -398,7 +437,11 @@ Content-Type: application/pgp-keys
 **Error** (404 - Not found):
 
 ```json
-{ "error": "Key not found", "code": "KEY_NOT_FOUND" }
+{
+  "error": "Key not found",
+  "code": "KEY_NOT_FOUND",
+  "docs": "https://gpg.kajkowalski.nl/e/KEY_NOT_FOUND"
+}
 ```
 
 ---
@@ -494,17 +537,25 @@ curl "https://gpg.kajkowalski.nl/admin/audit?limit=50&offset=0" \
 
 ## Error Codes Reference
 
-Every error body carries a `docs` field of the form `<service>/e/<CODE>`, which
-redirects to that code's section in the
+Every **coded** error body carries a `docs` field of the form
+`<service>/e/<CODE>`, which redirects to that code's section in the
 [error reference](docs/errors.md). Most also carry a `hint` naming what to
-change; `401`s carry the `subject` that was presented.
+change; `401`s carry the `subject` that was presented; most, but not all, carry
+a `requestId` — the `X-Request-ID` response header always does. A `400` raised
+by a route's request schema also carries `issues`, one entry per field that
+failed validation; see [`INVALID_REQUEST`](docs/errors.md#invalid_request).
+
+The one non-2xx JSON body without a `code` is the degraded
+[`GET /health`](#get-health) 503, which is a `HealthResponse` rather than an
+error envelope and therefore has no `docs` either.
 
 | Code                     | HTTP  | Description                                                           |
 | ------------------------ | ----- | --------------------------------------------------------------------- |
 | `AUTH_MISSING`           | `401` | Authorization header not provided                                     |
 | `AUTH_INVALID`           | `401` | A credential was presented and the credential was refused             |
-| `AUTH_SUBJECT_UNTRUSTED` | `401` | The credential verified; the identity holds no active trust rule      |
+| `AUTH_SUBJECT_UNTRUSTED` | `401` | The OIDC identity verified; it holds no active trust rule             |
 | `KEY_NOT_FOUND`          | `404` | Requested key does not exist                                          |
+| `KEY_NOT_ALLOWED`        | `403` | Credential is trusted; its grant does not cover this key              |
 | `KEY_PROCESSING_ERROR`   | `500` | Error processing key data (extraction, parsing)                       |
 | `KEY_LIST_ERROR`         | `500` | Error retrieving list of keys                                         |
 | `KEY_UPLOAD_ERROR`       | `500` | Error uploading or storing new key                                    |
@@ -518,6 +569,11 @@ change; `401`s carry the `subject` that was presented.
 | `INTERNAL_ERROR`         | `500` | Unexpected server error                                               |
 | `SERVICE_DEGRADED`       | `503` | A dependency was unreachable; the request was never judged            |
 | `SERVICE_MISCONFIGURED`  | `500` | The deployment's own configuration stopped it; retrying will not help |
+
+Two of these are `503` and only one of them carries a `Retry-After`
+(`SERVICE_DEGRADED`), so a client deciding whether to wait must read the `code`
+rather than the status. `SERVICE_MISCONFIGURED` is the one `5xx` that is never
+worth retrying.
 
 ---
 
@@ -552,7 +608,12 @@ All responses include rate limit information:
 When rate limited (HTTP 429):
 
 ```json
-{ "error": "Rate limit exceeded", "code": "RATE_LIMITED", "retryAfter": 45 }
+{
+  "error": "Rate limit exceeded",
+  "code": "RATE_LIMITED",
+  "retryAfter": 45,
+  "docs": "https://gpg.kajkowalski.nl/e/RATE_LIMITED"
+}
 ```
 
 Implementation:

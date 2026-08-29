@@ -2,7 +2,8 @@
 
 ## Start with the error itself
 
-Every error the service returns names its own documentation:
+Every error the service returns names its own documentation, provided it carries
+a `code`:
 
 ```json
 {
@@ -15,8 +16,12 @@ Every error the service returns names its own documentation:
 
 Open the `docs` link, or look the `code` up in the
 [error reference](errors.md) — every code has a section there naming the fix.
-This page covers the failures that are not a single error code: installer
-problems, environment issues, and the checks worth running first.
+
+The one exception is the degraded `GET /health` body, which is a status report
+rather than a refusal: it has no `code` and so no `docs`. Read its `checks` map
+instead. This page covers that and the other failures that are not a single
+error code: installer problems, environment issues, and the checks worth running
+first.
 
 ## Start with health and the contract
 
@@ -254,17 +259,22 @@ only place it appears.
 The service fails closed when rate limiting or a required dependency is
 unavailable. Check Worker logs plus Durable Object and D1 health.
 
-Read the `code` before doing any of that, because one of the two is not yours to
-fix:
+Read the `code` before doing any of that, because none of these three is yours
+to fix and only one of them is worth waiting out on a schedule the service set.
+Two of the three wear a `503` and only one of those carries a `Retry-After`, so
+the status alone does not separate them:
 
 - **`SERVICE_DEGRADED`** — the service could not reach the issuer's discovery or
   JWKS endpoint, or its own authorization store, so **the request was never
   judged**. Nothing about the token or the trust list is implicated. It carries
   a `Retry-After` header — a header, not an envelope field — and waiting is the
   whole fix. `gpg-sign` and the Go package retry it automatically and honour
-  that header; the bash example does too. These used to arrive as
-  `401 AUTH_INVALID`, which sent people to rotate a perfectly good token and
-  told every Go client not to retry the one auth failure a retry fixes.
+  that header; the bash example does too. The **discovery and JWKS** faults used
+  to arrive as `401 AUTH_INVALID`, which sent people to rotate a perfectly good
+  token and told every Go client not to retry the one auth failure a retry
+  fixes. The **authorization store** fault has always been a `503`; what changed
+  is its code, from `INTERNAL_ERROR` — which reads as a bug to report with a
+  stack trace — to this one, which reads as a wait.
 
 - **[`SERVICE_MISCONFIGURED`](errors.md#service_misconfigured)** — a `500`,
   and the same "not yours to fix" with the opposite answer. An entry in
@@ -280,7 +290,11 @@ fix:
   permanent fault was retried the full four times and only lost the interval.
 
 - **`RATE_LIMIT_ERROR`** — the limiter itself was unreachable, and the service
-  refused rather than signing unmetered. Check the Durable Object.
+  refused rather than signing unmetered. Check the Durable Object. A `503` like
+  `SERVICE_DEGRADED`, and retryable like it, but it carries **no `Retry-After`**:
+  the Durable Object never answered, so there is no interval to quote. Clients
+  back off on their own schedule. This is why a missing `Retry-After` is not a
+  "stop" signal even here — the code is.
 
 ## Request IDs
 

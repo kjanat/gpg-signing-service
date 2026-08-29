@@ -175,9 +175,10 @@ c, err := client.New(baseURL string, opts ...Option)
 - `AuthError` - Authentication failures (carries the service's `Code`,
   `Message`, and `RequestID`)
 - `RateLimitError` - Rate limit exceeded (carries the retry-after duration, read
-  from the body's `retryAfter` or the `Retry-After` header, in either the
-  delay-seconds or the HTTP-date form, and the `RequestID` — which on a 429 is
-  the echoed `X-Request-ID` header, since no 429 body declares one)
+  from the body's `retryAfter` — which is where this service puts it — falling
+  back to a `Retry-After` header, in either the delay-seconds or the HTTP-date
+  form, for a `429` an intermediary authored; and the `RequestID`, which on a
+  429 is the echoed `X-Request-ID` header, since no 429 body declares one)
 - `ValidationError` - Invalid request data
 - `ServiceError` - API errors with codes
 
@@ -306,11 +307,15 @@ fmt.Printf("Found %d audit entries\n", logs.Count)
 The client automatically retries:
 
 - Rate limits (`429`)
-- Transient service errors (`500`, `502`, `503`, `504`)
+- Transient service errors (`500`, `502`, `503`, `504`) — **except a `500`
+  carrying `SERVICE_MISCONFIGURED`**, which is the deployment's own
+  configuration and will answer identically forever
 - Transport faults — a refused dial, a connection dropped mid-body
 
 It never retries:
 
+- `SERVICE_MISCONFIGURED` — the one `5xx` exception, decided on the `code` and
+  not on the status or on a missing `Retry-After`
 - Authentication errors (401)
 - Validation errors (400)
 - Not found errors (404)
@@ -320,8 +325,11 @@ It never retries:
 
 Retry strategy:
 
-- The server's `Retry-After` when a `429` carries one, clamped to the configured
-  maximum; exponential backoff with jitter otherwise
+- The server's own wait hint when the failure carries one, clamped to the
+  configured maximum: the body's `retryAfter` on a `429`, and the `Retry-After`
+  header on a `SERVICE_DEGRADED` `503`. Exponential backoff with jitter
+  otherwise — including for `RATE_LIMIT_ERROR`, a retryable `503` the service
+  sends no interval with
 - Default: 3 retries, 1s-30s backoff range
 - Respects context cancellation
 
@@ -350,6 +358,13 @@ describes something only the caller can change, so re-sending either spends the
 timeout budget to arrive at the same answer. A cancelled or expired context is
 not retried either: the next attempt fails the same way, immediately.
 
+**One `5xx` is excepted:** a `500` whose code is `SERVICE_MISCONFIGURED`. That
+one is the deployment's own configuration and answers identically until an
+operator edits a variable, so `shouldRetry` declines it on the code. The status
+cannot carry that — an intermediary's unattributed `500` wears the same one and
+_is_ worth another go — and neither can the absent `Retry-After`, since
+`RATE_LIMIT_ERROR` is a retryable `503` that also sends none.
+
 Six things worth knowing:
 
 - `WithTimeout` bounds one attempt, not the operation. `http.Client` applies its
@@ -361,9 +376,18 @@ Six things worth knowing:
 - `Health` never retries a status. Its `503` is `degraded`, a documented answer
   carrying a body you are meant to read, and a probe wants the current state
   rather than an eventually healthy one. Transport faults still retry there.
-- The wait between attempts is the server's `Retry-After` when a `429` carries
-  one — read from the body's `retryAfter` or the header, in either RFC 9110
-  form — and the exponential backoff otherwise. A hint longer than
+- The wait between attempts is the server's own hint when the failure carries
+  one, and the exponential backoff otherwise. This service puts a `429`'s hint
+  in the body, as `retryAfter`; the client also reads a `Retry-After` header
+  there, in either RFC 9110 form, because a `429` that carries one came from an
+  edge throttle in front of the service and is otherwise the response whose hint
+  is lost. A `SERVICE_DEGRADED` `503` does carry the header, and the retrier
+  honours that too — a dependency is away and only the service has any idea for
+  how long.
+  `WithoutRateLimitRetry` does not discard the outage hint: that option is about
+  throttling. A `RATE_LIMIT_ERROR` `503` sends no hint at all and falls through
+  to the backoff, as does `SERVICE_MISCONFIGURED` — which never reaches the wait
+  anyway, because `shouldRetry` declines it first. A hint longer than
   `WithRetryWait`'s maximum is clamped to it, so a misconfigured responder
   cannot park the call; the untruncated value still reaches you on the
   `RateLimitError` returned once the attempts are spent.

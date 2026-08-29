@@ -1,7 +1,7 @@
 # Error reference
 
-Every error this service returns carries a `docs` field pointing at its own
-section here:
+Every **coded** error this service returns carries a `docs` field pointing at
+its own section here:
 
 ```json
 {
@@ -23,6 +23,11 @@ of this file.
 
 ## The envelope
 
+Everything below describes the **coded error envelope**: a JSON body with a
+`code` from the list in this document. `src/middleware/error-docs.ts` stamps
+`docs` onto every one of those on the way out, so the guarantee does not depend
+on the author of a route remembering it.
+
 | Field        | Always   | Meaning                                                                      |
 | ------------ | -------- | ---------------------------------------------------------------------------- |
 | `error`      | yes      | What happened, in prose. The service may reword these; do not match on them. |
@@ -31,12 +36,34 @@ of this file.
 | `requestId`  | mostly   | The id in `X-Request-ID`, in the logs, and in `audit_logs.request_id`.       |
 | `hint`       | often    | What to change. Absent where the message already is the action.              |
 | `subject`    | 401 only | The `sub` claim the caller presented, echoed back.                           |
-| `retryAfter` | 429 only | Whole seconds to wait.                                                       |
+| `retryAfter` | 429 only | Whole seconds to wait. The hint is in the body; there is no header.          |
+| `issues`     | 400 only | Which fields failed validation, and what was expected. Never the value.      |
+
+`requestId` is "mostly" because carrying it is per handler rather than
+structural the way `docs` is: a refusal has the field only when its handler read
+the id off the context, and a good third of them do not. Every `429`,
+`/public-key`'s two failures, both `NOT_FOUND` `404`s, the admin key and audit
+failures, the `500` for an unconfigured `ADMIN_TOKEN`, and the
+`400 INVALID_REQUEST` the schema validator builds all omit it — and that list is
+a description of today's handlers rather than a rule. `X-Request-ID` is on every
+one of them, so the id is never actually unavailable; it is just in the headers
+rather than in the envelope. **Read the header rather than learning which routes
+fill the field in**; see [Looking a refusal up](#looking-a-refusal-up).
 
 `gpg-sign` prints `subject`, `hint`, `docs` and `requestId` on their own lines
 underneath the one-line error, so a failed CI step reads as text rather than as
 a JSON blob. Callers using the Go package read them off `client.Guidance`; see
 [the CLI guide](cli.md#reading-a-failure).
+
+### The one response that is not an envelope
+
+`GET /health` answers `503` when a dependency check fails, and that body is a
+[`HealthResponse`](../src/schemas/health.ts) — `status`, `timestamp`, `version`,
+`checks` — not an error envelope. It carries no `code`, and therefore no `docs`
+either, because the middleware has nothing to build a link from. It is a
+_report_ that the service is degraded rather than a refusal of the request you
+made, and `/health` is the only route that answers this way. Do not write a
+client that assumes `status >= 400` implies a `code`.
 
 ## Authentication and authorization
 
@@ -200,7 +227,14 @@ armor checksum, and that the supplied id is the key's 16-character long id.
 
 **400.** The request did not satisfy the contract: an empty body on `/sign`, a
 `keyId` that is not 16 hexadecimal characters, or a body that failed schema
-validation (those carry an `issues` array).
+validation.
+
+The schema-validation ones carry an `issues` array from the validator, one entry
+per field that failed: `path` locates the field, `message` and the code-specific
+keys say what was expected. It never echoes what you sent — read `issues[].path`
+rather than the message, which is how `{"keyIds": ["${MY_KEY_ID}"]}` in single
+quotes is diagnosed without the response repeating the literal back. Only the
+routes with a declared request schema produce it; a hand-written `400` does not.
 
 Key ids are the 16-character long id — `62E75E54497815DD`, not
 `signing-key-v1`.
@@ -217,6 +251,17 @@ does not define, which usually means a typo rather than an undocumented error.
 **429.** The caller exceeded a token bucket. `retryAfter` is whole seconds, at
 least one.
 
+The wait hint is in the **body**. This service sends no `Retry-After` header on
+a `429` — the denial carries `X-RateLimit-Remaining` and `X-RateLimit-Reset` and
+nothing else, and the limiter's own header never leaves the Durable Object. A
+`Retry-After` on a `429` from this host therefore came from something in front
+of it, an edge throttle answering with a page rather than an envelope; the Go
+client reads both for that reason, and this service fills only the first.
+
+The body is `error`, `code`, `retryAfter` and `docs` — **no `requestId`**. Quote
+the `X-Request-ID` header instead; it is on the response either way. The schema
+also permits a `hint`, which no `429` sets today.
+
 There are two tiers, and the response does not say which one refused. The first
 is per caller (`<issuer>:<subject>`); the second is per trusted rule, an order
 of magnitude higher, and exists so one rule cannot be multiplied into unbounded
@@ -226,7 +271,13 @@ part of `sub`.
 ### RATE_LIMIT_ERROR
 
 **503.** The rate limiter itself was unreachable or answered with an error. The
-service refuses rather than signing unmetered. Retry.
+service refuses rather than signing unmetered. Retry — this and
+[`SERVICE_DEGRADED`](#service_degraded) are the two codes nothing on the
+caller's side can fix.
+
+Unlike `SERVICE_DEGRADED` it carries no `Retry-After`: the Durable Object never
+answered, so there is nothing to derive an interval from. Back off on your own
+schedule. The Go client does, and treats it like any other retryable 5xx.
 
 ## Signing and the service
 
@@ -242,17 +293,24 @@ run `task db:migrate`.
 
 ### INTERNAL_ERROR
 
-**500.** An unhandled fault. Worth reporting with the `requestId`.
+**500.** An unhandled fault. Worth reporting with the request id — but quote it
+from the `X-Request-ID` header rather than from the body. The `500` that
+`app.onError` builds does carry `requestId`; the one an unconfigured
+`ADMIN_TOKEN` produces does not, and both wear this code.
 
-The `Authorization store unavailable` 503 used to carry this code; it is now
+The `Authorization store unavailable` 503 used to carry this code — the status
+was always 503, only the code changed. It is now
 [`SERVICE_DEGRADED`](#service_degraded), because the fix is to wait rather than
-to read a stack trace.
+to read a stack trace. It is the one row in that table with this history; the
+discovery and JWKS rows came from `401 AUTH_INVALID` instead.
 
 ### SERVICE_DEGRADED
 
 **503.** This deployment could not reach something it needs, so it could not
-decide the request either way. **Nothing about the request is wrong**, and this
-is the only code in this reference a caller is invited to retry.
+decide the request either way. **Nothing about the request is wrong**, and
+waiting is the whole fix. The other code a caller is invited to retry is
+[`RATE_LIMIT_ERROR`](#rate_limit_error), which is the same shape one dependency
+further in: the limiter itself was away.
 
 | Message                                         | What failed                                                                                                                      |
 | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -265,15 +323,22 @@ is the only code in this reference a caller is invited to retry.
 | `Authorization store unavailable`               | The D1 lookup of the caller's trust failed — trusted subjects, or service tokens. Check `task db:migrate` and `gpg-sign health`. |
 
 Every row carries a `Retry-After`, and the JWKS is cached for five minutes once
-it is read, so a fleet that all hit a blip together recovers together. Every 503
-this service sends is this code, and every one of them carries a `Retry-After`;
-the fault that will **not** clear on its own is
+it is read, so a fleet that all hit a blip together recovers together. This is
+the only code that sends one — the fault that will **not** clear on its own is
 [`SERVICE_MISCONFIGURED`](#service_misconfigured), and it is a 500. See there for
 why.
 
-These used to be answered `401 AUTH_INVALID`, which sent the caller to a table
-of seven token faults, none of which they had, and told every Go client not to
-retry.
+Two other responses also wear a 503, and neither is this code nor carries a
+`Retry-After`: [`RATE_LIMIT_ERROR`](#rate_limit_error), and the degraded
+[`/health`](#the-one-response-that-is-not-an-envelope) body, which is not an
+error envelope at all. **Branch on the code, not on the 503.**
+
+The discovery and JWKS rows used to be answered `401 AUTH_INVALID`, which sent
+the caller to a table of seven token faults, none of which they had, and told
+every Go client not to retry. The `Authorization store unavailable` row arrived
+differently: it was already a 503, but under
+[`INTERNAL_ERROR`](#internal_error) — the right status wearing a code that reads
+as a bug to report rather than as a wait.
 
 ### SERVICE_MISCONFIGURED
 
@@ -333,13 +398,26 @@ request" is request-scoped, which is what this is.
 Between them the pair gives a caller who cannot read the code — a proxy, a
 `curl -i` in a CI log — a rule that holds across the two: **the transient one is
 a 503 and carries a `Retry-After`; the permanent one is a 500 and never does.**
-Neither half is safe to read on its own — plenty of retryable `5xx` elsewhere
-carry no header either — but together they are what a status alone can say.
+Neither half is safe to read on its own. A missing header does not mean
+permanent even here: [`RATE_LIMIT_ERROR`](#rate_limit_error) is a retryable 503
+that sends none, and plenty of retryable `5xx` elsewhere carry none either.
+Together the two signals are what a status alone can say, and the code is what
+says it exactly.
 
 ## Looking a refusal up
 
-Every error carries a `requestId`, which is also the `X-Request-ID` response
-header. It is the key to two places:
+Every response carries an `X-Request-ID` header, and most coded errors repeat it
+in the envelope as `requestId`. Where the field is absent — every `429`, both
+`NOT_FOUND` `404`s, `/public-key`'s failures, the admin key and audit failures,
+the `500` for an unconfigured `ADMIN_TOKEN`, the validator's `400`, and whatever
+is added next without reading the context — the header still has it. So **the
+header is the source that is always there, and the field is a convenience for a
+caller already holding the parsed body**: take the field when it is present, and
+the header when it is not. The Go client's
+`requestIDFrom` does exactly that, which is why `AuthError` and `RateLimitError`
+both print an id whether or not the body declared one.
+
+That id is the key to two places:
 
 ```bash
 # Audit records, for the events that write one

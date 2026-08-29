@@ -40,21 +40,30 @@ export const ErrorCodeSchema = z
 		 * This deployment could not reach something it needs — the issuer's JWKS,
 		 * the authorization store — and so could not decide the request either way.
 		 *
-		 * Answered 503, and the only refusal in this enum a caller is *invited* to
-		 * retry: nothing about the request is wrong. Split out of INTERNAL_ERROR
-		 * and out of AUTH_INVALID because both of those tell the caller to go and
-		 * change something, and there is nothing on their side to change.
+		 * Answered 503, and a refusal a caller is *invited* to retry: nothing
+		 * about the request is wrong. Split out of INTERNAL_ERROR and out of
+		 * AUTH_INVALID because both of those tell the caller to go and change
+		 * something, and there is nothing on their side to change.
+		 *
+		 * The only code that carries a `Retry-After`. RATE_LIMIT_ERROR is the
+		 * other retryable 503 and sends none — the limiter never answered, so
+		 * there is no interval to quote — which is why a missing header is not a
+		 * "stop" signal anywhere in this service. SERVICE_MISCONFIGURED is.
 		 */
 		"SERVICE_DEGRADED",
 		/**
-		 * The same 503 shape as SERVICE_DEGRADED — this deployment could not
-		 * decide the request, and nothing on the caller's side is wrong — but the
-		 * cause is this deployment's own configuration, so it will answer
-		 * identically forever. An `ALLOWED_ISSUERS` entry whose discovery URL the
-		 * SSRF guard refuses to fetch is the whole of it today.
+		 * The same shape as SERVICE_DEGRADED — this deployment could not decide
+		 * the request, and nothing on the caller's side is wrong — but the cause
+		 * is this deployment's own configuration, so it will answer identically
+		 * forever. An `ALLOWED_ISSUERS` entry whose discovery URL the SSRF guard
+		 * refuses to fetch is the whole of it today.
+		 *
+		 * Answered 500, not 503, and deliberately: 503 is the status
+		 * intermediaries retry on their own account, one layer up where the code
+		 * cannot be read. See `serviceMisconfigured` in `src/utils/errors.ts`.
 		 *
 		 * A separate code because retryability is the only thing a caller does
-		 * with a 503, and the two answers are opposite. The absence of a
+		 * with a 5xx, and the two answers are opposite. The absence of a
 		 * `Retry-After` was carrying that distinction before, which no client
 		 * reads as "stop": the Go retrier tries any 5xx, so omitting the header
 		 * only removed the interval and left the permanent fault being attempted

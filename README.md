@@ -55,11 +55,16 @@ design records.
 A verified OIDC token is not an authorized one. `ALLOWED_ISSUERS` is not a
 repository allowlist — every repository on GitHub Actions gets a token from the
 same issuer — so authorization is a separate table of trusted subjects managed
-through `/admin/subjects`. A token is refused with `AUTH_SUBJECT_UNTRUSTED`
-unless its issuer and `sub` match a live row, and each row carries its own key
-allowlist, expiry, and revocation. That refusal echoes the `subject` it saw and
+through `/admin/subjects`. An **OIDC** token is refused with
+`AUTH_SUBJECT_UNTRUSTED` unless its issuer and `sub` match a live row, and each
+row carries its own key allowlist, expiry, and revocation. The refusal echoes
+the `subject` it saw and
 links to [its own documentation](docs/errors.md#auth_subject_untrusted). **An empty table denies everyone**:
 a fresh deployment cannot sign over OIDC until a subject is trusted.
+
+That code is specific to verified OIDC identities. A `gst_` service token
+carries its own grant rather than matching this table, so one that is unknown,
+revoked or expired is refused `AUTH_INVALID` — never `AUTH_SUBJECT_UNTRUSTED`.
 
 Trust is granted per issuer, subject prefix, and key. Within that grant a
 trusted caller can request signatures over arbitrary non-empty text with any
