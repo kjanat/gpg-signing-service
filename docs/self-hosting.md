@@ -100,8 +100,11 @@ is ignored and the request's origin used instead.
 Only the origin of the value is used. The short links are served from the root
 of the Worker, so `https://gpg.example/service` yields
 `https://gpg.example/e/<CODE>` — any path, query, or fragment in the setting is
-dropped rather than spliced into the link. A non-default port is kept, since
-that is part of where the service answers.
+dropped rather than spliced into the link. Credentials go the same way: a value
+pasted in whole as `https://ops:secret@gpg.example/` yields
+`https://gpg.example`, so nothing from the setting's userinfo reaches the `docs`
+field that every error body carries into a CI log. A non-default port is kept,
+since that is part of where the service answers.
 
 `DISCLOSE_TRUST_PATTERNS` covers two hints, both off by default:
 
