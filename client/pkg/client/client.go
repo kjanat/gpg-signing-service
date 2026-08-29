@@ -129,6 +129,12 @@ func (c *Client) Health(ctx context.Context) (*HealthStatus, error) {
 			Code:       ErrCodeDegraded,
 			Message:    "service degraded",
 			StatusCode: 503,
+			// Envelope-less by construction: HealthResponse declares no requestId,
+			// so the echoed header is not a fallback here but the only source
+			// there is. Left off, the one 503 a caller is told to report — "the
+			// service says it is degraded" — arrived with nothing to correlate it
+			// against, which is the same hole the mapped statuses just closed.
+			RequestID: requestIDFrom("", resp.HTTPResponse.Header),
 		}
 		return &HealthStatus{
 			Status:     string(resp.JSON503.Status),
@@ -175,6 +181,7 @@ func (c *Client) PublicKey(ctx context.Context, keyID string) (string, error) {
 			Code:       string(resp.JSON404.Code),
 			Message:    resp.JSON404.Error,
 			StatusCode: 404,
+			RequestID:  requestIDFrom(envelopeRequestID(resp.JSON404), resp.HTTPResponse.Header),
 		}
 	}
 
@@ -183,6 +190,7 @@ func (c *Client) PublicKey(ctx context.Context, keyID string) (string, error) {
 			Code:       string(resp.JSON500.Code),
 			Message:    resp.JSON500.Error,
 			StatusCode: 500,
+			RequestID:  requestIDFrom(envelopeRequestID(resp.JSON500), resp.HTTPResponse.Header),
 		}
 	}
 
@@ -268,6 +276,7 @@ func (c *Client) UploadKey(ctx context.Context, keyID string, armoredPrivateKey 
 			Code:       string(errResp.Code),
 			Message:    errResp.Error,
 			StatusCode: statusCode,
+			RequestID:  requestIDFrom(envelopeRequestID(errResp), resp.HTTPResponse.Header),
 		}
 	}
 
@@ -305,6 +314,7 @@ func (c *Client) ListKeys(ctx context.Context) ([]KeyMetadata, error) {
 			Code:       string(resp.JSON500.Code),
 			Message:    resp.JSON500.Error,
 			StatusCode: 500,
+			RequestID:  requestIDFrom(envelopeRequestID(resp.JSON500), resp.HTTPResponse.Header),
 		}
 	}
 
@@ -351,6 +361,11 @@ func (c *Client) DeleteKey(ctx context.Context, keyID string) error {
 			Code:       ErrCodeKeyNotFound,
 			Message:    fmt.Sprintf("key %s not found", keyID),
 			StatusCode: 200,
+			// Synthesized from a 200 whose body says nothing happened, so there is
+			// no error envelope to read and the echoed header is the only source.
+			// It is still a real response with a real id behind it, and "delete
+			// reported the key was not there" is a report an operator files.
+			RequestID: requestIDFrom("", resp.HTTPResponse.Header),
 		}
 	}
 
@@ -363,6 +378,7 @@ func (c *Client) DeleteKey(ctx context.Context, keyID string) error {
 			Code:       string(resp.JSON500.Code),
 			Message:    resp.JSON500.Error,
 			StatusCode: 500,
+			RequestID:  requestIDFrom(envelopeRequestID(resp.JSON500), resp.HTTPResponse.Header),
 		}
 	}
 
@@ -420,6 +436,7 @@ func (c *Client) AdminPublicKey(ctx context.Context, keyID string) (string, erro
 			Code:       string(resp.JSON404.Code),
 			Message:    resp.JSON404.Error,
 			StatusCode: 404,
+			RequestID:  requestIDFrom(envelopeRequestID(resp.JSON404), resp.HTTPResponse.Header),
 		}
 	}
 
@@ -428,6 +445,7 @@ func (c *Client) AdminPublicKey(ctx context.Context, keyID string) (string, erro
 			Code:       string(resp.JSON500.Code),
 			Message:    resp.JSON500.Error,
 			StatusCode: 500,
+			RequestID:  requestIDFrom(envelopeRequestID(resp.JSON500), resp.HTTPResponse.Header),
 		}
 	}
 
@@ -450,16 +468,17 @@ func mapAuditResponseError(resp *api.GetAdminAuditResponse) error {
 		statusCode = 500
 	}
 
-	requestID := ""
-	if errResp.RequestId != nil {
-		requestID = errResp.RequestId.String()
-	}
-
+	// Envelope first, echoed header second, the same two sources every other
+	// mapped status here reads. This branch used to read the envelope alone,
+	// which is the shape the typed sign 403 also had: correct against this
+	// service, and empty against a deployment older than the release that put
+	// requestId in error bodies, or any intermediary that answers with the
+	// envelope's shape and none of its optional fields.
 	return &ServiceError{
 		Code:       string(errResp.Code),
 		Message:    errResp.Error,
 		StatusCode: statusCode,
-		RequestID:  requestID,
+		RequestID:  requestIDFrom(envelopeRequestID(errResp), resp.HTTPResponse.Header),
 	}
 }
 
@@ -553,15 +572,11 @@ func buildAuditParams(filter AuditFilter) *api.GetAdminAuditParams {
 func mapSignResponseError(resp *api.PostSignResponse) error {
 	switch {
 	case resp.JSON400 != nil:
-		envelopeID := ""
-		if resp.JSON400.RequestId != nil {
-			envelopeID = resp.JSON400.RequestId.String()
-		}
 		return &ValidationError{
 			Guidance:  guidanceFromResponse(resp.JSON400),
 			Code:      string(resp.JSON400.Code),
 			Message:   resp.JSON400.Error,
-			RequestID: requestIDFrom(envelopeID, resp.HTTPResponse.Header),
+			RequestID: requestIDFrom(envelopeRequestID(resp.JSON400), resp.HTTPResponse.Header),
 		}
 	case resp.JSON401 != nil:
 		// The refusal a first-time caller actually hits: an unregistered subject
@@ -573,22 +588,29 @@ func mapSignResponseError(resp *api.PostSignResponse) error {
 		// Without this case the 403 falls through to a bare "unexpected status
 		// code", discarding both the server's message and the KEY_NOT_ALLOWED code
 		// that exists so a scope denial is distinguishable from any other refusal.
-		e := &ServiceError{
+		//
+		// The id comes through requestIDFrom, as it does on the 400 above: the
+		// envelope is preferred and is what this service sends, and the echoed
+		// X-Request-ID header is the fallback that covers a deployment older than
+		// the release that put requestId in error bodies. Reading the envelope
+		// alone dropped the id on exactly the responses an operator is most likely
+		// to open a ticket about.
+		return &ServiceError{
 			Guidance:   guidanceFromResponse(resp.JSON403),
 			Code:       string(resp.JSON403.Code),
 			Message:    resp.JSON403.Error,
 			StatusCode: 403,
+			RequestID:  requestIDFrom(envelopeRequestID(resp.JSON403), resp.HTTPResponse.Header),
 		}
-		if resp.JSON403.RequestId != nil {
-			e.RequestID = resp.JSON403.RequestId.String()
-		}
-		return e
 	case resp.JSON404 != nil:
+		// Same two sources as the 403, and previously neither: a KEY_NOT_FOUND
+		// reached the caller with no id at all, typed or echoed.
 		return &ServiceError{
 			Guidance:   guidanceFromResponse(resp.JSON404),
 			Code:       string(resp.JSON404.Code),
 			Message:    resp.JSON404.Error,
 			StatusCode: 404,
+			RequestID:  requestIDFrom(envelopeRequestID(resp.JSON404), resp.HTTPResponse.Header),
 		}
 	case resp.JSON429 != nil:
 		// Through the shared constructor rather than inline: this is the declared
@@ -641,11 +663,6 @@ func mapServerError(resp *api.PostSignResponse) *ServiceError {
 		statusCode = 503
 	}
 
-	envelopeID := ""
-	if errResp.RequestId != nil {
-		envelopeID = errResp.RequestId.String()
-	}
-
 	return &ServiceError{
 		Guidance:   guidanceFromResponse(errResp),
 		Code:       string(errResp.Code),
@@ -659,7 +676,7 @@ func mapServerError(resp *api.PostSignResponse) *ServiceError {
 		// deployment older than the release that put requestId in that envelope.
 		// Dropping it there loses the one value docs/troubleshooting.md asks an
 		// operator to quote, on the status where they are most likely to need it.
-		RequestID: requestIDFrom(envelopeID, resp.HTTPResponse.Header),
+		RequestID: requestIDFrom(envelopeRequestID(errResp), resp.HTTPResponse.Header),
 		// A SERVICE_DEGRADED 503 says how long to wait, and this is the only place
 		// the typed path could pick it up: ErrorResponse declares no retryAfter
 		// field, so the header is the whole source.

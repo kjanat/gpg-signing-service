@@ -332,6 +332,20 @@ func requestIDFrom(envelope string, header http.Header) string {
 	return header.Get(headerRequestID)
 }
 
+// envelopeRequestID reads the request id off a typed envelope, absent meaning
+// "nothing to prefer" so requestIDFrom falls through to the echoed header.
+//
+// `requestId` is optional in the document and typed as a UUID, so every mapped
+// status has the same two-step to do before it can call requestIDFrom. Spelling
+// it once keeps a branch from quietly skipping the fallback, which is how the
+// typed 403 and 404 came to disagree with the 400 beside them.
+func envelopeRequestID(body *api.ErrorResponse) string {
+	if body == nil || body.RequestId == nil {
+		return ""
+	}
+	return body.RequestId.String()
+}
+
 // retryAfterFrom returns how long a 429 asks the caller to wait, preferring the
 // envelope's `retryAfter` seconds and falling back to the `Retry-After` header.
 //
@@ -422,15 +436,11 @@ func newAuthErrorFromResponse(body *api.ErrorResponse, header http.Header) error
 		return newUnexpectedStatusError(http.StatusUnauthorized)
 	}
 
-	envelopeID := ""
-	if body.RequestId != nil {
-		envelopeID = body.RequestId.String()
-	}
 	return &AuthError{
 		Guidance:  guidanceFromResponse(body),
 		Code:      string(body.Code),
 		Message:   body.Error,
-		RequestID: requestIDFrom(envelopeID, header),
+		RequestID: requestIDFrom(envelopeRequestID(body), header),
 	}
 }
 
