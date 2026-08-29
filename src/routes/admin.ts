@@ -297,6 +297,8 @@ const listKeysRoute = createRoute({
 });
 
 app.openapi(listKeysRoute, async (c) => {
+	const requestId = c.get("requestId");
+
 	try {
 		const response = await fetchKeyStorage(c.env, "/list-keys");
 		if (!response.ok) {
@@ -313,7 +315,7 @@ app.openapi(listKeysRoute, async (c) => {
 		};
 		return c.json(result, HTTP.OK);
 	} catch (error) {
-		logger.error("Failed to list keys:", error);
+		logger.error("Failed to list keys:", error, { requestId });
 		return c.json(
 			{
 				error: "Failed to retrieve keys",
@@ -360,6 +362,7 @@ const getPublicKeyRoute = createRoute({
 
 app.openapi(getPublicKeyRoute, async (c) => {
 	const { keyId } = c.req.valid("param");
+	const requestId = c.get("requestId");
 
 	try {
 		const keyResponse = await fetchKeyStorage(c.env, `/get-key?keyId=${encodeURIComponent(keyId)}`);
@@ -388,7 +391,12 @@ app.openapi(getPublicKeyRoute, async (c) => {
 			"Content-Type": MediaType.ApplicationPgpKeys,
 		});
 	} catch (error) {
-		logger.error("Failed to get public key:", { keyId, error });
+		// `logger.error(message, error, context)`. Folded into the context object
+		// the caught value reached the error slot as a plain object, and
+		// `JSON.stringify` renders a nested `Error` as `{}`, so the one line
+		// written for a key-storage or OpenPGP failure said nothing about what
+		// failed, and carried no id to reach the request that hit it.
+		logger.error("Failed to get public key:", error, { keyId, requestId });
 		return c.json(
 			{
 				error: "Failed to process key",
@@ -467,7 +475,9 @@ app.openapi(deleteKeyRoute, async (c) => {
 		return c.json(result, HTTP.OK);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Delete failed";
-		logger.error("Failed to delete key:", { keyId, error });
+		// Same nesting as the public-key path: the cause survives only in the
+		// error slot the logger unpacks into `{ message, name, stack }`.
+		logger.error("Failed to delete key:", error, { keyId, requestId });
 
 		// Audit failed deletion attempt (non-blocking in production)
 		await scheduleBackgroundTask(
@@ -520,6 +530,8 @@ const getAuditLogsRoute = createRoute({
 });
 
 app.openapi(getAuditLogsRoute, async (c) => {
+	const requestId = c.get("requestId");
+
 	try {
 		const { limit, offset, action, subject, startDate, endDate } = c.req.valid("query");
 
@@ -535,7 +547,7 @@ app.openapi(getAuditLogsRoute, async (c) => {
 
 		return c.json({ logs, count: logs.length }, HTTP.OK);
 	} catch (error) {
-		logger.error("Failed to get audit logs:", error);
+		logger.error("Failed to get audit logs:", error, { requestId });
 		return c.json(
 			{
 				error: "Failed to retrieve audit logs",
