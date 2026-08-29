@@ -21,6 +21,9 @@
  * - **Every code is on one side of that line deliberately.** `unpinnedStatuses`
  *   names the suite that covers each of the rest, and the partition is
  *   asserted, so a code cannot be added without deciding which side it is on.
+ *   The suite names are checked against the files rather than trusted: two of
+ *   them were wrong the day they were written, which is this document's own
+ *   failure mode wearing a `.ts` extension.
  * - **Every documented error example** parses as the schema it claims to be and
  *   carries a `docs`.
  * - **The envelope's exceptions** — the degraded `/health` body, the 429 and
@@ -43,6 +46,19 @@ import { ERROR_CODES, ErrorResponseSchema, RateLimitErrorSchema } from "#schemas
 import apiGuide from "../../API.md?raw";
 import errorReference from "../../docs/errors.md?raw";
 import troubleshooting from "../../docs/troubleshooting.md?raw";
+
+/**
+ * Every test file in this directory, keyed by name.
+ *
+ * Globbed rather than read, for the same reason the documents above are
+ * imported: the Workers pool has no filesystem. This is what lets
+ * `unpinnedStatuses` name a suite and have the name mean something.
+ */
+const suites: Record<string, string> = Object.fromEntries(
+	Object.entries(import.meta.glob<string>("./*.test.ts", { query: "?raw", import: "default", eager: true })).map(
+		([path, source]) => [path.replace(/^\.\//, ""), source],
+	),
+);
 
 async function request(path: string, options: RequestInit = {}): Promise<Response> {
 	const ctx = createExecutionContext();
@@ -196,19 +212,19 @@ const statusProbes: { code: ErrorCode; what: string; send: () => Promise<Respons
  * beside it. Written out rather than derived so that adding a code to the enum
  * fails this file until someone decides whether it is cheap to reach.
  */
-const unpinnedStatuses: Record<string, string> = {
-	AUTH_SUBJECT_UNTRUSTED: "sign.test.ts — needs a verified token with no trust row",
-	KEY_NOT_ALLOWED: "sign.test.ts — needs a trust row carrying a key allowlist",
-	KEY_PROCESSING_ERROR: "admin.test.ts — needs damaged key material in storage",
-	KEY_LIST_ERROR: "admin.test.ts — needs the key-storage DO stubbed into failure",
-	KEY_UPLOAD_ERROR: "admin.test.ts — needs the key-storage DO stubbed into failure",
-	KEY_DELETE_ERROR: "admin.test.ts — needs the key-storage DO stubbed into failure",
-	SIGN_ERROR: "sign.test.ts — needs a stored key and a signing failure",
-	RATE_LIMITED: "sign.test.ts — needs the limiter stubbed into denial",
-	RATE_LIMIT_ERROR: "sign.test.ts — needs the limiter stubbed into failure",
-	AUDIT_ERROR: "audit.test.ts — needs D1 stubbed into failure",
-	SERVICE_DEGRADED: "middleware.test.ts — needs an unreachable JWKS or store",
-	SERVICE_MISCONFIGURED: "ssrf.test.ts — needs an ALLOWED_ISSUERS entry the guard refuses",
+const unpinnedStatuses: Record<string, { suite: string; needs: string }> = {
+	AUTH_SUBJECT_UNTRUSTED: { suite: "middleware.test.ts", needs: "a verified token with no trust row" },
+	KEY_NOT_ALLOWED: { suite: "sign.test.ts", needs: "a trust row carrying a key allowlist" },
+	KEY_PROCESSING_ERROR: { suite: "admin.test.ts", needs: "damaged key material in storage" },
+	KEY_LIST_ERROR: { suite: "admin.test.ts", needs: "the key-storage DO stubbed into failure" },
+	KEY_UPLOAD_ERROR: { suite: "admin.test.ts", needs: "the key-storage DO stubbed into failure" },
+	KEY_DELETE_ERROR: { suite: "admin.test.ts", needs: "the key-storage DO stubbed into failure" },
+	SIGN_ERROR: { suite: "sign.test.ts", needs: "a stored key and a signing failure" },
+	RATE_LIMITED: { suite: "sign.test.ts", needs: "the limiter stubbed into denial" },
+	RATE_LIMIT_ERROR: { suite: "sign.test.ts", needs: "the limiter stubbed into failure" },
+	AUDIT_ERROR: { suite: "admin.test.ts", needs: "D1 stubbed into failure" },
+	SERVICE_DEGRADED: { suite: "middleware.test.ts", needs: "an unreachable JWKS or store" },
+	SERVICE_MISCONFIGURED: { suite: "middleware.test.ts", needs: "an ALLOWED_ISSUERS entry the SSRF guard refuses" },
 };
 
 describe("the status a code actually arrives with", () => {
@@ -232,6 +248,31 @@ describe("the status a code actually arrives with", () => {
 		const pinned = new Set(statusProbes.map((probe) => probe.code));
 
 		expect(ERROR_CODES.filter((code) => !pinned.has(code)).sort()).toEqual(Object.keys(unpinnedStatuses).sort());
+	});
+
+	it("names a suite that exists and asserts the code", () => {
+		// A pointer at a file is a claim about the code, and an unchecked claim
+		// about the code is what this whole suite exists to stop. Three of these
+		// were wrong when the map was written — `AUTH_SUBJECT_UNTRUSTED` and
+		// `SERVICE_MISCONFIGURED` named a suite that never mentions them, and
+		// `AUDIT_ERROR` named one that does not exercise it — and the partition
+		// assertion above passed anyway, because it only reads the keys.
+		//
+		// Substring rather than "asserts the status": the codes here need fixtures
+		// this file deliberately does not own, so what is checkable from outside is
+		// that the suite named is one that has heard of the code. That is exactly
+		// enough to catch a pointer aimed at the wrong file.
+		const wrong: string[] = [];
+		for (const [code, { suite }] of Object.entries(unpinnedStatuses)) {
+			const source = suites[suite];
+			if (source === undefined) {
+				wrong.push(`${code} -> ${suite} (no such suite in this directory)`);
+			} else if (!source.includes(code)) {
+				wrong.push(`${code} -> ${suite} (never mentions it)`);
+			}
+		}
+
+		expect(wrong).toEqual([]);
 	});
 });
 

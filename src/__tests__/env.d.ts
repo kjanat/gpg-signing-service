@@ -45,3 +45,11 @@ declare module "*.md?raw" {
 	const content: string;
 	export default content;
 }
+
+// Vite's `import.meta.glob`, narrowed to the one form `docs-contract.test.ts`
+// uses: eager, `?raw`, default export. `vite/client` declares it in full, but
+// this directory's tsconfig loads only the Workers pool's types, and pulling in
+// the whole client surface to type one call is a worse trade than six lines.
+interface ImportMeta {
+	glob<T = string>(pattern: string, options: { query: "?raw"; import: "default"; eager: true }): Record<string, T>;
+}
