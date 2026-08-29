@@ -103,7 +103,7 @@ To confirm the packet type on any signature this service returns:
 $ curl -sf "$GPG_SIGN_URL/public-key" | gpg --import
 $ printf 'tree ...\n' > payload            # the unsigned commit object
 $ curl -sf -H "Authorization: Bearer $TOKEN" --data-binary @payload \
-    "$GPG_SIGN_URL/sign" | jq -r .signature > payload.sig
+    "$GPG_SIGN_URL/sign" > payload.sig
 $ gpg --list-packets payload.sig | grep sigclass
 	version 4, created ..., md5len 0, sigclass 0x00
 $ gpg --verify payload.sig payload

@@ -452,22 +452,9 @@ describe("signCommitData caching", () => {
 		const commitData = "cached signing test";
 		const result = await signCommitData(commitData, storedKey, "");
 
-		// Verify the signature
-		const pubKey = await openpgp.readKey({ armoredKey: publicKey });
-		const message = await openpgp.createMessage({ text: commitData });
-		const signature = await openpgp.readSignature({
-			armoredSignature: result.signature,
-		});
-
-		const verification = await openpgp.verify({
-			message,
-			signature,
-			verificationKeys: pubKey,
-		});
-
-		const firstSignature = verification.signatures[0];
-		expect(firstSignature).toBeDefined();
-		await expect(firstSignature!.verified).resolves.toBeTruthy();
+		// Same byte-level check as the uncached path: a cached key must not
+		// change the packet the signature is made over.
+		await expect(verifyAgainstBytes(result.signature, publicKey, bytes(commitData))).resolves.toBe(true);
 	});
 });
 
