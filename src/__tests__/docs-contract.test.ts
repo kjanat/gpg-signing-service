@@ -83,6 +83,11 @@ function adminRequest(path: string): Promise<Response> {
 	return request(path, { headers: { Authorization: `Bearer ${env.ADMIN_TOKEN}` } });
 }
 
+/** The same, carrying the read-only admin bearer instead of the full one. */
+function readOnlyAdminRequest(path: string, options: RequestInit = {}): Promise<Response> {
+	return request(path, { ...options, headers: { Authorization: `Bearer ${env.ADMIN_READONLY_TOKEN}` } });
+}
+
 /**
  * Every ```json fence in a document, parsed.
  *
@@ -194,6 +199,14 @@ const statusProbes: { code: ErrorCode; what: string; send: () => Promise<Respons
 		code: "INVALID_REQUEST",
 		what: "a query the route's schema rejects",
 		send: () => adminRequest("/admin/audit?limit=-1"),
+	},
+	{
+		code: "AUTH_SCOPE_INSUFFICIENT",
+		// Refused by `adminAuth` on the method, before the handler or storage is
+		// reached, so the id below never has to exist for this to be the 403 the
+		// reference documents.
+		what: "a state-changing admin route with the read-only admin bearer",
+		send: () => readOnlyAdminRequest("/admin/keys/FFFFFFFFFFFFFFFF", { method: "DELETE" }),
 	},
 	{
 		code: "INTERNAL_ERROR",

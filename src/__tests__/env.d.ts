@@ -8,6 +8,9 @@ declare namespace Cloudflare {
 		/** Token for admin endpoints */
 		ADMIN_TOKEN: string;
 
+		/** Read-only admin bearer; accepted on GET and HEAD admin routes only */
+		ADMIN_READONLY_TOKEN: string;
+
 		/** Passphrase for encrypted private key */
 		KEY_PASSPHRASE: string;
 

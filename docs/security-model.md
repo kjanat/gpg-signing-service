@@ -289,14 +289,20 @@ describes.
   inside the window and updated in place afterwards. The report is also written
   to the workflow job summary.
 - **Credentials**: the workflow reads the `SIGNING_SERVICE_URL` repository
-  variable and the `ADMIN_TOKEN` secret. This widens the admin token's blast
-  radius to that workflow, which is the cost of checking the live deployment
-  instead of a transcribed date. The check needs read on four routes
-  (`/admin/keys`, `/admin/keys/{keyId}/public`, `/admin/subjects`,
-  `/admin/tokens`); the token it must be given also authorises key deletion,
-  token minting and subject management, because `adminAuth` is all-or-nothing
-  and no read-only admin scope exists. The token is otherwise unused by CI and
-  should be rotated on the same schedule as any other admin credential.
+  variable and the `ADMIN_READONLY_TOKEN` secret — not `ADMIN_TOKEN`. The check
+  needs read on exactly four routes (`/admin/keys`,
+  `/admin/keys/{keyId}/public`, `/admin/subjects`, `/admin/tokens`), all `GET`s,
+  which is the whole scope `ADMIN_READONLY_TOKEN` grants. The credential in that
+  repository secret therefore cannot delete a signing key, mint a service token
+  or rewrite the trust list. `ADMIN_TOKEN` is not accepted as a fallback: the
+  check exits `2` and names the substitution rather than performing it, because
+  falling back would widen the monitor's authority precisely on the run where
+  the narrow credential was absent, silently.
+
+  What the secret does still carry is **disclosure**, not authority: it reads
+  every stored key id, every trust rule, every token name and the audit log. A
+  workflow log or a compromised runner leaks that set. Rotate it on its own
+  schedule — cheaper than `ADMIN_TOKEN`, so rotate it more readily.
 - **Scope of a run**: one deployment, one wrangler environment (`WRANGLER_ENV`).
   Checking staging is a second run against staging's URL and token, not a wider
   read from the production run.

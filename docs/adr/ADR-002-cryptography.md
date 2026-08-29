@@ -285,6 +285,12 @@ already keeps. Both are read back out of live data:
 5. `.github/workflows/key-expiry-check.yml` runs this weekly and opens or
    updates a `key-expiry` GitHub issue
 
+Every one of those calls is a `GET`, so the check runs on
+`ADMIN_READONLY_TOKEN` rather than `ADMIN_TOKEN`, and refuses to fall back to
+the full credential if the narrow one is missing. A weekly scheduled job should
+not hold authority it never exercises, and a silent fallback would grant that
+authority on exactly the run where the narrow credential was absent.
+
 The set is exact only as far as the authorization model allows: one unscoped
 grant makes every stored key genuinely signable, and the report says so rather
 than pretending to a narrower answer.

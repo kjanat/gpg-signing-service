@@ -405,12 +405,25 @@ per run.
 | -------------------- | ----------------------------------------- | --------- |
 | Warning threshold    | `KEY_EXPIRY_WARN_DAYS` env var            | 60 days   |
 | Deployment to check  | `SIGNING_SERVICE_URL` repository variable | —         |
-| Admin credential     | `ADMIN_TOKEN` repository secret           | —         |
+| Admin credential     | `ADMIN_READONLY_TOKEN` repository secret  | —         |
 | Wrangler environment | `WRANGLER_ENV` env var                    | top-level |
 | Notification channel | GitHub issue labelled `key-expiry`        | —         |
 
-Both `SIGNING_SERVICE_URL` and `ADMIN_TOKEN` are required; without them the
-check fails loudly rather than reporting every key as healthy. Point
+The credential is
+[`ADMIN_READONLY_TOKEN`](#the-read-only-admin-credential), not `ADMIN_TOKEN`.
+Every call the check makes is a `GET`, and a weekly scheduled job holding a
+credential that can also delete the signing key is authority nothing in the run
+would ever exercise. Provision it on the Worker with `wrangler secret put
+ADMIN_READONLY_TOKEN`, then set the same value as the repository secret.
+
+`ADMIN_TOKEN` is **not** accepted as a fallback. If it is set and
+`ADMIN_READONLY_TOKEN` is not, the check exits `2` and names the substitution
+rather than making it — a fallback would widen the monitor's authority on
+exactly the run where the narrow credential was missing, and nothing in the
+output would say so.
+
+Both `SIGNING_SERVICE_URL` and `ADMIN_READONLY_TOKEN` are required; without them
+the check fails loudly rather than reporting every key as healthy. Point
 `WRANGLER_ENV` at the environment whose deployment `SIGNING_SERVICE_URL`
 addresses — `staging` for the staging Worker — so the two agree about which
 `KEY_ID` is the default. An unknown name is refused rather than silently falling
@@ -420,19 +433,25 @@ Run it locally against any deployment:
 
 ```bash
 export SIGNING_SERVICE_URL="https://gpg.example.com"
-export GPG_SIGN_ADMIN_TOKEN="..."
-ADMIN_TOKEN="$GPG_SIGN_ADMIN_TOKEN" KEY_EXPIRY_WARN_DAYS=90 task check:key-expiry
+export GPG_SIGN_ADMIN_READONLY_TOKEN="..."
+ADMIN_READONLY_TOKEN="$GPG_SIGN_ADMIN_READONLY_TOKEN" KEY_EXPIRY_WARN_DAYS=90 task check:key-expiry
 ```
 
 It exits `0` when every key is clear, `1` when at least one needs attention, and
 `2` when the check could not run at all — including when the grant lists cannot
 be read, since a report whose scope is unknown is worse than no report.
 
+A `401` from any of the four routes is most often the read-only secret existing
+in Actions but never having been put on the Worker: `adminAuth` skips the
+read-only comparison outright when `ADMIN_READONLY_TOKEN` is unset there, so a
+correct repository secret is refused as an invalid bearer. The exit-2 message
+says so.
+
 Checking staging is a second run of the same command:
 
 ```bash
 SIGNING_SERVICE_URL="https://staging.gpg.example.com" WRANGLER_ENV=staging \
-  ADMIN_TOKEN="$GPG_SIGN_STAGING_ADMIN_TOKEN" task check:key-expiry
+  ADMIN_READONLY_TOKEN="$GPG_SIGN_STAGING_ADMIN_READONLY_TOKEN" task check:key-expiry
 ```
 
 ## Key rotation
@@ -499,8 +518,10 @@ the overlap, so in-flight callers keep working.
    opens and updates that issue but does not close it.
 
 Rotating `ADMIN_TOKEN` is separate and immediate: `wrangler secret put
-ADMIN_TOKEN`, then update the repository secret the expiry check uses. There is
-no overlap period, so every admin caller must be updated at the same time.
+ADMIN_TOKEN`, then update every operator store holding it. There is no overlap
+period, so every admin caller must be updated at the same time. The expiry check
+does not hold that secret — it holds `ADMIN_READONLY_TOKEN`, whose rotation is
+[its own, cheaper procedure](#the-read-only-admin-credential).
 
 ## Before production
 

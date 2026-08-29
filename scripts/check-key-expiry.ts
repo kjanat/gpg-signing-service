@@ -12,9 +12,17 @@
  * material via `GET /admin/keys/{keyId}/public`. Nothing here is hand
  * maintained, so nothing here can drift.
  *
+ * Every call this makes is a `GET`, so it runs on `ADMIN_READONLY_TOKEN` — the
+ * credential that `adminAuth` accepts on `GET`/`HEAD` admin routes and refuses
+ * on every state-changing one. `ADMIN_TOKEN` is deliberately not read here and
+ * is not accepted as a fallback: it would also authorize deleting a signing
+ * key, minting a service token and rewriting the trust list, and a fallback
+ * would hand the monitor that authority silently, on the one run where the
+ * read-only secret was missing. Refusing is the whole point of the split.
+ *
  * Configuration (all environment variables):
  *   SIGNING_SERVICE_URL   Base URL of the deployment to check. Required.
- *   ADMIN_TOKEN           Bearer token for the admin routes. Required.
+ *   ADMIN_READONLY_TOKEN  Read-only admin bearer. Required.
  *   KEY_EXPIRY_WARN_DAYS  Warn this many days ahead of expiry. Default 60.
  *   WRANGLER_ENV          Environment whose `KEY_ID` to read. Default top-level.
  *
@@ -60,6 +68,54 @@ function requireEnv(name: string): string {
 	return value;
 }
 
+/**
+ * The read-only admin bearer, and a refusal to quietly accept the full one.
+ *
+ * `ADMIN_TOKEN` in the environment is the likely shape of the mistake — it is
+ * what this check used before the read-only credential existed, and it works.
+ * That is exactly why it is named and refused rather than ignored: silently
+ * falling back would give a weekly scheduled job the authority to delete a
+ * signing key, and nothing in the run's output would say so.
+ */
+function readOnlyAdminToken(): string {
+	const readOnly = process.env.ADMIN_READONLY_TOKEN?.trim();
+	if (readOnly) return readOnly;
+
+	if (process.env.ADMIN_TOKEN?.trim()) {
+		throw new Error(
+			"ADMIN_READONLY_TOKEN is not set, but ADMIN_TOKEN is. The expiry check only reads, so it takes the " +
+				"read-only credential and will not fall back to the full one. Provision it with " +
+				"`wrangler secret put ADMIN_READONLY_TOKEN` (a value distinct from ADMIN_TOKEN) and pass that instead.",
+		);
+	}
+
+	throw new Error("ADMIN_READONLY_TOKEN is not set; the expiry check needs it to read the admin API");
+}
+
+/**
+ * The credential fault a status code most likely means, so an exit-2 run says
+ * what to fix instead of only what failed.
+ *
+ * A 401 here is nearly always the read-only secret existing in Actions but not
+ * on the Worker: `adminAuth` skips the second comparison outright when
+ * `ADMIN_READONLY_TOKEN` is unset, so a perfectly good repository secret is
+ * refused as an invalid bearer. A 403 cannot happen on a `GET` and so means the
+ * scope boundary moved. A 500 is the equal-secrets refusal, whose diagnosis the
+ * service deliberately keeps out of the response body and in its own log.
+ */
+function credentialHint(status: number): string {
+	if (status === 401) {
+		return " — ADMIN_READONLY_TOKEN was refused; check the deployment has it set (`wrangler secret put ADMIN_READONLY_TOKEN`) and that it matches the secret this run was given";
+	}
+	if (status === 403) {
+		return " — the read-only credential was refused the scope for a GET, which should not happen; check adminAuth's READ_ONLY_METHODS";
+	}
+	if (status === 500) {
+		return " — if the deployment's ADMIN_READONLY_TOKEN equals its ADMIN_TOKEN the whole admin surface is refused; the reason is in the Worker log";
+	}
+	return "";
+}
+
 /** GET an admin route, failing loudly rather than reporting a key as healthy */
 async function adminFetch(baseUrl: string, route: string, token: string): Promise<Response> {
 	const response = await fetch(new URL(route, baseUrl), {
@@ -67,7 +123,7 @@ async function adminFetch(baseUrl: string, route: string, token: string): Promis
 	});
 
 	if (!response.ok) {
-		throw new Error(`GET ${route} failed: ${response.status} ${response.statusText}`);
+		throw new Error(`GET ${route} failed: ${response.status} ${response.statusText}${credentialHint(response.status)}`);
 	}
 
 	return response;
@@ -152,7 +208,7 @@ async function inspectKey(
 
 async function main(): Promise<number> {
 	const serviceUrl = requireEnv("SIGNING_SERVICE_URL");
-	const adminToken = requireEnv("ADMIN_TOKEN");
+	const adminToken = readOnlyAdminToken();
 	const warnDays = parseWarnDays(process.env.KEY_EXPIRY_WARN_DAYS);
 	const env = process.env.WRANGLER_ENV?.trim() || null;
 	const now = new Date();

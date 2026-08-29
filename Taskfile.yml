@@ -173,7 +173,9 @@ tasks:
     aliases: [cke, key-expiry]
     deps: [install:noscripts]
     # Reads the live deployment through the admin API, so it needs
-    # SIGNING_SERVICE_URL and ADMIN_TOKEN in the environment (or .dev.env).
+    # SIGNING_SERVICE_URL and ADMIN_READONLY_TOKEN in the environment (or
+    # .dev.env). Every call is a GET, so the read-only admin credential is
+    # what it takes; ADMIN_TOKEN is refused rather than used as a fallback.
     # KEY_EXPIRY_WARN_DAYS overrides the 60-day warning threshold.
     cmd: bun run check:key-expiry
 
