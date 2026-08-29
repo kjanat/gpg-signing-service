@@ -47,8 +47,14 @@ tasks:
     deps: [install:noscripts]
     cmds:
       - bun run test
+      - task: test:gnupg-interop
       - task: test:signing-shim
       - task: test:sign-commits
+
+  test:gnupg-interop:
+    desc: Verify signatures against real gpg and git (skips if gpg is absent)
+    aliases: [interop]
+    cmd: bash scripts/test-gnupg-interop.sh
 
   test:signing-shim:
     desc: Test the Git commit signing shim credential paths
@@ -67,6 +73,7 @@ tasks:
       # on pre-push and what CLAUDE.md points contributors at, so it has to be a
       # superset of `test` or these two never run outside CI.
       - bun run test:coverage
+      - task: test:gnupg-interop
       - task: test:signing-shim
       - task: test:sign-commits
 

@@ -62,6 +62,12 @@ the rate-limit check succeeds.
 as a Git object and does not compare OIDC repository, ref, or workflow claims
 with that body.
 
+The body is decoded as UTF-8 on arrival and re-encoded as UTF-8 before signing,
+so the signed bytes are the request bytes for any UTF-8 payload — which every
+Git commit object produced by a default `git` configuration is. A commit object
+carrying non-UTF-8 bytes (an `encoding` header naming a legacy charset, say)
+cannot round-trip through the text body and is not supported.
+
 Access to `/sign` is therefore authority to request signatures over arbitrary
 text with an accessible key. See [Authentication](authentication.md) and
 [Security model](security-model.md) before exposing a deployment.
@@ -76,6 +82,55 @@ text with an accessible key. See [Authentication](authentication.md) and
 The current high-level Go client and `gpg-sign` CLI validate PGP response
 markers and are therefore PGP-only. X.509 operations are available through the
 HTTP API and generated raw Go client.
+
+## OpenPGP packet format
+
+The PGP signature is a **binary** signature — signature type `0x00` in
+[RFC 9580 §5.2.1][rfc9580-sigtypes] — over the request body byte for byte. That
+is what Git produces itself: `git commit -S` shells out to `gpg -bsa` with no
+`--textmode`, and the resulting packet is `sigclass 0x00`.
+
+The alternative, canonical text (`0x01`), is not interchangeable here. A
+canonical-text signature rewrites every line ending to CRLF _before hashing_, so
+a payload whose lines end in LF and the same payload with CRLF line endings hash
+to the same value — one signature stays valid over two distinct commit objects,
+and neither is pinned to the bytes Git actually stored. The service never
+canonicalizes: the body is UTF-8 encoded and signed as-is.
+
+To confirm the packet type on any signature this service returns:
+
+```console
+$ curl -sf "$GPG_SIGN_URL/public-key" | gpg --import
+$ printf 'tree ...\n' > payload            # the unsigned commit object
+$ curl -sf -H "Authorization: Bearer $TOKEN" --data-binary @payload \
+    "$GPG_SIGN_URL/sign" | jq -r .signature > payload.sig
+$ gpg --list-packets payload.sig | grep sigclass
+	version 4, created ..., md5len 0, sigclass 0x00
+$ gpg --verify payload.sig payload
+gpg: Good signature from "..."
+```
+
+`sigclass 0x00` is the assertion. A `0x01` there is a defect, not a preference.
+
+`scripts/test-gnupg-interop.sh` runs this end to end against real `gpg` and
+`git` — it signs a genuine commit payload, checks the packet class against
+git's own, verifies with `gpg --verify`, asserts the signature is _rejected_
+over a CRLF-rewritten payload, and finally reassembles the commit object and
+runs `git verify-commit` on it. `task test:gnupg-interop` runs it; it is part of
+`task test` and skips itself where `gpg` is unavailable.
+
+### Packet correctness is not the GitHub badge
+
+Everything above is about the signature being cryptographically correct and
+Git-compatible. Whether GitHub renders a green **Verified** badge is a separate,
+account-level question — the key has to be registered to a GitHub account whose
+verified email matches the committer address. A perfectly correct `0x00`
+signature still shows as "Unverified" until that is done, and no change to the
+packet can fix it. See
+[GitHub will still say "Unverified"](cloud-session-signing.md#github-will-still-say-unverified)
+for the prerequisites.
+
+[rfc9580-sigtypes]: https://www.rfc-editor.org/rfc/rfc9580.html#name-signature-types
 
 ## From signature to signed commit
 
