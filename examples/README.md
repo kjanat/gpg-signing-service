@@ -707,6 +707,49 @@ python3 python/manage_keys.py rotate \
   --old-key-id old-key-v1
 ```
 
+### Retry and Transport Behaviour (`bash/sign-commit.sh`)
+
+The signing example retries only the two statuses the service invites a caller
+to repeat — `429` and `503` — and takes the wait off the response rather than
+choosing one itself.
+
+| Variable         | Default                      | Meaning                                               |
+| ---------------- | ---------------------------- | ----------------------------------------------------- |
+| `BASE_URL`       | `https://gpg.kajkowalski.nl` | Service origin                                        |
+| `MAX_RETRIES`    | `3`                          | Total signing attempts, not retries after the first   |
+| `MAX_RETRY_WAIT` | `120`                        | Ceiling, in seconds, on a wait the _server_ asked for |
+
+Rules the script follows, and which the shell suite pins:
+
+- **The `Retry-After` header outranks the body.** A `429` from an edge throttle
+  in front of the service answers with a page and a header, and a `retryAfter`
+  in a body underneath it can be stale. The body's value is the fallback for
+  when there is no readable header, which is how this service's own limiter is
+  read. A `503` has no body field at all — `ErrorResponse` declares none.
+- **Both `Retry-After` forms are read.** Delay-seconds and an absolute
+  HTTP-date, per RFC 9110 §10.2.3. A date already in the past, a zero, or a
+  value that is neither form counts as _no hint_, and the next source answers
+  instead.
+- **The last allowed attempt is never slept on.** Once the attempt count
+  reaches `MAX_RETRIES` the run is over, and a ten-minute hint on that last
+  refusal would be ten minutes of CI time spent to reach a failure the script
+  already knows about.
+- **A `curl` that never connected is reported as such.** DNS, TLS, a refused
+  connection or a timeout produce no HTTP status; the script says no response
+  was received and quotes curl's exit code, rather than sorting a `000` through
+  the status branches as though the service had refused.
+- **`MAX_RETRY_WAIT` and `MAX_RETRIES` are validated before any arithmetic.**
+  Both come from the environment and both end up inside `(( ))`, where a bare
+  word evaluates to zero and an array subscript is evaluated as an expression.
+  A non-numeric or zero value stops the run with a message, before the token
+  fetch, the key import, and any `sleep`.
+
+Verify the behaviour without touching the network:
+
+```bash
+task test:sign-commit-example   # also runs as part of `task test` / `task tc`
+```
+
 ## Integration with Your Project
 
 1. Copy examples to your repository

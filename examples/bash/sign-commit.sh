@@ -7,13 +7,16 @@ BASE_URL="${BASE_URL:-https://gpg.kajkowalski.nl}"
 OIDC_TOKEN="${OIDC_TOKEN:-}"
 MAX_RETRIES="${MAX_RETRIES:-3}"
 # Ceiling on a wait the *server* chose. Both retry branches below take an
-# interval off the response — `retryAfter` in a 429's body, `Retry-After` on a
-# 503 — and neither value is this script's. An unbounded one parks a CI job for
-# as long as whatever answered feels like: a misconfigured origin, an
+# interval off the response — `Retry-After` on either status, `retryAfter` in a
+# 429's body — and neither value is this script's. An unbounded one parks a CI
+# job for as long as whatever answered feels like: a misconfigured origin, an
 # intermediary with its own idea of a maintenance window, or simply a typo'd
 # variable. The Go client clamps the same two hints to its own retryWaitMax for
 # this reason; this is the shell equivalent.
 MAX_RETRY_WAIT="${MAX_RETRY_WAIT:-120}"
+
+# The wait taken when a retryable response names none this script can use.
+DEFAULT_RETRY_WAIT=30
 
 # Functions
 log_info() {
@@ -50,24 +53,169 @@ log_service_error() {
 	done
 }
 
+# Reject an operator-supplied wait or attempt count before it reaches
+# arithmetic.
+#
+# Both are read from the environment and both end up inside `(( ))` — and one
+# inside `sleep`. `((wait > MAX_RETRY_WAIT))` with `MAX_RETRY_WAIT=abc` does not
+# fail loudly: bash resolves a bare word as a *variable name*, finds it unset,
+# and evaluates it as 0, so every server hint would silently clamp to zero and
+# the retry loop would spin. `MAX_RETRY_WAIT='a[$(rm -rf x)]'` is worse — array
+# subscripts inside an arithmetic context are evaluated. The check is a
+# whitelist for that reason, not a blacklist.
+#
+# Nine digits is the cap because a wait is measured in seconds and anything
+# longer is a typo, not a policy; it also keeps the arithmetic below well clear
+# of the point where bash's intmax_t wraps.
+validate_config() {
+	local name value
+
+	for name in MAX_RETRY_WAIT MAX_RETRIES; do
+		value="${!name}"
+		if [[ ! ${value} =~ ^[0-9]{1,9}$ ]] || ((10#${value} == 0)); then
+			log_error "${name} must be a positive whole number, got: '${value}'"
+			return 1
+		fi
+		# `10#` so a padded value like 030 is thirty seconds and not an octal
+		# twenty-four, and so the normalised form is what every later `(( ))`
+		# and `sleep` sees.
+		printf -v "${name}" '%d' "$((10#${value}))"
+	done
+}
+
+# The last `Retry-After` on the response, verbatim.
+#
+# Header names are case-insensitive and HTTP/1.1 line endings are CRLF, neither
+# of which a naive `grep '^Retry-After: '` survives. The value is returned
+# unparsed because both forms RFC 9110 §10.2.3 permits are legal here and only
+# the reader below decides which one this is.
+retry_after_header() {
+	sed -n 's/^[Rr][Ee][Tt][Rr][Yy]-[Aa][Ff][Tt][Ee][Rr]:[[:space:]]*\(.*\)$/\1/p' <<<"${1-}" \
+		| tr -d '\r' \
+		| tail -1
+}
+
+# Convert a `Retry-After` value to whole seconds, or to nothing at all.
+#
+# RFC 9110 §10.2.3 permits delay-seconds *and* an absolute HTTP-date, and the
+# date form is not hypothetical: intermediaries and CDNs emit IMF-fixdate
+# freely, and the throttle most likely to answer a 429 in front of this service
+# is exactly such an intermediary. Reading only integers turned every one of
+# those into "no hint".
+#
+# Empty output means "no hint" rather than "no wait" — a date already in the
+# past says nothing about how long to wait now, and neither does a value that
+# parses as neither form. Callers fall back to their own default. This mirrors
+# the Go client's parseRetryAfter.
+retry_after_seconds() {
+	local value deadline now
+	value="$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' <<<"${1-}")"
+	[[ -n ${value} ]] || return 0
+
+	if [[ ${value} =~ ^[0-9]+$ ]]; then
+		# Zero is "no hint", not "immediately" — the reading the Go client's
+		# retryAfterSeconds takes. Reported as nothing at all so a `Retry-After: 0`
+		# lets the body value, and then the caller's default, answer instead of
+		# turning the retry loop into a tight one against a dependency that has
+		# just failed.
+		[[ ${value} =~ ^0+$ ]] || printf '%s\n' "${value}"
+		return 0
+	fi
+
+	# GNU date first, then the BSD/macOS spelling, so this reads a date on a
+	# developer's laptop and not only on a Linux runner. Anything neither
+	# accepts is not a date, and is reported as no hint.
+	deadline="$(date -u -d "${value}" +%s 2>/dev/null)" \
+		|| deadline="$(date -u -j -f '%a, %d %b %Y %T %Z' "${value}" +%s 2>/dev/null)" \
+		|| return 0
+	[[ ${deadline} =~ ^-?[0-9]+$ ]] || return 0
+
+	now="$(date -u +%s)"
+	if ((deadline > now)); then
+		printf '%s\n' "$((deadline - now))"
+	fi
+}
+
 # Clamp a server-chosen wait to MAX_RETRY_WAIT, and reject anything that is not
 # a plain number of seconds.
 #
-# `Retry-After` also has an HTTP-date form that intermediaries emit freely, and
-# the reader below yields an empty string for one rather than trying to parse a
-# date in portable shell — so a non-numeric value lands on the default here
-# instead of reaching `sleep` as a word it would refuse.
+# Everything reaching here came off a response, so "not a number" is a real
+# case: an intermediary's malformed header, a JSON `retryAfter` of `null`, a
+# date `retry_after_seconds` declined to read. Each lands on the caller's
+# fallback instead of reaching `sleep` as a word it would refuse.
 clamp_wait() {
 	local wait="$1" fallback="$2"
 
-	# Zero is "no hint", not "immediately" — the same reading the Go client's
-	# retryAfterSeconds takes. Sleeping 0 turns the retry loop into a tight one
-	# against a dependency that has just failed.
-	[[ ${wait} =~ ^[0-9]+$ && ${wait} -gt 0 ]] || wait="${fallback}"
+	if [[ ! ${wait} =~ ^[0-9]+$ ]]; then
+		wait="${fallback}"
+	elif ((${#wait} > 9)); then
+		# Longer than any wait this script will honour anyway, and long enough
+		# that `10#` below would overflow bash's intmax_t and arrive negative —
+		# a wait that reads as one already past. The ceiling is the answer.
+		wait="${MAX_RETRY_WAIT}"
+	else
+		wait="$((10#${wait}))"
+		# Zero is "no hint", not "immediately" — the same reading the Go client's
+		# retryAfterSeconds takes. Sleeping 0 turns the retry loop into a tight one
+		# against a dependency that has just failed.
+		((wait > 0)) || wait="${fallback}"
+	fi
+
 	if ((wait > MAX_RETRY_WAIT)); then
 		wait="${MAX_RETRY_WAIT}"
 	fi
 	echo "${wait}"
+}
+
+# How long a 429 asks the caller to wait, header first.
+#
+# The header is the HTTP-level authority and it is the one an intermediary can
+# set, so it outranks the envelope: a throttle in front of this service answers
+# with a page and a `Retry-After`, and a stale or optimistic `retryAfter` in a
+# body underneath it would otherwise send the next attempt in before the thing
+# doing the throttling permits one.
+#
+# The body is the fallback because this service's own limiter always writes
+# `retryAfter` when it writes a body at all. `|| true`, and `empty` rather than
+# a jq-side default: jq exits non-zero on an HTML error page, and under `set -e`
+# an assignment taking its status ended the whole script right here — before the
+# clamp, before `last_body` was recorded, and so before anything at all was
+# printed about the refusal.
+rate_limit_wait() {
+	local headers="$1" body="$2" wait
+
+	wait="$(retry_after_seconds "$(retry_after_header "${headers}")")"
+	if [[ -z ${wait} ]]; then
+		wait="$(jq -r '.retryAfter // empty' <<<"${body}" 2>/dev/null)" || wait=""
+	fi
+
+	clamp_wait "${wait}" "${DEFAULT_RETRY_WAIT}"
+}
+
+# How long a 503 asks the caller to wait.
+#
+# Retry-After is a header here and only a header: ErrorResponse declares no
+# `retryAfter`, so there is no body value to prefer or fall back to.
+degraded_wait() {
+	clamp_wait "$(retry_after_seconds "$(retry_after_header "$1")")" "${DEFAULT_RETRY_WAIT}"
+}
+
+# Wait between two signing attempts — but only when another one is coming.
+#
+# `attempts_made` is the count *after* the attempt just refused, so once it
+# reaches MAX_RETRIES the loop is over and this sleep would be paid for a retry
+# that is never made. On a 503 with a ten-minute hint that is ten minutes of CI
+# time spent to reach a failure the script already knows about.
+sleep_before_retry() {
+	local attempts_made="$1" wait_seconds="$2" reason="$3"
+
+	if ((attempts_made >= MAX_RETRIES)); then
+		log_info "${reason}; no attempt remains, not waiting ${wait_seconds}s"
+		return 0
+	fi
+
+	log_info "${reason}, waiting ${wait_seconds}s..."
+	sleep "${wait_seconds}"
 }
 
 check_requirements() {
@@ -135,22 +283,36 @@ sign_commit() {
 	fi
 
 	# Retry logic
-	while [[ ${retry_count} -lt ${MAX_RETRIES} ]]; do
+	while ((retry_count < MAX_RETRIES)); do
 		log_info "Signing attempt $((retry_count + 1))/${MAX_RETRIES}..."
 
-		local response http_code body request_id headers headers_file
+		local response http_code body request_id headers headers_file curl_status
 		request_id=$(uuidgen) || true
-		# Headers to a file, not just the body: `Retry-After` on a 503 is a header
-		# and has no field in the envelope, so a body-only read cannot see the one
-		# thing that response is telling the caller.
+		# Headers to a file, not just the body: `Retry-After` is a header on both
+		# retryable statuses and has no field in the 503's envelope, so a body-only
+		# read cannot see the one thing that response is telling the caller.
 		headers_file=$(mktemp)
+		curl_status=0
 		response=$(curl -sw "\n%{http_code}" -D "${headers_file}" -X POST \
 			-H "Authorization: Bearer ${OIDC_TOKEN}" \
 			-H "X-Request-ID: ${request_id}" \
 			--data-raw "${commit_data}" \
-			"${request_url}")
-		headers=$(cat "${headers_file}")
+			"${request_url}") || curl_status=$?
+		headers=$(cat "${headers_file}" 2>/dev/null || true)
 		rm -f "${headers_file}"
+
+		# A non-zero curl exit means no response existed to have a status: DNS did
+		# not resolve, TLS did not verify, the connection was refused or timed out.
+		# Left unhandled it is not a quiet nothing — `set -e` ends the run on the
+		# assignment above, with no line saying why, and the status the case below
+		# would otherwise sort on is curl's `%{http_code}` of `000`, which is not a
+		# refusal from this service and must not be reported as one.
+		if ((curl_status != 0)); then
+			log_error "No HTTP response from ${request_url}: curl exited ${curl_status}" \
+				"(transport failure — DNS, TLS, connection or timeout; nothing was signed)"
+			log_error "  requestId: ${request_id:-unavailable}"
+			return 1
+		fi
 
 		http_code="$(echo "${response}" | tail -1)"
 		body="$(echo "${response}" | head -n -1)"
@@ -162,49 +324,29 @@ sign_commit() {
 				return 0
 				;;
 			429)
-				# `|| true`, and `empty` rather than a jq-side default: a 429 is the
-				# one refusal that needs no envelope to be understood, and the
-				# responder most likely to answer one is an edge throttle in front
-				# of this service, which sends an HTML page and a `Retry-After`
-				# header. jq exits non-zero on that body, and under `set -e` an
-				# assignment taking its status ended the whole script right here —
-				# before the clamp, before `last_body` was recorded, and so before
-				# anything at all was printed about the refusal. Same failure the
-				# `if` in log_service_error exists to prevent.
-				#
-				# The header is the fallback for exactly that responder, read the
-				# same way the 503 branch reads its own.
 				local retry_after
-				retry_after=$(jq -r '.retryAfter // empty' <<<"${body}" 2>/dev/null) || retry_after=""
-				if [[ -z ${retry_after} ]]; then
-					retry_after=$(sed -n 's/^[Rr]etry-[Aa]fter: *\([0-9]*\).*/\1/p' <<<"${headers}" | tail -1)
-				fi
-				retry_after=$(clamp_wait "${retry_after:-30}" 30)
-				log_info "Rate limited, waiting ${retry_after}s..."
+				retry_after="$(rate_limit_wait "${headers}" "${body}")"
 				last_code="${http_code}" last_body="${body}"
-				sleep "${retry_after}"
 				retry_count=$((retry_count + 1))
+				sleep_before_retry "${retry_count}" "${retry_after}" "Rate limited"
 				;;
 			503)
 				# SERVICE_DEGRADED: the service could not reach something it needs
 				# — the issuer's JWKS, its authorization store — so nothing about
 				# this request was judged. It is the one refusal the service invites
 				# a caller to repeat, and the only one where waiting is the whole
-				# fix. Retry-After is a header here, not a body field: ErrorResponse
-				# declares no `retryAfter`.
+				# fix.
 				#
 				# Every 503 from this service is that one, and every 503 carries a
 				# Retry-After. The permanent fault — a deployment whose own
 				# configuration stopped the request, which answers identically until
 				# an operator changes it — is SERVICE_MISCONFIGURED and arrives as a
 				# 500, so it never reaches this branch to be sorted out of it.
-				local degraded_wait
-				degraded_wait=$(sed -n 's/^[Rr]etry-[Aa]fter: *\([0-9]*\).*/\1/p' <<<"${headers}" | tail -1)
-				degraded_wait=$(clamp_wait "${degraded_wait:-30}" 30)
-				log_info "Service degraded, waiting ${degraded_wait}s..."
+				local wait_seconds
+				wait_seconds="$(degraded_wait "${headers}")"
 				last_code="${http_code}" last_body="${body}"
-				sleep "${degraded_wait}"
 				retry_count=$((retry_count + 1))
+				sleep_before_retry "${retry_count}" "${wait_seconds}" "Service degraded"
 				;;
 			401)
 				# AUTH_MISSING and AUTH_INVALID are the credential's problem;
@@ -242,6 +384,9 @@ sign_commit() {
 main() {
 	log_info "GPG Signing Service - Commit Signing"
 
+	# Before anything reaches `(( ))` or `sleep`, and before the run spends a
+	# token fetch and a key import on a configuration it will fail on later.
+	validate_config
 	check_requirements
 	get_oidc_token
 	import_public_key
@@ -253,4 +398,10 @@ main() {
 	echo "${signature}"
 }
 
-main "$@"
+# Only a direct run signs anything. The shell regression suite in
+# .github/scripts/test-sign-commit-example.sh sources this file to exercise the
+# retry and transport paths against stubbed responses, and must not sign a
+# commit or reach the network to do it.
+if [[ ${BASH_SOURCE[0]} == "${0}" ]]; then
+	main "$@"
+fi
