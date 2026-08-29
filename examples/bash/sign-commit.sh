@@ -120,22 +120,30 @@ retry_after_header() {
 # is exactly such an intermediary. Reading only integers turned every one of
 # those into "no hint".
 #
-# Empty output means "no hint" rather than "no wait" — a date already in the
-# past says nothing about how long to wait now, and neither does a value that
-# parses as neither form. Callers fall back to their own default. This mirrors
-# the Go client's parseRetryAfter.
+# Two outcomes, and they are not the same statement:
+#
+#   - Nothing at all — "no hint". The value was absent, or is not one of the
+#     forms the grammar admits: `soon-ish`, `tomorrow`, or a `-30` that
+#     delay-seconds (1*DIGIT) does not cover. The caller goes on to its next
+#     source.
+#   - A number, which may be `0` — a hint of zero. `Retry-After: 0` is a valid
+#     delay-seconds value and a date already past has a remaining delay of
+#     zero; in both, the responder is saying the wait is already over, which is
+#     not the same as saying nothing. Every value that parses is reported as
+#     max(0, delay) for that reason.
+#
+# Keeping those apart is what lets a header outrank a body that disagrees with
+# it even when the header says zero. The Go client's parseRetryAfter cannot
+# draw the same line — it returns a time.Duration whose zero value *is* its "no
+# hint" — so this is the one place the two read a header differently. The
+# immediate retries that result are still bounded by MAX_RETRIES.
 retry_after_seconds() {
 	local value deadline now
 	value="$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' <<<"${1-}")"
 	[[ -n ${value} ]] || return 0
 
 	if [[ ${value} =~ ^[0-9]+$ ]]; then
-		# Zero is "no hint", not "immediately" — the reading the Go client's
-		# retryAfterSeconds takes. Reported as nothing at all so a `Retry-After: 0`
-		# lets the body value, and then the caller's default, answer instead of
-		# turning the retry loop into a tight one against a dependency that has
-		# just failed.
-		[[ ${value} =~ ^0+$ ]] || printf '%s\n' "${value}"
+		printf '%s\n' "${value}"
 		return 0
 	fi
 
@@ -165,6 +173,11 @@ retry_after_seconds() {
 	now="$(date -u +%s)"
 	if ((deadline > now)); then
 		printf '%s\n' "$((deadline - now))"
+	else
+		# The date read, and it has already come round: the remaining delay is
+		# zero, not unknown. Reported as `0` so the responder that named a moment
+		# now passed still gets the last word over a body value written before it.
+		printf '0\n'
 	fi
 }
 
@@ -175,6 +188,9 @@ retry_after_seconds() {
 # case: an intermediary's malformed header, a JSON `retryAfter` of `null`, a
 # date `retry_after_seconds` declined to read. Each lands on the caller's
 # fallback instead of reaching `sleep` as a word it would refuse.
+#
+# The output is therefore always a whole number of seconds in 0..MAX_RETRY_WAIT
+# — bounded and nonnegative — whatever the response said.
 clamp_wait() {
 	local wait="$1" fallback="$2" digits
 
@@ -188,10 +204,12 @@ clamp_wait() {
 		# client reads the same value as 5.
 		digits="${wait#"${wait%%[!0]*}"}"
 		if [[ -z ${digits} ]]; then
-			# Zero is "no hint", not "immediately" — the same reading the Go client's
-			# retryAfterSeconds takes. Sleeping 0 turns the retry loop into a tight one
-			# against a dependency that has just failed.
-			wait="${fallback}"
+			# All padding and no magnitude: a hint of zero, honoured as itself rather
+			# than swapped for the fallback. It can only have come from a value that
+			# parsed — a `Retry-After: 0`, a date already past, a `retryAfter` of 0 —
+			# and each of those is the responder saying the wait is over. The fallback
+			# belongs to the values that said nothing at all.
+			wait=0
 		elif ((${#digits} > 9)); then
 			# Longer than any wait this script will honour anyway, and long enough
 			# that `10#` below would overflow bash's intmax_t and arrive negative —
@@ -215,6 +233,12 @@ clamp_wait() {
 # with a page and a `Retry-After`, and a stale or optimistic `retryAfter` in a
 # body underneath it would otherwise send the next attempt in before the thing
 # doing the throttling permits one.
+#
+# A header of `0` keeps that precedence. It parses, so it is a hint, and
+# `retry_after_seconds` reports it as `0` rather than as nothing — which is the
+# whole reason that function separates the two. A throttle saying the window has
+# just cleared is not overruled by a `retryAfter: 60` written underneath it
+# before the window elapsed.
 #
 # The body is the fallback because this service's own limiter always writes
 # `retryAfter` when it writes a body at all. `|| true`, and `empty` rather than
@@ -247,11 +271,21 @@ degraded_wait() {
 # reaches MAX_RETRIES the loop is over and this sleep would be paid for a retry
 # that is never made. On a 503 with a ten-minute hint that is ten minutes of CI
 # time spent to reach a failure the script already knows about.
+#
+# A wait of zero is the other case where nothing is waited on: the response
+# named a moment that has already arrived. `sleep 0` is a process spawned to
+# accomplish nothing, and "waiting 0s..." in the log reads as a bug in the
+# script rather than as what the responder asked for.
 sleep_before_retry() {
 	local attempts_made="$1" wait_seconds="$2" reason="$3"
 
 	if ((attempts_made >= MAX_RETRIES)); then
 		log_info "${reason}; no attempt remains, not waiting ${wait_seconds}s"
+		return 0
+	fi
+
+	if ((wait_seconds == 0)); then
+		log_info "${reason}; the response says the wait is over, retrying now"
 		return 0
 	fi
 

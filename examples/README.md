@@ -607,8 +607,15 @@ Rules the script follows, and which the shell suite pins:
   formats §5.6.7 permits, checked by shape before `date(1)` sees it. `date -d`
   is a natural-language parser, so ungated it reads `tomorrow` as a day and
   `5 seconds` as five, and a malformed header would outrank a perfectly good
-  `retryAfter` in the body. A date already in the past, a zero, or a value that
-  is neither form counts as _no hint_, and the next source answers instead.
+  `retryAfter` in the body. A value that is neither form — `soon-ish`, or a
+  negative number the delay-seconds grammar does not admit — counts as _no
+  hint_, and the next source answers instead.
+- **A zero-delay header is a hint, not the absence of one.** `Retry-After: 0`
+  and a date that has already come round both mean the wait is over, so they
+  keep their precedence over a body that disagrees and are not replaced by the
+  30-second default. The next attempt goes immediately, without a `sleep`, and
+  `MAX_RETRIES` is what bounds it. Every wait the script derives is a whole
+  number of seconds between `0` and `MAX_RETRY_WAIT`.
 - **The last allowed attempt is never slept on.** Once the attempt count
   reaches `MAX_RETRIES` the run is over, and a ten-minute hint on that last
   refusal would be ten minutes of CI time spent to reach a failure the script
