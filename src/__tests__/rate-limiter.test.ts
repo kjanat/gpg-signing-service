@@ -81,26 +81,38 @@ describe("RateLimiter Durable Object", () => {
 			// wait 60s over 60ms of debt — and on the row bucket that hint idles every
 			// sibling under the trusted row, not just the caller that spent it.
 			const stub = getRateLimiter("retry-hint");
-			await runInDurableObject(stub, async (_instance, state) => {
-				// Seeded empty rather than drained: 1000 round-trips is what the CI
-				// timeout above was about. The denial path performs no write, so the
-				// seeded state is what the request sees.
+			// Seeded and spent inside one entry into the object, against the instance
+			// rather than through the stub. A bucket seeded empty at `now` refills one
+			// token per `windowMs / capacity` — 60ms at a ceiling of 1000 — so a
+			// stub round trip that loses a scheduling slice between the `put` and the
+			// `consume` hands the caller a token and answers 200. Calling the instance
+			// closes that window to the microseconds it takes to await a `put`, which
+			// is the difference between a test of the hint and a race against the
+			// refill. The denial path performs no write, so the seeded state is what
+			// the request sees either way.
+			//
+			// Bodies are read inside the callback too: a Response created in one
+			// Durable Object's context cannot be consumed outside it.
+			const consume = async (instance: RateLimiter, query: string) => {
+				const response = await instance.fetch(new Request(`http://localhost/consume?${query}`));
+				return { status: response.status, result: (await response.json()) as RateLimitResult };
+			};
+
+			const [wide, narrow] = await runInDurableObject(stub, async (instance, state) => {
 				await state.storage.put("bucket:wide", { tokens: 0, lastRefill: Date.now(), capacity: 1000 });
 				await state.storage.put("bucket:narrow", { tokens: 0, lastRefill: Date.now(), capacity: 100 });
+
+				return Promise.all([consume(instance, "identity=wide&limit=1000"), consume(instance, "identity=narrow")]);
 			});
 
-			const wide = await stub.fetch("http://localhost/consume?identity=wide&limit=1000");
-			const narrow = await stub.fetch("http://localhost/consume?identity=narrow");
 			expect(wide.status).toBe(429);
 			expect(narrow.status).toBe(429);
 
 			// One token against a ceiling of 1000 is ~60ms; against 100, ~600ms.
 			// Either way, not the 60s the window would have reported.
-			const wideResult = (await wide.json()) as RateLimitResult;
-			const narrowResult = (await narrow.json()) as RateLimitResult;
-			expect(wideResult.resetAt - Date.now()).toBeLessThan(500);
-			expect(narrowResult.resetAt - Date.now()).toBeGreaterThan(wideResult.resetAt - Date.now());
-			expect(narrowResult.resetAt - Date.now()).toBeLessThan(5_000);
+			expect(wide.result.resetAt - Date.now()).toBeLessThan(500);
+			expect(narrow.result.resetAt - Date.now()).toBeGreaterThan(wide.result.resetAt - Date.now());
+			expect(narrow.result.resetAt - Date.now()).toBeLessThan(5_000);
 		});
 
 		it("falls back to the default for a malformed limit", async () => {
