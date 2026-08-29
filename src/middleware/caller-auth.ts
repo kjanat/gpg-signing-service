@@ -53,8 +53,12 @@ export const callerAuth: MiddlewareHandler<{
 	try {
 		policy = await verifyServiceToken(c.env.AUDIT_DB, token);
 	} catch (error) {
-		logger.error("Service token lookup failed", {
-			error: error instanceof Error ? error.message : String(error),
+		// The caught value goes in `logger.error`'s error slot, not folded into
+		// context: that is the argument whose stack and name the logger unpacks,
+		// and the third argument is where `requestId` has to land for this entry
+		// to join up with the id the caller was handed back.
+		logger.error("Service token lookup failed", error, {
+			requestId: c.get("requestId"),
 		});
 		return serviceDegraded(c, "Authorization store unavailable", {
 			hint: "The service-token lookup failed, so this request could not be authorized either way. Nothing about the token is wrong. Retry after the interval in Retry-After; if it persists, the operator should check D1 and that `task db:migrate` has been applied.",
