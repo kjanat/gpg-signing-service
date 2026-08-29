@@ -657,4 +657,211 @@ describe("Admin Routes", () => {
 			env.KEY_STORAGE.get = originalGet;
 		});
 	});
+
+	// Regression cover for #94. The admin key paths used to hand `logger.error`
+	// an object in its *error* slot (`logger.error(msg, { keyId, error })`).
+	// The logger only unpacks a value that `instanceof Error`, so the object was
+	// stored verbatim and `JSON.stringify` rendered the nested `Error` as `{}` --
+	// the emitted line named the failure but not its cause, and carried no id to
+	// correlate against the response. These assert on the JSON the logger
+	// actually emits, so restoring the nested shape fails them.
+	describe("Admin error log fidelity", () => {
+		/** Shape of a production log line, as the nested-error bug would leave it. */
+		interface LoggedError {
+			message?: string;
+			name?: string;
+			stack?: string;
+			keyId?: string;
+			error?: unknown;
+		}
+
+		interface StructuredLogEntry {
+			level?: string;
+			message?: string;
+			requestId?: string;
+			keyId?: string;
+			error?: LoggedError;
+		}
+
+		/**
+		 * Run `fn` with `console.log` captured and return every line the logger
+		 * emitted as parsed JSON. Restores in `finally`, so a blown assertion
+		 * inside cannot leak the spy into the rest of the file.
+		 */
+		async function captureLogEntries<T>(fn: () => Promise<T>): Promise<{
+			result: T;
+			entries: StructuredLogEntry[];
+		}> {
+			const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+			try {
+				const result = await fn();
+				const entries: StructuredLogEntry[] = [];
+				for (const call of spy.mock.calls) {
+					const [line] = call;
+					if (typeof line !== "string") continue;
+					try {
+						entries.push(JSON.parse(line) as StructuredLogEntry);
+					} catch {
+						// Development-mode / non-JSON output is not what we assert on.
+					}
+				}
+				return { result, entries };
+			} finally {
+				spy.mockRestore();
+			}
+		}
+
+		function findErrorEntry(entries: StructuredLogEntry[], message: string): StructuredLogEntry | undefined {
+			return entries.find((entry) => entry.level === "error" && entry.message === message);
+		}
+
+		/** Swap KEY_STORAGE for a stub, restoring the real binding in `finally`. */
+		async function withKeyStorage<T>(fetchImpl: () => Promise<Response>, fn: () => Promise<T>): Promise<T> {
+			const originalGet = env.KEY_STORAGE.get;
+			env.KEY_STORAGE.get = () => ({ fetch: fetchImpl }) as unknown as DurableObjectStub;
+			try {
+				return await fn();
+			} finally {
+				env.KEY_STORAGE.get = originalGet;
+			}
+		}
+
+		it("keeps the cause and the request id when the public key path fails", async () => {
+			const requestId = crypto.randomUUID();
+			const { result: response, entries } = await captureLogEntries(() =>
+				withKeyStorage(
+					() => Promise.reject(new TypeError("key storage socket reset")),
+					() =>
+						adminRequest("/keys/A1B2C3D4E5F6A7B8/public", {
+							headers: { "X-Request-ID": requestId },
+						}),
+				),
+			);
+
+			// Response behaviour is unchanged by the logging fix.
+			expect(response.status).toBe(500);
+			const body = (await response.json()) as { error: string; code: string };
+			expect(body.code).toBe("KEY_PROCESSING_ERROR");
+			expect(body.error).toBe("Failed to process key");
+
+			const entry = findErrorEntry(entries, "Failed to get public key:");
+			expect(entry).toBeDefined();
+			// The cause survives serialization instead of collapsing to `{}`.
+			expect(entry?.error?.message).toBe("key storage socket reset");
+			expect(entry?.error?.name).toBe("TypeError");
+			expect(entry?.error).not.toEqual({});
+			// `keyId` is context, not part of the cause. Under the old shape it
+			// lived *inside* the error object and the cause was empty beside it.
+			expect(entry?.keyId).toBe("A1B2C3D4E5F6A7B8");
+			expect(entry?.error?.keyId).toBeUndefined();
+			// The id in the log is the id the caller was handed back, or the entry
+			// correlates with nothing.
+			expect(entry?.requestId).toBe(requestId);
+			expect(entry?.requestId).toBe(response.headers.get("X-Request-ID"));
+		});
+
+		it("keeps the cause and the request id when key deletion fails", async () => {
+			const requestId = crypto.randomUUID();
+			const { result: response, entries } = await captureLogEntries(() =>
+				withKeyStorage(
+					() => Promise.reject(new Error("delete rpc exploded")),
+					() =>
+						adminRequest("/keys/B1B2C3D4E5F6A7B8", {
+							method: "DELETE",
+							headers: { "X-Request-ID": requestId },
+						}),
+				),
+			);
+
+			expect(response.status).toBe(500);
+			const body = (await response.json()) as { error: string; code: string };
+			expect(body.code).toBe("KEY_DELETE_ERROR");
+			expect(body.error).toBe("Failed to delete key");
+
+			const entry = findErrorEntry(entries, "Failed to delete key:");
+			expect(entry).toBeDefined();
+			expect(entry?.error?.message).toBe("delete rpc exploded");
+			expect(entry?.error?.name).toBe("Error");
+			expect(entry?.error).not.toEqual({});
+			expect(entry?.keyId).toBe("B1B2C3D4E5F6A7B8");
+			expect(entry?.error?.keyId).toBeUndefined();
+			expect(entry?.requestId).toBe(requestId);
+			expect(entry?.requestId).toBe(response.headers.get("X-Request-ID"));
+		});
+
+		it("correlates a key listing failure with the caller's request id", async () => {
+			const requestId = crypto.randomUUID();
+			const { result: response, entries } = await captureLogEntries(() =>
+				withKeyStorage(
+					() => Promise.resolve(new Response("Storage Error", { status: 503 })),
+					() => adminRequest("/keys", { headers: { "X-Request-ID": requestId } }),
+				),
+			);
+
+			expect(response.status).toBe(500);
+			const body = (await response.json()) as { error: string; code: string };
+			expect(body.code).toBe("KEY_LIST_ERROR");
+
+			const entry = findErrorEntry(entries, "Failed to list keys:");
+			expect(entry).toBeDefined();
+			expect(entry?.error?.message).toBe("Key storage returned 503");
+			expect(entry?.requestId).toBe(requestId);
+			expect(entry?.requestId).toBe(response.headers.get("X-Request-ID"));
+		});
+
+		it("keeps the cause and the request id when a key upload fails", async () => {
+			const requestId = crypto.randomUUID();
+			const privateKey = await generateTestKey();
+			const { result: response, entries } = await captureLogEntries(() =>
+				withKeyStorage(
+					() => Promise.resolve(new Response(JSON.stringify({ error: "store-key quota exceeded" }), { status: 507 })),
+					() =>
+						adminRequest("/keys", {
+							method: "POST",
+							headers: { "X-Request-ID": requestId },
+							body: JSON.stringify({ armoredPrivateKey: privateKey, keyId: "D1B2C3D4E5F6A7B8" }),
+						}),
+				),
+			);
+
+			expect(response.status).toBe(500);
+			const body = (await response.json()) as { error: string; code: string };
+			expect(body.code).toBe("KEY_UPLOAD_ERROR");
+
+			// This path used to log at `debug`, which `NODE_ENV !== "development"`
+			// drops, so production saw no line for it at all.
+			const entry = findErrorEntry(entries, "Failed to upload key:");
+			expect(entry).toBeDefined();
+			expect(entry?.error?.message).toBe("store-key quota exceeded");
+			expect(entry?.error?.name).toBe("Error");
+			expect(entry?.requestId).toBe(requestId);
+			expect(entry?.requestId).toBe(response.headers.get("X-Request-ID"));
+		});
+
+		it("correlates an audit query failure with the caller's request id", async () => {
+			const requestId = crypto.randomUUID();
+			const originalPrepare = env.AUDIT_DB.prepare;
+			env.AUDIT_DB.prepare = () => {
+				throw new Error("D1_ERROR: no such table: audit_logs");
+			};
+
+			let capture: Awaited<ReturnType<typeof captureLogEntries<Response>>>;
+			try {
+				capture = await captureLogEntries(() => adminRequest("/audit", { headers: { "X-Request-ID": requestId } }));
+			} finally {
+				env.AUDIT_DB.prepare = originalPrepare;
+			}
+
+			const { result: response, entries } = capture;
+			expect(response.status).toBe(500);
+			const body = (await response.json()) as { error: string; code: string };
+			expect(body.code).toBe("AUDIT_ERROR");
+
+			const entry = findErrorEntry(entries, "Failed to get audit logs:");
+			expect(entry).toBeDefined();
+			expect(entry?.error?.message).toContain("no such table: audit_logs");
+			expect(entry?.requestId).toBe(requestId);
+			expect(entry?.requestId).toBe(response.headers.get("X-Request-ID"));
+		});
+	});
 });

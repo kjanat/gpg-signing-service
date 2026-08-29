@@ -334,6 +334,50 @@ describe("X.509 admin endpoints", () => {
 		expect(response.status).toBe(201);
 	});
 
+	// The X.509 upload path had no `logger` call in its catch at all, so a
+	// failure left nothing behind but a D1 audit row. Asserts on the JSON the
+	// logger emits, not on the call arguments, so the serialization is proven.
+	it("logs the cause and the request id when the X.509 upload fails", async () => {
+		vi.spyOn(env.KEY_STORAGE, "get").mockReturnValue({
+			fetch: async () => new Response(JSON.stringify({ error: "x509 store-key refused" }), { status: 500 }),
+		} as unknown as DurableObjectStub);
+		const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const requestId = crypto.randomUUID();
+
+		let response: Response;
+		let entries: { level?: string; message?: string; requestId?: string; error?: { message?: string } }[];
+		try {
+			response = await adminRequest("/keys/x509", {
+				method: "POST",
+				headers: { "X-Request-ID": requestId },
+				body: JSON.stringify({
+					keyId: "B1B2C3D4E5F60008",
+					privateKeyPem: fixture.encryptedKeyPem,
+					certificatePem: fixture.certificatePem,
+				}),
+			});
+			entries = consoleSpy.mock.calls.flatMap(([line]) => {
+				if (typeof line !== "string") return [];
+				try {
+					return [JSON.parse(line)];
+				} catch {
+					// Development-mode / non-JSON output is not what we assert on.
+					return [];
+				}
+			});
+		} finally {
+			consoleSpy.mockRestore();
+		}
+
+		expect(response.status).toBe(500);
+
+		const entry = entries.find((e) => e.level === "error" && e.message === "Failed to upload X.509 key:");
+		expect(entry).toBeDefined();
+		expect(entry?.error?.message).toBe("x509 store-key refused");
+		expect(entry?.requestId).toBe(requestId);
+		expect(entry?.requestId).toBe(response.headers.get("X-Request-ID"));
+	});
+
 	it("uses the fallback message when storage fails without detail", async () => {
 		vi.spyOn(env.KEY_STORAGE, "get").mockReturnValue({
 			fetch: async () => new Response(JSON.stringify({}), { status: 500 }),
