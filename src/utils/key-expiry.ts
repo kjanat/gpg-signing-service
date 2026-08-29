@@ -401,7 +401,11 @@ export async function pgpKeyExpiry(armoredKey: string): Promise<KeyExpiry> {
 	// have signed stops mattering.
 	if (await key.isRevoked()) return { kind: "revoked" };
 
-	return signingSubkeyExpiry(await key.getExpirationTime(), await collectSigningSubkeys(key));
+	return signingSubkeyExpiry(
+		await key.getExpirationTime(),
+		await collectSigningSubkeys(key),
+		await canSign(key, key.getKeyID()),
+	);
 }
 
 /** What openpgp's `getExpirationTime()` can hand back */
@@ -434,9 +438,13 @@ export interface SigningSubkey {
  * subkey was once revoked" is not news and a monitor that says it is gets
  * muted. What is news is that nothing is left to sign with:
  *
- * 1. **No signing subkey at all.** The primary key signs directly, so its own
- *    expiry is the whole answer. This is the shape openpgp's generator produces
- *    unless a signing subkey is asked for.
+ * 1. **No signing subkey at all.** Either the primary key signs directly — the
+ *    shape openpgp's generator produces unless a signing subkey is asked for,
+ *    and then its own expiry is the whole answer — or it does not, and nothing
+ *    on this key can sign. The standard offline layout is a certify-only
+ *    primary, so `primarySigns` is not a formality: reading the primary's
+ *    expiry there reports a comfortable date for a key that cannot produce a
+ *    signature at all.
  * 2. **At least one usable signing subkey.** Signing works, and keeps working
  *    until the last of them lapses — so the *latest* usable expiry is the date
  *    signing breaks, capped by the primary key's. Taking the earliest instead
@@ -455,12 +463,24 @@ export interface SigningSubkey {
  * the sets that matter here are awkward to conjure out of real key material,
  * and a rule this consequential should be assertable directly.
  */
-export function signingSubkeyExpiry(primary: OpenPgpExpiration, signingSubkeys: readonly SigningSubkey[]): KeyExpiry {
+export function signingSubkeyExpiry(
+	primary: OpenPgpExpiration,
+	signingSubkeys: readonly SigningSubkey[],
+	primarySigns: boolean,
+): KeyExpiry {
 	if (primary === null) {
 		return { kind: "unknown", reason: "PGP primary key has no valid self-certification (malformed)" };
 	}
 
-	if (signingSubkeys.length === 0) return effectiveExpiry(primary, primary);
+	if (signingSubkeys.length === 0) {
+		if (!primarySigns) {
+			return {
+				kind: "unknown",
+				reason: "no signing key: no signing subkey is bound and the primary key may not sign data",
+			};
+		}
+		return effectiveExpiry(primary, primary);
+	}
 
 	const usable = signingSubkeys.filter((subkey) => subkey.usable);
 	if (usable.length === 0) return noUsableSigningSubkey(signingSubkeys);
@@ -518,18 +538,25 @@ async function collectSigningSubkeys(key: openpgp.Key): Promise<SigningSubkey[]>
 	const signingSubkeys: SigningSubkey[] = [];
 
 	for (const subkey of key.getSubkeys()) {
-		if (!bindsSigningCapability(subkey)) continue;
-
 		const dateless = subkey as unknown as DatelessSubkey;
 		const revoked = await dateless.isRevoked(undefined, undefined, null).catch(() => false);
+		// openpgp's own selection rules decide usability, pinned to this one subkey
+		// so the answer cannot come from a different key: pinning stops the
+		// fallback that made a revoked subkey invisible in the first place.
+		const usable = !revoked && (await canSign(key, subkey.getKeyID()));
+
+		// Membership is the union of "openpgp will sign with it" and "its binding
+		// says it may sign", and the first half is not redundant: a subkey openpgp
+		// selects is in the signing set by definition, whatever this module would
+		// have concluded on its own. Only the subkeys openpgp refuses need a
+		// verdict derived here, and dropping one of those is what turns a broken
+		// signing path back into a healthy-looking primary-key date.
+		if (!usable && !(await bindsSigningCapability(key, subkey))) continue;
 
 		signingSubkeys.push({
 			keyId: subkey.getKeyID().toHex(),
 			revoked,
-			// openpgp's own selection rules decide usability, pinned to this one
-			// subkey so the answer cannot come from a different key: pinning stops
-			// the fallback that made a revoked subkey invisible in the first place.
-			usable: !revoked && (await canSign(key, subkey)),
+			usable,
 			expiresAt: await dateless.getExpirationTime(null),
 		});
 	}
@@ -537,10 +564,10 @@ async function collectSigningSubkeys(key: openpgp.Key): Promise<SigningSubkey[]>
 	return signingSubkeys;
 }
 
-/** Would openpgp sign with exactly this subkey, dates aside? */
-async function canSign(key: openpgp.Key, subkey: openpgp.Subkey): Promise<boolean> {
+/** Would openpgp sign with exactly this (sub)key, dates aside? */
+async function canSign(key: openpgp.Key, keyId: openpgp.KeyID): Promise<boolean> {
 	try {
-		await key.getSigningKey(subkey.getKeyID(), null);
+		await key.getSigningKey(keyId, null);
 		return true;
 	} catch {
 		return false;
@@ -548,26 +575,116 @@ async function canSign(key: openpgp.Key, subkey: openpgp.Subkey): Promise<boolea
 }
 
 /**
+ * Algorithms openpgp will accept a data signature from.
+ *
+ * An allow-list rather than a deny-list of the encryption algorithms, mirroring
+ * `isValidSigningKeyPacket`'s own `switch`: openpgp returns `false` for every
+ * algorithm it does not name, so an ECDH or X25519 subkey is outside the
+ * signing set no matter what its binding claims. Without this, a binding that
+ * carries no key flags at all — which the rule below reads as "unrestricted" —
+ * would sweep every encryption subkey into the report as broken signing
+ * material.
+ */
+const SIGNATURE_CAPABLE_ALGORITHMS: ReadonlySet<string> = new Set([
+	"rsaEncryptSign",
+	"rsaSign",
+	"dsa",
+	"ecdsa",
+	"eddsaLegacy",
+	"ed25519",
+	"ed448",
+]);
+
+/**
  * Does this subkey's binding say it may sign?
  *
- * The newest binding signature decides, not any of them: a subkey re-bound
+ * Two rules, both openpgp's rather than this module's, because getting either
+ * wrong moves a subkey into or out of the set whose emptiness decides whether
+ * the primary key's expiry is reported instead.
+ *
+ * **The binding must verify.** `readKey` does not check binding signatures — it
+ * appends every `subkeyBinding` packet it parses to `Subkey.bindingSignatures`
+ * and leaves verification to whoever asks a question later. So the newest entry
+ * in that array is not a statement the key's owner made: anyone can append a
+ * packet to an armored key, and a merge with an unrelated key leaves one behind
+ * without anybody trying. Reading key flags off the newest *raw* entry let a
+ * spliced binding carrying `keyFlags [12]` drop a live signing subkey out of the
+ * set entirely — and with it the revocation check this module exists for. Only
+ * bindings that verify against this primary key are considered, which is what
+ * `getLatestValidSignature` does before openpgp reads the same field.
+ *
+ * **The newest verified binding decides, not any of them.** A subkey re-bound
  * without the sign flag has left the signing set, and reading every binding
  * would keep it there forever — and keep its revocation raising alarms about a
  * signing path that no longer exists.
+ *
+ * A verified binding with no key flags at all counts as signing-capable, again
+ * matching `isValidSigningKeyPacket`: absent flags are unrestricted. openpgp
+ * still declines to sign with it unless `allowMissingKeyFlags` is set, so such a
+ * subkey lands in the report as unusable — which is the honest answer, since
+ * signing through it does not work.
  */
-function bindsSigningCapability(subkey: openpgp.Subkey): boolean {
-	const binding = newestSignature(subkey.bindingSignatures);
-	return ((binding?.keyFlags?.[0] ?? 0) & SIGN_DATA_FLAG) !== 0;
+async function bindsSigningCapability(key: openpgp.Key, subkey: openpgp.Subkey): Promise<boolean> {
+	if (!SIGNATURE_CAPABLE_ALGORITHMS.has(subkey.getAlgorithmInfo().algorithm)) return false;
+
+	const binding = await newestVerifiedBinding(key, subkey);
+	if (binding === undefined) return false;
+
+	return !binding.keyFlags || ((binding.keyFlags[0] ?? 0) & SIGN_DATA_FLAG) !== 0;
 }
 
-/** Latest-created signature, mirroring how openpgp picks among self-signatures */
-function newestSignature(signatures: readonly openpgp.SignaturePacket[]): openpgp.SignaturePacket | undefined {
+/**
+ * openpgp's typings date `SignaturePacket.verify` with a `Date`, but the
+ * implementation runs its creation-time and expiry checks through
+ * `util.normalizeDate`, which maps `null` to "no date to compare against" and
+ * skips both — leaving the issuer and cryptographic checks, which is exactly
+ * the question here. `getSigningKey(…, null)` reaches the same call the same
+ * way, so this is the documented `date: null` contract, not a new dependency.
+ */
+interface DatelessSignature {
+	verify(
+		key: openpgp.PublicKey["keyPacket"],
+		signatureType: openpgp.enums.signature,
+		data: { key: openpgp.PublicKey["keyPacket"]; bind: openpgp.Subkey["keyPacket"] },
+		date?: Date | null,
+	): Promise<boolean>;
+}
+
+/**
+ * Newest subkey binding signature that actually verifies against the primary
+ * key, mirroring openpgp's `getLatestValidSignature`.
+ *
+ * A binding that fails to verify is not weaker evidence, it is none: it was not
+ * issued by this primary key (`SignaturePacket.verify` checks the issuer key id
+ * first), or it does not hash to its own signature. Such a packet is discarded
+ * rather than allowed to outrank a real one by having a later `created`.
+ */
+async function newestVerifiedBinding(
+	key: openpgp.Key,
+	subkey: openpgp.Subkey,
+): Promise<openpgp.SignaturePacket | undefined> {
+	const primaryKeyPacket = key.keyPacket;
+	const dataToVerify = { key: primaryKeyPacket, bind: subkey.keyPacket };
 	const createdAt = (signature: openpgp.SignaturePacket) => signature.created?.getTime() ?? 0;
 
-	return signatures.reduce<openpgp.SignaturePacket | undefined>(
-		(newest, signature) => (newest === undefined || createdAt(signature) >= createdAt(newest) ? signature : newest),
-		undefined,
-	);
+	let newest: openpgp.SignaturePacket | undefined;
+	for (const binding of subkey.bindingSignatures) {
+		if (newest !== undefined && createdAt(binding) < createdAt(newest)) continue;
+
+		try {
+			await (binding as unknown as DatelessSignature).verify(
+				primaryKeyPacket,
+				openpgp.enums.signature.subkeyBinding,
+				dataToVerify,
+				null,
+			);
+			newest = binding;
+		} catch {
+			// Unverifiable, so it says nothing about this subkey either way.
+		}
+	}
+
+	return newest;
 }
 
 /**

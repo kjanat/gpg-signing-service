@@ -280,7 +280,9 @@ what sign a commit, not the primary key:
 - A revoked primary key is reported first. It takes every subkey down with it,
   so which one would have signed stops mattering.
 - A key with no signing subkey signs with its primary key, and that key's own
-  expiry is the whole answer.
+  expiry is the whole answer — unless the primary key may not sign either, the
+  standard offline layout, in which case nothing on the key can sign and the row
+  says so rather than quoting a date for a capability the key does not have.
 - Otherwise the answer comes from the subkeys that can still sign — not from
   whichever one openpgp happens to select. Asking openpgp for a signing key
   returns the first _acceptable_ one: it skips a revoked subkey and falls back
@@ -294,7 +296,17 @@ what sign a commit, not the primary key:
   like, and it must not raise an alarm.
 - When no signing subkey is usable, signing is already broken. That is reported
   as `revoked` when a revocation is why, and `unknown` when the material is
-  unusable for some other reason, because those need opposite fixes.
+  unusable for some other reason, because those need opposite fixes. This
+  deliberately does not fall back to the primary key, which openpgp would do
+  whenever the primary carries the sign flag: the signature would then be made
+  by different key material than the operator configured, which is worth hearing
+  about rather than laundering into an `ok` row.
+- Which subkeys count is decided by binding signatures that **verify** against
+  the primary key. Reading a key does not check them — every `subkeyBinding`
+  packet parsed is kept and verified only when something asks — so a packet
+  appended to an armored key, or left behind by a merge with an unrelated key,
+  would otherwise be able to add an encryption subkey to the signing set or drop
+  a live signing subkey out of it.
 
 **Where the rule is imprecise**, stated in every report rather than only here:
 

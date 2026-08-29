@@ -603,8 +603,43 @@ SAvgpQI=
 		expect(await key.getExpirationTime()).toBeInstanceOf(Date);
 
 		const expiry = await pgpKeyExpiry(REVOKED_SIGNING_SUBKEY);
+		// Reported as revoked rather than as an unexplained `unknown`: the subkey
+		// is enumerated instead of being inferred from a failed lookup, so the
+		// verdict can say which decision broke signing and which subkey to replace.
+		expect(expiry).toMatchObject({ kind: "revoked" });
+		if (expiry.kind === "revoked") {
+			expect(expiry.detail).toMatch(/no usable signing subkey/);
+			expect(expiry.detail).toContain(key.subkeys[0]?.getKeyID().toHex());
+		}
+		expect(classifyExpiry(PRODUCTION_KEY_ID, expiry, NOW, 60).state).toBe("revoked");
+	});
+
+	it("reports a certify-only primary with no signing subkey as unknown", async () => {
+		// The same real `gpg` key with its subkey packets dropped, which is the
+		// other half of the offline layout: a primary that may certify but not
+		// sign, and nothing bound to sign in its place. Its 2029 expiry is a date
+		// for a capability the key does not have, so reporting it would be an
+		// all-clear for a deployment that cannot sign at all.
+		const full = await openpgp.readKey({ armoredKey: REVOKED_SIGNING_SUBKEY });
+		const kept = new openpgp.PacketList<openpgp.AnyPacket>();
+		for (const packet of full.toPacketList()) {
+			const isSubkeyPacket = packet instanceof openpgp.PublicSubkeyPacket;
+			const isSubkeySignature =
+				packet instanceof openpgp.SignaturePacket &&
+				(packet.signatureType === openpgp.enums.signature.subkeyBinding ||
+					packet.signatureType === openpgp.enums.signature.subkeyRevocation);
+			if (!isSubkeyPacket && !isSubkeySignature) kept.push(packet);
+		}
+		const armored = new openpgp.PublicKey(kept).armor();
+
+		const stripped = await openpgp.readKey({ armoredKey: armored });
+		expect(stripped.getSubkeys()).toHaveLength(0);
+		expect(await stripped.isRevoked()).toBe(false);
+		expect(await stripped.getExpirationTime()).toBeInstanceOf(Date);
+
+		const expiry = await pgpKeyExpiry(armored);
 		expect(expiry).toMatchObject({ kind: "unknown" });
-		if (expiry.kind === "unknown") expect(expiry.reason).toMatch(/no usable signing key/);
+		if (expiry.kind === "unknown") expect(expiry.reason).toMatch(/no signing key/);
 		expect(classifyExpiry(PRODUCTION_KEY_ID, expiry, NOW, 60).state).toBe("unknown");
 	});
 
@@ -721,6 +756,15 @@ describe("pgpKeyExpiry with revoked signing subkeys", () => {
 
 		expect(await daysFromCreation(armored, expiry.expiresAt)).toBe(400);
 		expect(classifyExpiry(PRODUCTION_KEY_ID, expiry, NOW, 60).state).toBe("ok");
+
+		// The rule above is a claim about openpgp, so it is asserted against
+		// openpgp: `getSigningKey` skips a lapsed subkey and carries on down the
+		// list, which is why warning at day 30 would be an outage that never
+		// happens. Day 100 is past the short subkey and well inside the long one.
+		const key = await openpgp.readKey({ armoredKey: armored });
+		const atDay100 = new Date(key.getCreationTime().getTime() + 100 * DAY_MS);
+		const stillSigning = await key.getSigningKey(undefined, atDay100);
+		expect(stillSigning.getKeyID().toHex()).toBe(key.subkeys[1]?.getKeyID().toHex());
 	});
 
 	it("still warns when every usable signing subkey is inside the window", async () => {
@@ -801,6 +845,233 @@ describe("pgpKeyExpiry with revoked signing subkeys", () => {
 	});
 });
 
+describe("pgpKeyExpiry with binding signatures it cannot verify", () => {
+	const DAY_SECONDS = 24 * 60 * 60;
+
+	/**
+	 * A subkey binding signature issued by an *unrelated* key.
+	 *
+	 * `readKey` appends every `subkeyBinding` packet it parses to
+	 * `Subkey.bindingSignatures` without verifying any of them — verification is
+	 * deferred to whoever asks a question later. So a packet spliced into an
+	 * armored key sits in that array looking exactly like the real one, and if it
+	 * carries a later `created` it is the newest entry there. Nothing exotic is
+	 * needed to produce one: appending packets to an armored key takes a text
+	 * editor, and merging a key with an unrelated copy leaves them behind with
+	 * nobody trying.
+	 *
+	 * Borrowing a real binding from a second generated key keeps the fixture
+	 * honest — it is a well-formed signature packet with a real issuer and a real
+	 * digest, and the only thing wrong with it is that this primary key did not
+	 * issue it, which is precisely what has to be detected.
+	 */
+	async function foreignBinding(options: { sign: boolean; createdDaysAgo: number }): Promise<openpgp.SignaturePacket> {
+		const { privateKey } = await openpgp.generateKey({
+			type: "ecc",
+			curve: "ed25519Legacy",
+			userIDs: [{ name: "Elsewhere", email: "elsewhere@test.com" }],
+			date: new Date(NOW.getTime() - options.createdDaysAgo * DAY_MS),
+			subkeys: [options.sign ? { sign: true } : {}],
+			format: "object",
+		});
+
+		const binding = privateKey.subkeys[0]?.bindingSignatures[0];
+		if (!binding) throw new Error("fixture key has no subkey binding signature");
+		return binding;
+	}
+
+	/** Generate a key, splice a foreign binding onto one subkey, and re-armor it */
+	async function keyWithSplicedBinding(options: {
+		subkeys: openpgp.SubkeyOptions[];
+		spliceOnto: number;
+		binding: openpgp.SignaturePacket;
+		revoke?: number;
+	}): Promise<string> {
+		const { privateKey } = await openpgp.generateKey({
+			type: "ecc",
+			curve: "ed25519Legacy",
+			userIDs: [{ name: "Spliced", email: "spliced@test.com" }],
+			date: new Date(NOW.getTime() - 10 * DAY_MS),
+			keyExpirationTime: 400 * DAY_SECONDS,
+			subkeys: options.subkeys,
+			format: "object",
+		});
+
+		privateKey.subkeys[options.spliceOnto]?.bindingSignatures.push(options.binding);
+		if (options.revoke !== undefined) {
+			const subkey = privateKey.subkeys[options.revoke];
+			if (!subkey) throw new Error(`fixture has no subkey at index ${options.revoke}`);
+			privateKey.subkeys[options.revoke] = await subkey.revoke(privateKey.keyPacket as openpgp.SecretKeyPacket);
+		}
+
+		return privateKey.toPublic().armor();
+	}
+
+	/** Days from the key's own creation, which is 10 days before `NOW` for these fixtures */
+	async function daysFromCreation(armoredKey: string, expiresAt: Date): Promise<number> {
+		const key = await openpgp.readKey({ armoredKey });
+		return Math.round((expiresAt.getTime() - key.getCreationTime().getTime()) / DAY_MS);
+	}
+
+	it("keeps a live signing subkey that a foreign binding signature disowns", async () => {
+		// The newest *raw* binding on this subkey says encrypt-only, and reading
+		// key flags off it drops the subkey out of the signing set — which leaves
+		// the set empty and reports the primary key's 400 days for a key that
+		// signs with a subkey lapsing at 300. openpgp itself is not fooled, so
+		// the monitor must not be either.
+		const armored = await keyWithSplicedBinding({
+			subkeys: [{ sign: true, keyExpirationTime: 300 * DAY_SECONDS }, {}],
+			spliceOnto: 0,
+			binding: await foreignBinding({ sign: false, createdDaysAgo: 1 }),
+		});
+
+		const key = await openpgp.readKey({ armoredKey: armored });
+		const signingSubkey = key.getSubkeys()[0];
+		expect(signingSubkey?.bindingSignatures).toHaveLength(2);
+		// openpgp still signs with it: the spliced binding fails verification, so
+		// `getLatestValidSignature` never selects it.
+		await expect(key.getSigningKey(signingSubkey?.getKeyID(), null)).resolves.toBeDefined();
+
+		const expiry = await pgpKeyExpiry(armored);
+		expect(expiry.kind).toBe("date");
+		if (expiry.kind !== "date") return;
+		expect(await daysFromCreation(armored, expiry.expiresAt)).toBe(300);
+	});
+
+	it("still catches a revoked signing subkey a foreign binding signature disowns", async () => {
+		// The same splice, on the revoked subkey this module exists to catch.
+		// Dropping it from the set would send the verdict back to the primary
+		// key's healthy date — the exact #90 regression, reachable again through
+		// a packet anyone can append.
+		const armored = await keyWithSplicedBinding({
+			subkeys: [{ sign: true, keyExpirationTime: 300 * DAY_SECONDS }, {}],
+			spliceOnto: 0,
+			binding: await foreignBinding({ sign: false, createdDaysAgo: 1 }),
+			revoke: 0,
+		});
+
+		const expiry = await pgpKeyExpiry(armored);
+		expect(expiry.kind).toBe("revoked");
+		if (expiry.kind !== "revoked") return;
+		const key = await openpgp.readKey({ armoredKey: armored });
+		expect(expiry.detail).toContain(key.subkeys[0]?.getKeyID().toHex());
+	});
+
+	it("ignores a subkey whose only binding signature does not verify", async () => {
+		// Not "the newest binding is wrong" but "there is no binding at all": every
+		// packet claiming to bind this subkey was issued elsewhere, so nothing on
+		// this key says it may sign and it is not signing material to report on.
+		const { privateKey } = await openpgp.generateKey({
+			type: "ecc",
+			curve: "ed25519Legacy",
+			userIDs: [{ name: "Unbound", email: "unbound@test.com" }],
+			date: new Date(NOW.getTime() - 10 * DAY_MS),
+			keyExpirationTime: 400 * DAY_SECONDS,
+			subkeys: [{ sign: true, keyExpirationTime: 300 * DAY_SECONDS }, {}],
+			format: "object",
+		});
+		const orphan = privateKey.subkeys[0];
+		if (!orphan) throw new Error("fixture has no signing subkey");
+		orphan.bindingSignatures = [await foreignBinding({ sign: true, createdDaysAgo: 1 })];
+		const armored = privateKey.toPublic().armor();
+
+		// The primary key openpgp generates can sign, so this key still has a
+		// signing path and its 400 days are the honest answer.
+		const expiry = await pgpKeyExpiry(armored);
+		expect(expiry.kind).toBe("date");
+		if (expiry.kind !== "date") return;
+		expect(await daysFromCreation(armored, expiry.expiresAt)).toBe(400);
+	});
+
+	/**
+	 * A signing subkey carrying two binding signatures that both verify.
+	 *
+	 * Extending a subkey adds a second, later binding rather than replacing the
+	 * first, so this is the ordinary shape of a key whose subkey has been
+	 * renewed. The newest one is stored first, so the older has to lose on its
+	 * creation time rather than on being last in the packet list.
+	 */
+	async function keyWithRebound(revoke: boolean): Promise<string> {
+		const userIDs = [{ name: "Rebound", email: "rebound@test.com" }];
+		const { privateKey } = await openpgp.generateKey({
+			type: "ecc",
+			curve: "ed25519Legacy",
+			userIDs,
+			date: new Date(NOW.getTime() - 10 * DAY_MS),
+			keyExpirationTime: 800 * DAY_SECONDS,
+			subkeys: [{ sign: true, keyExpirationTime: 300 * DAY_SECONDS }, {}],
+			format: "object",
+		});
+		const extended = await openpgp.reformatKey({
+			privateKey,
+			userIDs,
+			keyExpirationTime: 800 * DAY_SECONDS,
+			date: new Date(NOW.getTime() - DAY_MS),
+			format: "object",
+		});
+
+		const subkey = privateKey.subkeys[0];
+		const rebinding = extended.privateKey.subkeys[0]?.bindingSignatures[0];
+		const original = subkey?.bindingSignatures[0];
+		if (!subkey || !rebinding || !original) throw new Error("fixture is missing a subkey binding");
+		subkey.bindingSignatures = [rebinding, original];
+
+		if (revoke) privateKey.subkeys[0] = await subkey.revoke(privateKey.keyPacket as openpgp.SecretKeyPacket);
+
+		return privateKey.toPublic().armor();
+	}
+
+	it("reads a re-bound subkey from its newest binding signature, whatever the packet order", async () => {
+		const armored = await keyWithRebound(false);
+
+		const expiry = await pgpKeyExpiry(armored);
+		expect(expiry.kind).toBe("date");
+		if (expiry.kind !== "date") return;
+		// `reformatKey` re-binds the subkey for the key's own 800 days, so the
+		// superseded 300-day binding is no longer what ends signing.
+		expect(await daysFromCreation(armored, expiry.expiresAt)).toBe(800);
+	});
+
+	it("still recognises a re-bound subkey as signing material once it is revoked", async () => {
+		// The same two verified bindings, on the subkey openpgp now refuses. This
+		// is where the module has to pick among them itself, and picking the
+		// superseded one — or neither — would drop a revoked signing subkey out
+		// of the set and hand back the primary key's date instead.
+		const armored = await keyWithRebound(true);
+
+		const expiry = await pgpKeyExpiry(armored);
+		expect(expiry.kind).toBe("revoked");
+		if (expiry.kind !== "revoked") return;
+		const key = await openpgp.readKey({ armoredKey: armored });
+		expect(expiry.detail).toContain(key.subkeys[0]?.getKeyID().toHex());
+	});
+
+	it("does not adopt an encryption subkey a foreign binding signature claims can sign", async () => {
+		// The mirror image, and a false alarm rather than a missed one: an
+		// encryption subkey with a spliced sign-flagged binding is not signing
+		// material, so revoking it says nothing about signing. Trusting the raw
+		// binding makes this key read as `revoked` while the primary key signs
+		// perfectly well.
+		const armored = await keyWithSplicedBinding({
+			subkeys: [{}],
+			spliceOnto: 0,
+			binding: await foreignBinding({ sign: true, createdDaysAgo: 1 }),
+			revoke: 0,
+		});
+
+		const key = await openpgp.readKey({ armoredKey: armored });
+		// This key's primary is signing-capable, which is what openpgp's generator
+		// always produces, so signing genuinely still works.
+		await expect(key.getSigningKey(key.getKeyID(), null)).resolves.toBeDefined();
+
+		const expiry = await pgpKeyExpiry(armored);
+		expect(expiry.kind).toBe("date");
+		if (expiry.kind !== "date") return;
+		expect(await daysFromCreation(armored, expiry.expiresAt)).toBe(400);
+		expect(classifyExpiry(PRODUCTION_KEY_ID, expiry, NOW, 60).state).toBe("ok");
+	});
+});
+
 describe("signingSubkeyExpiry", () => {
 	const soon = fromNow(30);
 	const late = fromNow(400);
@@ -810,30 +1081,56 @@ describe("signingSubkeyExpiry", () => {
 	}
 
 	it("reports a malformed primary key as unknown, subkeys or not", () => {
-		expect(signingSubkeyExpiry(null, [subkey()])).toMatchObject({ kind: "unknown" });
-		expect(signingSubkeyExpiry(null, [])).toMatchObject({ kind: "unknown" });
+		expect(signingSubkeyExpiry(null, [subkey()], true)).toMatchObject({ kind: "unknown" });
+		expect(signingSubkeyExpiry(null, [], true)).toMatchObject({ kind: "unknown" });
 	});
 
 	it("falls back to the primary key when nothing signs but it", () => {
-		expect(signingSubkeyExpiry(soon, [])).toEqual({ kind: "date", expiresAt: soon });
-		expect(signingSubkeyExpiry(Infinity, [])).toEqual({ kind: "never" });
+		expect(signingSubkeyExpiry(soon, [], true)).toEqual({ kind: "date", expiresAt: soon });
+		expect(signingSubkeyExpiry(Infinity, [], true)).toEqual({ kind: "never" });
+	});
+
+	it("reports a key with no signing subkey and a primary that may not sign as unknown", () => {
+		// The standard offline layout is a certify-only primary. Reading its
+		// expiry there answers a question nobody asked: the date it stops
+		// certifying, for a key that has never been able to sign.
+		expect(signingSubkeyExpiry(soon, [], false)).toEqual({
+			kind: "unknown",
+			reason: "no signing key: no signing subkey is bound and the primary key may not sign data",
+		});
+		expect(signingSubkeyExpiry(Infinity, [], false)).toMatchObject({ kind: "unknown" });
+	});
+
+	it("still prefers a malformed primary key over the missing-signing-key verdict", () => {
+		// Both are unknown, but "we could not read this key" has to win: the
+		// signing-capability answer is derived from a self-certification that a
+		// malformed key does not have.
+		expect(signingSubkeyExpiry(null, [], false)).toEqual({
+			kind: "unknown",
+			reason: "PGP primary key has no valid self-certification (malformed)",
+		});
 	});
 
 	it("takes the longest-lived usable subkey, not the first or the shortest", () => {
 		const set = [subkey({ keyId: "short", expiresAt: soon }), subkey({ keyId: "long", expiresAt: late })];
-		expect(signingSubkeyExpiry(Infinity, set)).toEqual({ kind: "date", expiresAt: late });
+		expect(signingSubkeyExpiry(Infinity, set, true)).toEqual({ kind: "date", expiresAt: late });
 	});
 
 	it("caps the usable set at the primary key's own expiry", () => {
-		expect(signingSubkeyExpiry(soon, [subkey({ expiresAt: late })])).toEqual({ kind: "date", expiresAt: soon });
-		expect(signingSubkeyExpiry(soon, [subkey({ expiresAt: Infinity })])).toEqual({ kind: "date", expiresAt: soon });
+		expect(signingSubkeyExpiry(soon, [subkey({ expiresAt: late })], true)).toEqual({ kind: "date", expiresAt: soon });
+		expect(signingSubkeyExpiry(soon, [subkey({ expiresAt: Infinity })], true)).toEqual({
+			kind: "date",
+			expiresAt: soon,
+		});
 	});
 
 	it("never expires only when neither the primary key nor a usable subkey does", () => {
-		expect(signingSubkeyExpiry(Infinity, [subkey({ expiresAt: Infinity })])).toEqual({ kind: "never" });
-		expect(signingSubkeyExpiry(Infinity, [subkey({ expiresAt: soon }), subkey({ expiresAt: Infinity })])).toEqual({
-			kind: "never",
-		});
+		expect(signingSubkeyExpiry(Infinity, [subkey({ expiresAt: Infinity })], true)).toEqual({ kind: "never" });
+		expect(signingSubkeyExpiry(Infinity, [subkey({ expiresAt: soon }), subkey({ expiresAt: Infinity })], true)).toEqual(
+			{
+				kind: "never",
+			},
+		);
 	});
 
 	it("ignores revoked and unusable subkeys when a usable one remains", () => {
@@ -842,12 +1139,12 @@ describe("signingSubkeyExpiry", () => {
 			subkey({ keyId: "broken", usable: false, expiresAt: late }),
 			subkey({ keyId: "live", expiresAt: soon }),
 		];
-		expect(signingSubkeyExpiry(late, set)).toEqual({ kind: "date", expiresAt: soon });
+		expect(signingSubkeyExpiry(late, set, true)).toEqual({ kind: "date", expiresAt: soon });
 	});
 
 	it("reports revocation when no usable signing subkey is left", () => {
 		const set = [subkey({ keyId: "dead", revoked: true, usable: false })];
-		expect(signingSubkeyExpiry(late, set)).toEqual({
+		expect(signingSubkeyExpiry(late, set, true)).toEqual({
 			kind: "revoked",
 			detail: "no usable signing subkey — 1 signing subkey revoked (dead)",
 		});
@@ -858,14 +1155,17 @@ describe("signingSubkeyExpiry", () => {
 			subkey({ keyId: "one", revoked: true, usable: false }),
 			subkey({ keyId: "two", revoked: true, usable: false }),
 		];
-		expect(signingSubkeyExpiry(late, set)).toMatchObject({
+		expect(signingSubkeyExpiry(late, set, true)).toMatchObject({
 			detail: "no usable signing subkey — 2 signing subkeys revoked (one, two)",
 		});
 	});
 
 	it("leads with revocation even when other subkeys failed for other reasons", () => {
 		const set = [subkey({ keyId: "broken", usable: false }), subkey({ keyId: "dead", revoked: true, usable: false })];
-		expect(signingSubkeyExpiry(late, set)).toMatchObject({ kind: "revoked", detail: expect.stringContaining("dead") });
+		expect(signingSubkeyExpiry(late, set, true)).toMatchObject({
+			kind: "revoked",
+			detail: expect.stringContaining("dead"),
+		});
 	});
 
 	it("reports unusable-but-unrevoked signing subkeys as unknown, not revoked", () => {
@@ -873,15 +1173,15 @@ describe("signingSubkeyExpiry", () => {
 		// itself is broken, and calling that a revocation sends the wrong person
 		// looking for the wrong certificate.
 		const set = [subkey({ keyId: "broken", usable: false }), subkey({ keyId: "alsobroken", usable: false })];
-		expect(signingSubkeyExpiry(late, set)).toEqual({
+		expect(signingSubkeyExpiry(late, set, true)).toEqual({
 			kind: "unknown",
 			reason: "no usable signing subkey: openpgp will not sign with broken, alsobroken",
 		});
 	});
 
 	it("treats a usable subkey with no verdict as lasting as long as the primary key", () => {
-		expect(signingSubkeyExpiry(soon, [subkey({ expiresAt: null })])).toEqual({ kind: "date", expiresAt: soon });
-		expect(signingSubkeyExpiry(Infinity, [subkey({ expiresAt: null })])).toEqual({ kind: "never" });
+		expect(signingSubkeyExpiry(soon, [subkey({ expiresAt: null })], true)).toEqual({ kind: "date", expiresAt: soon });
+		expect(signingSubkeyExpiry(Infinity, [subkey({ expiresAt: null })], true)).toEqual({ kind: "never" });
 	});
 });
 
