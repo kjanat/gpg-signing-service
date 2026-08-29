@@ -171,10 +171,41 @@ Before relying on the service for protected production branches, account for:
   bound a trusted row;
 - no HSM or external key-management boundary;
 - no private-key backup or restoration workflow;
-- no automated passphrase, admin-token, or key rotation;
+- no automated passphrase, admin-token, or key rotation, and no enforcement in
+  the sign path against a key that is close to expiring — expiry is monitored
+  and rotation is documented, but both are carried out by hand;
 - no audit retention or alert configuration;
 - PGP-only behavior in the high-level CLI and Go wrapper; and
 - Git history rewriting when a detached signature is attached after commit
   creation.
 
 See [Self-hosting](self-hosting.md#before-production) for an operator checklist.
+
+## Key expiry monitoring
+
+The service does not refuse to sign with a key that is about to expire, so an
+unnoticed expiry breaks every caller at once. A scheduled GitHub Actions check
+(`.github/workflows/key-expiry-check.yml`, weekly plus manual dispatch) closes
+that gap.
+
+The check derives its subjects rather than trusting a hand-written list: it asks
+the deployment for the keys it holds through `GET /admin/keys`, cross-checks
+those against every `KEY_ID` in `wrangler.toml` so a configured-but-absent key is
+reported too, and reads each expiry out of the key material returned by
+`GET /admin/keys/{keyId}/public` — the PGP expiration time, or the X.509
+certificate's `notAfter`. No expiry date is stored anywhere that could drift from
+the key it describes.
+
+- **Threshold**: `KEY_EXPIRY_WARN_DAYS`, default 60 days. Keys inside the window,
+  already expired, unreadable or missing are all treated as needing action.
+- **Channel**: a GitHub issue labelled `key-expiry`, opened on the first run
+  inside the window and updated in place afterwards. The report is also written
+  to the workflow job summary.
+- **Credentials**: the workflow reads the `SIGNING_SERVICE_URL` repository
+  variable and the `ADMIN_TOKEN` secret. This widens the admin token's blast
+  radius to that workflow, which is the cost of checking the live deployment
+  instead of a transcribed date; the token is otherwise unused by CI and should
+  be rotated on the same schedule as any other admin credential.
+
+The check reports; it does not rotate. See
+[Key rotation](self-hosting.md#key-rotation) for the procedure it points at.

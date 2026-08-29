@@ -206,8 +206,9 @@ Use **openpgp.js v6** as the cryptographic library with passphrase-encrypted pri
 
 **Limited Key Management**:
 
-- No automated key rotation
-- No key expiration enforcement (must check manually)
+- No automated key rotation (procedure documented, carried out by hand)
+- No key expiration enforcement in the sign path; expiry is monitored out of
+  band by a scheduled check that warns before the threshold
 - No revocation certificate handling
 
 **JavaScript Crypto Performance**:
@@ -257,6 +258,26 @@ Use **openpgp.js v6** as the cryptographic library with passphrase-encrypted pri
 3. Import via admin API: `POST /admin/keys` with armored key and passphrase
 4. Verify import: `GET /admin/keys` to list stored keys
 5. Test signing: `POST /sign` with sample commit data
+
+**Key Expiry Monitoring**:
+
+Stored keys carry no `expiresAt` field, and adding one would only duplicate a
+fact the key material already states. Expiry is instead read back out of the key
+itself:
+
+1. `GET /admin/keys` enumerates the keys the deployment holds
+2. Every `KEY_ID` in `wrangler.toml` is cross-checked against that list, so a
+   configured key the deployment has lost is reported alongside expiring ones
+3. `GET /admin/keys/{keyId}/public` yields the material, and
+   `src/utils/key-expiry.ts` derives the expiry — the earlier of the PGP primary
+   key's and signing subkey's expiration times, or the X.509 `notAfter`
+4. `scripts/check-key-expiry.ts` classifies each key against
+   `KEY_EXPIRY_WARN_DAYS` (default 60) and renders the report
+5. `.github/workflows/key-expiry-check.yml` runs this weekly and opens or
+   updates a `key-expiry` GitHub issue
+
+See [Key rotation](../self-hosting.md#key-rotation) for the rotation procedure
+this check points maintainers at.
 
 **Monitoring**:
 

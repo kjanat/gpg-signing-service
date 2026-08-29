@@ -18,6 +18,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
+    "check:key-expiry": "bun scripts/check-key-expiry.ts",
     "db:create": "wrangler d1 create gpg-signing-audit",
     "db:create:staging": "wrangler d1 create gpg-signing-audit-staging",
     "db:migrate": "wrangler d1 migrations apply AUDIT_DB --remote",

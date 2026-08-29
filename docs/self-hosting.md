@@ -229,6 +229,78 @@ printf 'smoke test' |
   gpg --verify smoke-test.asc -
 ```
 
+## Key expiry monitoring
+
+A signing key that lapses breaks every caller at once, with no warning from the
+service itself: nothing in the sign path refuses a key because it is close to
+expiring. `.github/workflows/key-expiry-check.yml` covers that gap. It runs
+weekly, and on demand through **Actions → Key expiry check → Run workflow**.
+
+The check discovers keys rather than reading a list someone maintains by hand:
+
+1. `GET /admin/keys` returns the keys the deployment actually holds.
+2. Every `KEY_ID` in `wrangler.toml` is cross-checked against that list. A key
+   the Worker is configured to sign with, that the deployment no longer holds,
+   is reported as `missing`.
+3. Each key's expiry is read out of its own material from
+   `GET /admin/keys/{keyId}/public` — the PGP public key's expiration time
+   (whichever of the primary key and the signing subkey lapses first), or the
+   X.509 certificate's `notAfter`. No expiry date is ever transcribed into a
+   config file, so none can drift from the key it describes.
+
+Keys inside the threshold, already expired, unreadable or missing are collected
+into a report that is written to the job summary and used to open or update a
+GitHub issue labelled `key-expiry`. The issue is updated rather than duplicated,
+so a key that stays inside the window produces one issue, not one per run.
+
+| Setting              | Where                                     | Default |
+| -------------------- | ----------------------------------------- | ------- |
+| Warning threshold    | `KEY_EXPIRY_WARN_DAYS` env var            | 60 days |
+| Deployment to check  | `SIGNING_SERVICE_URL` repository variable | —       |
+| Admin credential     | `ADMIN_TOKEN` repository secret           | —       |
+| Notification channel | GitHub issue labelled `key-expiry`        | —       |
+
+Both `SIGNING_SERVICE_URL` and `ADMIN_TOKEN` are required; without them the
+check fails loudly rather than reporting every key as healthy.
+
+Run it locally against any deployment:
+
+```bash
+export SIGNING_SERVICE_URL="https://gpg.example.com"
+export GPG_SIGN_ADMIN_TOKEN="..."
+ADMIN_TOKEN="$GPG_SIGN_ADMIN_TOKEN" KEY_EXPIRY_WARN_DAYS=90 task check:key-expiry
+```
+
+It exits `0` when every key is clear, `1` when at least one needs attention, and
+`2` when the check could not run at all.
+
+## Key rotation
+
+Run this before the expiry date, not after it. Both keys stay uploaded during
+the overlap, so in-flight callers keep working.
+
+1. Generate the replacement key offline: `task generate:key`. It writes to
+   `.keys/`, never `~/.gnupg`.
+2. Upload it alongside the current key with `POST /admin/keys` (see
+   [Upload the PGP key](#7-upload-the-pgp-key)). The service holds both.
+3. Publish the new public key to every verifier that needs it — GitHub account
+   GPG keys, and any `gpg --import` step in a consuming pipeline. Signatures
+   from the new key are rejected until this lands.
+4. Add the new key ID to the `keyIds` of every trusted subject
+   (`POST /admin/subjects`) and to any service token that pins key IDs.
+5. Point the deployment at the new key: update `KEY_ID` in `wrangler.toml` for
+   each environment, then `task deploy`. The expiry check reads `KEY_ID`, so
+   this step is also what puts the new key under monitoring.
+6. Smoke test as in [Smoke test](#8-smoke-test), signing with the new key ID.
+7. Once no caller signs with the old key — check the audit log — remove it with
+   `DELETE /admin/keys/{keyId}` and drop its ID from `wrangler.toml` and from
+   every subject and token allowlist.
+8. Close the `key-expiry` issue, or re-run the check and let it confirm.
+
+Rotating `ADMIN_TOKEN` is separate and immediate: `wrangler secret put
+ADMIN_TOKEN`, then update the repository secret the expiry check uses. There is
+no overlap period, so every admin caller must be updated at the same time.
+
 ## Before production
 
 - Run `task db:migrate`, then trust at least one subject through
@@ -240,5 +312,8 @@ printf 'smoke test' |
 - Define private-key backup and restoration procedures; no export endpoint
   exists.
 - Define audit retention and monitoring; no cleanup or alert policy is built in.
-- Test key and admin-token rotation.
+- Set the `SIGNING_SERVICE_URL` variable and `ADMIN_TOKEN` secret so
+  [Key expiry monitoring](#key-expiry-monitoring) can reach the deployment, and
+  confirm a manual run reports every key you expect.
+- Walk [Key rotation](#key-rotation) once on staging, and rotate the admin token.
 - Review the [Security model](security-model.md).

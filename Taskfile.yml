@@ -155,6 +155,15 @@ tasks:
     generates: [./.keys]
     cmd: bash scripts/generate-key.sh
 
+  check:key-expiry:
+    desc: Report active signing keys at or near expiry
+    aliases: [cke, key-expiry]
+    deps: [install:noscripts]
+    # Reads the live deployment through the admin API, so it needs
+    # SIGNING_SERVICE_URL and ADMIN_TOKEN in the environment (or .dev.env).
+    # KEY_EXPIRY_WARN_DAYS overrides the 60-day warning threshold.
+    cmd: bun run check:key-expiry
+
   db:create:
     desc: Create D1 database
     status:
