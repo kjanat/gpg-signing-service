@@ -20,6 +20,14 @@ import (
 // Envelope first, header second, on both statuses: the pair of ids in each
 // envelope-present case are deliberately different so preferring the envelope
 // is provable rather than merely consistent.
+// Envelopes reused across the cases below, with no requestId field: the shape a
+// deployment older than the release that added it sends, and the one that has
+// only the echoed header left to fall back on.
+const (
+	bodyKeyNotFound   = `{"error":"Key not found","code":"KEY_NOT_FOUND"}`
+	bodyInternalError = `{"error":"Internal error","code":"INTERNAL_ERROR"}`
+)
+
 func TestTypedSignErrorsKeepTheRequestID(t *testing.T) {
 	const envelopeID = "9c1e0f4a-7b3d-4e21-8f60-5a2c7d9b1e34"
 	const headerID = "2d7f8a15-0c46-4b93-a1e7-6f3b8c05d29a"
@@ -60,7 +68,7 @@ func TestTypedSignErrorsKeepTheRequestID(t *testing.T) {
 		},
 		"404 header only": {
 			status:      http.StatusNotFound,
-			body:        `{"error":"Key not found","code":"KEY_NOT_FOUND"}`,
+			body:        bodyKeyNotFound,
 			header:      headerID,
 			wantID:      headerID,
 			wantCode:    ErrCodeKeyNotFound,
@@ -120,7 +128,7 @@ func TestTypedSignErrorsWithoutAnIDPrintNone(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(status)
-				_, _ = fmt.Fprint(w, `{"error":"Key not found","code":"KEY_NOT_FOUND"}`)
+				_, _ = fmt.Fprint(w, bodyKeyNotFound)
 			}))
 			defer server.Close()
 
@@ -140,5 +148,132 @@ func TestTypedSignErrorsWithoutAnIDPrintNone(t *testing.T) {
 				t.Errorf("Error() = %q, want %q", svcErr.Error(), want)
 			}
 		})
+	}
+}
+
+// The same defect, on the branches the sign path's fix did not reach: every
+// other mapped status either read the envelope alone (the admin audit 400/500)
+// or read nothing at all (PublicKey, AdminPublicKey, UploadKey, ListKeys,
+// DeleteKey), so a response carrying its id only on X-Request-ID left the
+// caller with nothing to quote there either. requestIdMiddleware stamps the
+// header on every response the service sends, which is what makes it a
+// fallback worth having on all of them.
+func TestNonSignErrorsKeepTheRequestID(t *testing.T) {
+	const headerID = "2d7f8a15-0c46-4b93-a1e7-6f3b8c05d29a"
+
+	cases := map[string]struct {
+		status int
+		body   string
+		call   func(*Client) error
+	}{
+		"public key 404": {
+			status: http.StatusNotFound,
+			body:   bodyKeyNotFound,
+			call: func(c *Client) error {
+				_, err := c.PublicKey(context.Background(), "AAAA")
+				return err
+			},
+		},
+		"public key 500": {
+			status: http.StatusInternalServerError,
+			body:   bodyInternalError,
+			call: func(c *Client) error {
+				_, err := c.PublicKey(context.Background(), "AAAA")
+				return err
+			},
+		},
+		"admin public key 404": {
+			status: http.StatusNotFound,
+			body:   bodyKeyNotFound,
+			call: func(c *Client) error {
+				_, err := c.AdminPublicKey(context.Background(), "AAAA")
+				return err
+			},
+		},
+		"upload key 400": {
+			status: http.StatusBadRequest,
+			body:   `{"error":"Invalid key","code":"INVALID_REQUEST"}`,
+			call: func(c *Client) error {
+				_, err := c.UploadKey(context.Background(), "AAAA", "-----BEGIN PGP PRIVATE KEY BLOCK-----")
+				return err
+			},
+		},
+		"list keys 500": {
+			status: http.StatusInternalServerError,
+			body:   bodyInternalError,
+			call: func(c *Client) error {
+				_, err := c.ListKeys(context.Background())
+				return err
+			},
+		},
+		"delete key 500": {
+			status: http.StatusInternalServerError,
+			body:   bodyInternalError,
+			call: func(c *Client) error {
+				return c.DeleteKey(context.Background(), "AAAA")
+			},
+		},
+		"audit 500": {
+			status: http.StatusInternalServerError,
+			body:   bodyInternalError,
+			call: func(c *Client) error {
+				_, err := c.AuditLogs(context.Background(), AuditFilter{})
+				return err
+			},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Request-ID", headerID)
+				w.WriteHeader(tc.status)
+				_, _ = fmt.Fprint(w, tc.body)
+			}))
+			defer server.Close()
+
+			c := newMappingClient(t, server.URL, WithAdminToken("test-token"))
+
+			err := tc.call(c)
+
+			var svcErr *ServiceError
+			if !errors.As(err, &svcErr) {
+				t.Fatalf("expected a *ServiceError, got %T (%v)", err, err)
+			}
+			if svcErr.RequestID != headerID {
+				t.Errorf("RequestID = %q, want %q", svcErr.RequestID, headerID)
+			}
+			if !strings.Contains(svcErr.Error(), "request "+headerID) {
+				t.Errorf("Error() = %q, want it to mention the request id", svcErr.Error())
+			}
+		})
+	}
+}
+
+// The envelope still wins where the service does send one, on the branch that
+// used to be the only non-sign reader of it.
+func TestAuditErrorPrefersTheEnvelopeID(t *testing.T) {
+	const envelopeID = "9c1e0f4a-7b3d-4e21-8f60-5a2c7d9b1e34"
+	const headerID = "2d7f8a15-0c46-4b93-a1e7-6f3b8c05d29a"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Request-ID", headerID)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprintf(w, `{"error":"Invalid filter","code":"INVALID_REQUEST","requestId":%q}`, envelopeID)
+	}))
+	defer server.Close()
+
+	c := newMappingClient(t, server.URL, WithAdminToken("test-token"))
+
+	_, err := c.AuditLogs(context.Background(), AuditFilter{})
+
+	var svcErr *ServiceError
+	if !errors.As(err, &svcErr) {
+		t.Fatalf("expected a *ServiceError, got %T (%v)", err, err)
+	}
+	if svcErr.RequestID != envelopeID {
+		t.Errorf("RequestID = %q, want the envelope id %q", svcErr.RequestID, envelopeID)
 	}
 }

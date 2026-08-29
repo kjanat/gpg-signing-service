@@ -175,6 +175,7 @@ func (c *Client) PublicKey(ctx context.Context, keyID string) (string, error) {
 			Code:       string(resp.JSON404.Code),
 			Message:    resp.JSON404.Error,
 			StatusCode: 404,
+			RequestID:  requestIDFrom(envelopeRequestID(resp.JSON404), resp.HTTPResponse.Header),
 		}
 	}
 
@@ -183,6 +184,7 @@ func (c *Client) PublicKey(ctx context.Context, keyID string) (string, error) {
 			Code:       string(resp.JSON500.Code),
 			Message:    resp.JSON500.Error,
 			StatusCode: 500,
+			RequestID:  requestIDFrom(envelopeRequestID(resp.JSON500), resp.HTTPResponse.Header),
 		}
 	}
 
@@ -268,6 +270,7 @@ func (c *Client) UploadKey(ctx context.Context, keyID string, armoredPrivateKey 
 			Code:       string(errResp.Code),
 			Message:    errResp.Error,
 			StatusCode: statusCode,
+			RequestID:  requestIDFrom(envelopeRequestID(errResp), resp.HTTPResponse.Header),
 		}
 	}
 
@@ -305,6 +308,7 @@ func (c *Client) ListKeys(ctx context.Context) ([]KeyMetadata, error) {
 			Code:       string(resp.JSON500.Code),
 			Message:    resp.JSON500.Error,
 			StatusCode: 500,
+			RequestID:  requestIDFrom(envelopeRequestID(resp.JSON500), resp.HTTPResponse.Header),
 		}
 	}
 
@@ -363,6 +367,7 @@ func (c *Client) DeleteKey(ctx context.Context, keyID string) error {
 			Code:       string(resp.JSON500.Code),
 			Message:    resp.JSON500.Error,
 			StatusCode: 500,
+			RequestID:  requestIDFrom(envelopeRequestID(resp.JSON500), resp.HTTPResponse.Header),
 		}
 	}
 
@@ -420,6 +425,7 @@ func (c *Client) AdminPublicKey(ctx context.Context, keyID string) (string, erro
 			Code:       string(resp.JSON404.Code),
 			Message:    resp.JSON404.Error,
 			StatusCode: 404,
+			RequestID:  requestIDFrom(envelopeRequestID(resp.JSON404), resp.HTTPResponse.Header),
 		}
 	}
 
@@ -428,6 +434,7 @@ func (c *Client) AdminPublicKey(ctx context.Context, keyID string) (string, erro
 			Code:       string(resp.JSON500.Code),
 			Message:    resp.JSON500.Error,
 			StatusCode: 500,
+			RequestID:  requestIDFrom(envelopeRequestID(resp.JSON500), resp.HTTPResponse.Header),
 		}
 	}
 
@@ -450,16 +457,17 @@ func mapAuditResponseError(resp *api.GetAdminAuditResponse) error {
 		statusCode = 500
 	}
 
-	requestID := ""
-	if errResp.RequestId != nil {
-		requestID = errResp.RequestId.String()
-	}
-
+	// Envelope first, echoed header second, the same two sources every other
+	// mapped status here reads. This branch used to read the envelope alone,
+	// which is the shape the typed sign 403 also had: correct against this
+	// service, and empty against a deployment older than the release that put
+	// requestId in error bodies, or any intermediary that answers with the
+	// envelope's shape and none of its optional fields.
 	return &ServiceError{
 		Code:       string(errResp.Code),
 		Message:    errResp.Error,
 		StatusCode: statusCode,
-		RequestID:  requestID,
+		RequestID:  requestIDFrom(envelopeRequestID(errResp), resp.HTTPResponse.Header),
 	}
 }
 
