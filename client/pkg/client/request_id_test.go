@@ -25,6 +25,7 @@ import (
 // only the echoed header left to fall back on.
 const (
 	bodyKeyNotFound   = `{"error":"Key not found","code":"KEY_NOT_FOUND"}`
+	bodyKeyNotAllowed = `{"error":"Token is not allowed to sign with key AAAA","code":"KEY_NOT_ALLOWED"}`
 	bodyInternalError = `{"error":"Internal error","code":"INTERNAL_ERROR"}`
 )
 
@@ -51,7 +52,7 @@ func TestTypedSignErrorsKeepTheRequestID(t *testing.T) {
 		},
 		"403 header only": {
 			status:      http.StatusForbidden,
-			body:        `{"error":"Token is not allowed to sign with key AAAA","code":"KEY_NOT_ALLOWED"}`,
+			body:        bodyKeyNotAllowed,
 			header:      headerID,
 			wantID:      headerID,
 			wantCode:    ErrCodeKeyNotAllowed,
@@ -122,13 +123,27 @@ func TestTypedSignErrorsKeepTheRequestID(t *testing.T) {
 }
 
 // A 403 or 404 with neither source prints no id, and no empty "(request )".
+//
+// Each status is fed the body it actually sends — sign.ts answers 403 with
+// KEY_NOT_ALLOWED and 404 with KEY_NOT_FOUND — so the rendered string these
+// assert is one the service can produce rather than a fixture that only
+// happens to exercise the branch.
 func TestTypedSignErrorsWithoutAnIDPrintNone(t *testing.T) {
-	for _, status := range []int{http.StatusForbidden, http.StatusNotFound} {
-		t.Run(fmt.Sprint(status), func(t *testing.T) {
+	cases := []struct {
+		status   int
+		body     string
+		wantText string
+	}{
+		{http.StatusForbidden, bodyKeyNotAllowed, "KEY_NOT_ALLOWED: Token is not allowed to sign with key AAAA"},
+		{http.StatusNotFound, bodyKeyNotFound, "KEY_NOT_FOUND: Key not found"},
+	}
+
+	for _, tc := range cases {
+		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(status)
-				_, _ = fmt.Fprint(w, bodyKeyNotFound)
+				w.WriteHeader(tc.status)
+				_, _ = fmt.Fprint(w, tc.body)
 			}))
 			defer server.Close()
 
@@ -143,7 +158,7 @@ func TestTypedSignErrorsWithoutAnIDPrintNone(t *testing.T) {
 			if svcErr.RequestID != "" {
 				t.Errorf("RequestID = %q, want empty", svcErr.RequestID)
 			}
-			want := fmt.Sprintf("KEY_NOT_FOUND: Key not found (status %d)", status)
+			want := fmt.Sprintf("%s (status %d)", tc.wantText, tc.status)
 			if svcErr.Error() != want {
 				t.Errorf("Error() = %q, want %q", svcErr.Error(), want)
 			}
@@ -152,12 +167,13 @@ func TestTypedSignErrorsWithoutAnIDPrintNone(t *testing.T) {
 }
 
 // The same defect, on the branches the sign path's fix did not reach: every
-// other mapped status either read the envelope alone (the admin audit 400/500)
-// or read nothing at all (PublicKey, AdminPublicKey, UploadKey, ListKeys,
-// DeleteKey), so a response carrying its id only on X-Request-ID left the
-// caller with nothing to quote there either. requestIdMiddleware stamps the
-// header on every response the service sends, which is what makes it a
-// fallback worth having on all of them.
+// other error this client returns either read the envelope alone (the admin
+// audit 400/500) or read nothing at all (PublicKey, AdminPublicKey, UploadKey,
+// ListKeys, DeleteKey, and the two envelope-less errors at the end of the
+// table), so a response carrying its id only on X-Request-ID left the caller
+// with nothing to quote there either. requestIdMiddleware stamps the header on
+// every response the service sends, which is what makes it a fallback worth
+// having on all of them.
 func TestNonSignErrorsKeepTheRequestID(t *testing.T) {
 	const headerID = "2d7f8a15-0c46-4b93-a1e7-6f3b8c05d29a"
 
@@ -219,6 +235,29 @@ func TestNonSignErrorsKeepTheRequestID(t *testing.T) {
 			call: func(c *Client) error {
 				_, err := c.AuditLogs(context.Background(), AuditFilter{})
 				return err
+			},
+		},
+		// The last two have no error envelope to read at all, so the echoed
+		// header is not a fallback there but the only source: HealthResponse
+		// declares no requestId, and the delete not-found is synthesized from a
+		// 200 whose body says nothing happened. Both are still responses an
+		// operator reports — a service calling itself degraded, a delete that
+		// says the key was never there.
+		"health 503 degraded": {
+			status: http.StatusServiceUnavailable,
+			body: `{"status":"degraded","version":"1.0.0",` +
+				`"timestamp":"2026-01-01T00:00:00Z",` +
+				`"checks":{"keyStorage":false,"database":true}}`,
+			call: func(c *Client) error {
+				_, err := c.Health(context.Background())
+				return err
+			},
+		},
+		"delete key reported not found": {
+			status: http.StatusOK,
+			body:   `{"success":true,"deleted":false,"keyId":"AAAA"}`,
+			call: func(c *Client) error {
+				return c.DeleteKey(context.Background(), "AAAA")
 			},
 		},
 	}

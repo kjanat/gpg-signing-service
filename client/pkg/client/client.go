@@ -129,6 +129,12 @@ func (c *Client) Health(ctx context.Context) (*HealthStatus, error) {
 			Code:       ErrCodeDegraded,
 			Message:    "service degraded",
 			StatusCode: 503,
+			// Envelope-less by construction: HealthResponse declares no requestId,
+			// so the echoed header is not a fallback here but the only source
+			// there is. Left off, the one 503 a caller is told to report — "the
+			// service says it is degraded" — arrived with nothing to correlate it
+			// against, which is the same hole the mapped statuses just closed.
+			RequestID: requestIDFrom("", resp.HTTPResponse.Header),
 		}
 		return &HealthStatus{
 			Status:     string(resp.JSON503.Status),
@@ -355,6 +361,11 @@ func (c *Client) DeleteKey(ctx context.Context, keyID string) error {
 			Code:       ErrCodeKeyNotFound,
 			Message:    fmt.Sprintf("key %s not found", keyID),
 			StatusCode: 200,
+			// Synthesized from a 200 whose body says nothing happened, so there is
+			// no error envelope to read and the echoed header is the only source.
+			// It is still a real response with a real id behind it, and "delete
+			// reported the key was not there" is a report an operator files.
+			RequestID: requestIDFrom("", resp.HTTPResponse.Header),
 		}
 	}
 
