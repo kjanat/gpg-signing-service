@@ -1,5 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
 import { createLocalJWKSet, jwtVerify } from "jose";
+import { INSUFFICIENT_SCOPE_MESSAGE } from "#lib/openapi";
 import { getRequestId } from "#middleware/request-id";
 import type { AdminScope, Env, LegacyJWKSResponse, OIDCClaims, RateLimitResult, Variables } from "#types";
 import { createIdentity, HEADERS, HTTP, markClaimsAsValidated, TIME } from "#types";
@@ -621,7 +622,7 @@ export const adminAuth: MiddlewareHandler<{
 	c.set("adminScope", scope);
 
 	if (scope === "readonly" && !READ_ONLY_METHODS.has(c.req.method)) {
-		return insufficientScope(c, "This admin credential may only read", {
+		return insufficientScope(c, INSUFFICIENT_SCOPE_MESSAGE, {
 			hint: `ADMIN_READONLY_TOKEN is accepted on ${[...READ_ONLY_METHODS].join(" and ")} admin routes only. ${c.req.method} ${c.req.path} changes state and needs ADMIN_TOKEN.`,
 		});
 	}

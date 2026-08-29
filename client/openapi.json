@@ -16,7 +16,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT",
-        "description": "Admin token for /admin/* endpoints"
+        "description": "Admin bearer for /admin/* endpoints. ADMIN_TOKEN reaches every admin route; the optional ADMIN_READONLY_TOKEN is accepted on GET and HEAD only and answers 403 AUTH_SCOPE_INSUFFICIENT on the rest."
       },
       "serviceTokenAuth": {
         "type": "http",

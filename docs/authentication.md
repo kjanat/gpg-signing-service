@@ -8,7 +8,7 @@
 | `/sign`                                 | OIDC JWT               | GitHub Actions or GitLab CI                         |
 | `/sign`                                 | `gst_` service token   | CI systems and automation without supported OIDC    |
 | `/admin/*`                              | `ADMIN_TOKEN`          | Deployment operator                                 |
-| `/admin/*`, `GET` only                  | `ADMIN_READONLY_TOKEN` | Monitoring jobs that read and never change anything |
+| `/admin/*`, `GET`/`HEAD` only           | `ADMIN_READONLY_TOKEN` | Monitoring jobs that read and never change anything |
 | GitHub installer action                 | GitHub API token       | Release lookup and asset download                   |
 
 The install action's `token` input is unrelated to all service credentials.

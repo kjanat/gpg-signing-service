@@ -226,23 +226,33 @@ describe("the admin route table this suite claims to cover", () => {
 	// only as good as the list of routes. Reading that list off the document the
 	// service publishes is what makes it a claim about the service rather than
 	// about this file.
-	const documented = (() => {
-		// Round-tripped through JSON for the same reason openapi-spec.test.ts does
-		// it: the generated object's declared type does not admit an index
-		// signature, and the plain document is what a client actually reads.
-		const document = JSON.parse(JSON.stringify(app.getOpenAPIDocument(openApiConfig))) as {
-			paths: Record<string, Record<string, unknown>>;
-		};
-		const methods = new Set(["get", "post", "put", "patch", "delete", "head"]);
-		return Object.entries(document.paths)
-			.filter(([path]) => path.startsWith("/admin/"))
-			.flatMap(([path, operations]) =>
-				Object.keys(operations)
-					.filter((method) => methods.has(method))
-					.map((method) => `${method.toUpperCase()} ${path}`),
-			)
-			.sort();
-	})();
+	// Round-tripped through JSON for the same reason openapi-spec.test.ts does
+	// it: the generated object's declared type does not admit an index
+	// signature, and the plain document is what a client actually reads.
+	const document = JSON.parse(JSON.stringify(app.getOpenAPIDocument(openApiConfig))) as {
+		paths: Record<string, Record<string, { responses?: Record<string, unknown> }>>;
+	};
+	const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "head"]);
+
+	// `path === "/admin"` is not redundant with the prefix. A sub-app route
+	// declared as `path: "/"` renders in the document without the trailing
+	// slash — `/sign` is exactly that today — so an admin index route would land
+	// on `/admin`, be served by the `use("*", adminAuth)` mount like every other
+	// admin route, and fall straight through a `startsWith("/admin/")` filter.
+	// The enumeration would stay green while the route it missed was handed to
+	// the read-only credential by default, which is the one failure this whole
+	// describe block exists to make impossible.
+	const isAdminPath = (path: string) => path === "/admin" || path.startsWith("/admin/");
+
+	const adminOperations = Object.entries(document.paths)
+		.filter(([path]) => isAdminPath(path))
+		.flatMap(([path, operations]) =>
+			Object.entries(operations)
+				.filter(([method]) => HTTP_METHODS.has(method))
+				.map(([method, operation]) => ({ label: `${method.toUpperCase()} ${path}`, operation })),
+		);
+
+	const documented = adminOperations.map(({ label: name }) => name).sort();
 
 	it("is every admin operation the service publishes, and nothing else", () => {
 		expect([...READS, ...MUTATIONS].map(label).sort()).toEqual(documented);
@@ -271,6 +281,21 @@ describe("the admin route table this suite claims to cover", () => {
 			"POST /admin/subjects",
 			"POST /admin/tokens",
 		]);
+	});
+
+	it("declares the 403 on exactly the mutation routes in the published document", () => {
+		// The runtime boundary and the document are two independent statements of
+		// the same rule, and only one of them is what a generated client compiles
+		// against. Nothing above ties them together: classifying a new route into
+		// MUTATIONS satisfies every other test in this block while its operation
+		// still declares only a 401, so `api.gen.go` would ship without a
+		// `JSON403` for a call that can only ever answer 403.
+		const declaresForbidden = adminOperations
+			.filter(({ operation }) => operation.responses && "403" in operation.responses)
+			.map(({ label: name }) => name)
+			.sort();
+
+		expect(declaresForbidden).toEqual(MUTATIONS.map(label).sort());
 	});
 
 	it("covers the four routes the key-expiry monitor calls", () => {
@@ -319,6 +344,10 @@ describe("the read-only admin credential", () => {
 			// whose generic handler branches on the challenge must not be told to
 			// re-authenticate with a credential that is already correct.
 			expect(response.headers.get("WWW-Authenticate")).toBe(WWW_AUTHENTICATE_INSUFFICIENT_SCOPE);
+			// And the challenge is the body, not a second copy of it. A header
+			// asserting a different refusal than the JSON beside it is the failure
+			// mode of two literals that have to stay equal.
+			expect(response.headers.get("WWW-Authenticate")).toContain(`error_description="${body.error}"`);
 			// The same envelope every other refusal carries, so the refusal is
 			// greppable in the audit trail and self-documenting in a CI log.
 			expect(body.requestId).toBe(response.headers.get("X-Request-ID"));

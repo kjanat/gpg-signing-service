@@ -4,7 +4,7 @@
 
 import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import { WWW_AUTHENTICATE, WWW_AUTHENTICATE_INSUFFICIENT_SCOPE } from "#lib/openapi";
+import { insufficientScopeChallenge, WWW_AUTHENTICATE } from "#lib/openapi";
 import type { ErrorCode } from "#schemas/errors";
 import { HEADERS, HTTP } from "#types";
 import { logger } from "#utils/logger";
@@ -122,7 +122,7 @@ export function insufficientScope(c: Context, message: string, details: { hint?:
 		...(requestId && { requestId }),
 	});
 
-	c.header("WWW-Authenticate", WWW_AUTHENTICATE_INSUFFICIENT_SCOPE);
+	c.header("WWW-Authenticate", insufficientScopeChallenge(message));
 
 	return c.json(
 		{
