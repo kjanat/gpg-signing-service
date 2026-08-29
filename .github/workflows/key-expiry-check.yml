@@ -26,7 +26,11 @@ jobs:
         continue-on-error: true
         env:
           SIGNING_SERVICE_URL: ${{ vars.SIGNING_SERVICE_URL }}
-          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          # Read-only on purpose: every call the check makes is a GET, and this
+          # credential is refused on every state-changing admin route. Do not
+          # substitute ADMIN_TOKEN — the script refuses it rather than widening
+          # a weekly scheduled job to key deletion and token minting.
+          ADMIN_READONLY_TOKEN: ${{ secrets.ADMIN_READONLY_TOKEN }}
           KEY_EXPIRY_WARN_DAYS: ${{ vars.KEY_EXPIRY_WARN_DAYS }}
         run: bun run check:key-expiry
 
