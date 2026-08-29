@@ -3,18 +3,40 @@
  *
  * `error-docs.test.ts` next door asserts that every code has a *section* to land
  * on. This suite asserts that what those sections and the API guide *say* is
- * still true of the code: the statuses, the shape of the examples, and the two
- * places the envelope guarantee has an exception. Each of these was wrong at
- * least once — a prose claim drifts silently, because nothing fails when it
- * stops matching.
+ * still true of the code. Each claim below was wrong at least once — a prose
+ * claim drifts silently, because nothing fails when it stops matching.
  *
- * Read as a contract rather than as a spelling check: every assertion here
- * fails only when a *response* changed and a document did not.
+ * What is proven here, and by what:
+ *
+ * - **The two documents and the enum agree on every status.** API.md's table,
+ *   the reference's `**NNN.**` openings and `ERROR_CODES` are compared as sets.
+ *   This is document-against-document: it catches one guide knowing a code the
+ *   other does not, which is how `KEY_NOT_ALLOWED` went missing from the table.
+ *   On its own it proves nothing about runtime — both documents can agree with
+ *   each other and with the enum while the handler sends something else.
+ * - **…and the codes in `statusProbes` agree with a live response.** Each sends
+ *   a real request through the app and asserts the status and `code` that come
+ *   back are the ones the reference gives. This is the half that fails when a
+ *   *handler* changes rather than a document.
+ * - **Every code is on one side of that line deliberately.** `unpinnedStatuses`
+ *   names the suite that covers each of the rest, and the partition is
+ *   asserted, so a code cannot be added without deciding which side it is on.
+ * - **Every documented error example** parses as the schema it claims to be and
+ *   carries a `docs`.
+ * - **The envelope's exceptions** — the degraded `/health` body, the 429 and
+ *   404 without a `requestId`, the validator's `issues` array — are pinned
+ *   against live responses or against the schema that declares the body.
+ * - **Every relative anchor** into the reference lands on a heading that exists.
+ *
+ * Not proven here: that a code is reachable at all, that a `hint` says what the
+ * reference says it says, or that the unpinned statuses are right. Those belong
+ * to the route suites, which own the fixtures they need.
  */
 
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import app from "#index";
+import type { ErrorCode } from "#schemas/errors";
 import { ERROR_CODES, ErrorResponseSchema, RateLimitErrorSchema } from "#schemas/errors";
 // Inlined at build time by Vite: the Workers pool has no filesystem, so this is
 // the only way a test running inside it can read a document from the repo.
@@ -29,10 +51,31 @@ async function request(path: string, options: RequestInit = {}): Promise<Respons
 	return response;
 }
 
-/** Every ```json fence in a document, parsed. */
-function jsonExamples(markdown: string): Record<string, unknown>[] {
+/** An admin request that will be authenticated, so the failure under test is the one asked for. */
+function adminRequest(path: string): Promise<Response> {
+	return request(path, { headers: { Authorization: `Bearer ${env.ADMIN_TOKEN}` } });
+}
+
+/**
+ * Every ```json fence in a document, parsed.
+ *
+ * `name` exists for the failure message. An unparseable fence is a broken
+ * document rather than a broken test, and a bare `SyntaxError` from
+ * `JSON.parse` names neither the document nor the block it came from — which is
+ * every fence in three files to search by hand.
+ */
+function jsonExamples(name: string, markdown: string): Record<string, unknown>[] {
 	return [...markdown.matchAll(/```json\n([\s\S]*?)```/g)]
-		.map(([, block]) => JSON.parse(block as string) as unknown)
+		.map(([, block]) => {
+			try {
+				return JSON.parse(block as string) as unknown;
+			} catch (error) {
+				throw new Error(
+					`${name}: a \`\`\`json fence does not parse (${error instanceof Error ? error.message : String(error)}).\n${block}`,
+					{ cause: error },
+				);
+			}
+		})
 		.filter((value): value is Record<string, unknown> => typeof value === "object" && value !== null);
 }
 
@@ -85,6 +128,113 @@ describe("the documented status of every code", () => {
 	});
 });
 
+/**
+ * A refusal this suite can provoke with nothing but a request and the admin
+ * token the test environment already configures.
+ *
+ * Deliberately cheap. A probe that needed a JWKS mock, a trust row and a stubbed
+ * Durable Object would be a second copy of the route suite that owns those
+ * fixtures, and it would fail for reasons that have nothing to do with the
+ * documentation — which is how a contract test stops being read.
+ */
+const statusProbes: { code: ErrorCode; what: string; send: () => Promise<Response> }[] = [
+	{
+		code: "AUTH_MISSING",
+		what: "an admin route with no Authorization header",
+		send: () => request("/admin/audit"),
+	},
+	{
+		code: "AUTH_INVALID",
+		what: "an admin route with a bearer that is not the admin token",
+		send: () => request("/admin/audit", { headers: { Authorization: "Bearer not-the-admin-token" } }),
+	},
+	{
+		code: "NOT_FOUND",
+		what: "a path no route matches",
+		send: () => request("/no-such-route"),
+	},
+	{
+		code: "NOT_FOUND",
+		what: "`/e/<CODE>` for a code this service does not define",
+		send: () => request("/e/NOPE"),
+	},
+	{
+		code: "KEY_NOT_FOUND",
+		what: "`/public-key` for an id nothing is stored under",
+		send: () => request("/public-key?keyId=FFFFFFFFFFFFFFFF"),
+	},
+	{
+		code: "INVALID_REQUEST",
+		what: "a query the route's schema rejects",
+		send: () => adminRequest("/admin/audit?limit=-1"),
+	},
+	{
+		code: "INTERNAL_ERROR",
+		what: "a handler that throws, caught by `app.onError`",
+		send: async () => {
+			// `/public-key` does not guard the Durable Object lookup, so this reaches
+			// the app-level handler rather than a route's own catch — which is the
+			// path `INTERNAL_ERROR` documents.
+			const original = env.KEY_STORAGE.idFromName;
+			env.KEY_STORAGE.idFromName = () => {
+				throw new Error("Key storage failure");
+			};
+			try {
+				return await request("/public-key");
+			} finally {
+				env.KEY_STORAGE.idFromName = original;
+			}
+		},
+	},
+];
+
+/**
+ * The codes no probe above reaches, and what covers them instead.
+ *
+ * Each of these needs a fixture — a signed token and a JWKS mock, a trust row in
+ * D1, a Durable Object stubbed into failure — that belongs to the suite named
+ * beside it. Written out rather than derived so that adding a code to the enum
+ * fails this file until someone decides whether it is cheap to reach.
+ */
+const unpinnedStatuses: Record<string, string> = {
+	AUTH_SUBJECT_UNTRUSTED: "sign.test.ts — needs a verified token with no trust row",
+	KEY_NOT_ALLOWED: "sign.test.ts — needs a trust row carrying a key allowlist",
+	KEY_PROCESSING_ERROR: "admin.test.ts — needs damaged key material in storage",
+	KEY_LIST_ERROR: "admin.test.ts — needs the key-storage DO stubbed into failure",
+	KEY_UPLOAD_ERROR: "admin.test.ts — needs the key-storage DO stubbed into failure",
+	KEY_DELETE_ERROR: "admin.test.ts — needs the key-storage DO stubbed into failure",
+	SIGN_ERROR: "sign.test.ts — needs a stored key and a signing failure",
+	RATE_LIMITED: "sign.test.ts — needs the limiter stubbed into denial",
+	RATE_LIMIT_ERROR: "sign.test.ts — needs the limiter stubbed into failure",
+	AUDIT_ERROR: "audit.test.ts — needs D1 stubbed into failure",
+	SERVICE_DEGRADED: "middleware.test.ts — needs an unreachable JWKS or store",
+	SERVICE_MISCONFIGURED: "ssrf.test.ts — needs an ALLOWED_ISSUERS entry the guard refuses",
+};
+
+describe("the status a code actually arrives with", () => {
+	const documented = statusesFromReference();
+
+	for (const probe of statusProbes) {
+		it(`is the documented ${documented.get(probe.code)} for ${probe.code}: ${probe.what}`, async () => {
+			const response = await probe.send();
+			const body = await response.json<Record<string, unknown>>();
+
+			// Asserted as one object so a failure names both halves: a handler that
+			// changed status and one that changed code look nothing alike to fix.
+			expect({ code: body.code, status: response.status }).toEqual({
+				code: probe.code,
+				status: documented.get(probe.code),
+			});
+		});
+	}
+
+	it("is pinned against a live response, or named as covered elsewhere", () => {
+		const pinned = new Set(statusProbes.map((probe) => probe.code));
+
+		expect(ERROR_CODES.filter((code) => !pinned.has(code)).sort()).toEqual(Object.keys(unpinnedStatuses).sort());
+	});
+});
+
 describe("every error example in the documentation", () => {
 	// A caller copies these. An example that would not validate is a caller
 	// building a parser against a body the service never sends.
@@ -96,7 +246,7 @@ describe("every error example in the documentation", () => {
 
 	for (const [name, markdown] of Object.entries(documents)) {
 		it(`is a body ${name} could actually have received`, () => {
-			const errors = jsonExamples(markdown).filter((example) => typeof example.code === "string");
+			const errors = jsonExamples(name, markdown).filter((example) => typeof example.code === "string");
 
 			// Guards the guard: a regex that stopped matching would leave this
 			// suite passing with nothing to check.
@@ -167,6 +317,31 @@ describe("the envelope guarantee's exceptions", () => {
 		expect(body.docs).toBe("https://sign.test/e/NOT_FOUND");
 		expect(body).not.toHaveProperty("requestId");
 		expect(response.headers.get("X-Request-ID")).toMatch(/^[0-9a-f-]{36}$/);
+	});
+
+	it("adds an issues array to a validation 400, and echoes no value in it", async () => {
+		// `issues` is the one envelope field a route does not build: the OpenAPI
+		// validator's `defaultHook` attaches it. Documented because
+		// `docs/troubleshooting.md` sends a reader to `issues[].path` to catch a
+		// shell-quoting mistake — advice that needs the array to be there, and
+		// needs the *path* rather than the message to be the informative part.
+		const response = await adminRequest("/admin/audit?limit=-1");
+
+		expect(response.status).toBe(400);
+		const body = await response.json<{ code: string; docs?: string; issues?: Record<string, unknown>[] }>();
+		expect(body.code).toBe("INVALID_REQUEST");
+		expect(typeof body.docs).toBe("string");
+		expect(body.issues?.length).toBeGreaterThan(0);
+
+		for (const issue of body.issues ?? []) {
+			expect(Object.keys(issue).sort()).toEqual(expect.arrayContaining(["code", "message", "path"]));
+			// Zod drops the offending value from a finalized issue unless
+			// `reportInput` is set, and nothing here sets it. That is what makes the
+			// array safe to hand back: it names which field failed and what was
+			// expected, never what the caller sent. A `keyIds` element that came
+			// from an unexpanded shell variable is a path, not a secret.
+			expect(issue).not.toHaveProperty("input");
+		}
 	});
 });
 

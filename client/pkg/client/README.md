@@ -175,9 +175,10 @@ c, err := client.New(baseURL string, opts ...Option)
 - `AuthError` - Authentication failures (carries the service's `Code`,
   `Message`, and `RequestID`)
 - `RateLimitError` - Rate limit exceeded (carries the retry-after duration, read
-  from the body's `retryAfter` or the `Retry-After` header, in either the
-  delay-seconds or the HTTP-date form, and the `RequestID` — which on a 429 is
-  the echoed `X-Request-ID` header, since no 429 body declares one)
+  from the body's `retryAfter` — which is where this service puts it — falling
+  back to a `Retry-After` header, in either the delay-seconds or the HTTP-date
+  form, for a `429` an intermediary authored; and the `RequestID`, which on a
+  429 is the echoed `X-Request-ID` header, since no 429 body declares one)
 - `ValidationError` - Invalid request data
 - `ServiceError` - API errors with codes
 
@@ -325,8 +326,8 @@ It never retries:
 Retry strategy:
 
 - The server's own wait hint when the failure carries one, clamped to the
-  configured maximum: `retryAfter`/`Retry-After` on a `429`, and the
-  `Retry-After` on a `SERVICE_DEGRADED` `503`. Exponential backoff with jitter
+  configured maximum: the body's `retryAfter` on a `429`, and the `Retry-After`
+  header on a `SERVICE_DEGRADED` `503`. Exponential backoff with jitter
   otherwise — including for `RATE_LIMIT_ERROR`, a retryable `503` the service
   sends no interval with
 - Default: 3 retries, 1s-30s backoff range
@@ -376,10 +377,13 @@ Six things worth knowing:
   carrying a body you are meant to read, and a probe wants the current state
   rather than an eventually healthy one. Transport faults still retry there.
 - The wait between attempts is the server's own hint when the failure carries
-  one, and the exponential backoff otherwise. A `429` carries it as the body's
-  `retryAfter` or the header, in either RFC 9110 form; a `SERVICE_DEGRADED`
-  `503` carries it as the header, and the retrier honours that too — a
-  dependency is away and only the service has any idea for how long.
+  one, and the exponential backoff otherwise. This service puts a `429`'s hint
+  in the body, as `retryAfter`; the client also reads a `Retry-After` header
+  there, in either RFC 9110 form, because a `429` that carries one came from an
+  edge throttle in front of the service and is otherwise the response whose hint
+  is lost. A `SERVICE_DEGRADED` `503` does carry the header, and the retrier
+  honours that too — a dependency is away and only the service has any idea for
+  how long.
   `WithoutRateLimitRetry` does not discard the outage hint: that option is about
   throttling. A `RATE_LIMIT_ERROR` `503` sends no hint at all and falls through
   to the backoff, as does `SERVICE_MISCONFIGURED` — which never reaches the wait

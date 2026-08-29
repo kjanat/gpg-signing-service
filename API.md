@@ -291,7 +291,9 @@ wpYEAREBAgAGBQJlsji1AAoJEP...
 ```
 
 A `429` body carries `retryAfter` and **never a `requestId`** — take the id from
-the `X-Request-ID` response header, which is set on every response.
+the `X-Request-ID` response header, which is set on every response. The wait
+hint is in the body only: this service sends no `Retry-After` header on a `429`,
+just `X-RateLimit-Remaining` and `X-RateLimit-Reset`.
 
 **Error** (403 - Key outside this credential's grant):
 
@@ -539,7 +541,9 @@ Every **coded** error body carries a `docs` field of the form
 `<service>/e/<CODE>`, which redirects to that code's section in the
 [error reference](docs/errors.md). Most also carry a `hint` naming what to
 change; `401`s carry the `subject` that was presented; most, but not all, carry
-a `requestId` — the `X-Request-ID` response header always does.
+a `requestId` — the `X-Request-ID` response header always does. A `400` raised
+by a route's request schema also carries `issues`, one entry per field that
+failed validation; see [`INVALID_REQUEST`](docs/errors.md#invalid_request).
 
 The one non-2xx JSON body without a `code` is the degraded
 [`GET /health`](#get-health) 503, which is a `HealthResponse` rather than an

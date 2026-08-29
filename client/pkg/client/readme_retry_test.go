@@ -1,6 +1,7 @@
 package client
 
 import (
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -119,5 +120,50 @@ func TestReadmeDescribesTheDegradedWaitHint(t *testing.T) {
 		if !strings.Contains(readme, claim) {
 			t.Errorf("README.md does not mention %s, so its account of the wait hint is incomplete", claim)
 		}
+	}
+}
+
+// The README says where a 429's wait hint comes from, and the two sources are
+// not interchangeable.
+//
+// This service puts the hint in the body, as `retryAfter`; it sends no
+// `Retry-After` header on a 429 at all — the denial carries only the two
+// X-RateLimit headers, and the limiter's own header never leaves the Durable
+// Object. The client still reads the header, because a 429 that carries one was
+// authored by an edge throttle in front of the service and is otherwise the
+// response whose hint is lost. Writing that as "`retryAfter`/`Retry-After` on a
+// 429" described the two as one thing and left a reader expecting a header this
+// service never sends.
+func TestReadmeAttributesThe429WaitHint(t *testing.T) {
+	// The envelope is preferred, which is what makes it the service's channel.
+	if got := retryAfterFrom(3, http.Header{headerRetryAfter: []string{"9"}}); got != 3*time.Second {
+		t.Fatalf("retryAfterFrom with both = %v, want the envelope's 3s", got)
+	}
+	// The header is the fallback, for the 429 this service did not write.
+	if got := retryAfterFrom(0, http.Header{headerRetryAfter: []string{"9"}}); got != 9*time.Second {
+		t.Fatalf("retryAfterFrom with a header only = %v, want 9s", got)
+	}
+	if got := retryAfterFrom(0, http.Header{}); got != 0 {
+		t.Fatalf("retryAfterFrom with neither = %v, want no hint", got)
+	}
+
+	raw, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatalf("reading README.md: %v", err)
+	}
+	// Reflowed to one line first: the formatter wraps this prose at 80 columns,
+	// so a phrase this test looks for can land either side of a newline for
+	// reasons that have nothing to do with what it says.
+	readme := strings.Join(strings.Fields(string(raw)), " ")
+
+	// Both sources have to be named, and the body one attributed to this service
+	// rather than listed as an alternative spelling of the header.
+	for _, claim := range []string{"body's `retryAfter`", "`Retry-After` header"} {
+		if !strings.Contains(readme, claim) {
+			t.Errorf("README.md does not contain %q, so it no longer says where a 429's hint comes from", claim)
+		}
+	}
+	if strings.Contains(readme, "`retryAfter`/`Retry-After` on a `429`") {
+		t.Error("README.md still describes the body field and the header as one source on a 429")
 	}
 }

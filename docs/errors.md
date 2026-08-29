@@ -36,7 +36,8 @@ on the author of a route remembering it.
 | `requestId`  | mostly   | The id in `X-Request-ID`, in the logs, and in `audit_logs.request_id`.       |
 | `hint`       | often    | What to change. Absent where the message already is the action.              |
 | `subject`    | 401 only | The `sub` claim the caller presented, echoed back.                           |
-| `retryAfter` | 429 only | Whole seconds to wait.                                                       |
+| `retryAfter` | 429 only | Whole seconds to wait. The hint is in the body; there is no header.          |
+| `issues`     | 400 only | Which fields failed validation, and what was expected. Never the value.      |
 
 `requestId` is "mostly" because carrying it is per handler rather than
 structural the way `docs` is: a refusal has the field only when its handler read
@@ -226,7 +227,14 @@ armor checksum, and that the supplied id is the key's 16-character long id.
 
 **400.** The request did not satisfy the contract: an empty body on `/sign`, a
 `keyId` that is not 16 hexadecimal characters, or a body that failed schema
-validation (those carry an `issues` array).
+validation.
+
+The schema-validation ones carry an `issues` array from the validator, one entry
+per field that failed: `path` locates the field, `message` and the code-specific
+keys say what was expected. It never echoes what you sent — read `issues[].path`
+rather than the message, which is how `{"keyIds": ["${MY_KEY_ID}"]}` in single
+quotes is diagnosed without the response repeating the literal back. Only the
+routes with a declared request schema produce it; a hand-written `400` does not.
 
 Key ids are the 16-character long id — `62E75E54497815DD`, not
 `signing-key-v1`.
@@ -243,8 +251,16 @@ does not define, which usually means a typo rather than an undocumented error.
 **429.** The caller exceeded a token bucket. `retryAfter` is whole seconds, at
 least one.
 
+The wait hint is in the **body**. This service sends no `Retry-After` header on
+a `429` — the denial carries `X-RateLimit-Remaining` and `X-RateLimit-Reset` and
+nothing else, and the limiter's own header never leaves the Durable Object. A
+`Retry-After` on a `429` from this host therefore came from something in front
+of it, an edge throttle answering with a page rather than an envelope; the Go
+client reads both for that reason, and this service fills only the first.
+
 The body is `error`, `code`, `retryAfter` and `docs` — **no `requestId`**. Quote
-the `X-Request-ID` header instead; it is on the response either way.
+the `X-Request-ID` header instead; it is on the response either way. The schema
+also permits a `hint`, which no `429` sets today.
 
 There are two tiers, and the response does not say which one refused. The first
 is per caller (`<issuer>:<subject>`); the second is per trusted rule, an order
@@ -277,7 +293,10 @@ run `task db:migrate`.
 
 ### INTERNAL_ERROR
 
-**500.** An unhandled fault. Worth reporting with the `requestId`.
+**500.** An unhandled fault. Worth reporting with the request id — but quote it
+from the `X-Request-ID` header rather than from the body. The `500` that
+`app.onError` builds does carry `requestId`; the one an unconfigured
+`ADMIN_TOKEN` produces does not, and both wear this code.
 
 The `Authorization store unavailable` 503 used to carry this code — the status
 was always 503, only the code changed. It is now
@@ -390,10 +409,11 @@ says it exactly.
 Every response carries an `X-Request-ID` header, and most coded errors repeat it
 in the envelope as `requestId`. Where the field is absent — every `429`, both
 `NOT_FOUND` `404`s, `/public-key`'s failures, the admin key and audit failures,
-the validator's `400`, and whatever is added next without reading the context —
-the header still has it. So **the header is the source that is always there, and
-the field is a convenience for a caller already holding the parsed body**: take
-the field when it is present, and the header when it is not. The Go client's
+the `500` for an unconfigured `ADMIN_TOKEN`, the validator's `400`, and whatever
+is added next without reading the context — the header still has it. So **the
+header is the source that is always there, and the field is a convenience for a
+caller already holding the parsed body**: take the field when it is present, and
+the header when it is not. The Go client's
 `requestIDFrom` does exactly that, which is why `AuthError` and `RateLimitError`
 both print an id whether or not the body declared one.
 
