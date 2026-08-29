@@ -62,9 +62,13 @@ deployment credentials. There is no private-key export endpoint.
 - Service tokens support expiration, revocation, and optional key allowlists.
 - Trusted OIDC subjects support the same three, managed at runtime through
   `/admin/subjects` rather than by redeploying.
-- Both static admin tokens are compared in constant time, and both
-  comparisons run on every request so which one matched is not
-  observable by timing.
+- Both static admin tokens are compared in constant time. When
+  `ADMIN_READONLY_TOKEN` is provisioned, both comparisons run on every request,
+  so which of the two a valid bearer matched is not observable by timing. When
+  it is unset the second comparison is skipped rather than run against a
+  placeholder — so whether a deployment provisioned the credential at all is
+  timeable. That bit is not a secret; the values are, and those stay
+  constant-time either way.
 
 Service-token hashes are not a substitute for high entropy. An attacker who
 obtains a plaintext `gst_` token can use it until expiration or revocation.
@@ -85,9 +89,19 @@ Concretely, the read-only credential may call `GET /admin/keys`,
 service token, or trust or revoke an OIDC subject.
 
 The boundary is drawn on the method rather than on a list of paths, and that is
-a deliberate safety property rather than brevity: a route added later is denied
-to the read-only credential unless it is a `GET`, so forgetting this file cannot
-widen the credential. A path allowlist would fail the other way.
+a deliberate trade rather than brevity. It runs one way: a route added later
+that **changes state** is denied to the read-only credential by construction,
+where a path allowlist would grant it to anyone who forgot to edit the list.
+
+It does not run the other way. A route added later that **reads** is _granted_
+to the read-only credential by construction — a future
+`GET /admin/keys/{keyId}/export` would be reachable with the monitoring secret
+the moment it is mounted, without anyone deciding that it should be. Nothing in
+the middleware prevents that. What prevents it is
+`src/__tests__/admin-scope.test.ts`, which pins the read set literally and
+diffs it against the generated OpenAPI document: widening the read side fails
+CI until the list is edited on purpose. Mutations are closed by code; reads are
+opened by code and closed by review.
 
 `ADMIN_READONLY_TOKEN` exists for the scheduled key-expiry monitor, which needs
 four `GET`s and nothing else. Without it, a repository secret readable by that
@@ -105,7 +119,11 @@ Two constraints the service enforces rather than documents:
   silently be a full administrator — the exact outcome the split exists to
   prevent, and one that is invisible from the outside because every call the
   monitor makes still succeeds. The whole admin surface answers `500
-  SERVICE_MISCONFIGURED` until they differ.
+  SERVICE_MISCONFIGURED` until they differ. The body says only that admin
+  authentication is misconfigured: the guard runs before the `Authorization`
+  header is read, so anything more specific would be handed to unauthenticated
+  callers. The diagnosis and the fix go to the Workers log, keyed by the same
+  `requestId` the caller was given.
 
 Neither credential is scoped by key, and neither writes an audit row for a
 refusal on the scope boundary; a refused mutation is a warn-level log line

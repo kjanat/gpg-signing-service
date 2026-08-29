@@ -306,9 +306,15 @@ deployment could not decide the request, and nothing about the request is wrong
 answer identically until an operator changes something**. No `Retry-After`, and
 retrying is not useful.
 
-| Message              | What failed                                                                  |
-| -------------------- | ---------------------------------------------------------------------------- |
-| `SSRF protection: …` | An entry in `ALLOWED_ISSUERS` points at a URL this service refuses to fetch. |
+| Message                                 | What failed                                                                                                               |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `SSRF protection: …`                    | An entry in `ALLOWED_ISSUERS` points at a URL this service refuses to fetch.                                              |
+| `Admin authentication is misconfigured` | `ADMIN_READONLY_TOKEN` was set to the same value as `ADMIN_TOKEN`. Every `/admin/*` route answers this until they differ. |
+
+The admin message is deliberately unspecific. That check runs before the
+`Authorization` header is read, so its detail would be readable without any
+credential at all; the line naming both secrets and the command that fixes it
+goes to the Workers log instead, under the `requestId` in the response body.
 
 The URL is refused because it resolves somewhere a signing service must not go:
 a private address, a loopback, a cloud metadata endpoint. It is checked before

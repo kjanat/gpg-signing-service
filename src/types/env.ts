@@ -30,23 +30,7 @@ export interface Variables {
 	 * which is already metered per credential.
 	 */
 	subjectPolicyId?: string;
-	/**
-	 * Which admin credential authorized this request. Set by `adminAuth` only,
-	 * so it is absent on every non-admin route.
-	 */
-	adminScope?: AdminScope;
 }
-
-/**
- * What an authenticated admin caller may do.
- *
- * `full` is the deployment's `ADMIN_TOKEN`: every admin route. `readonly` is
- * `ADMIN_READONLY_TOKEN`, permitted on safe methods and refused on everything
- * else — the credential a monitoring job holds so that reading key expiry does
- * not also carry the authority to delete a key, mint a service token or change
- * who is trusted.
- */
-export type AdminScope = "full" | "readonly";
 
 /** Cloudflare Workers environment bindings */
 export interface Env {

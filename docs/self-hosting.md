@@ -167,6 +167,14 @@ silently be a full administrator. The whole admin surface answers
 `500 SERVICE_MISCONFIGURED` until they differ, which is loud on purpose: the
 alternative failure is silent and total.
 
+The response body does not say which fault it was — that guard runs before the
+`Authorization` header is read, so its message would go to unauthenticated
+callers. Look in the Workers log for the line naming both secrets:
+
+```bash
+wrangler tail --format pretty | grep ADMIN_READONLY_TOKEN
+```
+
 It reduces authority, not disclosure. The holder can still enumerate every key
 id and fingerprint, every trust rule, every service-token name and the whole
 audit log. Store it like any other secret.

@@ -441,8 +441,23 @@ describe("how the read-only credential is provisioned", () => {
 			const body = await envelope(response);
 
 			expect([path, response.status, body.code]).toEqual([path, 500, "SERVICE_MISCONFIGURED"]);
-			expect(body.hint).toContain("ADMIN_READONLY_TOKEN");
 		}
+	});
+
+	it("does not describe the misconfiguration to a caller holding no credential", async () => {
+		// The guard above runs before the Authorization header is read, so its
+		// body goes to anyone who can reach the URL. It must not be the most
+		// specific configuration statement the service makes — the `!ADMIN_TOKEN`
+		// guard beside it answers its own deployment fault with no hint for the
+		// same reason. The diagnosis is a log line; `requestId` is what ties the
+		// two together.
+		const response = await request("/admin/keys", {}, { ADMIN_READONLY_TOKEN: FULL });
+		const body = await envelope(response);
+
+		expect([response.status, body.code]).toEqual([500, "SERVICE_MISCONFIGURED"]);
+		expect(body.hint).toBeUndefined();
+		expect(JSON.stringify(body)).not.toContain("ADMIN_READONLY_TOKEN");
+		expect(body.requestId).toBeTruthy();
 	});
 
 	it("still refuses a bearer that is neither secret", async () => {

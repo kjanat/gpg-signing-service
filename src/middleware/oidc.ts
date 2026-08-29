@@ -2,7 +2,7 @@ import type { Context, MiddlewareHandler } from "hono";
 import { createLocalJWKSet, jwtVerify } from "jose";
 import { INSUFFICIENT_SCOPE_MESSAGE } from "#lib/openapi";
 import { getRequestId } from "#middleware/request-id";
-import type { AdminScope, Env, LegacyJWKSResponse, OIDCClaims, RateLimitResult, Variables } from "#types";
+import type { Env, LegacyJWKSResponse, OIDCClaims, RateLimitResult, Variables } from "#types";
 import { createIdentity, HEADERS, HTTP, markClaimsAsValidated, TIME } from "#types";
 import { logAuditEvent } from "#utils/audit";
 import { CACHE_TTL } from "#utils/constants";
@@ -505,6 +505,19 @@ export const oidcAuth: MiddlewareHandler<{
  * denied here by construction, whereas an allowlist only denies it if whoever
  * added the route remembered this file existed.
  *
+ * The converse is equally true and is the cost of choosing it: a new *read*
+ * route is **granted** to the monitoring credential by construction. Add
+ * `GET /admin/keys/{keyId}/export` and `ADMIN_READONLY_TOKEN` reaches it at
+ * runtime without anyone deciding that it should. Nothing in this file stops
+ * that; what stops it is `admin-scope.test.ts`, which pins the read set
+ * literally and diffs it against the generated OpenAPI document, so widening
+ * the read side fails CI until somebody edits that list on purpose. That is a
+ * review gate rather than a runtime one, and it is where the trade lands:
+ * mutations are closed by code, reads are opened by code and closed by CI. The
+ * posture that makes it acceptable is documented rather than enforced — this
+ * credential is narrower in authority, not in disclosure, and already reads
+ * every key id, trust rule, token name and audit row.
+ *
  * `HEAD` rides along because Workers answers it from the `GET` handler, so
  * excluding it would refuse a request that returns nothing but headers for a
  * body the credential may read in full.
@@ -530,8 +543,7 @@ const READ_ONLY_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD"]);
  *
  * Typed with `Variables` so the refusals can read `requestId` off the context
  * the global middleware populated — the same id `X-Request-ID` echoes and
- * `audit_logs.request_id` stores — and so the resolved scope can be handed
- * downstream.
+ * `audit_logs.request_id` stores.
  */
 export const adminAuth: MiddlewareHandler<{
 	Bindings: Env;
@@ -563,14 +575,23 @@ export const adminAuth: MiddlewareHandler<{
 	// first wins and the credential labelled read-only is a full administrator.
 	// That is precisely the outcome the second secret exists to prevent, and it
 	// is invisible from the outside — the monitor's calls all succeed. Refuse
-	// the whole admin surface instead, loudly, with the fix in the message. A
-	// plain `===` is right here: both values are this deployment's own, neither
-	// is attacker-supplied, and there is no secret to leak by timing.
+	// the whole admin surface instead. A plain `===` is right here: both values
+	// are this deployment's own, neither is attacker-supplied, and there is no
+	// secret to leak by timing.
+	//
+	// The diagnosis goes to the operator log and not into the body. This guard
+	// runs before the `Authorization` header is even read, so anything put in
+	// the response is handed to unauthenticated callers — and it would be the
+	// most specific configuration statement the service makes, naming both
+	// secrets and describing the exact defect. The `!ADMIN_TOKEN` guard above
+	// already answers its own deployment fault with no hint for that reason;
+	// this one is the same class and gets the same posture. `requestId` ties the
+	// caller's 500 to the log line that says what to fix.
 	if (readOnlyToken !== undefined && readOnlyToken === c.env.ADMIN_TOKEN) {
-		logger.error("ADMIN_READONLY_TOKEN equals ADMIN_TOKEN; refusing every admin request");
-		return serviceMisconfigured(c, "Admin authentication is misconfigured", {
-			hint: "ADMIN_READONLY_TOKEN is set to the same value as ADMIN_TOKEN, which would make the read-only credential a full administrator. Put a distinct value with `wrangler secret put ADMIN_READONLY_TOKEN`.",
-		});
+		logger.error(
+			"ADMIN_READONLY_TOKEN is set to the same value as ADMIN_TOKEN, which would make the read-only credential a full administrator; refusing every admin request until they differ. Put a distinct value with `wrangler secret put ADMIN_READONLY_TOKEN`.",
+		);
+		return serviceMisconfigured(c, "Admin authentication is misconfigured");
 	}
 
 	const authHeader = c.req.header("Authorization");
@@ -615,13 +636,10 @@ export const adminAuth: MiddlewareHandler<{
 		});
 	}
 
-	// `full` wins a tie it can no longer have — the equality guard above already
-	// refused the only way both could match — but ordering it this way keeps the
-	// safe reading if that guard is ever weakened.
-	const scope: AdminScope = isFullAdmin ? "full" : "readonly";
-	c.set("adminScope", scope);
-
-	if (scope === "readonly" && !READ_ONLY_METHODS.has(c.req.method)) {
+	// `isFullAdmin` wins a tie it can no longer have — the equality guard above
+	// already refused the only way both could match — but reading it this way
+	// keeps the safe outcome if that guard is ever weakened.
+	if (!isFullAdmin && !READ_ONLY_METHODS.has(c.req.method)) {
 		return insufficientScope(c, INSUFFICIENT_SCOPE_MESSAGE, {
 			hint: `ADMIN_READONLY_TOKEN is accepted on ${[...READ_ONLY_METHODS].join(" and ")} admin routes only. ${c.req.method} ${c.req.path} changes state and needs ADMIN_TOKEN.`,
 		});
