@@ -11,6 +11,12 @@
 # `gpg-sign sign` prints exactly the armored detached signature (fmt.Print in
 # client/cmd/gpg-sign/main.go), so we pipe stdin straight through.
 #
+# gpg.program is not sign-only from git's side: the same program is run with
+# --verify for `git log --show-signature`, `git tag -v`, `git merge
+# --verify-signatures` and friends. Only the detached-sign invocation is ours;
+# every other invocation is exec'd against the real gpg unchanged, so
+# gpg.program stays a drop-in GnuPG for anything that is not signing.
+#
 # A fresh OIDC token is fetched per invocation: GitHub's job-level OIDC tokens
 # expire after ~5 minutes, while a Claude session can run much longer, so a
 # pre-minted token would go stale mid-run.
@@ -22,6 +28,81 @@
 # Hence the GPG_OIDC_REQUEST_* fallback below — see the precedence comment.
 set -euo pipefail
 
+# The first executable named `gpg` on PATH that is not this script, or whatever
+# GPG_SIGN_REAL_GPG names. The override exists so the choice is testable
+# without rewriting PATH, and so an installation that keeps GnuPG off PATH can
+# still verify.
+#
+# The self-check is what keeps `gpg.program` safe to install *as* `gpg`: -ef
+# compares device and inode through symlinks, so a `gpg -> this script` symlink
+# on PATH is skipped rather than re-entered. A byte copy has its own inode and
+# survives that check, which is what the re-entry guard in delegate() is for.
+find_real_gpg() {
+	local candidate
+
+	if [[ -n "${GPG_SIGN_REAL_GPG:-}" ]]; then
+		if [[ ! -x "${GPG_SIGN_REAL_GPG}" ]]; then
+			printf '%s\n' \
+				"gpg-sign-git-program: GPG_SIGN_REAL_GPG is not executable: ${GPG_SIGN_REAL_GPG}" >&2
+			return 1
+		fi
+		printf '%s\n' "${GPG_SIGN_REAL_GPG}"
+		return 0
+	fi
+
+	while IFS= read -r candidate; do
+		if [[ ! -f "${candidate}" || ! -x "${candidate}" ]]; then
+			continue
+		fi
+		if [[ "${candidate}" -ef "${BASH_SOURCE[0]}" ]]; then
+			continue
+		fi
+		printf '%s\n' "${candidate}"
+		return 0
+	done < <(type -aP gpg 2>/dev/null || true)
+
+	return 1
+}
+
+# Hand the invocation to GnuPG with argv, stdin, stdout, stderr and exit status
+# untouched. exec, not a subshell: git reads the status fd of this very process
+# and propagates whatever it exits with.
+delegate() {
+	local real_gpg
+
+	# Set across the exec below. Seeing it on entry means the "real gpg" we
+	# picked last time was this script again — a copy on PATH under the name
+	# gpg, which -ef cannot detect. Refuse instead of exec'ing forever.
+	if [[ -n "${GPG_SIGN_GIT_PROGRAM_DELEGATED:-}" ]]; then
+		printf '%s\n' \
+			'gpg-sign-git-program: refusing to delegate to itself.' >&2
+		printf '  %s\n' \
+			'A copy of this script is on PATH under the name gpg.' >&2
+		printf '  %s\n' \
+			'Set GPG_SIGN_REAL_GPG to the real GnuPG binary.' >&2
+		exit 1
+	fi
+
+	if ! real_gpg="$(find_real_gpg)"; then
+		# A rejected GPG_SIGN_REAL_GPG has already said why; saying "no gpg
+		# found" on top of it would point at the wrong problem.
+		if [[ -z "${GPG_SIGN_REAL_GPG:-}" ]]; then
+			printf '%s\n' \
+				'gpg-sign-git-program: no gpg executable found for a non-signing invocation.' >&2
+			printf '  %s\n' \
+				'Only signing goes to the service; git uses gpg.program to verify too.' >&2
+			printf '  %s\n' \
+				'Install GnuPG, or point GPG_SIGN_REAL_GPG at it.' >&2
+		fi
+		# 127 is the conventional "command not found", and is what git would
+		# have seen had gpg.program itself been missing.
+		exit 127
+	fi
+
+	export GPG_SIGN_GIT_PROGRAM_DELEGATED=1
+	exec "${real_gpg}" "$@"
+}
+
 signing=false
 for arg in "$@"; do
 	case "${arg}" in
@@ -30,10 +111,7 @@ for arg in "$@"; do
 	esac
 done
 if [[ "${signing}" != true ]]; then
-	# git also calls gpg.program with --verify when showing signatures; we only
-	# sign. Fail loudly rather than pretending to verify.
-	printf 'gpg-sign-git-program: unsupported invocation (sign-only shim): %s\n' "$*" >&2
-	exit 1
+	delegate "$@"
 fi
 
 : "${GPG_SIGN_URL:?GPG_SIGN_URL must point at the signing service}"
