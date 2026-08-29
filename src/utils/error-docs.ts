@@ -83,24 +83,30 @@ function withoutTrailingSlash(url: string): string {
  * to the request loses the pinning and keeps the field correct, which is the
  * right way round for a field that only ever advises.
  *
+ * Only the origin of a configured value is kept. `/e/:code` is mounted at the
+ * root of this Worker, so a `SERVICE_BASE_URL` of `https://gpg.example/service`
+ * would advertise `https://gpg.example/service/e/SIGN_ERROR` — a 404 on a
+ * deployment whose route is `https://gpg.example/e/SIGN_ERROR`. Trimming to the
+ * origin means the setting cannot describe a path the service does not serve,
+ * and the same trim disposes of a query or fragment that would otherwise be
+ * spliced into the middle of the link. The port survives, because it is part of
+ * the origin and a deployment behind one genuinely answers there.
+ *
  * @param c - Request context
  * @returns Origin with no trailing slash, e.g. `https://gpg.kajkowalski.nl`
  */
 export function serviceBaseUrl(c: DocsContext): string {
 	const configured = c.env?.SERVICE_BASE_URL;
-	if (configured && isAbsoluteHttpUrl(configured)) {
-		return withoutTrailingSlash(configured);
-	}
-	return new URL(c.req.url).origin;
+	return (configured ? absoluteHttpUrl(configured) : null)?.origin ?? new URL(c.req.url).origin;
 }
 
-/** Does `value` parse as an absolute `http:` or `https:` URL? */
-function isAbsoluteHttpUrl(value: string): boolean {
+/** `value` parsed, if it is an absolute `http:` or `https:` URL; otherwise null. */
+function absoluteHttpUrl(value: string): URL | null {
 	try {
 		const parsed = new URL(value);
-		return parsed.protocol === "http:" || parsed.protocol === "https:";
+		return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed : null;
 	} catch {
-		return false;
+		return null;
 	}
 }
 
@@ -134,6 +140,6 @@ export function errorDocsTarget(env: DocsEnv | undefined, code?: ErrorCode): str
 	// no browser should follow. Falling back to the default keeps the redirect
 	// landing on real documentation, which is the point of the route.
 	const configured = env?.ERROR_DOCS_URL;
-	const base = withoutTrailingSlash(configured && isAbsoluteHttpUrl(configured) ? configured : DEFAULT_ERROR_DOCS_URL);
+	const base = withoutTrailingSlash(configured && absoluteHttpUrl(configured) ? configured : DEFAULT_ERROR_DOCS_URL);
 	return code ? `${base}#${code.toLowerCase()}` : base;
 }
