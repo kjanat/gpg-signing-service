@@ -38,11 +38,16 @@ on the author of a route remembering it.
 | `subject`    | 401 only | The `sub` claim the caller presented, echoed back.                           |
 | `retryAfter` | 429 only | Whole seconds to wait.                                                       |
 
-`requestId` is "mostly" because a handful of responses omit it from the body:
-every `429`, the `404` for an unrouted path, and the `/public-key` failures.
-`X-Request-ID` is on all of them, so the id is never actually unavailable — it
-is just in the headers rather than the envelope. Read the header when the field
-is not there; see [Looking a refusal up](#looking-a-refusal-up).
+`requestId` is "mostly" because carrying it is per handler rather than
+structural the way `docs` is: a refusal has the field only when its handler read
+the id off the context, and a good third of them do not. Every `429`,
+`/public-key`'s two failures, both `NOT_FOUND` `404`s, the admin key and audit
+failures, the `500` for an unconfigured `ADMIN_TOKEN`, and the
+`400 INVALID_REQUEST` the schema validator builds all omit it — and that list is
+a description of today's handlers rather than a rule. `X-Request-ID` is on every
+one of them, so the id is never actually unavailable; it is just in the headers
+rather than in the envelope. **Read the header rather than learning which routes
+fill the field in**; see [Looking a refusal up](#looking-a-refusal-up).
 
 `gpg-sign` prints `subject`, `hint`, `docs` and `requestId` on their own lines
 underneath the one-line error, so a failed CI step reads as text rather than as
@@ -383,13 +388,14 @@ says it exactly.
 ## Looking a refusal up
 
 Every response carries an `X-Request-ID` header, and most coded errors repeat it
-in the envelope as `requestId`. Where the field is absent — every `429`, the
-`404` for an unrouted path, `/public-key`'s failures — the header still has it.
-So **the header is the source that is always there, and the field is a
-convenience for a caller already holding the parsed body**: take the field when
-it is present, and the header when it is not. The Go client's `requestIDFrom`
-does exactly that, which is why `AuthError` and `RateLimitError` both print an
-id whether or not the body declared one.
+in the envelope as `requestId`. Where the field is absent — every `429`, both
+`NOT_FOUND` `404`s, `/public-key`'s failures, the admin key and audit failures,
+the validator's `400`, and whatever is added next without reading the context —
+the header still has it. So **the header is the source that is always there, and
+the field is a convenience for a caller already holding the parsed body**: take
+the field when it is present, and the header when it is not. The Go client's
+`requestIDFrom` does exactly that, which is why `AuthError` and `RateLimitError`
+both print an id whether or not the body declared one.
 
 That id is the key to two places:
 

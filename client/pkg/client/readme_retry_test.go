@@ -99,9 +99,14 @@ func TestReadmeDescribesTheDegradedWaitHint(t *testing.T) {
 	}
 	// RATE_LIMIT_ERROR is the retryable 503 that sends no interval, which is why
 	// the README may not say "a 503 carries a Retry-After" without qualifying it.
+	//
+	// Asserted as "fell through to the backoff" rather than as "not 2s": the
+	// latter passes for every wait the retrier could have invented except one,
+	// so it would not have caught a hint read off the wrong field. At
+	// retryWaitMin=1ms the first backoff is 2^1*1ms plus up to 1ms of jitter.
 	noHint := &ServiceError{Code: "RATE_LIMIT_ERROR", StatusCode: 503}
-	if got := r.waitBefore(1, noHint); got == 2*time.Second {
-		t.Fatal("waitBefore invented a hint for a 503 that carried none")
+	if got := r.waitBefore(1, noHint); got < 2*time.Millisecond || got >= 3*time.Millisecond {
+		t.Fatalf("waitBefore for a 503 that carried no interval = %v, want the backoff (2-3ms)", got)
 	}
 
 	raw, err := os.ReadFile("README.md")
