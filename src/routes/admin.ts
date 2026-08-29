@@ -121,11 +121,12 @@ app.openapi(uploadKeyRoute, async (c) => {
 			HTTP.Created,
 		);
 	} catch (error) {
-		logger.debug("Upload key route error handler", {
-			error: String(error),
-			requestId,
-		});
 		const message = error instanceof Error ? error.message : "Key upload failed";
+		// `logger.debug` is gated on `NODE_ENV === "development"`, so the only
+		// record a failed key upload used to leave in production was its D1 audit
+		// row -- which is written by the very call below, and so is missing
+		// exactly when D1 is what failed.
+		logger.error("Failed to upload key:", error, { requestId });
 
 		// Audit failed key upload attempt (non-blocking in production)
 		logger.debug("Scheduling background task for upload failure audit", {
@@ -250,6 +251,9 @@ app.openapi(uploadX509KeyRoute, async (c) => {
 		);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Key upload failed";
+		// The X.509 path logged nothing at all: same gap as the OpenPGP upload
+		// above, without even a debug line to delete.
+		logger.error("Failed to upload X.509 key:", error, { requestId });
 
 		await scheduleBackgroundTask(
 			c,

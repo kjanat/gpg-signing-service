@@ -809,6 +809,35 @@ describe("Admin Routes", () => {
 			expect(entry?.requestId).toBe(response.headers.get("X-Request-ID"));
 		});
 
+		it("keeps the cause and the request id when a key upload fails", async () => {
+			const requestId = crypto.randomUUID();
+			const privateKey = await generateTestKey();
+			const { result: response, entries } = await captureLogEntries(() =>
+				withKeyStorage(
+					() => Promise.resolve(new Response(JSON.stringify({ error: "store-key quota exceeded" }), { status: 507 })),
+					() =>
+						adminRequest("/keys", {
+							method: "POST",
+							headers: { "X-Request-ID": requestId },
+							body: JSON.stringify({ armoredPrivateKey: privateKey, keyId: "D1B2C3D4E5F6A7B8" }),
+						}),
+				),
+			);
+
+			expect(response.status).toBe(500);
+			const body = (await response.json()) as { error: string; code: string };
+			expect(body.code).toBe("KEY_UPLOAD_ERROR");
+
+			// This path used to log at `debug`, which `NODE_ENV !== "development"`
+			// drops, so production saw no line for it at all.
+			const entry = findErrorEntry(entries, "Failed to upload key:");
+			expect(entry).toBeDefined();
+			expect(entry?.error?.message).toBe("store-key quota exceeded");
+			expect(entry?.error?.name).toBe("Error");
+			expect(entry?.requestId).toBe(requestId);
+			expect(entry?.requestId).toBe(response.headers.get("X-Request-ID"));
+		});
+
 		it("correlates an audit query failure with the caller's request id", async () => {
 			const requestId = crypto.randomUUID();
 			const originalPrepare = env.AUDIT_DB.prepare;
