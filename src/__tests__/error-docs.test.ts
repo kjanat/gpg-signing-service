@@ -376,6 +376,19 @@ describe("error-docs helpers", () => {
 		);
 	});
 
+	it("does not carry credentials out of the base URL into the docs field", () => {
+		// `docs` is echoed into every error body, which is to say into CI logs and
+		// from there into chat. Userinfo is not part of an origin, so trimming to
+		// one drops it — worth a test rather than a coincidence, because the value
+		// that would leak is one an operator pasted in whole.
+		expect(
+			serviceBaseUrl({
+				env: { SERVICE_BASE_URL: "https://ops:hunter2@gpg.example/service" },
+				req: { url: "https://b.test/x" },
+			}),
+		).toBe("https://gpg.example");
+	});
+
 	it("points at the reference's top when no code is named", () => {
 		expect(errorDocsTarget(undefined)).toBe(DEFAULT_ERROR_DOCS_URL);
 		expect(errorDocsTarget({ ERROR_DOCS_URL: "" })).toBe(DEFAULT_ERROR_DOCS_URL);
