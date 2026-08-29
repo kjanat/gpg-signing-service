@@ -380,4 +380,24 @@ describe("error-docs helpers", () => {
 		expect(errorDocsTarget(undefined)).toBe(DEFAULT_ERROR_DOCS_URL);
 		expect(errorDocsTarget({ ERROR_DOCS_URL: "" })).toBe(DEFAULT_ERROR_DOCS_URL);
 	});
+
+	it("drops a fragment on ERROR_DOCS_URL rather than appending after it", () => {
+		// The anchor is this function's to write. Keeping a configured one emits
+		// `#top#sign_error`, which matches no heading, so the browser silently
+		// lands on the top of the reference — the reader is told nothing about
+		// having missed the section the redirect exists to reach. The path is
+		// still kept: that value names a document, unlike SERVICE_BASE_URL.
+		expect(errorDocsTarget({ ERROR_DOCS_URL: "https://docs.example/errors#top" }, "SIGN_ERROR")).toBe(
+			"https://docs.example/errors#sign_error",
+		);
+		expect(errorDocsTarget({ ERROR_DOCS_URL: "https://docs.example/errors/#top" }, "SIGN_ERROR")).toBe(
+			"https://docs.example/errors#sign_error",
+		);
+		// A query is not an anchor and survives — it can be what addresses the
+		// document at all on a docs host that versions by parameter.
+		expect(errorDocsTarget({ ERROR_DOCS_URL: "https://docs.example/errors?v=2" }, "SIGN_ERROR")).toBe(
+			"https://docs.example/errors?v=2#sign_error",
+		);
+		expect(errorDocsTarget({ ERROR_DOCS_URL: "https://docs.example/errors#top" })).toBe("https://docs.example/errors");
+	});
 });

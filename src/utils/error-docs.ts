@@ -139,7 +139,18 @@ export function errorDocsTarget(env: DocsEnv | undefined, code?: ErrorCode): str
 	// makes `/e/<CODE>` — the link printed into every error — redirect somewhere
 	// no browser should follow. Falling back to the default keeps the redirect
 	// landing on real documentation, which is the point of the route.
+	//
+	// Unlike SERVICE_BASE_URL the path is kept — this value names a document,
+	// not an origin — but the fragment is dropped, because the anchor is this
+	// function's to write. Appending to a configured one yields
+	// `…/errors#top#sign_error`, a fragment matching no heading, which browsers
+	// resolve to the top of the page: the reader lands on the reference with no
+	// sign that the section they were sent to was ever missed.
 	const configured = env?.ERROR_DOCS_URL;
-	const base = withoutTrailingSlash(configured && absoluteHttpUrl(configured) ? configured : DEFAULT_ERROR_DOCS_URL);
+	const parsed = configured ? absoluteHttpUrl(configured) : null;
+	if (parsed) {
+		parsed.hash = "";
+	}
+	const base = withoutTrailingSlash(parsed ? parsed.href : DEFAULT_ERROR_DOCS_URL);
 	return code ? `${base}#${code.toLowerCase()}` : base;
 }

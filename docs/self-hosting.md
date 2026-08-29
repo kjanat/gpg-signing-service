@@ -103,6 +103,12 @@ of the Worker, so `https://gpg.example/service` yields
 dropped rather than spliced into the link. A non-default port is kept, since
 that is part of where the service answers.
 
+`ERROR_DOCS_URL` is the opposite case and keeps its path — it names a document,
+not an origin — but its fragment is dropped, because `/e/<CODE>` appends the
+code's own anchor. `https://docs.example/errors#top` redirects to
+`https://docs.example/errors#sign_error`, not to a doubled fragment that matches
+no heading.
+
 `DISCLOSE_TRUST_PATTERNS` covers two hints, both off by default:
 
 - the untrusted-subject `401` appends the rule counts for the issuer and the
