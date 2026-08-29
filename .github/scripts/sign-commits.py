@@ -108,9 +108,10 @@ def verify(commit: bytes, home: str) -> None:
 def verify_status(commit: bytes, home: str) -> tuple[bool, str]:
     result = subprocess.run(
         # Pin the verifier the same way GNUPGHOME pins the keyring. A checkout
-        # that ran setup-claude-signing has gpg.program aimed at the sign-only
-        # shim, which exits 1 on --verify, so ambient config would report every
-        # commit -- including ones this key just signed -- as unverified.
+        # that ran setup-claude-signing has gpg.program aimed at our shim; it
+        # delegates --verify to the real gpg, so this is no longer load-bearing,
+        # but the verdict on a commit this run just signed should not depend on
+        # a shim in the repo under test.
         # minTrustLevel is the same trap through a different knob: the keyring
         # is built by importing the key, so it carries no ownertrust, and any
         # setting above the default rejects an otherwise good signature.

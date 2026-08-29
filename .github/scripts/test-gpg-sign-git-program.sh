@@ -63,25 +63,260 @@ EOF
 
 chmod +x "${tmp_dir}/bin/curl" "${tmp_dir}/bin/jq" "${tmp_dir}/bin/gpg-sign"
 
-# The shim is sign-only, and git calls gpg.program with --verify whenever it
-# shows a signature. That rejection is load-bearing: if it ever regressed into a
-# silent success, `git log --show-signature` would report commits as verified
-# without anything having verified them. Nothing below covers it, because every
-# other case invokes the shim the way git invokes it to sign.
+# --- delegation to the real gpg ---------------------------------------------
 #
-# GPG_SIGN_TOKEN is set deliberately, so a pass proves the guard fires on the
-# arguments rather than on a missing credential.
-if printf 'commit object' | env \
-	PATH="${tmp_dir}/bin:${PATH}" \
-	GPG_SIGN_URL='https://sign.example.test' \
-	GPG_SIGN_TOKEN='minted-token' \
-	"${shim}" --status-fd=2 --verify /dev/null - \
-	>"${tmp_dir}/verify-output" 2>"${tmp_dir}/verify-error"; then
-	echo 'expected --verify to be rejected by the sign-only shim' >&2
+# git uses gpg.program to verify as well as to sign: `git log --show-signature`,
+# `git tag -v` and `--verify-signatures` all run it with --verify. Only the
+# detached-sign invocation belongs to the service, so everything else has to
+# reach GnuPG with argv, stdin, stdout, stderr and exit status untouched.
+
+mkdir "${tmp_dir}/delegate"
+
+cat >"${tmp_dir}/delegate/gpg" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%s\n' "$@" >"${STUB_ARGV_FILE}"
+cat >"${STUB_STDIN_FILE}"
+printf 'stub gpg stdout\n'
+printf 'stub gpg stderr\n' >&2
+exit "${STUB_EXIT}"
+EOF
+
+# Routing is by argv, not by credential. A checkout with signing fully
+# configured must still delegate --verify, so a gpg-sign that fails on sight
+# sits next to the gpg stub for the whole section.
+cat >"${tmp_dir}/delegate/gpg-sign" <<'EOF'
+#!/usr/bin/env bash
+echo 'gpg-sign must not be called for a non-signing invocation' >&2
+exit 1
+EOF
+
+chmod +x "${tmp_dir}/delegate/gpg" "${tmp_dir}/delegate/gpg-sign"
+
+# The exit status matters as much as the output: git reads it to decide whether
+# a signature is good, so a shim that swallowed gpg's non-zero exit would report
+# a BADSIG commit as verified.
+for stub_exit in 0 1; do
+	rm -f "${tmp_dir}/delegate-argv" "${tmp_dir}/delegate-stdin"
+
+	set +e
+	printf 'signed payload' | env \
+		-u GPG_SIGN_REAL_GPG \
+		-u GPG_OIDC_REQUEST_URL \
+		-u GPG_OIDC_REQUEST_TOKEN \
+		-u ACTIONS_ID_TOKEN_REQUEST_URL \
+		-u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+		PATH="${tmp_dir}/delegate:${PATH}" \
+		GPG_SIGN_URL='https://sign.example.test' \
+		GPG_SIGN_TOKEN='minted-token' \
+		STUB_ARGV_FILE="${tmp_dir}/delegate-argv" \
+		STUB_STDIN_FILE="${tmp_dir}/delegate-stdin" \
+		STUB_EXIT="${stub_exit}" \
+		"${shim}" --status-fd=2 --keyid-format=long --verify /dev/null - \
+		>"${tmp_dir}/delegate-output" 2>"${tmp_dir}/delegate-error"
+	delegate_rc=$?
+	set -e
+
+	if [[ "${delegate_rc}" -ne "${stub_exit}" ]]; then
+		echo "expected the shim to exit ${stub_exit} from gpg, got ${delegate_rc}" >&2
+		exit 1
+	fi
+
+	# Byte-for-byte argv, in order. git's verify invocations carry options this
+	# shim knows nothing about, so anything less than a full passthrough is a
+	# shim that only works for the arguments someone thought to enumerate.
+	diff - "${tmp_dir}/delegate-argv" <<'EOF'
+--status-fd=2
+--keyid-format=long
+--verify
+/dev/null
+-
+EOF
+
+	# git feeds the signed payload on stdin and reads the verdict from the
+	# status fd, so both directions have to survive the exec.
+	test "$(cat "${tmp_dir}/delegate-stdin")" = 'signed payload'
+	diff - "${tmp_dir}/delegate-output" <<'EOF'
+stub gpg stdout
+EOF
+	diff - "${tmp_dir}/delegate-error" <<'EOF'
+stub gpg stderr
+EOF
+done
+
+# Verification must work in a checkout that has no signing credential at all —
+# it is the everyday case for anyone who cloned this repo. env -i also proves
+# the delegation path reads nothing from the environment beyond PATH.
+printf 'signed payload' | env -i \
+	PATH="${tmp_dir}/delegate:/usr/bin:/bin" \
+	STUB_ARGV_FILE="${tmp_dir}/bare-argv" \
+	STUB_STDIN_FILE="${tmp_dir}/bare-stdin" \
+	STUB_EXIT=0 \
+	"${shim}" --verify /dev/null - \
+	>"${tmp_dir}/bare-output" 2>"${tmp_dir}/bare-error"
+
+grep -qx 'stub gpg stdout' "${tmp_dir}/bare-output"
+
+# GPG_SIGN_REAL_GPG names the binary outright, for a host that keeps GnuPG off
+# PATH — and it has to outrank PATH, or the override cannot rescue a PATH whose
+# `gpg` is the wrong one.
+cat >"${tmp_dir}/override-gpg" <<'EOF'
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'override gpg ran\n'
+EOF
+chmod +x "${tmp_dir}/override-gpg"
+
+printf 'signed payload' | env \
+	PATH="${tmp_dir}/delegate:${PATH}" \
+	GPG_SIGN_REAL_GPG="${tmp_dir}/override-gpg" \
+	STUB_ARGV_FILE="${tmp_dir}/unused-argv" \
+	STUB_STDIN_FILE="${tmp_dir}/unused-stdin" \
+	STUB_EXIT=0 \
+	"${shim}" --verify /dev/null - \
+	>"${tmp_dir}/override-output" 2>"${tmp_dir}/override-error"
+
+grep -qx 'override gpg ran' "${tmp_dir}/override-output"
+
+# An override that cannot be executed must say so rather than quietly falling
+# back to PATH: a typo'd path would otherwise verify against some other gpg
+# while looking like it honoured the setting.
+rm -f "${tmp_dir}/delegate-argv"
+if printf 'signed payload' | env \
+	PATH="${tmp_dir}/delegate:${PATH}" \
+	GPG_SIGN_REAL_GPG="${tmp_dir}/does-not-exist" \
+	STUB_ARGV_FILE="${tmp_dir}/delegate-argv" \
+	STUB_STDIN_FILE="${tmp_dir}/delegate-stdin" \
+	STUB_EXIT=0 \
+	"${shim}" --verify /dev/null - \
+	>"${tmp_dir}/bad-override-output" 2>"${tmp_dir}/bad-override-error"; then
+	echo 'expected an unusable GPG_SIGN_REAL_GPG to fail' >&2
 	exit 1
 fi
 
-grep -q 'unsupported invocation (sign-only shim)' "${tmp_dir}/verify-error"
+grep -q 'GPG_SIGN_REAL_GPG is not an executable file' "${tmp_dir}/bad-override-error"
+if grep -q 'no gpg executable found' "${tmp_dir}/bad-override-error"; then
+	echo 'expected the override error alone, not the generic missing-gpg hint' >&2
+	exit 1
+fi
+if [[ -e "${tmp_dir}/delegate-argv" ]]; then
+	echo 'expected an unusable GPG_SIGN_REAL_GPG not to fall back to PATH' >&2
+	exit 1
+fi
+
+# A regression in either self-reference guard does not fail, it hangs: the shim
+# execs itself until the runner dies. Cap every case that could loop.
+if command -v timeout >/dev/null 2>&1; then
+	guard_self=(timeout 20)
+else
+	guard_self=()
+fi
+
+# A directory is -x whenever it is searchable, so an override that names one
+# reaches exec and dies there with bash's own "Is a directory" and status 126 --
+# the shape of a broken shim rather than of a misconfigured variable. Reject it
+# on the same branch as a missing path.
+if printf 'signed payload' | env \
+	PATH="${tmp_dir}/delegate:${PATH}" \
+	GPG_SIGN_REAL_GPG="${tmp_dir}/delegate" \
+	STUB_ARGV_FILE="${tmp_dir}/unused-argv" \
+	STUB_STDIN_FILE="${tmp_dir}/unused-stdin" \
+	STUB_EXIT=0 \
+	"${shim}" --verify /dev/null - \
+	>"${tmp_dir}/dir-override-output" 2>"${tmp_dir}/dir-override-error"; then
+	echo 'expected a directory GPG_SIGN_REAL_GPG to fail' >&2
+	exit 1
+fi
+
+grep -q 'GPG_SIGN_REAL_GPG is not an executable file' "${tmp_dir}/dir-override-error"
+
+# The override bypasses the PATH search, so it bypasses that search's self
+# check. Pointed at this script it would otherwise exec once and be caught by
+# the re-entry guard, whose message blames a copy of the shim on PATH -- the
+# wrong thing to go looking at when the variable is what is wrong.
+if printf 'signed payload' | env \
+	-u GPG_SIGN_GIT_PROGRAM_DELEGATED \
+	PATH="${tmp_dir}/delegate:${PATH}" \
+	GPG_SIGN_REAL_GPG="${shim}" \
+	"${guard_self[@]}" "${shim}" --verify /dev/null - \
+	>"${tmp_dir}/self-override-output" 2>"${tmp_dir}/self-override-error"; then
+	echo 'expected GPG_SIGN_REAL_GPG pointing at the shim to fail' >&2
+	exit 1
+fi
+
+grep -q 'GPG_SIGN_REAL_GPG points at this script' "${tmp_dir}/self-override-error"
+if grep -q 'refusing to delegate to itself' "${tmp_dir}/self-override-error"; then
+	echo 'expected the override to be rejected before any exec' >&2
+	exit 1
+fi
+
+# Installing the shim under the name `gpg` is a supported thing to do, and the
+# obvious implementation of "run gpg" would then run the shim again. A symlink
+# is the ordinary way to do it, and -ef sees through it, so the search has to
+# walk past this entry and find the next one.
+mkdir "${tmp_dir}/self-link"
+ln -s "${shim}" "${tmp_dir}/self-link/gpg"
+
+rm -f "${tmp_dir}/delegate-argv"
+printf 'signed payload' | env \
+	-u GPG_SIGN_REAL_GPG \
+	PATH="${tmp_dir}/self-link:${tmp_dir}/delegate:${PATH}" \
+	STUB_ARGV_FILE="${tmp_dir}/delegate-argv" \
+	STUB_STDIN_FILE="${tmp_dir}/delegate-stdin" \
+	STUB_EXIT=0 \
+	"${shim}" --verify /dev/null - \
+	>"${tmp_dir}/self-link-output" 2>"${tmp_dir}/self-link-error"
+
+grep -qx 'stub gpg stdout' "${tmp_dir}/self-link-output"
+test -e "${tmp_dir}/delegate-argv"
+
+# A byte copy under the name `gpg` has its own inode, so -ef cannot see it and
+# the shim does exec itself. The re-entry marker is the only thing between that
+# and a runner forking until it dies, so this case asserts it terminates —
+# under `timeout`, because a regression here does not fail, it hangs.
+mkdir "${tmp_dir}/self-copy"
+cp "${shim}" "${tmp_dir}/self-copy/gpg"
+chmod +x "${tmp_dir}/self-copy/gpg"
+
+if printf 'signed payload' | env \
+	-u GPG_SIGN_REAL_GPG \
+	-u GPG_SIGN_GIT_PROGRAM_DELEGATED \
+	PATH="${tmp_dir}/self-copy:${PATH}" \
+	"${guard_self[@]}" "${shim}" --verify /dev/null - \
+	>"${tmp_dir}/self-copy-output" 2>"${tmp_dir}/self-copy-error"; then
+	echo 'expected a self-copy on PATH to be refused' >&2
+	exit 1
+fi
+
+grep -q 'refusing to delegate to itself' "${tmp_dir}/self-copy-error"
+
+# No gpg anywhere: say what is missing. git turns any non-zero exit into its own
+# message, so an unnamed failure here reads as a broken signature rather than a
+# host without GnuPG. bash is symlinked in because the shebang needs it; gpg
+# deliberately is not.
+mkdir "${tmp_dir}/no-gpg"
+ln -s "$(command -v bash)" "${tmp_dir}/no-gpg/bash"
+
+set +e
+printf 'signed payload' | env \
+	-u GPG_SIGN_REAL_GPG \
+	PATH="${tmp_dir}/no-gpg" \
+	"${shim}" --verify /dev/null - \
+	>"${tmp_dir}/no-gpg-output" 2>"${tmp_dir}/no-gpg-error"
+no_gpg_rc=$?
+set -e
+
+# 127 specifically, not just non-zero: it is what git would have seen had
+# gpg.program been missing outright, it is what the shim's own comment and
+# docs/cloud-session-signing.md promise, and nothing else pins it -- the suite
+# passes with any other code if only failure is asserted.
+if [[ "${no_gpg_rc}" -ne 127 ]]; then
+	echo "expected a missing gpg to exit 127, got ${no_gpg_rc}" >&2
+	exit 1
+fi
+
+grep -q 'no gpg executable found' "${tmp_dir}/no-gpg-error"
 
 # GPG_SIGN_URL is required, and the message has to name it: git reports any
 # non-zero exit from gpg.program as "gpg failed to sign the data", so an
@@ -255,4 +490,88 @@ if printf 'commit object' | env \
 fi
 
 grep -q 'returned no token value' "${tmp_dir}/null-error"
+
+# --- end to end, against real git and real GnuPG -----------------------------
+#
+# Everything above stubs gpg, so it proves the shim hands over an invocation but
+# not that git is satisfied by what comes back. This signs with real gpg, then
+# verifies through the shim: `git log --show-signature`, `git verify-commit` and
+# `git tag -v` are exactly the three commands issue #72 reported as broken.
+if ! command -v gpg >/dev/null 2>&1; then
+	printf 'skipping the end-to-end verification case: no gpg on PATH\n' >&2
+else
+	gnupg_home="${tmp_dir}/gnupg"
+	mkdir -m 700 "${gnupg_home}"
+	# gpg-agent outlives the command that started it and holds the socket in
+	# the temp dir the EXIT trap is about to remove.
+	trap 'gpgconf --homedir "${gnupg_home}" --kill all >/dev/null 2>&1 || true; rm -rf "${tmp_dir}"' EXIT
+
+	GNUPGHOME="${gnupg_home}" gpg --batch --quiet --passphrase '' \
+		--quick-generate-key 'Shim Test <shim@example.test>' ed25519 sign never
+
+	signing_key="$(
+		GNUPGHOME="${gnupg_home}" gpg --batch --with-colons --list-secret-keys \
+			| awk -F: '/^fpr:/ { print $10; exit }'
+	)"
+	test -n "${signing_key}"
+
+	e2e_repo="${tmp_dir}/e2e-repo"
+	git init -q "${e2e_repo}"
+	git -C "${e2e_repo}" config user.name 'Shim Test'
+	git -C "${e2e_repo}" config user.email 'shim@example.test'
+	git -C "${e2e_repo}" config gpg.format openpgp
+	git -C "${e2e_repo}" config user.signingkey "${signing_key}"
+	: >"${e2e_repo}/file"
+	git -C "${e2e_repo}" add file
+
+	# Signed by gpg directly. The service path has no key in this keyring, and
+	# what is under test is verification, not signing.
+	GNUPGHOME="${gnupg_home}" git -C "${e2e_repo}" \
+		-c gpg.program=gpg -c commit.gpgsign=true \
+		commit -q -m 'signed by real gpg'
+	GNUPGHOME="${gnupg_home}" git -C "${e2e_repo}" \
+		-c gpg.program=gpg tag -s -m 'signed tag' e2e-tag
+
+	# From here on gpg.program is the shim, and no credential is in scope: a
+	# clone that never configured the service still has to be able to verify.
+	e2e_git() {
+		env \
+			-u GPG_SIGN_URL \
+			-u GPG_SIGN_TOKEN \
+			-u GPG_SIGN_REAL_GPG \
+			-u GPG_OIDC_REQUEST_URL \
+			-u GPG_OIDC_REQUEST_TOKEN \
+			-u ACTIONS_ID_TOKEN_REQUEST_URL \
+			-u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+			GNUPGHOME="${gnupg_home}" \
+			git -C "${e2e_repo}" -c gpg.program="${shim}" -c gpg.format=openpgp "$@"
+	}
+
+	e2e_git log --show-signature -1 >"${tmp_dir}/e2e-log" 2>&1
+	grep -q 'Good signature from "Shim Test <shim@example.test>"' "${tmp_dir}/e2e-log"
+
+	e2e_git verify-commit HEAD >"${tmp_dir}/e2e-verify" 2>&1
+	grep -q 'Good signature' "${tmp_dir}/e2e-verify"
+
+	e2e_git tag -v e2e-tag >"${tmp_dir}/e2e-tag" 2>&1
+	grep -q 'Good signature' "${tmp_dir}/e2e-tag"
+
+	# A tampered signature has to come back bad. Without this, a shim that
+	# exited 0 unconditionally would pass every case above.
+	git -C "${e2e_repo}" cat-file commit HEAD \
+		| sed 's/signed by real gpg/tampered payload!!/' \
+		| git -C "${e2e_repo}" hash-object -t commit -w --stdin \
+			>"${tmp_dir}/tampered-commit"
+
+	if e2e_git verify-commit "$(cat "${tmp_dir}/tampered-commit")" \
+		>"${tmp_dir}/e2e-bad" 2>&1; then
+		echo 'expected a tampered commit to fail verification through the shim' >&2
+		exit 1
+	fi
+
+	# The verdict, not just the exit code: a shim that mangled the payload would
+	# also exit non-zero, but for the wrong reason.
+	grep -q 'BAD signature' "${tmp_dir}/e2e-bad"
+fi
+
 printf 'signing shim tests passed\n'

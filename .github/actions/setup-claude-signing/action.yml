@@ -9,6 +9,10 @@ description: >-
   Requires `id-token: write` on the calling job (the shim mints a fresh OIDC
   token per signature — see .github/scripts/gpg-sign-git-program.sh).
 
+  gpg.program stays a drop-in GnuPG for everything else: the shim claims only
+  the detached-sign invocation and delegates the rest — `git log
+  --show-signature`, `git tag -v`, `--verify-signatures` — to the runner's gpg.
+
 inputs:
   service-url:
     description: Base URL of the signing service (e.g. vars.SIGNING_SERVICE_URL)
@@ -130,3 +134,12 @@ runs:
         # committer identity. The signature itself remains valid and can be verified
         # with `git log --show-signature` after importing:
         # ${SERVICE_URL}/public-key
+        #
+        # That verification works with gpg.program still pointing at the shim: it
+        # claims only the detached-sign invocation and delegates --verify to the
+        # runner's gpg. What a job does need first is the key itself, which is not
+        # in the runner keyring — so a step that verifies signatures should import
+        # it. This action deliberately does not, to keep signing jobs off a network
+        # call they do not use:
+        #
+        #   curl -sf "${SERVICE_URL}/public-key" | gpg --import
