@@ -428,12 +428,27 @@ export const oidcAuth: MiddlewareHandler<{
 				expiresAt: resolution.expiresAt,
 			});
 		} else {
+			// Counted, not listed. This is the arm no limiter guards and no audit
+			// row records, so anyone who can mint a token on a shared issuer can
+			// reach it as often as they like — and while it logged the array, the
+			// size of each record it produced was a function of how many orgs sign
+			// here. That is trust-table-size amplification into the log store,
+			// paid for by the operator and chosen by the caller.
+			//
+			// The counts keep the diagnosis whole: `issuerRuleCount` is zero when
+			// the deployment was never configured for the issuer, and the active
+			// count separates "configured and all dead" from "configured, live,
+			// and this subject is not among them" — the three states an operator
+			// acts on differently. Which prefixes those are is the same question
+			// `DISCLOSE_TRUST_PATTERNS` gates in the response, and the authorized
+			// answer to it is GET /admin/subjects. `requestId`, `issuer` and
+			// `subject` stay so the pasted CI log still joins to this line.
 			logger.warn("Rejected untrusted OIDC subject", {
 				requestId,
 				issuer: payload.iss,
 				subject: payload.sub,
 				issuerRuleCount: resolution.issuerRuleCount,
-				activePrefixes: resolution.activePrefixes,
+				activePrefixCount: resolution.activePrefixes.length,
 			});
 		}
 		// `unknown` gets no audit_logs row: that arm is reachable by anyone holding
