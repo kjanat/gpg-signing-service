@@ -4,7 +4,7 @@
 
 import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import { WWW_AUTHENTICATE } from "#lib/openapi";
+import { insufficientScopeChallenge, WWW_AUTHENTICATE } from "#lib/openapi";
 import type { ErrorCode } from "#schemas/errors";
 import { HEADERS, HTTP } from "#types";
 import { logger } from "#utils/logger";
@@ -88,6 +88,50 @@ export function unauthorized(
 			...(details.hint && { hint: details.hint }),
 		},
 		HTTP.Unauthorized,
+	);
+}
+
+/**
+ * The service's "your credential is right, and it is too small".
+ *
+ * The counterpart to `unauthorized`, and deliberately not one of its codes. A
+ * 401 tells the caller its credential was refused, and the only thing a caller
+ * — or a scheduled job, which is the caller this exists for — does with that is
+ * go and re-mint the credential. When a read-only admin bearer is refused on a
+ * delete, the credential is exactly what it was provisioned to be and rotating
+ * it produces this same answer forever. So: 403, a code of its own, and a
+ * `WWW-Authenticate` carrying RFC 6750's `insufficient_scope` rather than the
+ * bare challenge, which reads as "try again with credentials".
+ *
+ * Logged at warn, not error. A monitoring job that reaches a mutation route is
+ * either a bug in that job or somebody probing, and both are worth a line —
+ * but neither is a fault in this service, and the volume is not ours to bound.
+ *
+ * @param c - Request context
+ * @param message - What was refused; never names stored state
+ * @param details - `hint` says which credential the operation actually needs
+ */
+export function insufficientScope(c: Context, message: string, details: { hint?: string | undefined } = {}) {
+	const requestId = c.get("requestId");
+
+	logger.warn(message, {
+		code: "AUTH_SCOPE_INSUFFICIENT",
+		status: HTTP.Forbidden,
+		method: c.req.method,
+		path: c.req.path,
+		...(requestId && { requestId }),
+	});
+
+	c.header("WWW-Authenticate", insufficientScopeChallenge(message));
+
+	return c.json(
+		{
+			error: message,
+			code: "AUTH_SCOPE_INSUFFICIENT" as const satisfies ErrorCode,
+			...(requestId && { requestId }),
+			...(details.hint && { hint: details.hint }),
+		},
+		HTTP.Forbidden,
 	);
 }
 
