@@ -3,6 +3,7 @@ import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test"
 import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "#gpg-signing-service";
+import { logger } from "#utils/logger";
 import {
 	generateToken,
 	hashToken,
@@ -34,6 +35,29 @@ async function request(path: string, token: string, options: RequestInit = {}): 
 	);
 	await waitOnExecutionContext(ctx);
 	return response;
+}
+
+/**
+ * Run `body` with the service-token read failing, and put `AUDIT_DB.prepare`
+ * back whatever happens. The restore has to be in `finally`: it used to sit
+ * after the request, so a rejected request or a failed assertion left every
+ * later test in the file talking to a database that throws on
+ * `FROM service_tokens`.
+ */
+async function withFailingTokenStore<T>(body: () => Promise<T>): Promise<T> {
+	const realPrepare = env.AUDIT_DB.prepare.bind(env.AUDIT_DB);
+	const spy = vi.spyOn(env.AUDIT_DB, "prepare").mockImplementation((query: string) => {
+		if (query.includes("FROM service_tokens")) {
+			throw new Error("D1_ERROR: no such table: service_tokens: SQLITE_ERROR");
+		}
+		return realPrepare(query);
+	});
+
+	try {
+		return await body();
+	} finally {
+		spy.mockRestore();
+	}
 }
 
 beforeAll(async () => {
@@ -134,6 +158,13 @@ describe("service token utils", () => {
 });
 
 describe("caller auth on /sign", () => {
+	// Belt and braces around the `finally` in `withFailingTokenStore`: any spy a
+	// test in here installs is gone before the next one runs, even if the test
+	// never reached its own restore.
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
 	it("rejects an unknown service token", async () => {
 		const response = await request("/sign", "gst_invalid", {
 			method: "POST",
@@ -151,16 +182,16 @@ describe("caller auth on /sign", () => {
 		// into `onError` and come back INTERNAL_ERROR — "an unhandled fault, worth
 		// reporting with the requestId" for what is a dependency to wait out. One
 		// database, two callers, two different instructions.
-		const realPrepare = env.AUDIT_DB.prepare.bind(env.AUDIT_DB);
-		const spy = vi.spyOn(env.AUDIT_DB, "prepare").mockImplementation((query: string) => {
-			if (query.includes("FROM service_tokens")) {
-				throw new Error("D1_ERROR: no such table: service_tokens: SQLITE_ERROR");
-			}
-			return realPrepare(query);
-		});
+		const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+		const requestId = crypto.randomUUID();
 
-		const response = await request("/sign", "gst_whatever", { method: "POST", body: "data" });
-		spy.mockRestore();
+		const response = await withFailingTokenStore(() =>
+			request("/sign", "gst_whatever", {
+				method: "POST",
+				body: "data",
+				headers: { "X-Request-ID": requestId },
+			}),
+		);
 
 		expect(response.status).toBe(503);
 		const body = (await response.json()) as { code: string; error: string; hint: string };
@@ -171,6 +202,40 @@ describe("caller auth on /sign", () => {
 		// message was the raw D1 string.
 		expect(body.error).not.toContain("service_tokens");
 		expect(body.error).not.toContain("SQLITE");
+
+		// `logger.error(message, error, context)`: the caught value belongs in the
+		// second argument, which is the one the logger unpacks into
+		// `{ message, name, stack }`. Passing it as context instead flattened it to
+		// a string and dropped the request id — leaving the one log line written
+		// for an outage with no way back to the request that hit it.
+		expect(errorSpy).toHaveBeenCalledWith(
+			"Service token lookup failed",
+			expect.any(Error),
+			expect.objectContaining({ requestId }),
+		);
+		const [, loggedError, loggedContext] = errorSpy.mock.calls[0] as [string, unknown, { requestId?: string }];
+		expect(loggedError).toBeInstanceOf(Error);
+		expect((loggedError as Error).message).toContain("no such table: service_tokens");
+		// The id in the log is the id the caller was handed back, or the log is
+		// not correlated with anything.
+		expect(loggedContext.requestId).toBe(response.headers.get("X-Request-ID"));
+	});
+
+	it("puts the token store back even when the body under the outage throws", async () => {
+		// The cleanup-on-failure property itself: `withFailingTokenStore` restores
+		// in `finally`, so a blown assertion inside it cannot leak the spy into the
+		// rest of the file.
+		const original = env.AUDIT_DB.prepare;
+
+		await expect(
+			withFailingTokenStore(async () => {
+				throw new Error("assertion blew up");
+			}),
+		).rejects.toThrow("assertion blew up");
+
+		expect(env.AUDIT_DB.prepare).toBe(original);
+		// Not just the same reference — the store actually reads again.
+		expect(await verifyServiceToken(env.AUDIT_DB, "gst_nope")).toBeNull();
 	});
 
 	it("enforces the token key allowlist before any signing work", async () => {

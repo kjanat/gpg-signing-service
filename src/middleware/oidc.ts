@@ -381,9 +381,16 @@ export const oidcAuth: MiddlewareHandler<{
 	try {
 		resolution = await resolveOIDCSubject(c.env.AUDIT_DB, payload.iss, payload.sub);
 	} catch (error) {
-		logger.error("OIDC subject lookup failed", {
+		// Same three arguments as the service-token branch in `caller-auth.ts`,
+		// for the same outage: the caught value in the error slot the logger
+		// unpacks, and `requestId` in context. This was the one line in this
+		// function's failure block without the id — the three `logger.warn` calls
+		// below all carry it, for the reason stated there, and the caller holding
+		// the 503's id had no entry to match it against on the one arm whose
+		// answer is "wait" rather than "fix your credential".
+		logger.error("OIDC subject lookup failed", error, {
+			requestId,
 			issuer: payload.iss,
-			error: error instanceof Error ? error.message : String(error),
 		});
 		// SERVICE_DEGRADED rather than INTERNAL_ERROR. The status was always 503,
 		// but the code said "internal fault" — whose reference section is about
