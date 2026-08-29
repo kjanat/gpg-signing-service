@@ -522,12 +522,14 @@ describe("Security Headers Middleware", () => {
 				}
 				return realPrepare(query);
 			});
+			const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+			const requestId = crypto.randomUUID();
 
 			let response: Response;
 			try {
 				response = await makeRequest("/sign", {
 					method: "POST",
-					headers: { Authorization: `Bearer ${token}` },
+					headers: { Authorization: `Bearer ${token}`, "X-Request-ID": requestId },
 					body: "commit data",
 				});
 			} finally {
@@ -551,6 +553,20 @@ describe("Security Headers Middleware", () => {
 			expect(body.hint).toContain("Nothing about the token is wrong");
 			expect(body.error).not.toContain("oidc_subjects");
 			expect(body.error).not.toContain("SQLITE");
+
+			// The same shape the service-token branch is asserted to write, for the
+			// same outage: the caught value in `logger.error`'s error slot, and the
+			// id the caller was handed back in context. Folded into context instead,
+			// the entry came out `{"error":{"issuer":...,"error":"D1_ERROR..."}}`
+			// with nothing to correlate it against.
+			expect(errorSpy).toHaveBeenCalledWith(
+				"OIDC subject lookup failed",
+				expect.any(Error),
+				expect.objectContaining({ requestId, issuer }),
+			);
+			const [, loggedError, loggedContext] = errorSpy.mock.calls[0] as [string, unknown, { requestId?: string }];
+			expect((loggedError as Error).message).toContain("no such table: oidc_subjects");
+			expect(loggedContext.requestId).toBe(response.headers.get("X-Request-ID"));
 		});
 
 		it("rejects a cryptographically valid token whose subject is not trusted", async () => {
