@@ -35,7 +35,6 @@ jobs:
         uses: actions/github-script@v9
         env:
           REPORT: ${{ steps.expiry.outputs.report }}
-          ACTIONABLE_COUNT: ${{ steps.expiry.outputs.actionable-count }}
         with:
           script: |
             const owner = context.repo.owner;
