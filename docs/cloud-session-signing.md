@@ -174,7 +174,10 @@ verified email matches the committer address. To get the badge:
    address is verified on the account.
 
 Until then the signature is real and verifiable locally — import the key and run
-`git log --show-signature` — GitHub simply doesn't recognise the signer.
+`git log --show-signature` — GitHub simply doesn't recognise the signer. This is
+an account-registration gap, not a signature one; see
+[OpenPGP packet format](how-it-works.md#openpgp-packet-format) for what
+"correct signature" means on its own terms.
 
 ## Why not just reuse the CI mechanism
 

@@ -50,6 +50,56 @@ async function generateTestKey(passphrase?: string) {
 	return { privateKey, publicKey, keyId, fingerprint };
 }
 
+/** RFC 9580 §5.2.1 signature types. */
+const BINARY_SIGNATURE = openpgp.enums.signature.binary; // 0x00 — what git's `gpg -bsa` emits
+const CANONICAL_TEXT_SIGNATURE = openpgp.enums.signature.text; // 0x01 — CRLF-normalized
+
+const bytes = (value: string) => new TextEncoder().encode(value);
+
+function storedKeyFrom(privateKey: string, keyId: string, fingerprint: string): StoredKey {
+	return {
+		armoredPrivateKey: createArmoredPrivateKey(privateKey),
+		keyId: createKeyId(keyId),
+		fingerprint: createKeyFingerprint(fingerprint),
+		createdAt: new Date().toISOString(),
+		algorithm: "EdDSA",
+	};
+}
+
+const readSig = (armoredSignature: string) => openpgp.readSignature({ armoredSignature });
+
+function signatureTypeOf(signature: openpgp.Signature): number | null {
+	const packet = signature.packets[0];
+	expect(packet).toBeDefined();
+	return packet?.signatureType ?? null;
+}
+
+/**
+ * Verify a detached signature against a literal byte sequence, the way a Git
+ * verifier does. Returns false rather than throwing so tests can assert on the
+ * negative case.
+ */
+async function verifyAgainstBytes(
+	armoredSignature: string,
+	armoredPublicKey: string,
+	data: Uint8Array,
+): Promise<boolean> {
+	const verification = await openpgp.verify({
+		message: await openpgp.createMessage({ binary: data }),
+		signature: await readSig(armoredSignature),
+		verificationKeys: await openpgp.readKey({ armoredKey: armoredPublicKey }),
+		expectSigned: false,
+	});
+
+	const first = verification.signatures[0];
+	if (!first) return false;
+	try {
+		return await first.verified;
+	} catch {
+		return false;
+	}
+}
+
 describe("parseAndValidateKey", () => {
 	it("should parse unencrypted key", async () => {
 		const { privateKey } = await generateTestKey();
@@ -186,38 +236,84 @@ describe("signCommitData", () => {
 		expect(result.signature).toContain("-----BEGIN PGP SIGNATURE-----");
 	});
 
-	it("should create verifiable signature", async () => {
+	it("should create a signature that verifies against the exact input bytes", async () => {
 		const { privateKey, publicKey, keyId, fingerprint } = await generateTestKey();
-
-		const storedKey: StoredKey = {
-			armoredPrivateKey: createArmoredPrivateKey(privateKey),
-			keyId: createKeyId(keyId),
-			fingerprint: createKeyFingerprint(fingerprint),
-			createdAt: new Date().toISOString(),
-			algorithm: "EdDSA",
-		};
+		const storedKey = storedKeyFrom(privateKey, keyId, fingerprint);
 
 		const commitData = "tree abc\nTest";
 
 		const result = await signCommitData(commitData, storedKey, "");
 
-		// Verify the signature
-		const pubKey = await openpgp.readKey({ armoredKey: publicKey });
-		const message = await openpgp.createMessage({ text: commitData });
-		const signature = await openpgp.readSignature({
-			armoredSignature: result.signature,
+		// Verify against the raw bytes, not a text message: this is the shape
+		// `git verify-commit` uses when it hands gpg the commit object.
+		await expect(verifyAgainstBytes(result.signature, publicKey, bytes(commitData))).resolves.toBe(true);
+	});
+
+	it("should emit a binary signature (sigclass 0x00), not canonical text (0x01)", async () => {
+		const { privateKey, keyId, fingerprint } = await generateTestKey();
+		const storedKey = storedKeyFrom(privateKey, keyId, fingerprint);
+
+		const result = await signCommitData("tree abc\nTest\n", storedKey, "");
+
+		expect(signatureTypeOf(await readSig(result.signature))).toBe(BINARY_SIGNATURE);
+	});
+
+	it("should not produce the canonical-text packet openpgp.js emits for text messages", async () => {
+		// Guards the exact regression this replaced: `createMessage({ text })`.
+		const { privateKey } = await generateTestKey();
+		const key = await openpgp.readPrivateKey({ armoredKey: privateKey });
+
+		const textSignature = await openpgp.sign({
+			message: await openpgp.createMessage({ text: "tree abc\nTest\n" }),
+			signingKeys: key,
+			detached: true,
+			format: "armored",
 		});
 
-		const verification = await openpgp.verify({
-			message,
-			signature,
-			verificationKeys: pubKey,
-		});
+		expect(signatureTypeOf(await readSig(textSignature as string))).toBe(CANONICAL_TEXT_SIGNATURE);
+	});
 
-		const firstSignature = verification.signatures[0];
-		expect(firstSignature).toBeDefined();
-		const { verified } = firstSignature!;
-		await expect(verified).resolves.toBeTruthy();
+	it("should bind the signature to one byte sequence, so an LF/CRLF variant fails", async () => {
+		// A canonical-text signature rewrites every line ending to CRLF before
+		// hashing, so it stays valid across both variants below — one signature,
+		// two distinct commit objects. A binary signature must reject the variant.
+		const { privateKey, publicKey, keyId, fingerprint } = await generateTestKey();
+		const storedKey = storedKeyFrom(privateKey, keyId, fingerprint);
+
+		const signed = "tree abc\nparent def\n\nmessage\n";
+		const variant = signed.replace(/\n/g, "\r\n");
+
+		const result = await signCommitData(signed, storedKey, "");
+
+		await expect(verifyAgainstBytes(result.signature, publicKey, bytes(signed))).resolves.toBe(true);
+		await expect(verifyAgainstBytes(result.signature, publicKey, bytes(variant))).resolves.toBe(false);
+	});
+
+	it("should sign multi-byte UTF-8 commit bytes without re-encoding them", async () => {
+		const { privateKey, publicKey, keyId, fingerprint } = await generateTestKey();
+		const storedKey = storedKeyFrom(privateKey, keyId, fingerprint);
+
+		// Non-ASCII author name and a trailing CR inside the message body: both
+		// survive only if the payload is hashed as bytes.
+		const commitData =
+			"tree abc\nauthor Jörg Müller <j@example.com> 1234567890 +0000\n\nfix: caf\u00e9 \ud83d\ude80\r\n";
+
+		const result = await signCommitData(commitData, storedKey, "");
+
+		await expect(verifyAgainstBytes(result.signature, publicKey, bytes(commitData))).resolves.toBe(true);
+	});
+
+	it("should reject a signature checked against a single flipped byte", async () => {
+		const { privateKey, publicKey, keyId, fingerprint } = await generateTestKey();
+		const storedKey = storedKeyFrom(privateKey, keyId, fingerprint);
+
+		const commitData = "tree abc\nTest\n";
+		const result = await signCommitData(commitData, storedKey, "");
+
+		const tampered = bytes(commitData);
+		tampered[0] = (tampered[0] ?? 0) ^ 0x01;
+
+		await expect(verifyAgainstBytes(result.signature, publicKey, tampered)).resolves.toBe(false);
 	});
 
 	it("should throw with wrong passphrase", async () => {
@@ -356,22 +452,9 @@ describe("signCommitData caching", () => {
 		const commitData = "cached signing test";
 		const result = await signCommitData(commitData, storedKey, "");
 
-		// Verify the signature
-		const pubKey = await openpgp.readKey({ armoredKey: publicKey });
-		const message = await openpgp.createMessage({ text: commitData });
-		const signature = await openpgp.readSignature({
-			armoredSignature: result.signature,
-		});
-
-		const verification = await openpgp.verify({
-			message,
-			signature,
-			verificationKeys: pubKey,
-		});
-
-		const firstSignature = verification.signatures[0];
-		expect(firstSignature).toBeDefined();
-		await expect(firstSignature!.verified).resolves.toBeTruthy();
+		// Same byte-level check as the uncached path: a cached key must not
+		// change the packet the signature is made over.
+		await expect(verifyAgainstBytes(result.signature, publicKey, bytes(commitData))).resolves.toBe(true);
 	});
 });
 
