@@ -29,7 +29,8 @@
  * - **The envelope's exceptions** — the degraded `/health` body, the 429 and
  *   404 without a `requestId`, the validator's `issues` array — are pinned
  *   against live responses or against the schema that declares the body.
- * - **Every relative anchor** into the reference lands on a heading that exists.
+ * - **Every relative anchor** into the reference, from any document that writes
+ *   one, lands on a heading that exists.
  *
  * Not proven here: that a code is reachable at all, that a `hint` says what the
  * reference says it says, or that the unpinned statuses are right. Those belong
@@ -44,8 +45,12 @@ import { ERROR_CODES, ErrorResponseSchema, RateLimitErrorSchema } from "#schemas
 // Inlined at build time by Vite: the Workers pool has no filesystem, so this is
 // the only way a test running inside it can read a document from the repo.
 import apiGuide from "../../API.md?raw";
+import apiOverview from "../../docs/api.md?raw";
+import authenticationGuide from "../../docs/authentication.md?raw";
 import errorReference from "../../docs/errors.md?raw";
+import selfHosting from "../../docs/self-hosting.md?raw";
 import troubleshooting from "../../docs/troubleshooting.md?raw";
+import readme from "../../README.md?raw";
 
 /**
  * Every test file in this directory, keyed by name.
@@ -388,9 +393,13 @@ describe("the envelope guarantee's exceptions", () => {
 
 describe("relative links into the error reference", () => {
 	it("land on a heading that exists", () => {
-		// The reference is linked from three documents by anchor, and an anchor is
-		// derived from a heading nobody thinks of as an identifier. A renamed
-		// section silently 404s every link into it.
+		// The reference is linked by anchor from every document below, and an
+		// anchor is derived from a heading nobody thinks of as an identifier. A
+		// renamed section silently 404s every link into it. The set is every
+		// document in the repository that writes such a link today, rather than
+		// only the ones this PR edited: a link rots the same whichever document
+		// holds it, and `self-hosting.md` acquired one on master while this
+		// branch was open.
 		const headings = new Set(
 			[...errorReference.matchAll(/^#{1,4} (.+)$/gm)].map(([, heading]) => slug(heading as string)),
 		);
@@ -398,7 +407,11 @@ describe("relative links into the error reference", () => {
 		const broken: string[] = [];
 		for (const [name, markdown] of Object.entries({
 			"API.md": apiGuide,
+			"README.md": readme,
+			"docs/api.md": apiOverview,
+			"docs/authentication.md": authenticationGuide,
 			"docs/errors.md": errorReference,
+			"docs/self-hosting.md": selfHosting,
 			"docs/troubleshooting.md": troubleshooting,
 		})) {
 			for (const [, anchor] of markdown.matchAll(/\]\((?:\.\.\/)?(?:docs\/)?errors\.md#([\w-]+)\)/g)) {
