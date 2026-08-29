@@ -293,6 +293,18 @@ describe("the read-only admin credential", () => {
 		});
 	}
 
+	it("is served HEAD on a route it may GET", async () => {
+		// `READ_ONLY_METHODS` admits HEAD, and nothing above reaches it: the
+		// enumeration is built from the OpenAPI document, which declares no HEAD
+		// operation, so the allowance would otherwise ship unexercised. Hono
+		// answers HEAD by dispatching the GET handler with `c.req.method` still
+		// `HEAD`, which is the only reason the method has to be in that set at all.
+		const response = await asAdmin(READONLY, "/admin/keys", { method: "HEAD" });
+
+		expect(response.status).toBe(200);
+		expect(await response.text()).toBe("");
+	});
+
 	for (const operation of MUTATIONS) {
 		it(`is refused ${label(operation)}`, async () => {
 			const response = await send(READONLY, operation);

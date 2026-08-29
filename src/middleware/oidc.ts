@@ -593,10 +593,16 @@ export const adminAuth: MiddlewareHandler<{
 		});
 	}
 
-	// Both comparisons run, and both are awaited before either is read: a
-	// short-circuit here would make "which secret did you match" — and, for a
-	// non-matching bearer, "is a read-only credential provisioned at all" —
-	// observable as one extra constant-time compare. Cheap to avoid, so avoided.
+	// Both comparisons run, and both are awaited before either is read, so which
+	// of the two secrets a valid bearer matched is not observable as one extra
+	// constant-time compare.
+	//
+	// Whether a read-only credential is provisioned at all is *not* hidden: with
+	// `ADMIN_READONLY_TOKEN` unset the second compare is skipped outright rather
+	// than run against a placeholder nothing can present. That is deliberate, and
+	// the reason is that the bit is not a secret — a deployment's own docs say
+	// whether it provisioned the credential. The value is what this compare
+	// protects, and that stays constant-time either way.
 	const [isFullAdmin, isReadOnly] = await Promise.all([
 		timingSafeEqual(token, c.env.ADMIN_TOKEN),
 		readOnlyToken === undefined ? Promise.resolve(false) : timingSafeEqual(token, readOnlyToken),
