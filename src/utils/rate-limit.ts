@@ -1,8 +1,11 @@
 /**
- * Rate-limit response headers.
+ * The one place a rate-limit refusal is built.
  */
 
-import { HEADERS, TIME } from "#types";
+import type { Context } from "hono";
+
+import type { ErrorCode } from "#schemas/errors";
+import { HEADERS, HTTP, TIME } from "#types";
 
 /**
  * The headers describing the budget that just refused a request.
@@ -19,12 +22,50 @@ import { HEADERS, TIME } from "#types";
  * round trip, and a header computed independently would hand back the instant
  * already past that the floor exists to avoid.
  *
+ * Deliberately not exported. Every refusal goes through `rateLimitExceeded`
+ * below, so no branch can author a 429 and forget these — which is how two of
+ * the sign route's four refusals came to answer without them.
+ *
  * @param retryAfter - Whole seconds to wait, as sent in the response body
  * @returns Headers to pass as `c.json`'s third argument
  */
-export function rateLimitDeniedHeaders(retryAfter: number): Record<string, string> {
+function rateLimitDeniedHeaders(retryAfter: number): Record<string, string> {
 	return {
 		[HEADERS.RATE_LIMIT_REMAINING]: "0",
 		[HEADERS.RATE_LIMIT_RESET]: String(Math.ceil(Date.now() / TIME.SECOND) + retryAfter),
 	};
+}
+
+/**
+ * The complete 429: body, status and the headers describing the refusing budget.
+ *
+ * A single constructor rather than four `c.json` calls that happened to agree.
+ * The sign route has four refusal branches — per-caller and row ceiling, each on
+ * the signing path and on the key-scope path — and the two on the key-scope path
+ * were written separately and shipped without the headers, so what a caller
+ * received depended on which branch fired. There is nothing left for a fifth
+ * branch to forget.
+ *
+ * No `Retry-After`. The wait rides in the body and in `X-RateLimit-Reset`, and
+ * `docs/errors.md` tells callers that a `Retry-After` on a 429 from this host
+ * came from an intermediary rather than from the service — adding one here for
+ * symmetry with the 503s would make that documented distinction untrue and take
+ * away the only way a caller has to tell the two apart.
+ *
+ * @param c - Request context
+ * @param retryAfter - Whole seconds to wait; already floored at one by caller
+ * @returns The refusal, ready to return from a handler or middleware
+ */
+export function rateLimitExceeded(c: Context, retryAfter: number) {
+	return c.json(
+		{
+			error: "Rate limit exceeded",
+			// No `requestId`: `RateLimitErrorSchema` does not declare one, and the
+			// documents point callers at the `X-Request-ID` header here instead.
+			code: "RATE_LIMITED" as const satisfies ErrorCode,
+			retryAfter,
+		},
+		HTTP.TooManyRequests,
+		rateLimitDeniedHeaders(retryAfter),
+	);
 }
