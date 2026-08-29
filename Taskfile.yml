@@ -50,6 +50,7 @@ tasks:
       - task: test:gnupg-interop
       - task: test:signing-shim
       - task: test:sign-commits
+      - task: test:sign-commit-example
 
   test:gnupg-interop:
     desc: Verify signatures against real gpg and git (skips if gpg is absent)
@@ -64,6 +65,10 @@ tasks:
     desc: Test commit re-signing behavior
     cmd: bash .github/scripts/test-sign-commits.sh
 
+  test:sign-commit-example:
+    desc: Test the Bash example's retry, clamping and transport handling
+    cmd: bash .github/scripts/test-sign-commit-example.sh
+
   test:coverage:
     desc: Run tests with coverage
     aliases: [tc]
@@ -76,6 +81,7 @@ tasks:
       - task: test:gnupg-interop
       - task: test:signing-shim
       - task: test:sign-commits
+      - task: test:sign-commit-example
 
   test:watch:
     desc: Run tests in watch mode
