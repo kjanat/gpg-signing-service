@@ -69,6 +69,19 @@ describe("docs links on error responses", () => {
 		expect((await body<{ docs: string }>(response)).docs).toBe("https://gpg.example/e/AUTH_MISSING");
 	});
 
+	it("roots the link at the configured origin even when the base URL names a path", async () => {
+		// `/e/:code` is served from the root, so a base URL of
+		// `https://gpg.example/service` must not push the link down a path the
+		// deployment does not answer on.
+		const response = await request(
+			"/sign",
+			{ method: "POST", body: "data" },
+			{ SERVICE_BASE_URL: "https://gpg.example/service" },
+		);
+
+		expect((await body<{ docs: string }>(response)).docs).toBe("https://gpg.example/e/AUTH_MISSING");
+	});
+
 	it("leaves successful responses alone", async () => {
 		const response = await request("/health");
 
@@ -318,6 +331,48 @@ describe("error-docs helpers", () => {
 		);
 		expect(serviceBaseUrl({ env: { SERVICE_BASE_URL: "javascript:alert(1)" }, req: { url: "https://b.test/x" } })).toBe(
 			"https://b.test",
+		);
+	});
+
+	it("keeps only the origin of a configured base URL", () => {
+		// `/e/:code` is mounted at the root of this Worker. A base URL carrying a
+		// path would advertise `https://gpg.example/service/e/SIGN_ERROR`, which is
+		// a 404 on a deployment routed at `https://gpg.example/e/SIGN_ERROR` — the
+		// one failure mode a setting whose whole job is to make the link right
+		// cannot have. A query or a fragment is worse still: both would land in the
+		// middle of the link, before the code.
+		const req = { url: "https://b.test/x" };
+
+		expect(serviceBaseUrl({ env: { SERVICE_BASE_URL: "https://gpg.example/service" }, req })).toBe(
+			"https://gpg.example",
+		);
+		expect(serviceBaseUrl({ env: { SERVICE_BASE_URL: "https://gpg.example/service/" }, req })).toBe(
+			"https://gpg.example",
+		);
+		expect(serviceBaseUrl({ env: { SERVICE_BASE_URL: "https://gpg.example/?tenant=a" }, req })).toBe(
+			"https://gpg.example",
+		);
+		expect(serviceBaseUrl({ env: { SERVICE_BASE_URL: "https://gpg.example/#top" }, req })).toBe("https://gpg.example");
+		expect(errorDocsUrl({ env: { SERVICE_BASE_URL: "https://gpg.example/service?a=1#top" }, req }, "SIGN_ERROR")).toBe(
+			"https://gpg.example/e/SIGN_ERROR",
+		);
+	});
+
+	it("keeps a port, which is part of where the service answers", () => {
+		// The trim is to the origin, not to the hostname: a deployment behind
+		// `:8787` genuinely serves `/e/<CODE>` there, and dropping the port would
+		// break exactly the local and self-hosted setups the setting exists for.
+		const req = { url: "https://b.test/x" };
+
+		expect(serviceBaseUrl({ env: { SERVICE_BASE_URL: "http://localhost:8787/base/" }, req })).toBe(
+			"http://localhost:8787",
+		);
+		expect(errorDocsUrl({ env: { SERVICE_BASE_URL: "http://localhost:8787" }, req }, "SIGN_ERROR")).toBe(
+			"http://localhost:8787/e/SIGN_ERROR",
+		);
+		// The default port for the scheme is not part of the origin, so it goes.
+		expect(serviceBaseUrl({ env: { SERVICE_BASE_URL: "https://gpg.example:443/service" }, req })).toBe(
+			"https://gpg.example",
 		);
 	});
 
