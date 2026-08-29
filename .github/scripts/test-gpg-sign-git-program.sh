@@ -195,13 +195,59 @@ if printf 'signed payload' | env \
 	exit 1
 fi
 
-grep -q 'GPG_SIGN_REAL_GPG is not executable' "${tmp_dir}/bad-override-error"
+grep -q 'GPG_SIGN_REAL_GPG is not an executable file' "${tmp_dir}/bad-override-error"
 if grep -q 'no gpg executable found' "${tmp_dir}/bad-override-error"; then
 	echo 'expected the override error alone, not the generic missing-gpg hint' >&2
 	exit 1
 fi
 if [[ -e "${tmp_dir}/delegate-argv" ]]; then
 	echo 'expected an unusable GPG_SIGN_REAL_GPG not to fall back to PATH' >&2
+	exit 1
+fi
+
+# A regression in either self-reference guard does not fail, it hangs: the shim
+# execs itself until the runner dies. Cap every case that could loop.
+if command -v timeout >/dev/null 2>&1; then
+	guard_self=(timeout 20)
+else
+	guard_self=()
+fi
+
+# A directory is -x whenever it is searchable, so an override that names one
+# reaches exec and dies there with bash's own "Is a directory" and status 126 --
+# the shape of a broken shim rather than of a misconfigured variable. Reject it
+# on the same branch as a missing path.
+if printf 'signed payload' | env \
+	PATH="${tmp_dir}/delegate:${PATH}" \
+	GPG_SIGN_REAL_GPG="${tmp_dir}/delegate" \
+	STUB_ARGV_FILE="${tmp_dir}/unused-argv" \
+	STUB_STDIN_FILE="${tmp_dir}/unused-stdin" \
+	STUB_EXIT=0 \
+	"${shim}" --verify /dev/null - \
+	>"${tmp_dir}/dir-override-output" 2>"${tmp_dir}/dir-override-error"; then
+	echo 'expected a directory GPG_SIGN_REAL_GPG to fail' >&2
+	exit 1
+fi
+
+grep -q 'GPG_SIGN_REAL_GPG is not an executable file' "${tmp_dir}/dir-override-error"
+
+# The override bypasses the PATH search, so it bypasses that search's self
+# check. Pointed at this script it would otherwise exec once and be caught by
+# the re-entry guard, whose message blames a copy of the shim on PATH -- the
+# wrong thing to go looking at when the variable is what is wrong.
+if printf 'signed payload' | env \
+	-u GPG_SIGN_GIT_PROGRAM_DELEGATED \
+	PATH="${tmp_dir}/delegate:${PATH}" \
+	GPG_SIGN_REAL_GPG="${shim}" \
+	"${guard_self[@]}" "${shim}" --verify /dev/null - \
+	>"${tmp_dir}/self-override-output" 2>"${tmp_dir}/self-override-error"; then
+	echo 'expected GPG_SIGN_REAL_GPG pointing at the shim to fail' >&2
+	exit 1
+fi
+
+grep -q 'GPG_SIGN_REAL_GPG points at this script' "${tmp_dir}/self-override-error"
+if grep -q 'refusing to delegate to itself' "${tmp_dir}/self-override-error"; then
+	echo 'expected the override to be rejected before any exec' >&2
 	exit 1
 fi
 
@@ -233,17 +279,11 @@ mkdir "${tmp_dir}/self-copy"
 cp "${shim}" "${tmp_dir}/self-copy/gpg"
 chmod +x "${tmp_dir}/self-copy/gpg"
 
-if command -v timeout >/dev/null 2>&1; then
-	guard=(timeout 20)
-else
-	guard=()
-fi
-
 if printf 'signed payload' | env \
 	-u GPG_SIGN_REAL_GPG \
 	-u GPG_SIGN_GIT_PROGRAM_DELEGATED \
 	PATH="${tmp_dir}/self-copy:${PATH}" \
-	"${guard[@]}" "${shim}" --verify /dev/null - \
+	"${guard_self[@]}" "${shim}" --verify /dev/null - \
 	>"${tmp_dir}/self-copy-output" 2>"${tmp_dir}/self-copy-error"; then
 	echo 'expected a self-copy on PATH to be refused' >&2
 	exit 1

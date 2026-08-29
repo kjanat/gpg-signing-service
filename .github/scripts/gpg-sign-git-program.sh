@@ -41,9 +41,21 @@ find_real_gpg() {
 	local candidate
 
 	if [[ -n "${GPG_SIGN_REAL_GPG:-}" ]]; then
-		if [[ ! -x "${GPG_SIGN_REAL_GPG}" ]]; then
+		# -f as well as -x: -x alone is true for any searchable directory, so
+		# GPG_SIGN_REAL_GPG=/usr/bin would pass here and fail at exec with
+		# bash's own "Is a directory" and status 126, instead of the named
+		# error this branch exists to produce.
+		if [[ ! -f "${GPG_SIGN_REAL_GPG}" || ! -x "${GPG_SIGN_REAL_GPG}" ]]; then
 			printf '%s\n' \
-				"gpg-sign-git-program: GPG_SIGN_REAL_GPG is not executable: ${GPG_SIGN_REAL_GPG}" >&2
+				"gpg-sign-git-program: GPG_SIGN_REAL_GPG is not an executable file: ${GPG_SIGN_REAL_GPG}" >&2
+			return 1
+		fi
+		# The override skips the PATH search, so it also skips its self-check.
+		# Without this, GPG_SIGN_REAL_GPG=<this script> is caught one exec later
+		# by the re-entry guard, which then blames PATH for a bad override.
+		if [[ "${GPG_SIGN_REAL_GPG}" -ef "${BASH_SOURCE[0]}" ]]; then
+			printf '%s\n' \
+				"gpg-sign-git-program: GPG_SIGN_REAL_GPG points at this script: ${GPG_SIGN_REAL_GPG}" >&2
 			return 1
 		fi
 		printf '%s\n' "${GPG_SIGN_REAL_GPG}"
@@ -77,9 +89,9 @@ delegate() {
 		printf '%s\n' \
 			'gpg-sign-git-program: refusing to delegate to itself.' >&2
 		printf '  %s\n' \
-			'A copy of this script is on PATH under the name gpg.' >&2
+			'The gpg it resolved to is a byte copy of this script, which -ef cannot see.' >&2
 		printf '  %s\n' \
-			'Set GPG_SIGN_REAL_GPG to the real GnuPG binary.' >&2
+			'Point GPG_SIGN_REAL_GPG at the real GnuPG binary.' >&2
 		exit 1
 	fi
 
