@@ -67,7 +67,10 @@ Routing is prefix-based:
 
 - a bearer beginning `gst_` is a service token;
 - any other bearer on `/sign` is treated as an OIDC JWT;
-- every `/admin/*` bearer is compared with `ADMIN_TOKEN`.
+- every `/admin/*` bearer is compared with `ADMIN_TOKEN`, and with
+  `ADMIN_READONLY_TOKEN` if one is set — the latter is accepted on `GET` and
+  `HEAD` only, and answers `403 AUTH_SCOPE_INSUFFICIENT` on every admin route
+  that changes state.
 
 See [Authentication](authentication.md) for token acquisition and policy.
 
