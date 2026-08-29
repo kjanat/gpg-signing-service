@@ -270,10 +270,43 @@ grant names — is reported `missing`, naming which of the two it was, because t
 fixes are opposite: deploy the key, or re-scope the credential.
 
 Each monitored key's expiry is then read out of its own material from
-`GET /admin/keys/{keyId}/public` — the PGP public key's expiration time
-(whichever of the primary key and the signing subkey lapses first), or the X.509
-certificate's `notAfter`. No expiry date is ever transcribed into a config file,
-so none can drift from the key it describes.
+`GET /admin/keys/{keyId}/public` — the PGP public key's expiration time, or the
+X.509 certificate's `notAfter`. No expiry date is ever transcribed into a config
+file, so none can drift from the key it describes.
+
+For a PGP key that is a question about its **signing subkeys**, since those are
+what sign a commit, not the primary key:
+
+- A revoked primary key is reported first. It takes every subkey down with it,
+  so which one would have signed stops mattering.
+- A key with no signing subkey signs with its primary key, and that key's own
+  expiry is the whole answer — unless the primary key may not sign either, the
+  standard offline layout, in which case nothing on the key can sign and the row
+  says so rather than quoting a date for a capability the key does not have.
+- Otherwise the answer comes from the subkeys that can still sign — not from
+  whichever one openpgp happens to select. Asking openpgp for a signing key
+  returns the first _acceptable_ one: it skips a revoked subkey and falls back
+  to the next, or to the primary key, so a deployment whose only signing subkey
+  had been revoked used to report its primary key's distant expiry and read as
+  healthy.
+- Signing keeps working until the **last** usable signing subkey lapses, so that
+  is the reported date, capped by the primary key's own. Taking the earliest
+  instead would warn about an outage that a valid replacement subkey already
+  prevents — revoking a subkey and issuing a new one is what rotation looks
+  like, and it must not raise an alarm.
+- When no signing subkey is usable, signing is already broken. That is reported
+  as `revoked` when a revocation is why, and `unknown` when the material is
+  unusable for some other reason, because those need opposite fixes. This
+  deliberately does not fall back to the primary key, which openpgp would do
+  whenever the primary carries the sign flag: the signature would then be made
+  by different key material than the operator configured, which is worth hearing
+  about rather than laundering into an `ok` row.
+- Which subkeys count is decided by binding signatures that **verify** against
+  the primary key. Reading a key does not check them — every `subkeyBinding`
+  packet parsed is kept and verified only when something asks — so a packet
+  appended to an armored key, or left behind by a merge with an unrelated key,
+  would otherwise be able to add an encryption subkey to the signing set or drop
+  a live signing subkey out of it.
 
 **Where the rule is imprecise**, stated in every report rather than only here:
 
