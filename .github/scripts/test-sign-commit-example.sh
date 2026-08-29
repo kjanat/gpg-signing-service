@@ -70,6 +70,9 @@ expect_between() {
 source "${example}"
 
 http_date() { date -u -d "$1" '+%a, %d %b %Y %H:%M:%S GMT'; }
+# The two obsolete forms RFC 9110 §5.6.7 still requires a recipient to accept.
+rfc850_date() { date -u -d "$1" '+%A, %d-%b-%y %H:%M:%S GMT'; }
+asctime_date() { date -u -d "$1" '+%a %b %e %H:%M:%S %Y'; }
 
 crlf_headers() {
 	# What curl -D actually writes: a status line, CRLF endings, and header
@@ -111,6 +114,20 @@ expect_between "an HTTP-date is the remaining wait" 5 10 \
 expect_eq "an HTTP-date already past is no hint" "" \
 	"$(retry_after_seconds "$(http_date '-60 seconds')")"
 
+expect_between "an RFC 850 date is read" 295 300 \
+	"$(retry_after_seconds "$(rfc850_date '+300 seconds')")"
+
+expect_between "an asctime date is read" 295 300 \
+	"$(retry_after_seconds "$(asctime_date '+300 seconds')")"
+
+# `date -d` is a natural-language parser, not a date parser: ungated it reads
+# `tomorrow` as +86400 and `5 seconds` as +5. Neither is a `Retry-After`, and
+# accepting them lets a malformed header outrank a good body value below.
+expect_eq "a relative expression is not an HTTP-date" "" "$(retry_after_seconds "tomorrow")"
+expect_eq "a bare duration is not an HTTP-date" "" "$(retry_after_seconds "5 seconds")"
+expect_eq "a weekday name alone is not an HTTP-date" "" "$(retry_after_seconds "next friday")"
+expect_eq "an epoch spelling is not an HTTP-date" "" "$(retry_after_seconds "@1735689600")"
+
 ### Clamping -----------------------------------------------------------------
 
 MAX_RETRY_WAIT=120
@@ -123,6 +140,12 @@ expect_eq "a zero hint falls back" "30" "$(clamp_wait 0 30)"
 expect_eq "a padded hint is decimal, not octal" "30" "$(clamp_wait 030 30)"
 expect_eq "a hint too large for the arithmetic is clamped, not wrapped" "120" \
 	"$(clamp_wait 99999999999999999999 30)"
+# The length test is a stand-in for "too large for the arithmetic", so it has to
+# measure magnitude and not padding: ten characters of `0000000005` are still
+# five seconds.
+expect_eq "a long but small padded hint is its value, not the ceiling" "5" \
+	"$(clamp_wait 0000000005 30)"
+expect_eq "a padded zero is still no hint" "30" "$(clamp_wait 0000000000 30)"
 
 ### Header precedence over the body ------------------------------------------
 
@@ -142,6 +165,16 @@ expect_eq "the body answers when there is no header" "60" \
 
 expect_eq "the body answers when the header is unreadable" "60" \
 	"$(rate_limit_wait "$(crlf_headers 'Retry-After: whenever')" "${rate_limited_body}")"
+
+# The header outranking the body is only safe if "unreadable" is decided
+# strictly. `tomorrow` is a value `date -d` accepts and RFC 9110 does not, and
+# taking it as a hint clamped every such response to MAX_RETRY_WAIT while the
+# body's real interval sat unread.
+expect_eq "a header date-ish enough for date(1) does not outrank the body" "5" \
+	"$(rate_limit_wait "$(crlf_headers 'Retry-After: tomorrow')" '{"retryAfter":5}')"
+
+expect_eq "a padded header hint is its value, not the ceiling" "5" \
+	"$(rate_limit_wait "$(crlf_headers 'Retry-After: 0000000005')" "${rate_limited_body}")"
 
 expect_eq "the body answers when the header's date is already past" "60" \
 	"$(rate_limit_wait "$(crlf_headers "Retry-After: $(http_date '-60 seconds')")" "${rate_limited_body}")"
@@ -171,6 +204,7 @@ expect_eq "a 503 with no readable header falls back to the default" "30" \
 #   STUB_HEADERS     header block returned for every attempt
 #   STUB_BODY        response body returned for every attempt
 #   STUB_CURL_EXIT   curl's exit status, for the transport-failure case
+#   STUB_TRACE_ARGS  file the last curl argv is written to, when set
 run_sign_commit() (
 	local codes attempt_file
 	read -ra codes <<<"${STUB_CODES}"
@@ -188,6 +222,8 @@ run_sign_commit() (
 
 		attempt=$(($(cat "${attempt_file}") + 1))
 		printf '%s\n' "${attempt}" >"${attempt_file}"
+
+		[[ -n ${STUB_TRACE_ARGS:-} ]] && printf '%s\n' "$*" >"${STUB_TRACE_ARGS}"
 
 		if ((${STUB_CURL_EXIT:-0} != 0)); then
 			# curl writes nothing usable when the connection never happened.
@@ -318,6 +354,20 @@ expect_contains "a transport failure says no response was received" \
 expect_contains "a transport failure reports curl's exit status" \
 	"curl exited 7" "${output}"
 expect_contains "a transport failure names itself as one" "transport failure" "${output}"
+
+# A connect that is dropped rather than refused produces no response and no
+# failure, so the bound has to be on the request. Without it MAX_RETRY_WAIT
+# bounds only the waits it can see and the job hangs on the attempt itself.
+status=0
+STUB_CODES="200" \
+	STUB_TRACE_ARGS="${stub_dir}/curl-args" \
+	STUB_HEADERS="$(crlf_headers)" \
+	STUB_BODY='{"signature":"-----BEGIN PGP SIGNATURE-----"}' \
+	output="$(run_sign_commit 2>/dev/null)" || status=$?
+
+curl_args="$(cat "${stub_dir}/curl-args" 2>/dev/null || true)"
+expect_contains "the signing request bounds its connect" "--connect-timeout" "${curl_args}"
+expect_contains "the signing request bounds its total time" "--max-time" "${curl_args}"
 if [[ ${output} == *"HTTP 000"* ]]; then
 	fail "a transport failure must not be reported as an HTTP status"
 else

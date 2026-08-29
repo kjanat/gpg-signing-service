@@ -18,6 +18,19 @@ MAX_RETRY_WAIT="${MAX_RETRY_WAIT:-120}"
 # The wait taken when a retryable response names none this script can use.
 DEFAULT_RETRY_WAIT=30
 
+# Bounds on a single attempt. Not configurable, and deliberately: they are
+# arguments to `curl`, not knobs, and every value read from the environment here
+# is one more thing validate_config has to defend.
+#
+# curl's own defaults are a 300-second connect timeout and no ceiling at all on
+# a transfer that connected and then stalled, so a black-holed TCP connect — a
+# security group that drops rather than rejects, a proxy that accepts and never
+# answers — parks the job indefinitely. That is the same CI time MAX_RETRY_WAIT
+# exists to bound, arriving by the one route the clamp cannot see, and until
+# curl gives up the transport-failure branch below never runs.
+CONNECT_TIMEOUT_SECONDS=10
+REQUEST_TIMEOUT_SECONDS=60
+
 # Functions
 log_info() {
 	echo "[INFO] $*" >&2
@@ -122,11 +135,26 @@ retry_after_seconds() {
 		return 0
 	fi
 
-	# GNU date first, then the BSD/macOS spelling, so this reads a date on a
-	# developer's laptop and not only on a Linux runner. Anything neither
-	# accepts is not a date, and is reported as no hint.
+	# Only the three formats RFC 9110 §5.6.7 permits reach `date`, and the shape
+	# is checked here rather than left to it. `date -d` is not a date parser but a
+	# natural-language one: it reads `tomorrow` as +86400 and `5 seconds` as +5,
+	# and neither is a `Retry-After`. Left ungated that leniency has teeth now
+	# that the header outranks the body — a header of `tomorrow` beside a
+	# perfectly good `retryAfter: 5` was read as a hint of a day, clamped to
+	# MAX_RETRY_WAIT, and the body never consulted. The Go client's
+	# `http.ParseTime` accepts these three and nothing else; so does this.
+	local imf_fixdate rfc850 asctime
+	imf_fixdate='^[A-Za-z]{3}, [0-9]{2} [A-Za-z]{3} [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} [A-Za-z]+$'
+	rfc850='^[A-Za-z]{6,9}, [0-9]{2}-[A-Za-z]{3}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} [A-Za-z]+$'
+	asctime='^[A-Za-z]{3} [A-Za-z]{3} [ 0-9][0-9] [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4}$'
+	[[ ${value} =~ ${imf_fixdate} || ${value} =~ ${rfc850} || ${value} =~ ${asctime} ]] || return 0
+
+	# GNU date first, then the BSD/macOS spelling of each accepted form, so this
+	# reads a date on a developer's laptop and not only on a Linux runner.
 	deadline="$(date -u -d "${value}" +%s 2>/dev/null)" \
 		|| deadline="$(date -u -j -f '%a, %d %b %Y %T %Z' "${value}" +%s 2>/dev/null)" \
+		|| deadline="$(date -u -j -f '%A, %d-%b-%y %T %Z' "${value}" +%s 2>/dev/null)" \
+		|| deadline="$(date -u -j -f '%a %b %e %T %Y' "${value}" +%s 2>/dev/null)" \
 		|| return 0
 	[[ ${deadline} =~ ^-?[0-9]+$ ]] || return 0
 
@@ -144,21 +172,30 @@ retry_after_seconds() {
 # date `retry_after_seconds` declined to read. Each lands on the caller's
 # fallback instead of reaching `sleep` as a word it would refuse.
 clamp_wait() {
-	local wait="$1" fallback="$2"
+	local wait="$1" fallback="$2" digits
 
 	if [[ ! ${wait} =~ ^[0-9]+$ ]]; then
 		wait="${fallback}"
-	elif ((${#wait} > 9)); then
-		# Longer than any wait this script will honour anyway, and long enough
-		# that `10#` below would overflow bash's intmax_t and arrive negative —
-		# a wait that reads as one already past. The ceiling is the answer.
-		wait="${MAX_RETRY_WAIT}"
 	else
-		wait="$((10#${wait}))"
-		# Zero is "no hint", not "immediately" — the same reading the Go client's
-		# retryAfterSeconds takes. Sleeping 0 turns the retry loop into a tight one
-		# against a dependency that has just failed.
-		((wait > 0)) || wait="${fallback}"
+		# Leading zeros are padding, not magnitude. The length test below stands in
+		# for "too large for bash's intmax_t", and measuring the *unpadded* form is
+		# what makes it one: `Retry-After: 0000000005` is five seconds, and counting
+		# its ten characters sent it to the ceiling instead. `strconv.Atoi` in the Go
+		# client reads the same value as 5.
+		digits="${wait#"${wait%%[!0]*}"}"
+		if [[ -z ${digits} ]]; then
+			# Zero is "no hint", not "immediately" — the same reading the Go client's
+			# retryAfterSeconds takes. Sleeping 0 turns the retry loop into a tight one
+			# against a dependency that has just failed.
+			wait="${fallback}"
+		elif ((${#digits} > 9)); then
+			# Longer than any wait this script will honour anyway, and long enough
+			# that `10#` below would overflow bash's intmax_t and arrive negative —
+			# a wait that reads as one already past. The ceiling is the answer.
+			wait="${MAX_RETRY_WAIT}"
+		else
+			wait="$((10#${digits}))"
+		fi
 	fi
 
 	if ((wait > MAX_RETRY_WAIT)); then
@@ -294,6 +331,8 @@ sign_commit() {
 		headers_file=$(mktemp)
 		curl_status=0
 		response=$(curl -sw "\n%{http_code}" -D "${headers_file}" -X POST \
+			--connect-timeout "${CONNECT_TIMEOUT_SECONDS}" \
+			--max-time "${REQUEST_TIMEOUT_SECONDS}" \
 			-H "Authorization: Bearer ${OIDC_TOKEN}" \
 			-H "X-Request-ID: ${request_id}" \
 			--data-raw "${commit_data}" \
@@ -314,8 +353,13 @@ sign_commit() {
 			return 1
 		fi
 
-		http_code="$(echo "${response}" | tail -1)"
-		body="$(echo "${response}" | head -n -1)"
+		# `sed '$d'` rather than `head -n -1`: a negative line count is a GNU
+		# extension and BSD/macOS head refuses it outright, which would strand the
+		# body on the same laptop the date fallback above exists to support. `<<<`
+		# rather than `echo` for the same reason it is used elsewhere here — a body
+		# that happens to start with `-n` is an argument to some echos, not output.
+		http_code="$(tail -1 <<<"${response}")"
+		body="$(sed '$d' <<<"${response}")"
 
 		case "${http_code}" in
 			200)
@@ -371,7 +415,7 @@ sign_commit() {
 		esac
 	done
 
-	log_error "Signing failed after ${MAX_RETRIES} retries"
+	log_error "Signing failed after ${MAX_RETRIES} attempts"
 	# Without this the run ends on that one line and everything the service sent
 	# — which code it was, what to change, where to read about it — is discarded
 	# by the loop that was supposed to be handling it.
