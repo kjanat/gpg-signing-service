@@ -154,146 +154,22 @@ curl -s "${BASE_URL}/admin/audit" \
 <details>
 <summary>Sign Commit with Error Handling (Bash)</summary>
 
-**File**: `bash/sign-commit.sh`
+**File**: [`bash/sign-commit.sh`](bash/sign-commit.sh)
+
+The script is not reproduced here. It was, and the copy went stale: it retried
+on the body's `retryAfter` alone, slept after the attempt it had no retry left
+for, had no `503` branch and no ceiling on a server-chosen wait — the opposite
+of every rule in [Retry and Transport Behaviour](#retry-and-transport-behaviour-bashsign-commitsh) below, which is
+what the file now does and what
+`.github/scripts/test-sign-commit-example.sh` pins. A reader who pasted the
+listing got the behaviour the tests exist to prevent.
+
+Read it in the repository, or run it:
 
 ```bash
-#!/usr/bin/env bash
-
-set -euo pipefail
-
-# Configuration
-BASE_URL="https://gpg.kajkowalski.nl"
-OIDC_TOKEN="${OIDC_TOKEN:-}"
-MAX_RETRIES=3
-RETRY_DELAY=2
-
-# Functions
-log_info() {
-  echo "[INFO] $*" >&2
-}
-
-log_error() {
-  echo "[ERROR] $*" >&2
-}
-
-check_requirements() {
-  local required_tools=("curl" "jq" "git" "gpg")
-  for tool in "${required_tools[@]}"; do
-    if ! command -v "$tool" &> /dev/null; then
-      log_error "Required tool not found: $tool"
-      return 1
-    fi
-  done
-}
-
-get_oidc_token() {
-  if [ -z "$OIDC_TOKEN" ]; then
-    if [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
-      log_error "OIDC token not provided and not in GitHub Actions"
-      return 1
-    fi
-
-    log_info "Fetching OIDC token from GitHub Actions..."
-    OIDC_TOKEN=$(curl -s -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-      "$ACTIONS_ID_TOKEN_REQUEST_URL" | jq -r '.token')
-  fi
-
-  if [ -z "$OIDC_TOKEN" ] || [ "$OIDC_TOKEN" = "null" ]; then
-    log_error "Failed to get OIDC token"
-    return 1
-  fi
-}
-
-import_public_key() {
-  log_info "Importing public key from signing service..."
-
-  local public_key
-  public_key=$(curl -sf "$BASE_URL/public-key")
-
-  if [ -z "$public_key" ]; then
-    log_error "Failed to retrieve public key"
-    return 1
-  fi
-
-  echo "$public_key" | gpg --import --quiet
-  log_info "Public key imported successfully"
-}
-
-sign_commit() {
-  local commit_ref="${1:-HEAD}"
-  local keyid="${2:-}"
-  local retry_count=0
-
-  log_info "Signing commit: $commit_ref"
-
-  # Get commit data
-  local commit_data
-  commit_data=$(git cat-file commit "$commit_ref")
-
-  # Build request URL
-  local request_url="$BASE_URL/sign"
-  if [ -n "$keyid" ]; then
-    request_url="$request_url?keyId=$keyid"
-  fi
-
-  # Retry logic
-  while [ $retry_count -lt $MAX_RETRIES ]; do
-    log_info "Signing attempt $((retry_count + 1))/$MAX_RETRIES..."
-
-    local response
-    local http_code
-    response=$(curl -sw "\n%{http_code}" -X POST \
-      -H "Authorization: Bearer $OIDC_TOKEN" \
-      -H "X-Request-ID: $(uuidgen)" \
-      --data-raw "$commit_data" \
-      "$request_url")
-
-    http_code=$(echo "$response" | tail -1)
-    local body=$(echo "$response" | head -n -1)
-
-    case "$http_code" in
-      200)
-        log_info "Commit signed successfully"
-        echo "$body"
-        return 0
-        ;;
-      429)
-        local retry_after
-        retry_after=$(echo "$body" | jq -r '.retryAfter // 30')
-        log_info "Rate limited, waiting ${retry_after}s..."
-        sleep "$retry_after"
-        retry_count=$((retry_count + 1))
-        ;;
-      401)
-        log_error "Authentication failed: $(echo "$body" | jq -r .error)"
-        return 1
-        ;;
-      *)
-        log_error "Signing failed (HTTP $http_code): $(echo "$body" | jq -r .error // .)"
-        return 1
-        ;;
-    esac
-  done
-
-  log_error "Signing failed after $MAX_RETRIES retries"
-  return 1
-}
-
-main() {
-  log_info "GPG Signing Service - Commit Signing"
-
-  check_requirements || return 1
-  get_oidc_token || return 1
-  import_public_key || return 1
-
-  local signature
-  signature=$(sign_commit "$@") || return 1
-
-  log_info "Signature:"
-  echo "$signature"
-}
-
-main "$@"
+BASE_URL=https://gpg.kajkowalski.nl \
+  OIDC_TOKEN="${OIDC_TOKEN}" \
+  bash examples/bash/sign-commit.sh HEAD
 ```
 
 </details>
@@ -705,6 +581,72 @@ python3 python/manage_keys.py upload \
 python3 python/manage_keys.py rotate \
   new-key-v2 signing-key-v2.asc \
   --old-key-id old-key-v1
+```
+
+### Retry and Transport Behaviour (`bash/sign-commit.sh`)
+
+The signing example retries only the two statuses the service invites a caller
+to repeat — `429` and `503` — and takes the wait off the response rather than
+choosing one itself.
+
+| Variable         | Default                      | Meaning                                               |
+| ---------------- | ---------------------------- | ----------------------------------------------------- |
+| `BASE_URL`       | `https://gpg.kajkowalski.nl` | Service origin                                        |
+| `MAX_RETRIES`    | `3`                          | Total signing attempts, not retries after the first   |
+| `MAX_RETRY_WAIT` | `120`                        | Ceiling, in seconds, on a wait the _server_ asked for |
+
+Rules the script follows, and which the shell suite pins:
+
+- **The `Retry-After` header outranks the body.** A `429` from an edge throttle
+  in front of the service answers with a page and a header, and a `retryAfter`
+  in a body underneath it can be stale. The body's value is the fallback for
+  when there is no readable header, which is how this service's own limiter is
+  read. A `503` has no body field at all — `ErrorResponse` declares none.
+- **Both `Retry-After` forms are read, and only those.** Delay-seconds and an
+  absolute HTTP-date, per RFC 9110 §10.2.3 — the date in any of the three
+  formats §5.6.7 permits, checked by shape before `date(1)` sees it. `date -d`
+  is a natural-language parser, so ungated it reads `tomorrow` as a day and
+  `5 seconds` as five, and a malformed header would outrank a perfectly good
+  `retryAfter` in the body. A value that is neither form — `soon-ish`, or a
+  negative number the delay-seconds grammar does not admit — counts as _no
+  hint_, and the next source answers instead. The `GMT` §5.6.7 requires on both
+  date forms is matched literally rather than as a zone abbreviation, because
+  `date -d` resolves one: a date five minutes out labelled `CEST` came back as a
+  moment two hours _past_, which under header-first precedence is a hint of zero
+  overruling the body.
+- **A zero-delay header is a hint, not the absence of one.** `Retry-After: 0`
+  and a date that has already come round both mean the wait is over, so they
+  keep their precedence over a body that disagrees and are not replaced by the
+  30-second default. The next attempt goes immediately, without a `sleep`, and
+  `MAX_RETRIES` is what bounds it. Every wait the script derives is a whole
+  number of seconds between `0` and `MAX_RETRY_WAIT`.
+- **The last allowed attempt is never slept on.** Once the attempt count
+  reaches `MAX_RETRIES` the run is over, and a ten-minute hint on that last
+  refusal would be ten minutes of CI time spent to reach a failure the script
+  already knows about.
+- **A single attempt is bounded in time.** `--connect-timeout 10` and
+  `--max-time 60`, because curl's own defaults are a 300-second connect and no
+  ceiling at all on a stalled transfer. `MAX_RETRY_WAIT` bounds the waits
+  between attempts; without these, a connection that is dropped rather than
+  refused parks the job on an attempt, where the clamp cannot see it.
+- **A `curl` that never connected is reported as such.** DNS, TLS, a refused
+  connection or a timeout produce no HTTP status; the script says no response
+  was received and quotes curl's exit code, rather than sorting a `000` through
+  the status branches as though the service had refused. The token fetch and the
+  key import say the same thing for the same failures: both took curl's status
+  into an assignment, where `set -euo pipefail` ended the run before the
+  `log_error` each of them carries for exactly that case, so a bounded request
+  that hit its bound stopped the script with no line saying why.
+- **`MAX_RETRY_WAIT` and `MAX_RETRIES` are validated before any arithmetic.**
+  Both come from the environment and both end up inside `(( ))`, where a bare
+  word evaluates to zero and an array subscript is evaluated as an expression.
+  A non-numeric or zero value stops the run with a message, before the token
+  fetch, the key import, and any `sleep`.
+
+Verify the behaviour without touching the network:
+
+```bash
+task test:sign-commit-example   # also runs as part of `task test` / `task tc`
 ```
 
 ## Integration with Your Project
