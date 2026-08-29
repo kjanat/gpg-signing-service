@@ -177,10 +177,13 @@ The scan can come up empty, which is when you have to pass it:
 
 ```text
 Error: sign-commit failed: no verified commit in HEAD; pass base explicitly:
-base is the exclusive lower bound of the range to sign, so --base=origin/master
-signs every commit after the branch point, and --base=<sha> signs everything
-after that commit (nothing this key signed was found in HEAD, which is expected
-on a branch that has never been signed with it)
+base is the exclusive lower bound of the range to sign, so --base=<sha> signs
+every commit after that one — pick the commit just before the first one you
+want signed, from `git log --oneline`. There is no branch point to use here:
+master is the default branch, so origin/master is its own remote tip rather
+than a fork point. Nothing this key signed was found in HEAD, which is expected
+on a branch that has never been signed with it, and this ends the run before
+any request is made
 ```
 
 This is normal the first time a repository signs with a given key, and on any
@@ -188,9 +191,18 @@ branch whose history predates it. It ends the run **before any request is
 made** — so if a `401` appears in the same job, the two are independent
 failures, not cause and effect.
 
-Pick the base by what you want rewritten. `--base=origin/master` on a topic
-branch signs your commits and nothing already published. A `--base=<sha>` of the
-oldest commit you want left alone is the general answer.
+Pick the base by what you want rewritten. **`--base=<sha>` — the commit just
+before the first one you want signed — is the general answer**, and it is the
+only answer on this path: the scan only runs when you are standing on
+`--default-branch`, where `origin/<default-branch>` is this branch's own remote
+tip rather than a fork point. `origin/master..HEAD` there is whatever has not
+been pushed yet, usually empty, which is a second round of guessing rather than
+a fix.
+
+`--base=origin/master` is the right shape one branch over: on a **topic**
+branch it is the branch point, so it signs your commits and nothing already
+published. That path never reaches the error above, because it takes the merge
+base automatically and needs no `--base` at all.
 
 #### Reading a failure
 
