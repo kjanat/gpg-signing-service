@@ -234,7 +234,7 @@ printf 'smoke test' |
 A signing key that lapses breaks every caller at once, with no warning from the
 service itself: nothing in the sign path refuses a key because it is close to
 expiring. `.github/workflows/key-expiry-check.yml` covers that gap. It runs
-weekly, and on demand through **Actions → Key expiry check → Run workflow**.
+weekly, and on demand through **Actions → Key Expiry Check → Run workflow**.
 
 ### Which keys are checked
 
@@ -358,21 +358,56 @@ the overlap, so in-flight callers keep working.
 3. Publish the new public key to every verifier that needs it — GitHub account
    GPG keys, and any `gpg --import` step in a consuming pipeline. Signatures
    from the new key are rejected until this lands.
-4. Add the new key ID to the `keyIds` of every trusted subject
-   (`POST /admin/subjects`) and to any service token that pins key IDs. This is
-   also what puts the new key under expiry monitoring — the check watches what
-   live grants permit, so a key becomes monitored the moment something is
-   allowed to sign with it.
+4. Widen every grant that pins key IDs to include the new key. This is also
+   what puts the new key under expiry monitoring — the check watches what live
+   grants permit, so a key becomes monitored the moment something is allowed to
+   sign with it.
+
+   There is no update verb on either credential: `/admin/subjects` and
+   `/admin/tokens` expose create, list and revoke only, and `keyIds` is fixed at
+   creation. Replacing a grant, not editing it, is the procedure.
+
+   - **Trusted subjects.** `POST /admin/subjects` with an issuer and prefix that
+     are already claimed returns `409`; uniqueness is scoped to unrevoked rows,
+     so the slot only frees on revoke. Revoke the current row, then create its
+     replacement with both key IDs:
+
+     ```bash
+     curl -sS -H "Authorization: Bearer $ADMIN_TOKEN" \
+       "$SIGNING_SERVICE_URL/admin/subjects"          # find the row id
+     curl -sS -XDELETE -H "Authorization: Bearer $ADMIN_TOKEN" \
+       "$SIGNING_SERVICE_URL/admin/subjects/$ID"
+     curl -sS -XPOST -H "Authorization: Bearer $ADMIN_TOKEN" \
+       -H 'Content-Type: application/json' \
+       -d '{"name":"...","issuer":"...","subjectPrefix":"...","keyIds":["OLDKEYID","NEWKEYID"]}' \
+       "$SIGNING_SERVICE_URL/admin/subjects"
+     ```
+
+     Between the two calls that subject cannot sign, so run them back to back
+     rather than at the start of a maintenance window. Do **not** reach for a
+     broader `subjectPrefix` to dodge the conflict — that widens trust
+     permanently to work around a sequencing problem.
+
+   - **Service tokens.** `keyIds` is equally fixed, and re-minting issues a new
+     secret. Mint a second token carrying both key IDs, move every consumer onto
+     it, then `DELETE /admin/tokens/{id}` the old one. The old token keeps
+     working throughout, so unlike the subject case there is no gap.
+
+   Grants that pin no key IDs already permit every stored key and need no change
+   — though that also means they cannot narrow the expiry report.
 5. Point the deployment at the new key: update `KEY_ID` in `wrangler.toml` for
    each environment, then `task deploy`. Callers that name no key move over
    here.
 6. Smoke test as in [Smoke test](#8-smoke-test), signing with the new key ID.
 7. Once no caller signs with the old key — check the audit log — drop its ID
-   from `wrangler.toml` and from every subject and token allowlist, then remove
-   it with `DELETE /admin/keys/{keyId}`. Revoking the allowlists first is what
-   takes the old key out of the report; a key that is merely retained in storage
-   raises nothing, but a key a live grant still names does.
-8. Close the `key-expiry` issue, or re-run the check and let it confirm.
+   from `wrangler.toml`, and replace each grant again by the same revoke-then-
+   create route as step 4, this time listing only the new key. Then remove the
+   key with `DELETE /admin/keys/{keyId}`. Narrowing the grants is what takes the
+   old key out of the report; a key that is merely retained in storage raises
+   nothing, but a key a live grant still names does.
+8. Re-run the check (**Actions → Key Expiry Check → Run workflow**) and confirm
+   it comes back clear, then close the `key-expiry` issue by hand — the workflow
+   opens and updates that issue but does not close it.
 
 Rotating `ADMIN_TOKEN` is separate and immediate: `wrangler secret put
 ADMIN_TOKEN`, then update the repository secret the expiry check uses. There is

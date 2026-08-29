@@ -308,7 +308,9 @@ describe("resolveActiveKeys", () => {
 		// It is what this environment signs with the moment anyone is trusted
 		// again, so its lapsing is still news.
 		const scope = resolveActiveKeys({ storedKeyIds: [PRODUCTION_KEY_ID], defaultKey, grants: [], now: NOW });
-		expect(scope.keys).toEqual([{ keyId: PRODUCTION_KEY_ID, reasons: ["default"], grants: [], stored: true }]);
+		expect(scope.keys).toEqual([
+			{ keyId: PRODUCTION_KEY_ID, reasons: ["default"], grants: [], anyKeyGrants: [], stored: true },
+		]);
 	});
 
 	it("marks a granted key the deployment does not hold as unstored", () => {
@@ -323,6 +325,7 @@ describe("resolveActiveKeys", () => {
 			keyId: STORED_A,
 			reasons: ["grant"],
 			grants: ["service-token:stale"],
+			anyKeyGrants: [],
 			stored: false,
 		});
 	});
@@ -354,6 +357,9 @@ describe("resolveActiveKeys", () => {
 			keyId: PRODUCTION_KEY_ID,
 			reasons: ["default", "grant", "unrestricted-grant"],
 			grants: ["oidc-subject:repo:kjanat/svc", "service-token:anything"],
+			// The any-key grant is recorded apart from the scoped one, so the
+			// report can say which of the two reached this key how.
+			anyKeyGrants: ["service-token:anything"],
 			stored: true,
 		});
 	});
@@ -376,6 +382,7 @@ describe("describeActivation", () => {
 		keyId: PRODUCTION_KEY_ID,
 		reasons: [],
 		grants: [],
+		anyKeyGrants: [],
 		stored: true,
 		...over,
 	});
@@ -390,10 +397,29 @@ describe("describeActivation", () => {
 		);
 	});
 
+	it("does not describe an any-key grant as if it were scoped to the key", () => {
+		// A grant is scoped or unscoped as a property of the grant, so a key that
+		// a scoped grant names *and* an any-key grant sweeps up has to show both.
+		// Reporting only the scoped list printed `service-token:broad` under
+		// "granted to" on this row while the very next row called the same
+		// credential an any-key grant.
+		expect(
+			describeActivation(
+				key({
+					reasons: ["grant", "unrestricted-grant"],
+					grants: ["service-token:broad", "service-token:ci"],
+					anyKeyGrants: ["service-token:broad"],
+				}),
+			),
+		).toBe("granted to `service-token:ci`; any-key grant `service-token:broad`");
+	});
+
 	it("says when a key is only reachable through an any-key grant", () => {
-		expect(describeActivation(key({ reasons: ["unrestricted-grant"], grants: ["service-token:ci"] }))).toBe(
-			"any-key grant `service-token:ci`",
-		);
+		expect(
+			describeActivation(
+				key({ reasons: ["unrestricted-grant"], grants: ["service-token:ci"], anyKeyGrants: ["service-token:ci"] }),
+			),
+		).toBe("any-key grant `service-token:ci`");
 	});
 
 	it("falls back to a dash when nothing explains the key", () => {
@@ -537,6 +563,49 @@ describe("pgpKeyExpiry", () => {
 			state: "revoked",
 			detail: "key is revoked",
 		});
+	});
+
+	// GnuPG key in the standard offline layout: a certify-only primary key that
+	// expires in 2029, and a signing subkey that has been revoked. openpgp.js
+	// cannot generate a certify-only primary, so this is real `gpg` output —
+	// which is the point, since it is the layout the bug needs.
+	const REVOKED_SIGNING_SUBKEY = `-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+mDMEapNZxxYJKwYBBAHaRw8BAQdAP0rR98D408ENU8GBzH4eZXURIbTwqNO5fWkS
+16ao7ji0LVJldm9rZWQgU2lnbmluZyBTdWJrZXkgPHJldm9rZWQtc3ViQHRlc3Qu
+Y29tPoiZBBMWCgBBFiEEbPMdMrXxwMBf2Ni5R3kFE3J0hgMFAmqTWccCGwEFCQWj
+moAFCwkIBwICIgIGFQoJCAsCBBYCAwECHgcCF4AACgkQR3kFE3J0hgN0KgEAmJvF
+bh2kZ9gZzg5HiqOjqHFIqknb/hr+p1pOUlCxuxgBAPrEbwvnxsGLlscrwDbBjxeF
+t1NRElxYLF0nXeP4oicCuDMEapNZxxYJKwYBBAHaRw8BAQdAeaMOUtly8Up3HBmC
+izQgknayVMlXZ0foVtaa9XomNkeIeAQoFgoAIBYhBGzzHTK18cDAX9jYuUd5BRNy
+dIYDBQJqk1nHAh0CAAoJEEd5BRNydIYDbyQBAI0Ott8sr579QOoJ6DYXPB+k1biN
+btNpNpOIVnMqf+57AQDtp1I4LcYxvK/AdpZ7qehyQ5cUAGs8cVmQZKlrazhFA4j1
+BBgWCgAmFiEEbPMdMrXxwMBf2Ni5R3kFE3J0hgMFAmqTWccCGwIFCQWjmoAAgQkQ
+R3kFE3J0hgN2IAQZFgoAHRYhBFMPgbZjkFc85CeZ9ZpIZNvYd/LOBQJqk1nHAAoJ
+EJpIZNvYd/LOLkYA/jXwYZK1mB6345d92S+LEj3cvplQURWhOhoNR2qUfnlwAQCU
+R+Lw4vqNRyufQAjjgbJ+UayGObaqtpvHDUx6kPTlBouyAQCADlBIfJBe3W7szMlM
+9+aKYI/ib4CPb2XhVhdkpfid5AD8Dv2YWyTqjGfMAU5uw+vy+dPjSoraHk+gJwLR
+SAvgpQI=
+=QTDx
+-----END PGP PUBLIC KEY BLOCK-----`;
+
+	it("refuses to call a key healthy when its signing subkey is revoked", async () => {
+		// The subkey is what signs — that is why its expiry is preferred over the
+		// primary key's above. Revoking it stops verifiers accepting the
+		// signatures just as completely, but leaves the primary key valid and
+		// both expiration subpackets untouched. openpgp then refuses to resolve a
+		// signing key at all, and reading the primary key's 2029 date instead
+		// would report a comfortable `ok` for a key that can no longer sign.
+		const key = await openpgp.readKey({ armoredKey: REVOKED_SIGNING_SUBKEY });
+		// Neither existing check catches it: the primary key is not revoked, and
+		// its own expiration date is years away.
+		expect(await key.isRevoked()).toBe(false);
+		expect(await key.getExpirationTime()).toBeInstanceOf(Date);
+
+		const expiry = await pgpKeyExpiry(REVOKED_SIGNING_SUBKEY);
+		expect(expiry).toMatchObject({ kind: "unknown" });
+		if (expiry.kind === "unknown") expect(expiry.reason).toMatch(/no usable signing key/);
+		expect(classifyExpiry(PRODUCTION_KEY_ID, expiry, NOW, 60).state).toBe("unknown");
 	});
 
 	it("reports unreadable key material as unknown", async () => {
@@ -886,6 +955,7 @@ describe("missingKeyRow", () => {
 		keyId: PRODUCTION_KEY_ID,
 		reasons: [],
 		grants: [],
+		anyKeyGrants: [],
 		stored: false,
 		...over,
 	});
@@ -959,6 +1029,7 @@ describe("renderReport", () => {
 					keyId: row.keyId,
 					reasons: ["default"] as ActiveKey["reasons"],
 					grants: [],
+					anyKeyGrants: [],
 					stored: row.state !== "missing",
 				})),
 				retainedInactive: [],
@@ -1030,11 +1101,12 @@ describe("renderReport", () => {
 			rows,
 			contextFor(rows, {
 				keys: [
-					{ keyId: "DEFAULTKEY000000", reasons: ["default"], grants: [], stored: true },
+					{ keyId: "DEFAULTKEY000000", reasons: ["default"], grants: [], anyKeyGrants: [], stored: true },
 					{
 						keyId: "GRANTEDKEY000000",
 						reasons: ["unrestricted-grant"],
 						grants: ["service-token:ci"],
+						anyKeyGrants: ["service-token:ci"],
 						stored: true,
 					},
 				],
@@ -1157,9 +1229,14 @@ describe("renderReport", () => {
 		expect(report).toContain("- `BROKEN0000000000`: ❓ unknown (—) — revoked");
 	});
 
-	it("reports a deployment with no active keys without crashing", () => {
+	it("says nothing was checked, not that everything is clear, when the set is empty", () => {
+		// "No key is expiring" and "no key was looked at" are opposite pieces of
+		// news. Rendering the all-clear line here hands out a green light earned
+		// by an empty set, which is the one report a monitor must never produce.
 		const report = renderReport([], contextFor([]));
+
 		expect(report).toContain("Monitored 0 active signing keys");
-		expect(report).toContain("No active signing key expires within 60 days.");
+		expect(report).toContain("**No key was checked.**");
+		expect(report).not.toContain("No active signing key expires within 60 days.");
 	});
 });
