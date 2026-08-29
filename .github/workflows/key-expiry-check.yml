@@ -1,0 +1,93 @@
+name: Key Expiry Check
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: key-expiry-check
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-bun
+        id: bun
+
+      - name: Check active signing keys
+        id: expiry
+        continue-on-error: true
+        env:
+          SIGNING_SERVICE_URL: ${{ vars.SIGNING_SERVICE_URL }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          KEY_EXPIRY_WARN_DAYS: ${{ vars.KEY_EXPIRY_WARN_DAYS }}
+        run: bun run check:key-expiry
+
+      - name: Open or update expiry issue
+        if: steps.expiry.outputs.actionable == 'true'
+        uses: actions/github-script@v9
+        env:
+          REPORT: ${{ steps.expiry.outputs.report }}
+          ACTIONABLE_COUNT: ${{ steps.expiry.outputs.actionable-count }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const label = 'key-expiry';
+
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: label });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              await github.rest.issues.createLabel({
+                owner,
+                repo,
+                name: label,
+                color: 'd93f0b',
+                description: 'An active signing key needs rotation or investigation',
+              });
+            }
+
+            const { data: matches } = await github.rest.issues.listForRepo({
+              owner,
+              repo,
+              state: 'open',
+              labels: label,
+              per_page: 10,
+            });
+
+            const title = 'Active signing key needs attention';
+            const body = `${process.env.REPORT}\n\n_Automatically updated by the key-expiry check._`;
+            const existing = matches.find((issue) => !issue.pull_request);
+
+            if (existing) {
+              await github.rest.issues.update({
+                owner,
+                repo,
+                issue_number: existing.number,
+                title,
+                body,
+                labels: [label, 'reliability'],
+              });
+            } else {
+              await github.rest.issues.create({
+                owner,
+                repo,
+                title,
+                body,
+                labels: [label, 'reliability'],
+              });
+            }
+
+      - name: Fail when the check could not run
+        if: steps.expiry.outcome == 'failure' && steps.expiry.outputs.actionable != 'true'
+        run: |
+          echo 'Key expiry check failed before it could produce an actionable report.' >&2
+          exit 1
