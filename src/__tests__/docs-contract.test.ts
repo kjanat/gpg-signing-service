@@ -29,6 +29,9 @@
  * - **The envelope's exceptions** — the degraded `/health` body, the 429 and
  *   404 without a `requestId`, the validator's `issues` array — are pinned
  *   against live responses or against the schema that declares the body.
+ * - **The shell example's `503` branch** names every code the reference sorts
+ *   onto that status. It said there was one; there are two, and they disagree
+ *   about carrying a `Retry-After`.
  * - **Every relative anchor** into the reference, from any document that writes
  *   one, lands on a heading that exists.
  *
@@ -50,6 +53,9 @@ import authenticationGuide from "../../docs/authentication.md?raw";
 import errorReference from "../../docs/errors.md?raw";
 import selfHosting from "../../docs/self-hosting.md?raw";
 import troubleshooting from "../../docs/troubleshooting.md?raw";
+// The shell example sorts a response by status alone, so its branch comments
+// are where a status carrying two codes gets described — or mis-described.
+import signCommitExample from "../../examples/bash/sign-commit.sh?raw";
 import readme from "../../README.md?raw";
 
 /**
@@ -278,6 +284,32 @@ describe("the status a code actually arrives with", () => {
 		}
 
 		expect(wrong).toEqual([]);
+	});
+});
+
+describe("the shell example's 503 branch", () => {
+	/** The body of a `case` arm in `sign_commit`'s retry loop, comments included. */
+	function branchFor(status: number): string {
+		const arm = signCommitExample.match(new RegExp(`\\n\\t+${status}\\)\\n([\\s\\S]*?);;`));
+		if (arm === null) throw new Error(`sign-commit.sh has no ${status} branch`);
+		return arm[1] as string;
+	}
+
+	it("names every code the reference sorts onto a 503", () => {
+		// The example branches on status, so one arm can be reached by codes that
+		// want different things — and its comment is the only place that says so.
+		// It claimed every 503 was SERVICE_DEGRADED and carried a `Retry-After`;
+		// RATE_LIMIT_ERROR is the other one and sends neither, which is the whole
+		// reason the arm falls back to DEFAULT_RETRY_WAIT.
+		//
+		// Only the 503 is pinned. The 429 arm has a single code and nothing to get
+		// wrong about it, and pinning a comment that has no distinction to draw
+		// would be the busywork this suite is trying not to be.
+		const branch = branchFor(503);
+		const documented = [...statusesFromReference()].filter(([, status]) => status === 503).map(([code]) => code);
+
+		expect(documented.length).toBeGreaterThan(1);
+		expect(documented.filter((code) => !branch.includes(code))).toEqual([]);
 	});
 });
 

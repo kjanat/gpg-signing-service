@@ -468,15 +468,23 @@ sign_commit() {
 			503)
 				# SERVICE_DEGRADED: the service could not reach something it needs
 				# — the issuer's JWKS, its authorization store — so nothing about
-				# this request was judged. It is the one refusal the service invites
-				# a caller to repeat, and the only one where waiting is the whole
-				# fix.
+				# this request was judged. Waiting is the whole fix, and it is the
+				# one refusal that says how long: a Retry-After, which degraded_wait
+				# prefers over the default.
 				#
-				# Every 503 from this service is that one, and every 503 carries a
-				# Retry-After. The permanent fault — a deployment whose own
-				# configuration stopped the request, which answers identically until
-				# an operator changes it — is SERVICE_MISCONFIGURED and arrives as a
-				# 500, so it never reaches this branch to be sorted out of it.
+				# It is not the only 503 that reaches here, though. RATE_LIMIT_ERROR
+				# is the other one — the limiter itself was unreachable or answered
+				# with an error, so the request went unjudged for a different reason —
+				# and it is worth repeating for the same reason. It carries no
+				# Retry-After: the limiter never answered, so there is no interval to
+				# quote. degraded_wait already handles that, falling back to
+				# DEFAULT_RETRY_WAIT, and this branch wants it to: a missing hint is
+				# not a stop signal, only an absent one.
+				#
+				# The permanent fault — a deployment whose own configuration stopped
+				# the request, which answers identically until an operator changes it
+				# — is SERVICE_MISCONFIGURED and arrives as a 500, so it never reaches
+				# this branch to be sorted out of it.
 				local wait_seconds
 				wait_seconds="$(degraded_wait "${headers}")"
 				last_code="${http_code}" last_body="${body}"

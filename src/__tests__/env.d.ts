@@ -46,6 +46,14 @@ declare module "*.md?raw" {
 	export default content;
 }
 
+// The same suffix on the shell example. `docs-contract.test.ts` holds its `503`
+// branch against the codes the reference sorts onto that status, because two of
+// them land there and they disagree about carrying a `Retry-After`.
+declare module "*.sh?raw" {
+	const content: string;
+	export default content;
+}
+
 // Vite's `import.meta.glob`, narrowed to the one form `docs-contract.test.ts`
 // uses: eager, `?raw`, default export. `vite/client` declares it in full, but
 // this directory's tsconfig loads only the Workers pool's types, and pulling in
