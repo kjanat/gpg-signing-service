@@ -247,6 +247,21 @@ func (r *repairer) selectRange(ctx context.Context) ([]string, error) {
 			"re-read the branch and re-run with the tip that is actually there", tip, head)
 	}
 
+	// base is an exclusive lower bound, which only means anything if the tip
+	// reaches it. A base on a divergent branch still produces a non-empty range
+	// — one silently starting at the merge base — so a mistyped ref would widen
+	// the rewrite rather than be refused, and the only thing left standing in
+	// the way is whether the extra commits happen to carry an address
+	// --expect-identity was not given.
+	ancestor, err := r.repo.isAncestor(ctx, base, tip)
+	if err != nil {
+		return nil, err
+	}
+	if !ancestor {
+		return nil, fmt.Errorf("base %s is not an ancestor of %s; base is an exclusive lower bound, so the "+
+			"range would silently start at their merge base and rewrite commits you did not name", base, tip)
+	}
+
 	commits, err := r.repo.revList(ctx, base, tip)
 	if err != nil {
 		return nil, err
