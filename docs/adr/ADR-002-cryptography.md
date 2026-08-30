@@ -206,8 +206,12 @@ Use **openpgp.js v6** as the cryptographic library with passphrase-encrypted pri
 
 **Limited Key Management**:
 
-- No automated key rotation
-- No key expiration enforcement (must check manually)
+- No automated key rotation; the procedure is manual and documented in
+  [Self-hosting](../self-hosting.md#key-rotation)
+- No key expiration _enforcement_ in the sign path — a key inside the warning
+  window, revoked, or already lapsed is still signed with. Expiry and revocation
+  are _detected_ by a scheduled monitor (below) rather than left to be checked
+  by hand
 - No revocation certificate handling
 
 **JavaScript Crypto Performance**:
@@ -257,6 +261,26 @@ Use **openpgp.js v6** as the cryptographic library with passphrase-encrypted pri
 3. Import via admin API: `POST /admin/keys` with armored key and passphrase
 4. Verify import: `GET /admin/keys` to list stored keys
 5. Test signing: `POST /sign` with sample commit data
+
+**Key Expiry Monitoring**:
+
+A Cron Trigger in this same Worker (`scheduled()` in `src/index.ts`) runs
+`runKeyExpiryMonitor` weekly and emails through Cloudflare Email Service's
+`send_email` binding when a key needs attention.
+
+1. `src/utils/key-expiry.ts` — the I/O-free core: which keys count as active,
+   and what the key material says about expiry and revocation
+2. `src/utils/key-expiry-monitor.ts` — reads the `KeyStorage` Durable Object and
+   the grant tables through the modules the request path already uses, then
+   renders and sends the report
+3. `wrangler.toml` — `[triggers] crons` and the `[[send_email]]` binding
+
+There is deliberately no manifest of keys and expiry dates. A transcribed date
+is a claim about a key rather than the key's expiry, and it drifts the moment
+the key is extended or rotated; the monitored set is derived from the default
+`KEY_ID` and the live grants, and each verdict is parsed out of the key itself.
+The monitor authenticates to nothing — not to its own admin API, not to a mail
+provider — so no credential exists for its sake alone.
 
 **Monitoring**:
 

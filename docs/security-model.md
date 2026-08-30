@@ -51,6 +51,44 @@ Object:
 Use encrypted key inputs and control both the Cloudflare account and repository
 deployment credentials. There is no private-key export endpoint.
 
+## Key expiry monitoring
+
+A Cron Trigger inside this same Worker checks, weekly, every key the deployment
+can currently sign with, and emails through a Cloudflare Email Service
+`send_email` binding when one needs attention.
+
+|             |                                                        |
+| ----------- | ------------------------------------------------------ |
+| Channel     | Email, through the `KEY_EXPIRY_ALERTS` binding         |
+| Threshold   | `KEY_EXPIRY_WARN_DAYS`, default 60 days                |
+| Schedule    | Weekly, plus `wrangler dev --test-scheduled` on demand |
+| Credentials | **None**                                               |
+
+The credential line is the point. The monitor reads the `KeyStorage` Durable
+Object and the grant tables through the same modules the request path uses, so
+it does not authenticate back into its own `/admin/*` API and holds neither
+`ADMIN_TOKEN` nor `ADMIN_READONLY_TOKEN`. Email is a binding, not an API token
+or an SMTP password. Nothing about this feature adds a credential to copy into
+another system or to remember to rotate — which is what a monitor that outlives
+its own credentials has to look like.
+
+The binding is restricted in `wrangler.toml` by `destination_address` and
+`allowed_sender_addresses`, so a compromised Worker cannot use it to mail
+anyone else or to forge a sender. The two addresses are plain vars rather than
+secrets; an address is not a credential, and the alternative is a deployment
+whose operator cannot read where their own monitor reports to.
+
+The monitored set is derived from live state rather than from a maintained
+list: the deployment's `KEY_ID`, plus every key a live grant permits, minus
+what no live grant reaches. Expiry and revocation are read out of the key
+material. Two consequences worth stating: a grant added after a run is not
+covered until the next one, and a key nothing can currently sign with is not
+monitored at all — retaining it raises nothing, and so does forgetting it.
+
+Reporting is not enforcement. Nothing in the sign path refuses a key that is
+near expiry, revoked, or already lapsed; the monitor exists so that the first
+sign of one is not every caller failing at once.
+
 ## Authentication controls
 
 - OIDC algorithms are restricted to asymmetric RSA and ECDSA variants.
@@ -234,7 +272,11 @@ Before relying on the service for protected production branches, account for:
 - no HSM or external key-management boundary;
 - no private-key backup or restoration workflow;
 - no automated passphrase, admin-token, or key rotation — including
-  `ADMIN_READONLY_TOKEN`, which is rotated by hand like the rest;
+  `ADMIN_READONLY_TOKEN`, which is rotated by hand like the rest. Key _expiry_
+  is monitored (above), but performing the rotation is manual: see
+  [Key rotation](self-hosting.md#key-rotation);
+- no enforcement of expiry in the sign path, so a key inside the warning window,
+  revoked, or already lapsed is still signed with;
 - a read-only admin credential that is narrower in _authority_ than
   `ADMIN_TOKEN` but not in _disclosure_: it still reads every key id,
   trust rule, token name and audit record;

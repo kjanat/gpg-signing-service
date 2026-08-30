@@ -73,6 +73,45 @@ export interface Env {
 	 */
 	DISCLOSE_TRUST_PATTERNS?: string;
 
+	/**
+	 * Optional: this deployment's environment label, e.g. `staging`. Set from
+	 * `[env.<name>.vars]` and absent on the top-level one. It is what keeps two
+	 * deployments' alert mail — otherwise identical — telling apart.
+	 */
+	ENVIRONMENT?: string;
+
+	/** Key-expiry monitor */
+	/**
+	 * Optional: days ahead of expiry the scheduled monitor starts reporting a
+	 * key. Defaults to 60. A positive whole number; anything else fails the run
+	 * rather than silently reverting to the default.
+	 */
+	KEY_EXPIRY_WARN_DAYS?: string;
+	/**
+	 * Cloudflare Email Service send binding the monitor alerts through.
+	 *
+	 * Optional in the type because a deployment can genuinely lack it — the test
+	 * environment does — and `mailConfig` is what turns that absence into a loud
+	 * failure on the next scheduled run rather than a silent one.
+	 */
+	KEY_EXPIRY_ALERTS?: SendEmail;
+	/**
+	 * Optional: address the monitor's alerts are sent from. Must belong to a
+	 * domain onboarded to Email Service; the binding's own
+	 * `allowed_sender_addresses` is what enforces that.
+	 */
+	KEY_EXPIRY_ALERT_FROM?: string;
+	/**
+	 * Optional: address the monitor's alerts are sent to. Must be a verified
+	 * destination address; the binding's own `destination_address` is what
+	 * enforces that.
+	 *
+	 * A plain var rather than a secret on purpose: an address is not a
+	 * credential, and hiding it would mean the repository could not show an
+	 * operator where their own monitor reports to.
+	 */
+	KEY_EXPIRY_ALERT_TO?: string;
+
 	/** Secrets */
 	/** Passphrase for private key */
 	KEY_PASSPHRASE: string;
