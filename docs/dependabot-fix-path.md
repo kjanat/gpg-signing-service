@@ -145,71 +145,60 @@ commit; `GPG_SIGN_DISABLE` remains the only way to sign nothing on purpose.
 
 ## Activation
 
-The workflow lives at `.github/workflows/claude-dependabot-fix.yml`, and putting
-it there is a step no automation in this repository can take.
+The workflow is live at
+[`.github/workflows/claude-dependabot-fix.yml`](../.github/workflows/claude-dependabot-fix.yml).
+Putting it there was a step no automation in this repository could take, and
+that is worth recording, because the same wall stands in front of the next
+workflow anyone tries to add this way.
 
 A GitHub App token has no `workflows` permission. Any push that touches
 `.github/workflows/` is rejected outright, and the rejection kills the whole
 push rather than just the offending file — so the CI job that wrote this design
-could commit the scripts, the tests and this document, and not the workflow. The
-file waits in `.github/workflows-pending/`.
+could commit the scripts, the tests and this document, and not the workflow. It
+waited in `.github/workflows-pending/` with the activation checked in beside it
+as `activate.patch`: a rename into `.github/workflows/`, plus the replacement of
+the retired instruction in `claude-code-review.yml`. A human holding an ordinary
+credential applied it, and both halves are now in the tree; the patch is spent
+and has been deleted.
 
-The activation itself is checked in beside it, as
-[`.github/workflows-pending/activate.patch`](../.github/workflows-pending/activate.patch).
-It does two things: renames the workflow into `.github/workflows/` (dropping the
-paragraph saying it is not active yet), and replaces the retired instruction in
-`claude-code-review.yml`. Apply it with a credential that can write the
-directory — an ordinary user account, not the App token:
+Checking the activation in rather than pasting it into a pull-request comment is
+the part worth keeping. A comment would not appear in the diff anybody reviews,
+would not be covered by branch protection, could be edited afterwards with no
+signal here, and nothing would notice it going stale against a moving
+`claude-code-review.yml`. In the tree it was reviewed with everything else, and
+both suites applied it on every run — so a patch that stopped applying was a red
+build rather than a surprise on the day someone tried to use it.
 
-```bash
-git apply .github/workflows-pending/activate.patch
-git rm .github/workflows-pending/activate.patch
-git commit -m 'ci: activate the trusted Dependabot fix path'
-```
+The suites were red for the whole wait, deliberately and in both files: one had
+no live workflow to guard, the other was asserting prompt text that arrived with
+the patch. Neither was a stub — each resolved its subject from the patch applied
+to a scratch copy and ran every behavioural, structural and mutation assertion
+for real, reporting the activation last as a single deferred failure. An earlier
+version instead resolved the live path first and fell back to the pending file,
+and went **green**. That is the shape to refuse: a security suite whose subject
+is a file nothing runs goes green exactly as fast as one guarding a live
+workflow, and the difference between those two is the entire point.
 
-A patch in a pull-request comment would have done the same job and none of the
-same guarantees: it would not appear in the diff anybody reviews, would not be
-covered by branch protection, could be edited afterwards with no signal here,
-and nothing would notice it going stale against a moving `claude-code-review.yml`.
-In the tree it is reviewed with everything else, and both test suites apply it
-on every run — a patch that stops applying is a red build, not a surprise on the
-day someone tries to use it.
+### The states the guards still refuse
 
-### The pre-activation state is red on purpose, twice
+`activation_state` in
+[`.github/scripts/dependabot-activation.sh`](../.github/scripts/dependabot-activation.sh)
+is read by both suites, so they cannot describe the same repository two ways.
+Only `active` passes:
 
-Until the patch lands, **both** `task test:dependabot-fix` and
-`task test:review-gate` fail. That is two failures, not one: the first has no
-live workflow to guard, and the second is asserting prompt text that arrives
-with the patch.
-
-Neither is a stub. Each resolves its subject from the checked-in patch applied
-to a scratch copy, runs every behavioural, structural and mutation assertion
-against it, and only then reports the activation as a single deferred failure
-naming the commands above. So the guards keep their meaning during the wait, the
-patch is proven to still apply, and the output says what to do instead of
-looking like a wiring regression.
-
-What neither suite does is pass. An earlier version resolved the live path first
-and fell back to the pending one, which went green — a security suite whose
-subject is a file nothing runs goes green exactly as fast as one guarding a live
-workflow, and the difference between those two is the entire point. Reading the
-patched tree is not that fallback returning: the exit status is still non-zero
-until the file GitHub executes is the file being guarded.
-
-Once activated, `task test:dependabot-fix` additionally fails if a copy is left
-behind in `.github/workflows-pending/`, or if `activate.patch` is still checked
-in — a spent one-shot artifact sitting next to a live workflow is a second,
-stale description of the same change.
-
-A half-applied activation — the workflow copied to `.github/workflows/` while
-the pending copy, the patch and the old review prompt all stay put — is its own
-state, and both suites report it with the same message, from
-`activation_unusable` in `.github/scripts/dependabot-activation.sh`. That
-message deliberately does **not** repeat the procedure above: `git apply`
-refuses once the live file exists (`already exists in working directory`), so
-the way out is `git rm` on the two leftovers plus a check that
-`claude-code-review.yml` picked up the prompt correction. The rename is only
-half of what the patch does.
+- **`pending`** — back in `.github/workflows-pending/`. The deferred failure
+  returns, naming the patch procedure.
+- **`both`** — live _and_ a copy still pending: two files claiming to be this
+  workflow, one of them running, both looking authoritative in review. This is
+  what a half-applied activation leaves behind, and the fix is `git rm` on the
+  leftovers, **not** a re-run of `git apply` — the patch renames onto a file
+  that now exists, so git refuses it with `already exists in working directory`.
+  Both suites say so, from `activation_unusable`.
+- **`absent`** — in neither place. The write path is gone and no patch brings it
+  back.
+- A spent `activate.patch` left checked in next to the live workflow also fails:
+  a one-shot artifact sitting there is a second, stale description of a change
+  already made.
 
 ## What the review workflow says about Dependabot
 
@@ -286,14 +275,14 @@ and requires the checker to catch it, because a structural assertion that has
 never been watched failing is one nobody knows works.
 
 The second owns the review job's no-token gate and, since #71, the prompt
-guards described above. Both suites also apply
-`.github/workflows-pending/activate.patch` and assert it still produces what it
-claims to, for as long as it is checked in.
+guards described above. Both also assert the activation state, and agree about
+it by construction: the states and their diagnoses come from the one helper
+they share.
 
 Neither suite reads the workflow as YAML the way GitHub will, so `task lint`
 also runs `actionlint` over `.github/workflows/` **and**
-`.github/workflows-pending/`. That covers this workflow in both of its
-locations: while it waits, and after the patch moves it.
+`.github/workflows-pending/` — the second so that a workflow still waiting on
+the activation wall is checked before it goes live, not after.
 
 ## What is still trusted
 
