@@ -23,6 +23,17 @@ const (
 	foreignEmail = "someone@example.test"
 )
 
+// The environment git reads an identity from, and the name every fixture
+// commit carries. Named rather than repeated so the hermeticity guard in
+// hermetic_test.go asserts on the same strings the harness sets.
+const (
+	envAuthorName     = "GIT_AUTHOR_NAME"
+	envAuthorEmail    = "GIT_AUTHOR_EMAIL"
+	envCommitterName  = "GIT_COMMITTER_NAME"
+	envCommitterEmail = "GIT_COMMITTER_EMAIL"
+	fixtureName       = "Test"
+)
+
 // requireGit skips tests that need a real git binary, so the suite still runs
 // on a machine that has none. Nothing here needs gpg: keys are generated,
 // signed with, and verified in-process.
@@ -124,12 +135,68 @@ func readAll(r *http.Request) ([]byte, error) {
 	return buf.Bytes(), err
 }
 
+// hermeticGit is the environment every git command in this package runs under.
+//
+// Two host-dependent things would otherwise decide what the fixtures look
+// like. The developer's global and system config settles questions the tests
+// assert on — commit.gpgsign, core.hooksPath, init.defaultBranch — so it is
+// pointed at /dev/null rather than trusted to be empty. And a git command that
+// writes an object falls back to guessing an identity from the host's username
+// and hostname; that guess succeeds on a workstation and fails outright on a
+// clean CI runner with "Author identity unknown". Naming an identity here
+// means no fixture can depend on the host having one.
+//
+// Callers append their own entries after these and win, since for a duplicate
+// environment key it is the last occurrence that takes effect.
+func hermeticGit() []string {
+	return []string{
+		"GIT_CONFIG_GLOBAL=" + os.DevNull,
+		"GIT_CONFIG_SYSTEM=" + os.DevNull,
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_TERMINAL_PROMPT=0",
+		envAuthorName + "=" + fixtureName, envAuthorEmail + "=" + serviceEmail,
+		envCommitterName + "=" + fixtureName, envCommitterEmail + "=" + serviceEmail,
+		"GIT_AUTHOR_DATE=2026-01-01T00:00:00Z", "GIT_COMMITTER_DATE=2026-01-01T00:00:00Z",
+	}
+}
+
+// scrubbedEnviron is the host environment with every GIT_* variable removed.
+//
+// Shadowing the ambient ones would be enough for the variables hermeticGit
+// happens to list, but not for the ones it does not: GIT_CONFIG_COUNT and its
+// GIT_CONFIG_KEY_n / GIT_CONFIG_VALUE_n companions inject config that outranks
+// every file, so a host that sets them could still reach into a fixture. The
+// cheaper rule is that no GIT_* variable survives, and the fixture environment
+// is then whatever this file says it is.
+//
+// This matters more than it looks: the CI job that runs this suite inside a
+// GitHub Action inherits GIT_AUTHOR_* and GIT_COMMITTER_* from the action, so
+// a missing identity is invisible there and fatal in the plain test job.
+func scrubbedEnviron() []string {
+	environ := os.Environ()
+	kept := make([]string, 0, len(environ))
+	for _, entry := range environ {
+		if strings.HasPrefix(entry, "GIT_") {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return kept
+}
+
+// gitEnv is the full environment for a fixture git command: the host's, with
+// its git state scrubbed and this package's pinned in, then the caller's.
+func gitEnv(env []string) []string {
+	return append(append(scrubbedEnviron(), hermeticGit()...), env...)
+}
+
 // gitSucceeds reports whether a git command works in the fixture, for the
 // optional repository features not every git build carries.
 func gitSucceeds(dir string, args ...string) bool {
 	// #nosec G204 -- test fixture; the arguments come from this file's callers.
 	cmd := exec.Command(gitProgram, args...)
 	cmd.Dir = dir
+	cmd.Env = gitEnv(nil)
 	return cmd.Run() == nil
 }
 
@@ -141,7 +208,7 @@ func git(t *testing.T, dir string, env []string, args ...string) string {
 	// #nosec G204 -- test fixture; the arguments come from this file's helpers.
 	cmd := exec.Command(gitProgram, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = gitEnv(env)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -159,6 +226,7 @@ func gitRaw(t *testing.T, dir string, stdin []byte, args ...string) []byte {
 	// #nosec G204 -- test fixture; the arguments come from this file's helpers.
 	cmd := exec.Command(gitProgram, args...)
 	cmd.Dir = dir
+	cmd.Env = gitEnv(nil)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
@@ -203,8 +271,8 @@ func repoFormat(t *testing.T, dir string) objectFormat {
 // identity returns the environment that pins a commit's author and committer.
 func identity(email string) []string {
 	return []string{
-		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=" + email,
-		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=" + email,
+		envAuthorName + "=" + fixtureName, envAuthorEmail + "=" + email,
+		envCommitterName + "=" + fixtureName, envCommitterEmail + "=" + email,
 		"GIT_AUTHOR_DATE=2026-01-01T00:00:00Z", "GIT_COMMITTER_DATE=2026-01-01T00:00:00Z",
 	}
 }
