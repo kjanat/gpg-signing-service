@@ -42,12 +42,16 @@
 #
 # NOT ACTIVE YET. This file is in .github/workflows-pending/ because a GitHub
 # App token has no `workflows` permission and cannot create a file under
-# .github/workflows/ — the push is rejected outright. Activate it with:
+# .github/workflows/ — the push is rejected outright, and the rejection kills
+# the whole push rather than just that one file. So the activation is checked
+# in beside this file, as a patch for a human holding an ordinary credential:
 #
-#   git mv .github/workflows-pending/claude-dependabot-fix.yml .github/workflows/
+#   git apply .github/workflows-pending/activate.patch
+#   git rm .github/workflows-pending/activate.patch
 #
-# Nothing else changes: `task test:dependabot-fix` resolves the live path first
-# and starts guarding this file where it lands.
+# Until that lands `task test:dependabot-fix` and `task test:review-gate` both
+# fail on purpose, each naming those two commands. See
+# docs/dependabot-fix-path.md#activation.
 name: Claude Dependabot Fix
 
 on:
