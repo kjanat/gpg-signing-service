@@ -366,9 +366,12 @@ superseded key raises nothing. A key that is configured or granted but _not_
 stored is reported as `missing` — signing through it is already broken.
 
 Expiry is read out of the key material itself rather than from a date typed into
-a config file: the earlier of the PGP primary key's and its signing subkeys'
-expirations, or an X.509 certificate's `notAfter`. Revocation is reported too,
-including a signing subkey revoked under an otherwise healthy primary key.
+a config file: for a PGP key, the _latest_ still-usable signing subkey's
+expiration, capped by the primary key's — signing keeps working until the last
+usable subkey lapses, so reading the earliest instead would warn about an outage
+a valid replacement subkey already prevents. For an X.509 key, the certificate's
+`notAfter`. Revocation is reported too, including a signing subkey revoked
+under an otherwise healthy primary key.
 
 ### Checking it by hand
 
