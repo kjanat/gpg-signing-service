@@ -59,6 +59,7 @@ tasks:
       - task: test:agent-harness
       - task: test:session-start
       - task: test:go-modernize-gate
+      - task: test:typegen-pin
 
   test:sentry:
     desc: Run the Sentry boundary suite alone — the inner loop of the mutation set
@@ -121,6 +122,11 @@ tasks:
     aliases: [mg]
     cmd: bash scripts/test-go-modernize-gate.sh
 
+  test:typegen-pin:
+    desc: Test that worker-configuration.d.ts has one pinned producer
+    aliases: [tgp]
+    cmd: bash scripts/test-typegen-pin.sh
+
   test:coverage:
     desc: Run tests with coverage
     aliases: [tc]
@@ -142,6 +148,7 @@ tasks:
       - task: test:agent-harness
       - task: test:session-start
       - task: test:go-modernize-gate
+      - task: test:typegen-pin
 
   test:watch:
     desc: Run tests in watch mode
@@ -238,7 +245,22 @@ tasks:
     deps: [install:noscripts]
     sources: ["**/*.ts"]
     generates: [worker-configuration.d.ts]
-    cmd: mise exec -- wrangler types
+    # Spelled through the package.json script, not `mise exec -- wrangler`, so
+    # that this and the `prepare` hook are the same command. They were not, and
+    # the two resolved different wranglers: `.mise.toml` carries an unpinned
+    # `wrangler = "latest"`, while `run typegen` picks up node_modules/.bin,
+    # which bun.lock pins exactly as a transitive dep of vitest-pool-workers.
+    # Whichever one wrote worker-configuration.d.ts last stamped its own workerd
+    # into the header, so `bun install` inside CI -- which fires `prepare` and
+    # therefore the node_modules one -- rewrote a file generated here by the
+    # mise one and turned the whole-worktree `git diff --exit-code` in
+    # .github/actions/check-api-changes red, on a tree where `task generate:api`
+    # itself is clean (#123). Only this call site moves: the lockfile wrangler
+    # is the one whose workerd the vitest-pool-workers suite actually executes
+    # on, so it is the one whose types belong in the tree, whereas deploy/d1/kv
+    # emit no committed artifact and are better off current.
+    # scripts/test-typegen-pin.sh holds both halves of that down.
+    cmd: mise exec -- run typegen
 
   generate:api:
     desc: Generate OpenAPI spec and client
