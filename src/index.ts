@@ -15,9 +15,11 @@ import tokenRoutes from "#routes/tokens";
 import { ErrorResponseSchema, HealthResponseSchema, PublicKeyQuerySchema, PublicKeyResponseSchema } from "#schemas";
 import { isErrorCode } from "#schemas/errors";
 import type { HealthResponse } from "#schemas/health";
+import type { Env } from "#types";
 import { HTTP, MediaType } from "#types";
 import { fetchKeyStorage } from "#utils/durable-objects";
 import { errorDocsTarget } from "#utils/error-docs";
+import { runKeyExpiryMonitor } from "#utils/key-expiry-monitor";
 import { logger as customLogger } from "#utils/logger";
 
 // Export Durable Objects
@@ -233,4 +235,35 @@ app.onError((err, c) => {
 	return c.json({ error: "Internal server error", code: "INTERNAL_ERROR", requestId }, HTTP.InternalServerError);
 });
 
-export default app;
+/**
+ * The Worker's handlers.
+ *
+ * `scheduled` is attached to the Hono app rather than to a fresh object literal
+ * because the app *is* the default export elsewhere: `scripts/generate-openapi.ts`
+ * and two suites read `getOpenAPIDocument` off it, and a `{ fetch, scheduled }`
+ * literal would drop that surface for the sake of a shape the runtime does not
+ * require. The runtime asks only that `fetch` and `scheduled` be callable
+ * properties of the default export, and both are.
+ */
+export default Object.assign(app, {
+	/**
+	 * The Cron Trigger. Warns before an active signing key lapses.
+	 *
+	 * Deliberately not wrapped in a catch-and-continue: a run that could not read
+	 * its own state, or could not send the mail it had to send, has not monitored
+	 * anything, and reporting that as a success is how a monitor becomes
+	 * decoration. Logged for the tail, then rethrown so the invocation is recorded
+	 * as failed.
+	 */
+	async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+		try {
+			await runKeyExpiryMonitor(env);
+		} catch (error) {
+			customLogger.error("Scheduled key expiry monitor failed", error, {
+				action: "key-expiry-check",
+				cron: controller.cron,
+			});
+			throw error;
+		}
+	},
+});

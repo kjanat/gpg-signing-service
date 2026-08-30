@@ -37,11 +37,48 @@ id      = "b4e1807f785b4b66b012004b14316d6a"  # Set after `wrangler kv namespace
 pattern       = "gpg.kajkowalski.nl"
 custom_domain = true
 
+[triggers]  # Cron Triggers (docs: https://developers.cloudflare.com/workers/configuration/cron-triggers/)
+# Weekly key-expiry monitor. Warns before an active signing key lapses; nothing
+# in the sign path refuses a key that is close to expiring, so without this the
+# first sign of an expiry is every caller failing at once.
+#
+# Weekly rather than daily because the default threshold is 60 days: a key that
+# enters the window is reported roughly eight times before it breaks, which is
+# enough to be impossible to miss and few enough to stay worth reading. A clean
+# run sends nothing at all.
+crons = ["0 7 * * 2"]  # Tuesdays, 07:00 UTC
+
+[[send_email]]  # Email Service send binding (docs: https://developers.cloudflare.com/email-service/configuration/send-bindings/)
+# The monitor's only outbound channel, and the only binding it needs beyond the
+# ones the request path already has. It authenticates to nothing: there is no
+# API token, no SMTP password and no admin bearer anywhere in this feature.
+#
+# Both restrictions below are deliberate. `destination_address` means this
+# Worker cannot mail anyone but the operator even if it is compromised, and
+# `allowed_sender_addresses` pins the From line to one address on an onboarded
+# domain. The Worker passes the same two addresses explicitly, from
+# KEY_EXPIRY_ALERT_TO and KEY_EXPIRY_ALERT_FROM below, so the code says where
+# alerts go and this block enforces it.
+name                     = "KEY_EXPIRY_ALERTS"
+destination_address      = "info@kajkowalski.nl"               # must be a verified destination address in Email Service
+allowed_sender_addresses = ["gpg-signing-service@kjanat.dev"]  # kjanat.dev is an onboarded sending domain
+
 # Environment variables (non-sensitive) (docs: https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables)
 ## Note: Use secrets to store sensitive data. (https://developers.cloudflare.com/workers/configuration/secrets/)
 [vars]
 ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com"
 KEY_ID          = "62E75E54497815DD"
+
+# Key-expiry monitor. Plain vars, not secrets: an address is not a credential,
+# and a threshold nobody can read is a threshold nobody can trust. The two
+# addresses must match the send_email binding's restrictions above.
+KEY_EXPIRY_ALERT_FROM = "gpg-signing-service@kjanat.dev"
+KEY_EXPIRY_ALERT_TO   = "info@kajkowalski.nl"
+# KEY_EXPIRY_WARN_DAYS: days ahead of expiry a key starts being reported.
+# Unset means 60. Plain decimal digits naming a positive whole number; anything
+# else — including `1e3` and `0x3C`, which Number() would read as 1000 and 60 —
+# fails the run rather than silently reverting to or reinterpreting the default.
+
 # ALLOWED_ORIGINS: comma-separated CORS allowlist. Left unset on purpose — CORS
 # then fails closed and no browser origin is granted anything, which is correct
 # for callers that are CI runners and the Go client. Set it only when a browser
@@ -85,7 +122,20 @@ database_id   = "22ec5e27-27d6-48d6-a921-61344dd5d7c2"
 binding = "JWKS_CACHE"
 id      = "1a1c95b63a59458a9347be82f1b961df"
 
+[env.staging.triggers]  # Triggers *are* inherited, so staging has to opt out explicitly.
+# Staging signs with the same key id as production, so a second cron would mail
+# the same warning twice for one key. The binding below is kept so the handler
+# can still be exercised there on demand with `wrangler dev --test-scheduled`.
+crons = []
+
+[[env.staging.send_email]]  # Bindings are non-inheritable - must be specified per environment
+name                     = "KEY_EXPIRY_ALERTS"
+destination_address      = "info@kajkowalski.nl"
+allowed_sender_addresses = ["gpg-signing-service@kjanat.dev"]
+
 [env.staging.vars]  # Staging environment variables
-ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com"
-KEY_ID          = "62E75E54497815DD"
-ENVIRONMENT     = "staging"
+ALLOWED_ISSUERS       = "https://token.actions.githubusercontent.com,https://gitlab.com"
+KEY_ID                = "62E75E54497815DD"
+ENVIRONMENT           = "staging"
+KEY_EXPIRY_ALERT_FROM = "gpg-signing-service@kjanat.dev"
+KEY_EXPIRY_ALERT_TO   = "info@kajkowalski.nl"
