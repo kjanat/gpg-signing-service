@@ -27,34 +27,35 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 gate="${repo_root}/.github/scripts/dependabot-fix-gate.sh"
 apply="${repo_root}/.github/scripts/dependabot-fix-apply.sh"
-# The workflow lives in one of two places, and this is not cosmetic. A GitHub
-# App token has no `workflows` permission, so the bot that wrote this branch
-# could not create the file under .github/workflows/ — the push is rejected
-# outright, and the rejection kills the whole push rather than just that file.
-# It is therefore committed to .github/workflows-pending/ and a human activates
-# it with a one-line `git mv`. See docs/dependabot-fix-path.md.
+# The workflow must be at the live path, and that is an assertion rather than a
+# lookup. It was not always there: a GitHub App token has no `workflows`
+# permission, so the automation that wrote the file could not create it under
+# .github/workflows/ — the push is rejected outright, and the rejection kills
+# the whole push rather than just that file. It was parked in
+# .github/workflows-pending/ for a human to `git mv`, which has now happened.
 #
-# Resolved live-first so that the move needs no change here and this suite
-# starts guarding the real file the moment it exists. Absent from both is a
-# failure, not a skip: a security suite that quietly passes when its subject is
-# missing is worse than no suite at all.
-live_workflow="${repo_root}/.github/workflows/claude-dependabot-fix.yml"
+# Requiring the live path is what stops that from being quietly undone. A
+# security suite whose subject is a file nothing runs goes green exactly as fast
+# as one guarding a live workflow, and the difference between the two is the
+# entire value of the thing. Absent, or present in both places, is a failure and
+# not a skip.
+workflow="${repo_root}/.github/workflows/claude-dependabot-fix.yml"
 pending_workflow="${repo_root}/.github/workflows-pending/claude-dependabot-fix.yml"
 
-if [[ -f "${live_workflow}" ]]; then
-	workflow="${live_workflow}"
-	# Both at once would mean two files claiming to be this workflow, with only
-	# one of them running and both looking authoritative in review.
+if [[ ! -f "${workflow}" ]]; then
+	echo "FAIL: ${workflow} is missing — the trusted Dependabot fix path is not active." >&2
 	if [[ -f "${pending_workflow}" ]]; then
-		echo "FAIL: the workflow is active AND still pending; delete ${pending_workflow}" >&2
-		exit 1
+		echo "      It is still pending. Activate it:" >&2
+		echo "      git mv .github/workflows-pending/claude-dependabot-fix.yml .github/workflows/" >&2
 	fi
-elif [[ -f "${pending_workflow}" ]]; then
-	workflow="${pending_workflow}"
-	printf '  note: the workflow is still pending activation (git mv %s .github/workflows/)\n' \
-		'.github/workflows-pending/claude-dependabot-fix.yml'
-else
-	echo "FAIL: claude-dependabot-fix.yml is in neither .github/workflows/ nor .github/workflows-pending/" >&2
+	exit 1
+fi
+
+# Both at once would mean two files claiming to be this workflow, with only one
+# of them running and both looking authoritative in review.
+if [[ -f "${pending_workflow}" ]]; then
+	echo "FAIL: the workflow is active AND a copy is still in .github/workflows-pending/;" >&2
+	echo "      delete ${pending_workflow}" >&2
 	exit 1
 fi
 
