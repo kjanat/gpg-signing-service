@@ -76,7 +76,11 @@ tasks:
     cmds:
       - golangci-lint fmt --config={{.GOLANGCI_LINT_CONFIG}} {{.CLI_ARGS}}
 
+  # Go 1.27 ships the modernize analyzers inside the toolchain as `go fix`, so
+  # this no longer downloads an unversioned gopls-internal command on every
+  # run: the fixers are exactly the ones the toolchain go.mod pins, they cover
+  # _test.go files by default, and `go fix -diff` is a CI-shaped dry run.
   modernize:
     desc: Modernize Go code *args
     aliases: [m]
-    cmd: go run golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@latest -fix -test ./...
+    cmd: go fix {{.CLI_ARGS}} ./...
