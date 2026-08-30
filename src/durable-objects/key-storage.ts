@@ -1,6 +1,6 @@
 import type { AnyStoredKey } from "#schemas/keys";
-import { HTTP, MediaType } from "#types";
 import { isX509Key } from "#schemas/keys";
+import { HTTP, MediaType } from "#types";
 import { logger } from "#utils/logger";
 
 export class KeyStorage implements DurableObject {

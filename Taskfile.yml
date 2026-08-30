@@ -60,6 +60,7 @@ tasks:
       - task: test:session-start
       - task: test:go-modernize-gate
       - task: test:typegen-pin
+      - task: test:tool-pins
 
   test:sentry:
     desc: Run the Sentry boundary suite alone — the inner loop of the mutation set
@@ -127,6 +128,11 @@ tasks:
     aliases: [tgp]
     cmd: bash scripts/test-typegen-pin.sh
 
+  test:tool-pins:
+    desc: Test that every tool which rewrites a committed file is explicit and pinned
+    aliases: [tp, pins]
+    cmd: bash scripts/test-tool-pins.sh
+
   test:coverage:
     desc: Run tests with coverage
     aliases: [tc]
@@ -149,6 +155,7 @@ tasks:
       - task: test:session-start
       - task: test:go-modernize-gate
       - task: test:typegen-pin
+      - task: test:tool-pins
 
   test:watch:
     desc: Run tests in watch mode
@@ -163,7 +170,13 @@ tasks:
     cmds:
       - task: format
       - bun eslint src/
-      - mise exec -- biome lint
+      # `check`, not `lint`: biome.jsonc turns the formatter off but leaves the
+      # organizeImports assist on, and `biome lint` does not run assists. So a
+      # tree with imports the pinned biome would reorder linted green here while
+      # the pre-commit `lint:fix` -- which is `biome check --fix` -- silently
+      # rewrote it, which is the mutation half of #125. This is the same command
+      # package.json's `lint:biome` runs, minus the fix.
+      - mise exec -- biome check
       - task: lint:shell
       - task: lint:actions
 
@@ -247,19 +260,23 @@ tasks:
     generates: [worker-configuration.d.ts]
     # Spelled through the package.json script, not `mise exec -- wrangler`, so
     # that this and the `prepare` hook are the same command. They were not, and
-    # the two resolved different wranglers: `.mise.toml` carries an unpinned
+    # the two resolved different wranglers: `.mise.toml` carried an unpinned
     # `wrangler = "latest"`, while `run typegen` picks up node_modules/.bin,
-    # which bun.lock pins exactly as a transitive dep of vitest-pool-workers.
-    # Whichever one wrote worker-configuration.d.ts last stamped its own workerd
-    # into the header, so `bun install` inside CI -- which fires `prepare` and
-    # therefore the node_modules one -- rewrote a file generated here by the
-    # mise one and turned the whole-worktree `git diff --exit-code` in
-    # .github/actions/check-api-changes red, on a tree where `task generate:api`
-    # itself is clean (#123). Only this call site moves: the lockfile wrangler
-    # is the one whose workerd the vitest-pool-workers suite actually executes
-    # on, so it is the one whose types belong in the tree, whereas deploy/d1/kv
-    # emit no committed artifact and are better off current.
-    # scripts/test-typegen-pin.sh holds both halves of that down.
+    # which bun.lock pins exactly. Whichever one wrote worker-configuration.d.ts
+    # last stamped its own workerd into the header, so `bun install` inside CI
+    # -- which fires `prepare` and therefore the node_modules one -- rewrote a
+    # file generated here by the mise one and turned the whole-worktree
+    # `git diff --exit-code` in .github/actions/check-api-changes red, on a tree
+    # where `task generate:api` itself is clean (#123).
+    #
+    # #125 closed the other half: wrangler is now a direct devDependency rather
+    # than a hoisted transitive of @cloudflare/vitest-pool-workers, and the mise
+    # tool is pinned to the same version instead of "latest". This call site
+    # still names the lockfile binary rather than either -- that is the producer
+    # whose workerd the vitest-pool-workers suite actually executes on, so it is
+    # the one whose types belong in the tree, and it stays correct even if the
+    # two pins are ever allowed to drift apart again.
+    # scripts/test-typegen-pin.sh and scripts/test-tool-pins.sh hold that down.
     cmd: mise exec -- run typegen
 
   generate:api:
