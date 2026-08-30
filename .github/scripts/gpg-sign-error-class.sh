@@ -9,10 +9,10 @@
 #   - .github/scripts/signing-preflight.sh, after `gpg-sign health` failed
 #     during job setup.
 #
-# It lives in one file because the code list has to track
-# client/pkg/client/errors.go, and a second copy of it would drift silently:
-# nothing fails when a classifier stops recognising a code, it just falls back
-# to UNKNOWN and the operator reads a worse message.
+# It lives in one file because the code list has to track the codes the service
+# actually sends (src/schemas/errors.ts), and a second copy of it would drift
+# silently: nothing fails when a classifier stops recognising a code, it just
+# falls back to UNKNOWN and the operator reads a worse message.
 #
 # Pure: reads its argument, writes to stdout, touches no files, makes no network
 # call and never exits the shell. Both callers reach it only on a path that has
@@ -25,9 +25,15 @@
 # Prints exactly one token naming the failure class.
 #
 # The service's refusal codes are the first choice, because they are what
-# docs/errors.md and docs/troubleshooting.md are indexed by. A failure carries
-# its code in at least one of three shapes, so one search over the whole text
-# finds it wherever this particular error happened to keep it:
+# docs/errors.md and docs/troubleshooting.md are indexed by. The list is the
+# wire codes, not the Go constants: newStatusError copies `parsed.Code` straight
+# out of the envelope (client/pkg/client/errors.go), so what reaches this text is
+# whatever src/schemas/errors.ts sent — a strictly larger set than the ErrCode*
+# constants. Only the ones /sign and /health can answer with are listed; the
+# admin and key-management codes are unreachable from here.
+#
+# A failure carries its code in at least one of three shapes, so one search over
+# the whole text finds it wherever this particular error happened to keep it:
 #
 #   ServiceError   "SERVICE_DEGRADED: <msg> (status 503, retry after 5s, ...)"
 #   AuthError      "authentication failed: AUTH_INVALID: <msg> (request ...)"
@@ -41,7 +47,7 @@ gpg_sign_error_class() {
 	code="$(
 		{
 			grep -owE \
-				'AUTH_MISSING|AUTH_INVALID|AUTH_SUBJECT_UNTRUSTED|SERVICE_DEGRADED|SERVICE_MISCONFIGURED|RATE_LIMIT_ERROR|RATE_LIMITED|KEY_NOT_FOUND|KEY_NOT_ALLOWED|INVALID_REQUEST|INTERNAL_ERROR' \
+				'AUTH_MISSING|AUTH_INVALID|AUTH_SUBJECT_UNTRUSTED|SERVICE_DEGRADED|SERVICE_MISCONFIGURED|RATE_LIMIT_ERROR|RATE_LIMITED|KEY_NOT_FOUND|KEY_NOT_ALLOWED|INVALID_REQUEST|SIGN_ERROR|INTERNAL_ERROR' \
 				<<<"${text}" || true
 		} | head -n 1
 	)"
@@ -113,6 +119,9 @@ gpg_sign_error_summary() {
 			;;
 		INVALID_REQUEST)
 			printf 'The service rejected the request itself. This is a bug in the caller, not an outage.\n'
+			;;
+		SIGN_ERROR)
+			printf 'The credential and the key were both accepted and the signature still could not be made — an undecryptable or otherwise unusable key. Re-running answers the same until an operator fixes KEY_PASSPHRASE or the key itself.\n'
 			;;
 		INTERNAL_ERROR)
 			printf 'The service faulted. Quote the request id below when reporting it.\n'

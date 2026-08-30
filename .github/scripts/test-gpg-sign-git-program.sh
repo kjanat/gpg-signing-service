@@ -576,6 +576,7 @@ AUTH_INVALID|Error: signing failed: authentication failed: AUTH_INVALID: Token v
 AUTH_SUBJECT_UNTRUSTED|Error: signing failed: authentication failed: AUTH_SUBJECT_UNTRUSTED: Subject not trusted (request req-403)
 SERVICE_DEGRADED|Error: signing failed: SERVICE_DEGRADED: Could not reach the OIDC configuration (status 503, retry after 5s, request req-503)
 SERVICE_MISCONFIGURED|Error: signing failed: SERVICE_MISCONFIGURED: ALLOWED_ISSUERS names an unfetchable URL (status 500, request req-500)
+SIGN_ERROR|Error: signing failed: SIGN_ERROR: Failed to sign data (status 500, request req-500)
 SERVICE_UNREACHABLE|Error: signing failed: Post "https://sign.example.test/sign": dial tcp: lookup sign.example.test: no such host
 UNKNOWN|Error: signing failed: a failure nobody has written a branch for
 EOF
@@ -585,6 +586,16 @@ EOF
 # does not say which.
 fail_rc="$(run_failing_sign 1 'Error: rate limit exceeded: rate limited: Rate limit exceeded (retry after 3s)')"
 grep -q 'wait for the bucket to refill' "${tmp_dir}/fail-error"
+
+# SIGN_ERROR is the code src/routes/sign.ts answers when the key is fetched and
+# will not decrypt — the "rotated key" half of what this change exists to name.
+# It has no ErrCode* constant in the Go client, so it only reaches the class list
+# if that list tracks the wire codes the envelope carries rather than the
+# constants; classified as UNKNOWN it would read as an unexplained fault instead
+# of "an operator has to fix KEY_PASSPHRASE".
+fail_rc="$(run_failing_sign 1 'Error: signing failed: SIGN_ERROR: Failed to sign data (status 500, request req-500)')"
+grep -q 'signing failed \[SIGN_ERROR\]' "${tmp_dir}/fail-error"
+grep -q 'KEY_PASSPHRASE' "${tmp_dir}/fail-error"
 
 # A code the classifier does not recognise still has to reach the log intact.
 # Degrading to UNKNOWN is a worse message, not a swallowed one.
