@@ -157,7 +157,8 @@ describe("the documented status of every code", () => {
 
 /**
  * A refusal this suite can provoke with nothing but a request and the admin
- * token the test environment already configures.
+ * tokens the test environment already configures — both of them: the scope
+ * probe below is refused *because* the bearer it presents is the read-only one.
  *
  * Deliberately cheap. A probe that needed a JWKS mock, a trust row and a stubbed
  * Durable Object would be a second copy of the route suite that owns those
