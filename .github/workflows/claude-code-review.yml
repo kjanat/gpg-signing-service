@@ -5,10 +5,24 @@ jobs:
     runs-on: ubuntu-latest
     permissions: { contents: write, pull-requests: write, issues: write, id-token: write }
     steps:
-      - name: Check for Claude token
-        env: { CLAUDE_TOKEN: "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}" }
-        run: printf 'HAS_CLAUDE_TOKEN=%s\n' "${CLAUDE_TOKEN:+true}" >> "${GITHUB_ENV}"
       - { uses: actions/checkout@v7, with: { fetch-depth: 0 } }
+      # Decides once, for the whole job, whether this run is going to run Claude
+      # at all — the signing setup and the review step below both read
+      # HAS_CLAUDE_TOKEN, so the two can never disagree. It is a script rather
+      # than an inline `run:` because a fork pull request is the case that has to
+      # keep working and no workflow can be tested outside a workflow; see
+      # .github/scripts/test-claude-review-gate.sh. Skipping is exit 0 on
+      # purpose: this step is what decides a run is a deliberate no-op.
+      #
+      # SECURITY: this workflow intentionally uses `pull_request`, not
+      # `pull_request_target`. The gate is read from the checked-out PR ref. If
+      # the trigger ever changes to `pull_request_target`, executing that script
+      # would run untrusted fork code in a privileged context.
+      - name: Check for Claude token
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"
+          PR_HEAD_REPO: "${{ github.event.pull_request.head.repo.full_name }}"
+        run: bash .github/scripts/claude-review-gate.sh
       - { uses: jdx/mise-action@v4 }
       - { uses: kjanat/install-dprint@v2 }
       - { uses: ./.github/actions/setup-bun, id: bun }
@@ -16,6 +30,19 @@ jobs:
       # Dogfood: fixes Claude pushes to PR branches get signed by our own service
       - uses: ./.github/actions/setup-claude-signing
         id: signing
+        # Gated with the review step below, never independently. Signing setup is
+        # fail-closed by design (#107), and a fork pull request has neither the
+        # OAuth token nor id-token: write — so unconditionally it failed the whole
+        # workflow on a run whose only intended outcome was to do nothing.
+        #
+        # This is not a missing-credential fallback. A run that HAS the token
+        # still fails here when the service is unreachable or the OIDC
+        # configuration is absent, and GPG_SIGN_DISABLE remains the only way to
+        # run Claude with signing deliberately off. It also keeps the OIDC
+        # request variables off a path where Claude will not run: the action
+        # exports them for the session, and a job that is not starting a session
+        # has no use for a token-minting endpoint.
+        if: env.HAS_CLAUDE_TOKEN == 'true'
         with:
           service-url: "${{ vars.SIGNING_SERVICE_URL }}"
           claude-settings: "${{ vars.CLAUDE_SETTINGS }}"
