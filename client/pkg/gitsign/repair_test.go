@@ -113,7 +113,7 @@ func TestRepairStripsAnExistingSignatureBeforeSigning(t *testing.T) {
 		t.Fatalf("could not read the repaired tip: %v", err)
 	}
 	headers := 0
-	for _, line := range bytes.Split(head, []byte("\n")) {
+	for line := range bytes.SplitSeq(head, []byte("\n")) {
 		if bytes.HasPrefix(line, []byte(sha1SignatureHeader+" ")) {
 			headers++
 		}
