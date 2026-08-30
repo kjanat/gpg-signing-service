@@ -133,6 +133,14 @@ export interface Env {
 	 * telemetry, not a wrong answer.
 	 */
 	SENTRY_TRACES_SAMPLE_RATE?: string;
+	/**
+	 * Not read here, and deliberately not declared: the SDK fills `spotlight`,
+	 * `tunnel` and `debug` from `SENTRY_SPOTLIGHT`, `SENTRY_TUNNEL` and
+	 * `SENTRY_DEBUG` for any option `buildSentryOptions` leaves unset. The first
+	 * two change where events are sent; all three are pinned in
+	 * `src/utils/sentry.ts` so the configured DSN is the only thing that decides
+	 * whether, and where, anything is forwarded.
+	 */
 
 	/** Secrets */
 	/** Passphrase for private key */

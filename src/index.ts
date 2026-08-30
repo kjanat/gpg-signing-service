@@ -28,11 +28,18 @@ import { sentryOptions } from "#utils/sentry";
 
 // Export Durable Objects
 //
-// Wrapped rather than re-exported so a fault inside either object is reported
-// with the same options — and through the same scrubber — as one in the request
-// path. Both are otherwise invisible: nothing in `fetchKeyStorage` or the
-// limiter's caller logs the far side of the stub, and `RateLimiter.alarm()`
-// runs with no request to attach to at all.
+// Wrapped rather than re-exported so that whatever *is* reported from inside
+// either object goes out with the same options, and through the same scrubber,
+// as a fault in the request path. Both objects are otherwise invisible from the
+// outside: nothing in `fetchKeyStorage` or the limiter's caller logs the far
+// side of the stub, and `RateLimiter.alarm()` runs with no request to attach to
+// at all.
+//
+// What the wrapper does not do is turn a swallowed fault into an event. Both
+// `fetch` methods catch everything and answer with a 500 body, so nothing
+// escapes to the SDK's own capture; `RateLimiter.alarm()` is the one method
+// that can throw past it. The reporting those catches do is the `logger.error`
+// call inside them, which is the same chokepoint every other path uses.
 //
 // The wrapper is a Proxy whose `construct` trap returns the real instance, so
 // the class name Cloudflare matches against `[[migrations]]`, the constructor
@@ -280,6 +287,13 @@ const handler = Object.assign(app, {
 	 * anything, and reporting that as a success is how a monitor becomes
 	 * decoration. Logged for the tail, then rethrown so the invocation is recorded
 	 * as failed.
+	 *
+	 * The rethrow lands in the SDK's own `scheduled` wrapper, which captures
+	 * unconditionally and has no `shouldHandleError` knob. It does not produce a
+	 * second, untagged event: `captureException` marks the exception it captured
+	 * and refuses to capture the same object twice, and `captureError` extends
+	 * that mark to a non-`Error` value it had to wrap. So this stays one event,
+	 * and it is the one carrying `action` and `cron`.
 	 */
 	async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
 		try {
