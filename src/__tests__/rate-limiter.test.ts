@@ -223,6 +223,33 @@ describe("RateLimiter Durable Object", () => {
 			expect(denied.status).toBe(429);
 		});
 
+		it("answers its own 429 with a whole positive Retry-After", async () => {
+			// The one header this object writes for itself. Nothing outside the
+			// Durable Object reads it — both middlewares rebuild the refusal from the
+			// body — so it was the one refusal artefact with no test at all: zeroing
+			// it, deleting it, or emitting the raw millisecond debt all passed the
+			// suite. It shares `retryAfterSeconds` with the body's `retryAfter` as of
+			// this change, and a shared owner is only as safe as the sites that
+			// notice when it stops being shared.
+			const stub = getRateLimiter("retry-after-header");
+
+			// Drained the same way the test above is: a ceiling of one, so the debt
+			// is the whole window rather than a race against the refill.
+			await stub.fetch("http://localhost/consume?identity=header&limit=1");
+			const denied = await stub.fetch("http://localhost/consume?identity=header&limit=1");
+
+			expect(denied.status).toBe(429);
+
+			const retryAfter = Number(denied.headers.get("Retry-After"));
+			// Whole seconds, per RFC 9110 — and never a `0`, which reads to a client
+			// as "immediately", the one answer a refusal must not give.
+			expect(Number.isInteger(retryAfter)).toBe(true);
+			expect(retryAfter).toBeGreaterThan(0);
+			// Bounded by the window: milliseconds here would be 60000, which a client
+			// would honour as sixteen hours.
+			expect(retryAfter).toBeLessThanOrEqual(60);
+		});
+
 		it("should use default identity when not provided", async () => {
 			const stub = getRateLimiter("consume-default");
 			const response = await stub.fetch("http://localhost/consume");
