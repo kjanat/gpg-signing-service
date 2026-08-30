@@ -86,7 +86,40 @@ activation_apply() {
 	fi
 }
 
-# activation_procedure — the two commands, on stderr, under a failure.
+# activation_unusable STATE — the diagnosis for a state neither suite can assert
+# against, on stderr. Shared, so `both` and `absent` cannot be described one way
+# by test-dependabot-fix.sh and another by test-claude-review-gate.sh.
+#
+# `both` in particular must NOT be answered with activation_procedure. Once
+# .github/workflows/claude-dependabot-fix.yml exists, `git apply` refuses the
+# patch outright — "already exists in working directory" — so pointing a human
+# at it there sends them at a command that cannot run. It is also the state a
+# half-finished activation lands in, which makes it the one most likely to be
+# read under pressure.
+activation_unusable() {
+	case "$1" in
+		both)
+			echo 'FAIL: the workflow is active AND a copy is still in .github/workflows-pending/.' >&2
+			echo '      Two files claim to be this workflow; only one of them runs, and both' >&2
+			echo '      look authoritative in review. This is a half-applied activation, so' >&2
+			echo '      do NOT re-run git apply — the patch refuses once the live file exists.' >&2
+			echo '      Finish it by hand:' >&2
+			echo '        git rm .github/workflows-pending/claude-dependabot-fix.yml' >&2
+			echo '        git rm .github/workflows-pending/activate.patch' >&2
+			echo '      and confirm .github/workflows/claude-code-review.yml carries the' >&2
+			echo '      prompt correction the patch makes; the rename alone is not the whole' >&2
+			echo '      activation. See docs/dependabot-fix-path.md#activation.' >&2
+			;;
+		*)
+			echo 'FAIL: claude-dependabot-fix.yml is in neither .github/workflows/ nor' >&2
+			echo '      .github/workflows-pending/. The trusted Dependabot write path is' >&2
+			echo '      gone, and no checked-in patch can bring it back.' >&2
+			;;
+	esac
+}
+
+# activation_procedure — the two commands, on stderr, under a failure. Only
+# correct in the `pending` state; see activation_unusable for the others.
 activation_procedure() {
 	echo '      Activate it with a credential that can write .github/workflows/' >&2
 	echo '      (a GitHub App token cannot: it has no workflows permission):' >&2
