@@ -16,6 +16,7 @@ implementation disagree.
 | Deploy your own instance                   | [Self-hosting](self-hosting.md)               |
 | Understand the trust boundary              | [Security model](security-model.md)           |
 | Review how CI writes to Dependabot PRs     | [Dependabot fix path](dependabot-fix-path.md) |
+| Understand how the `@claude` job is gated  | [Agent harness](claude-agent-harness.md)      |
 | Look up an endpoint                        | [API guide](api.md)                           |
 | Diagnose a failure                         | [Troubleshooting](troubleshooting.md)         |
 | Look up an error code                      | [Error reference](errors.md)                  |

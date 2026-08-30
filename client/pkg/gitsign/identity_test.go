@@ -56,6 +56,24 @@ func TestParseIdentReadsAGitHeaderValue(t *testing.T) {
 	}
 }
 
+// git will write "<address> seconds ±hhmm" with no name at all, and a repair
+// has to be able to read one back before it can refuse it by name. The parser
+// splits on the *last* bracket pair, so the empty prefix is a legitimate
+// result rather than a missing opening bracket, and display() spells it the
+// way a refusal quotes it.
+func TestParseIdentAcceptsAnIdentWithNoName(t *testing.T) {
+	got, err := parseIdent(committerHeader, "<"+botEmail+"> 1756538100 +0200")
+	if err != nil {
+		t.Fatalf("could not parse a nameless ident: %v", err)
+	}
+	if got.name != "" || got.email != botEmail {
+		t.Errorf("parsed %+v, want an empty name and %q", got, botEmail)
+	}
+	if got.display() != "<"+botEmail+">" {
+		t.Errorf("displayed %q, want %q", got.display(), "<"+botEmail+">")
+	}
+}
+
 // git tolerates idents this parser refuses, and that asymmetry is deliberate:
 // released go-git reads an ident with no space before its date as a timestamp
 // decades off, so a repair that guessed at one would move the commit rather
