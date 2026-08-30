@@ -110,7 +110,7 @@ func TestFixtureGitIgnoresInjectedHostConfig(t *testing.T) {
 	}
 }
 
-// A global config file the host points at must not reach a fixture either.
+// A global config file on the host must not reach a fixture either.
 //
 // The file is put where git finds it on its own rather than named through
 // GIT_CONFIG_GLOBAL, because the scrub deletes that variable before git is
