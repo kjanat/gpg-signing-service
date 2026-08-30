@@ -39,7 +39,7 @@ job and the untrusted pull request are one `if:` apart for the whole file.
 
 ## What this repository does instead
 
-[`.github/workflows/claude-dependabot-fix.yml`](../.github/workflows/claude-dependabot-fix.yml)
+[`claude-dependabot-fix.yml`](../.github/workflows-pending/claude-dependabot-fix.yml)
 triggers on `workflow_run`, on completion of CI. That gives the same elevation
 with a different shape:
 
@@ -143,6 +143,26 @@ third-party install scripts should not also be able to sign things.
 The escape hatch and the fail-closed contract are unchanged from #107. A job
 that means to sign and cannot fails, rather than quietly producing an unsigned
 commit; `GPG_SIGN_DISABLE` remains the only way to sign nothing on purpose.
+
+## Activating it
+
+The workflow ships in `.github/workflows-pending/`, not `.github/workflows/`,
+and is therefore **not running yet**. This is a platform constraint rather than
+a design choice: a GitHub App token has no `workflows` permission, so the
+automation that opened this change could not create a file under
+`.github/workflows/`. The push is rejected outright, and the rejection kills
+the whole push rather than just that one file.
+
+A human activates it with one command:
+
+```bash
+git mv .github/workflows-pending/claude-dependabot-fix.yml .github/workflows/
+```
+
+Nothing else has to change. `task test:dependabot-fix` resolves the live path
+first and falls back to the pending one, so it starts guarding the file where it
+lands, and refuses to pass if the file is in neither place — or, after a
+half-finished move, in both.
 
 ## Secret provisioning
 
