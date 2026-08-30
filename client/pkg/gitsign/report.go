@@ -88,23 +88,10 @@ func (s *session) reportStaleMergetag(raw []byte, commit string, moved map[strin
 		return
 	}
 
-	// An octopus merge embeds one tag per merged tag object, so every moved
-	// parent is checked against every embedded tag rather than the first one
-	// alone. Only the leading line of a tag body is its "object" line; a match
-	// anywhere else in the body would be the tag message quoting a SHA, which
-	// this run did not rewrite.
-	var stale []string
-	for parent := range moved {
-		if slices.ContainsFunc(tags, func(tag string) bool {
-			return strings.HasPrefix(tag, "object "+parent)
-		}) {
-			stale = append(stale, short(parent))
-		}
-	}
+	stale := staleMergeTags(tags, moved)
 	if len(stale) == 0 {
 		return
 	}
-	slices.Sort(stale)
 
 	s.warn("the merge %s carries a mergetag naming %s, which this run rewrote; the embedded tag is "+
 		"signed by its tagger, so it cannot be repointed at the rewritten parent and now matches no parent.",
@@ -137,4 +124,24 @@ func (s *session) reportCompatObjectFormat(ctx context.Context) error {
 		"the %s signature here, so nothing reads as unsigned.",
 		s.format, compat, s.format, compat, s.format)
 	return nil
+}
+
+// staleMergeTags returns the abbreviated SHAs of the moved parents an embedded
+// tag still names, sorted.
+//
+// An octopus merge embeds one tag per merged tag object, so every moved parent
+// is checked against every embedded tag rather than the first one alone. Only
+// the leading line of a tag body is its "object" line; a match anywhere else in
+// the body would be the tag message quoting a SHA, which no run rewrote.
+func staleMergeTags(tags []string, moved map[string]bool) []string {
+	var stale []string
+	for parent := range moved {
+		if slices.ContainsFunc(tags, func(tag string) bool {
+			return strings.HasPrefix(tag, "object "+parent)
+		}) {
+			stale = append(stale, short(parent))
+		}
+	}
+	slices.Sort(stale)
+	return stale
 }

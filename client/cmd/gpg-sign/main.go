@@ -70,6 +70,7 @@ This tool allows you to:
   - Retrieve public keys
   - Sign commit data
   - Apply signatures to commits in a local repository
+  - Repair the identity headers of a range of commits and sign them
   - Manage keys (admin)
   - Query audit logs (admin)
 
@@ -91,6 +92,7 @@ func init() {
 	rootCmd.AddCommand(publicKeyCmd)
 	rootCmd.AddCommand(signCmd)
 	rootCmd.AddCommand(signCommitCmd)
+	rootCmd.AddCommand(repairHistoryCmd)
 	rootCmd.AddCommand(adminCmd)
 }
 
