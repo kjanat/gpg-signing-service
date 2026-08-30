@@ -452,10 +452,28 @@ describe("scrubValue", () => {
 	});
 
 	it("stops descending past the depth cap", () => {
+		/** A `{ next: { next: ... { leaf } } }` chain `levels` deep. */
+		const nest = (levels: number): Record<string, unknown> => {
+			let node: Record<string, unknown> = { leaf: "sentinel-value" };
+			for (let i = 0; i < levels; i++) node = { next: node };
+			return node;
+		};
+
+		// Inside the cap, an ordinary value survives untouched.
+		expect(JSON.stringify(scrubValue(nest(10), envSecrets))).toContain("sentinel-value");
+
+		// Past it the subtree is replaced wholesale — the cap is what bounds the
+		// walk over an event whose depth this module does not control, and it has
+		// to bite on content that no other rule would have redacted.
+		const capped = JSON.stringify(scrubValue(nest(20), envSecrets));
+		expect(capped).not.toContain("sentinel-value");
+		expect(capped).toContain(REDACTED);
+	});
+
+	it("redacts a secret buried below the depth cap", () => {
 		let deep: Record<string, unknown> = { leak: SECRETS.passphrase };
 		for (let i = 0; i < 20; i++) deep = { next: deep };
 
-		// The cap replaces the subtree wholesale, so nothing below it escapes.
 		expect(JSON.stringify(scrubValue(deep, envSecrets))).not.toContain(SECRETS.passphrase);
 	});
 
