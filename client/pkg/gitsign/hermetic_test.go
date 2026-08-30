@@ -65,6 +65,11 @@ func TestFixtureGitWritesObjectsWithoutAHostIdentity(t *testing.T) {
 
 // A host that exports an identity must not be able to lend it to a fixture
 // either, or a test asserting on authorship would read the developer's name.
+//
+// The commit is written with no caller environment on purpose. Going through
+// commit() would name an identity that outranks the ambient one by itself,
+// appended last and winning with or without the scrub, so the pin under test
+// would never be the thing deciding and this would pass either way.
 func TestFixtureGitIgnoresAnAmbientIdentity(t *testing.T) {
 	requireGit(t)
 	t.Setenv(envAuthorName, "Ambient")
@@ -73,10 +78,10 @@ func TestFixtureGitIgnoresAnAmbientIdentity(t *testing.T) {
 	t.Setenv(envCommitterEmail, "ambient@example.invalid")
 
 	dir := initRepo(t)
-	sha := commit(t, dir, "chore: ambient", foreignEmail)
+	git(t, dir, nil, "commit", "--allow-empty", "-m", "chore: ambient")
 
-	got := git(t, dir, nil, "show", "--no-patch", "--format=%an <%ae>|%cn <%ce>", sha)
-	want := fixtureName + " <" + foreignEmail + ">|" + fixtureName + " <" + foreignEmail + ">"
+	got := git(t, dir, nil, "show", "--no-patch", "--format=%an <%ae>|%cn <%ce>", head(t, dir))
+	want := fixtureName + " <" + serviceEmail + ">|" + fixtureName + " <" + serviceEmail + ">"
 	if got != want {
 		t.Errorf("an ambient identity reached the fixture:\n got %s\nwant %s", got, want)
 	}
@@ -106,21 +111,26 @@ func TestFixtureGitIgnoresInjectedHostConfig(t *testing.T) {
 }
 
 // A global config file the host points at must not reach a fixture either.
+//
+// As above, the commit names no identity of its own: user.name and user.email
+// in a config file only ever get consulted when the environment is silent, so
+// a fixture that pinned them here would be isolated from this file by the
+// caller rather than by GIT_CONFIG_GLOBAL.
 func TestFixtureGitIgnoresAHostGlobalConfig(t *testing.T) {
 	requireGit(t)
 
 	hostile := filepath.Join(t.TempDir(), "gitconfig")
-	if err := os.WriteFile(hostile, []byte("[user]\n\tname = Hostile\n\temail = hostile@example.invalid\n"+
-		"[commit]\n\tgpgsign = true\n"), 0o600); err != nil {
+	if err := os.WriteFile(hostile, []byte("[user]\n\tname = Hostile\n\temail = hostile@example.invalid\n"), 0o600); err != nil {
 		t.Fatalf("could not write the hostile config: %v", err)
 	}
 	t.Setenv("GIT_CONFIG_GLOBAL", hostile)
 
 	dir := initRepo(t)
-	sha := commit(t, dir, "chore: hostile global config", serviceEmail)
+	git(t, dir, nil, "commit", "--allow-empty", "-m", "chore: hostile global config")
 
-	if email := git(t, dir, nil, "show", "--no-patch", "--format=%ae", sha); email != serviceEmail {
-		t.Errorf("a host global config chose the fixture's author: %q", email)
+	got := git(t, dir, nil, "show", "--no-patch", "--format=%an <%ae>", head(t, dir))
+	if want := fixtureName + " <" + serviceEmail + ">"; got != want {
+		t.Errorf("a host global config chose the fixture's author:\n got %s\nwant %s", got, want)
 	}
 }
 
