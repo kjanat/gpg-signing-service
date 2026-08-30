@@ -1,17 +1,35 @@
 #:schema https://mise.jdx.dev/schema/mise.json
 
+# Anything that can rewrite a file this repository commits is pinned; anything
+# that only reads is free to float. A floating linter reports a new finding and
+# someone looks at it, but a floating *producer* silently rewrites the tree from
+# whatever the machine resolved that day, which is #123/#125: `wrangler = "latest"`
+# and `biome = "latest"` each turned `mise install` into a repository mutation.
+#
+#   * wrangler  writes worker-configuration.d.ts (`wrangler types`)
+#   * biome     rewrites imports (`biome check --fix` in the pre-commit lint:fix)
+#   * tombi     rewrites TOML -- .dprint.jsonc shells out to it for *.toml
+#   * golangci-lint  rewrites Go -- .dprint.jsonc shells out to `golangci-lint fmt`
+#
+# wrangler is deliberately the same version bun.lock resolves, not merely some
+# fixed one: `wrangler types` stamps its own workerd into the generated header,
+# so two channels at two versions are two producers again. The two channels
+# exist because they reach different places -- .github/workflows/d1-migrate.yml
+# and scripts/cf.sh's WORKERS_CI branch run wrangler on a checkout that has no
+# node_modules -- but they are one version, and scripts/test-tool-pins.sh fails
+# if they drift apart.
 [tools]
 "cargo:runner-run" = "latest"
 actionlint         = "latest"
-biome              = "latest"
+biome              = "2.5.11"
 cargo-binstall     = "latest"
 golangci-lint      = "2.13.2"
 lefthook           = "latest"
 shellcheck         = "latest"
 task               = "latest"
-tombi              = "latest"
+tombi              = "1.5.0"
 uv                 = "latest"
-wrangler           = "latest"
+wrangler           = "4.123.0"
 
 [settings]
 idiomatic_version_file_enable_tools = ["go"]
