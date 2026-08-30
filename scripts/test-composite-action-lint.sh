@@ -183,6 +183,111 @@ if ! output="$(run_linter "${root}")"; then
 	fail "a comment quoting the broken shape was flagged as the shape itself:"$'\n'"${output}"
 fi
 
+# CA001's false-positive surface is the part that decides whether this gate
+# survives contact: there is no `# composite-lint disable`, so every one of
+# these is an unsuppressible red `task lint`.
+new_case "errexit-legitimate \`\$?\` reads are not flagged"
+root="$(
+	fixture_action errexit-ok <<'YAML'
+name: Errexit OK
+description: shapes where a $? read is live under errexit
+runs:
+  using: composite
+  steps:
+    - name: Trap
+      shell: bash
+      run: |
+        echo start
+        # Deliberately no variable: ShellCheck's own SC2154 does not track an
+        # assignment inside a single-quoted trap body, and this case is about
+        # CA001, not about that.
+        trap 'echo "step died with $?"' ERR
+        git diff
+    - name: Function body
+      shell: bash
+      run: |
+        report() {
+          echo "rc=$?"
+        }
+        git diff || report
+    - name: Guarded compound
+      shell: bash
+      run: |
+        if ! out="$(git diff)"; then
+          rc=$?
+          echo "${rc} ${out}"
+        fi
+YAML
+)"
+if ! output="$(run_linter "${root}")"; then
+	fail "CA001 fired on a live \$? read (trap body, function body, or guarded compound):"$'\n'"${output}"
+fi
+
+# The repo's own root action.yml is 77 lines of `shell: pwsh`, where `$?` is
+# PowerShell's boolean success variable and reading it is the idiom. CA001
+# describes `bash -e` and must not be aimed at a shell it does not model.
+new_case "CA001 is scoped to the shells it models, but CA002 is not"
+root="$(
+	fixture_action pwsh-status <<'YAML'
+name: Pwsh status
+description: PowerShell $? plus a malformed command from a non-shell step
+runs:
+  using: composite
+  steps:
+    - name: Pwsh
+      shell: pwsh
+      run: |
+        git diff
+        if (-not $?) { Write-Host "::error::git diff failed" }
+YAML
+)"
+if ! output="$(run_linter "${root}")"; then
+	fail "CA001 was applied to a pwsh block, where \$? is a boolean, not a status:"$'\n'"${output}"
+fi
+root="$(
+	fixture_action python-command <<'YAML'
+name: Python command
+description: a malformed workflow command is lost whatever printed it
+runs:
+  using: composite
+  steps:
+    - name: Py
+      shell: python
+      run: |
+        print("::notice:lost")
+YAML
+)"
+if output="$(run_linter "${root}")"; then
+	fail "CA002 stopped covering non-shell steps:"$'\n'"${output}"
+elif ! grep -q 'CA002' <<<"${output}"; then
+	fail "python step failed but not with CA002:"$'\n'"${output}"
+fi
+
+# A `set -e` in the ShellCheck prelude is a command, and ShellCheck only honours
+# a file-level directive when nothing executable precedes it -- so a prelude that
+# executes anything silently voids every `# shellcheck disable=` written at the
+# top of a run block, with no error to say so.
+new_case "a file-level shellcheck directive in a run block is honoured"
+root="$(
+	fixture_action directive <<'YAML'
+name: Directive
+description: block-scoped shellcheck disable must reach the whole block
+runs:
+  using: composite
+  steps:
+    - name: Disabled
+      shell: bash
+      run: |
+        # shellcheck disable=SC2086
+        files=$(ls)
+        printf '%s\n' $files
+        printf '%s\n' $files
+YAML
+)"
+if ! output="$(run_linter "${root}")"; then
+	fail "a file-level \`# shellcheck disable\` at the top of a run block was ignored:"$'\n'"${output}"
+fi
+
 # ---------------------------------------------------------------------------
 # Mutation 2: restore the malformed workflow command on the real file.
 # ---------------------------------------------------------------------------

@@ -429,7 +429,7 @@ function skipHeredocs(script: string, start: number, pending: { tag: string; ind
 // ---------------------------------------------------------------------------
 
 /** Segment texts after which `$?` is a live, meaningful status read. */
-const COMPOUND_TERMINATORS = /(^|[\s;])(fi|done|esac|then|else|do|\}|\))\s*$/;
+const COMPOUND_TERMINATORS = /(^|[\s;])(fi|done|esac|then|else|do|\}|\)|\{)\s*$/;
 
 function checkErrexitStatusReads(block: RunBlock, segments: Segment[]): Finding[] {
 	const findings: Finding[] = [];
@@ -443,7 +443,10 @@ function checkErrexitStatusReads(block: RunBlock, segments: Segment[]): Finding[
 	for (const segment of segments) {
 		const trimmed = segment.text.trim();
 
-		const statusIndex = segment.text.indexOf("$?");
+		// A trap body runs *after* the command that tripped errexit, so its `$?`
+		// is the one status errexit guarantees is live -- `trap 'rc=$?; ...' ERR`
+		// is the reporting idiom this rule exists to steer people towards.
+		const statusIndex = /^\s*trap\b/.test(segment.text) ? -1 : segment.text.indexOf("$?");
 		if (
 			statusIndex !== -1 &&
 			errexit &&
@@ -594,12 +597,17 @@ function maskExpressions(script: string): string {
 }
 
 function runShellCheck(block: RunBlock, dialect: "bash" | "sh"): Finding[] {
-	// Prepended so ShellCheck analyses the script under the options the runner
-	// actually sets, rather than under bare defaults.
+	// Records the shell the runner picks (ShellCheck reads the shebang) and the
+	// flags it sets, but as comments only, never as a command: ShellCheck honours a file-level
+	// `# shellcheck disable=...` directive only when nothing executable precedes
+	// it, so a `set -e -o pipefail` here would silently demote every such
+	// directive written at the top of a `run:` block. It bought nothing anyway --
+	// ShellCheck's errexit-sensitive checks (SC2310-SC2312) are opt-in and this
+	// gate does not enable them.
 	const prelude =
 		dialect === "bash"
-			? "#!/usr/bin/env bash\n# runner: bash --noprofile --norc -e -o pipefail {0}\nset -e -o pipefail\n"
-			: "#!/bin/sh\n# runner: sh -e {0}\nset -e\n";
+			? "#!/usr/bin/env bash\n# runner: bash --noprofile --norc -e -o pipefail {0}\n"
+			: "#!/bin/sh\n# runner: sh -e {0}\n";
 	const preludeLines = prelude.split("\n").length - 1;
 
 	let stdout: string;
@@ -663,13 +671,20 @@ function lintFile(absPath: string, root: string): { findings: Finding[]; blocks:
 
 	for (const block of blocks) {
 		const { masked, segments } = tokenize(block.script);
+		const dialect = shellDialect(block.shell);
 
-		for (const finding of [...checkErrexitStatusReads(block, segments), ...checkWorkflowCommands(block, masked)]) {
+		// CA001 models `bash -e`. In a `shell: pwsh` step `$?` is PowerShell's
+		// boolean success variable and reading it is the idiom, so the rule is
+		// scoped to the shells it actually describes. CA002 stays shell-agnostic:
+		// a workflow command is lost the same way whatever printed it.
+		for (const finding of [
+			...(dialect === null ? [] : checkErrexitStatusReads(block, segments)),
+			...checkWorkflowCommands(block, masked),
+		]) {
 			const pos = resolvePosition(block, finding.col);
 			findings.push({ ...finding, line: pos.line, col: pos.col });
 		}
 
-		const dialect = shellDialect(block.shell);
 		if (dialect !== null) findings.push(...runShellCheck(block, dialect));
 	}
 
