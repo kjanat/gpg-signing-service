@@ -164,15 +164,31 @@ export interface KeyGrant {
 /**
  * Can this grant authorize a signature right now?
  *
- * Mirrors the server's own test — `verifyServiceToken` and `resolveOIDCSubject`
- * both apply exactly this rule — including its treatment of an unparseable
- * `expiresAt`: `Date.parse` yields `NaN`, every comparison against it is false,
- * and the row is honoured. Re-deriving a stricter rule here would report a key
- * as unmonitored that the sign path would still sign with.
+ * Mirrors the server's own test rather than re-deriving one, so the monitored
+ * set cannot claim a key the sign path would refuse — or drop one it would
+ * still sign with. Both paths agree on a revoked row and on the boundary
+ * instant (`expiresAt === now` is still live), and they are written the same
+ * way up to that point.
+ *
+ * They part on an `expiresAt` that does not parse, so the rule is applied per
+ * grant kind rather than picked. `verifyServiceToken` refuses only on
+ * `Date.parse(expires_at) < Date.now()`, and `NaN < now` is false, so it
+ * honours the row. `resolveOIDCSubject` requires `Date.parse(expires_at) >=
+ * now`, and `NaN >= now` is *also* false, so it refuses the row. One condition
+ * cannot mirror both: reading the service-token rule for a subject would put a
+ * key in the report that nothing can sign with, and reading the subject rule
+ * for a token would drop one that still signs.
+ *
+ * Defensive either way — `expires_at` is written server-side from
+ * `expiresInDays`, so a row that does not parse is a corrupted one — but the
+ * whole premise of this module is that it does not guess at the sign path.
  */
 export function isGrantLive(grant: KeyGrant, now: Date): boolean {
 	if (grant.revokedAt) return false;
-	return !(grant.expiresAt && Date.parse(grant.expiresAt) < now.getTime());
+	if (!grant.expiresAt) return true;
+
+	const expiresAt = Date.parse(grant.expiresAt);
+	return grant.kind === "oidc-subject" ? expiresAt >= now.getTime() : !(expiresAt < now.getTime());
 }
 
 /** Why a key is in the monitored set */

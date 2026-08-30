@@ -233,16 +233,22 @@ describe("isGrantLive", () => {
 	});
 
 	it("keeps a grant expiring exactly now, as the sign path does", () => {
-		// `verifyServiceToken` refuses only on `expires_at < now`, so the boundary
-		// instant is still live. A stricter rule here would drop a key the service
-		// would still sign with.
+		// `verifyServiceToken` refuses only on `expires_at < now` and
+		// `resolveOIDCSubject` honours `expires_at >= now`, so the boundary
+		// instant is live on both paths. A stricter rule here would drop a key
+		// the service would still sign with.
 		expect(isGrantLive(grant({ expiresAt: NOW.toISOString() }), NOW)).toBe(true);
+		expect(isGrantLive(grant({ kind: "oidc-subject", expiresAt: NOW.toISOString() }), NOW)).toBe(true);
 	});
 
-	it("treats an unparseable expiry as live, mirroring the server", () => {
-		// Date.parse yields NaN and every comparison against it is false, so the
-		// server honours the row. The monitor has to agree or it under-reports.
+	it("reads an unparseable expiry the way the grant's own auth path does", () => {
+		// The two paths disagree, and `NaN` is why: `verifyServiceToken` refuses
+		// on `NaN < now` (false, so the token is honoured) while
+		// `resolveOIDCSubject` requires `NaN >= now` (also false, so the subject
+		// is refused). Reading one rule for both would either monitor a key
+		// nothing can sign with or drop one that still signs.
 		expect(isGrantLive(grant({ expiresAt: "not a date" }), NOW)).toBe(true);
+		expect(isGrantLive(grant({ kind: "oidc-subject", expiresAt: "not a date" }), NOW)).toBe(false);
 	});
 });
 
