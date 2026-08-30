@@ -65,13 +65,45 @@ const SERVICE_NAME = "gpg-signing-service";
 export type AlertMail = ReportDocument;
 
 /**
+ * Which of the monitor's two pieces of news an alert carries.
+ *
+ * A closed union, passed at the call site rather than derived at the boundary.
+ * The two alerts read differently in an inbox but are the same shape in a log
+ * line, and they mean opposite things: `key-expiry` is the monitor completing
+ * and having something to say about the keys — one that needs a human, or no
+ * active key to check at all — while `monitor-failure` is the monitor reporting
+ * that it reached no verdict on any key because it could not run. Collapsing
+ * them in Workers logs would make "the monitor sent something" unreadable as
+ * either.
+ *
+ * The sender is told which; it does not read the rendered subject or body to
+ * find out. Text is written for operators and may be reworded, so a log
+ * classification that depended on it would be one rewrite away from lying.
+ */
+export type AlertKind = "key-expiry" | "monitor-failure";
+
+/**
+ * The message each kind of successful send is logged under.
+ *
+ * Fixed strings, one per {@link AlertKind}, so both classifications are stable
+ * enough to build a log query on and neither can pick up rendered content.
+ */
+const ALERT_SENT_MESSAGE: Record<AlertKind, string> = {
+	"key-expiry": "Key expiry alert sent",
+	"monitor-failure": "Key expiry monitor self-failure alert sent",
+};
+
+/**
  * Where an alert goes.
  *
  * A function rather than the binding itself so the tests can watch what would
  * have been sent without a live Email Service account — and so the one place
  * that talks to Cloudflare is one line long and separately assertable.
+ *
+ * The {@link AlertKind} rides along with the rendered mail so a sender can
+ * classify the send without parsing it; see {@link bindingMailSender}.
  */
-export type MailSender = (mail: AlertMail) => Promise<void>;
+export type MailSender = (mail: AlertMail, kind: AlertKind) => Promise<void>;
 
 /** The binding and addresses this deployment sends alerts through */
 export interface MailConfig {
@@ -126,7 +158,7 @@ export function mailConfig(env: Env): MailConfig {
 export function bindingMailSender(env: Env): MailSender {
 	const { binding, from, to } = mailConfig(env);
 
-	return async (mail) => {
+	return async (mail, kind) => {
 		const { messageId } = await binding.send({
 			from,
 			to,
@@ -134,7 +166,11 @@ export function bindingMailSender(env: Env): MailSender {
 			text: mail.text,
 			html: mail.html,
 		});
-		logger.info("Key expiry alert sent", { action: "key-expiry-alert", messageId, to });
+		// `alert` is the discriminator the caller passed, not anything read back
+		// out of `mail`: what was sent is the operator's copy, and the log line
+		// records which of the two things the monitor had to say — never either
+		// body, which is where the key ids and the deployment's state live.
+		logger.info(ALERT_SENT_MESSAGE[kind], { action: "key-expiry-alert", alert: kind, messageId, to });
 	};
 }
 
@@ -247,7 +283,7 @@ export async function runKeyExpiryMonitor(env: Env, options: MonitorOptions = {}
 		});
 	}
 
-	await sendMail(report);
+	await sendMail(report, "key-expiry");
 
 	return { rows, actionable, scope, report, checkedNothing, alerted: true };
 }
@@ -351,7 +387,7 @@ async function reportSelfFailure(
 	});
 
 	try {
-		await sendMail(renderFailureReport(kind, context));
+		await sendMail(renderFailureReport(kind, context), "monitor-failure");
 	} catch (sendError) {
 		logger.error("Key expiry monitor could not report its own failure", sendError, {
 			action: "key-expiry-check",
