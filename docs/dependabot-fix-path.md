@@ -216,11 +216,18 @@ containing the word — an instruction wedged between two of them reads as part 
 the same instruction to any model, and scoping by keyword left exactly that hole.
 Within the span it requires:
 
-- no sentence containing the word `push`, unless that sentence also names
+- no line containing the word `push`, unless that same line also names
   `claude-dependabot-fix.yml`. Matching the word rather than a hand-written
   sentence shape is deliberate: an earlier version required
   "push … to the PR/branch" with at most three words in between, and
-  "push directly to the head branch" went straight through it;
+  "push directly to the head branch" went straight through it. The unit is a
+  line — split again at sentence ends, never joined across them — for the same
+  reason: a sentence is delimited by punctuation the author chooses, so
+  `- fix it and push the fix to the PR branch` followed by a bullet naming the
+  workflow was one unpunctuated "sentence" that named the trusted path, and the
+  instruction rode along inside it. Per line it stands alone. The cost is that
+  prose about the trusted path has to keep the word and the file name on one
+  line;
 - the paragraph names `claude-dependabot-fix.yml`, so a diagnosis has somewhere
   to go; and
 - it states the credential fact — a read-only token, or no write authority.
@@ -235,12 +242,14 @@ thing claude-dependabot-fix.yml does` passes — that is a sentence somebody has
 to write deliberately while looking at the name of the workflow holding the
 token, which is a different failure mode from drift.
 
-Five mutations exercise it: the pre-#71 sentence restored verbatim, two
+Seven mutations exercise it: the pre-#71 sentence restored verbatim, two
 paraphrases of it, the same instruction in an unnamed paragraph between two that
-do name the bot, the trusted-path pointer removed, and every statement about the
-credential removed. The literal restore is the least informative of them — a
-guard written from one sentence is guaranteed to catch that sentence — and the
-paraphrases are the ones that earn the check.
+do name the bot, the instruction as a bullet above a bullet naming the workflow,
+the instruction with the workflow named in a parenthetical on the next line, the
+trusted-path pointer removed, and every statement about the credential removed.
+The literal restore is the least informative of them — a guard written from one
+sentence is guaranteed to catch that sentence — and the paraphrases and the two
+laundering shapes are the ones that earn the check.
 
 ## Secret provisioning
 

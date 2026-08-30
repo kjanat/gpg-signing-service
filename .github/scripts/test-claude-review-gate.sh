@@ -277,19 +277,41 @@ dependabot_prose = "\n\n".join(paragraphs[mentions[0] : mentions[-1] + 1])
 # straight to the PR branch" both went through it untouched.
 #
 # The paragraph still has to be able to say that the trusted path pushes, so the
-# escape is per sentence and by name: a sentence may mention a push only while
-# naming the workflow that actually holds the token.
+# escape is per unit and by name: a unit may mention a push only while naming
+# the workflow that actually holds the token.
+#
+# A unit is a line, then split again at sentence ends — not a sentence spanning
+# lines. Sentences alone were launderable, because the name only had to land
+# somewhere in the same run of text as the instruction, and "the same sentence"
+# is decided by punctuation the author controls. Both of these passed:
+#
+#     - fix it and push the fix to the PR branch
+#     - the trusted path is .github/workflows/claude-dependabot-fix.yml
+#
+#     If it breaks, fix it and push to the PR branch
+#     (the trusted path is .github/workflows/claude-dependabot-fix.yml).
+#
+# The first has no full stop, so both bullets are one "sentence"; the second is
+# one sentence by construction. Per line, the instruction stands alone and is
+# named. The cost is that a legitimate sentence about the trusted path has to
+# keep the word and the file name on one line, which the message below says.
+units = [
+    u.strip()
+    for line in dependabot_prose.split("\n")
+    for u in re.split(r"(?<=[.!?])\s+", line)
+]
 offenders = [
-    s.strip()
-    for s in re.split(r"(?<=[.!?])\s+", dependabot_prose)
-    if re.search(r"\bpush\w*\b", s, re.IGNORECASE)
-    and "claude-dependabot-fix.yml" not in s
+    u
+    for u in units
+    if re.search(r"\bpush\w*\b", u, re.IGNORECASE)
+    and "claude-dependabot-fix.yml" not in u
 ]
 assert not offenders, (
     "the review prompt tells this run to push to a Dependabot branch: "
     f"{offenders[0]!r}. A Dependabot-triggered pull_request run has a "
     "read-only token, so that push cannot succeed. Diagnose here and leave "
-    "the write to .github/workflows/claude-dependabot-fix.yml."
+    "the write to .github/workflows/claude-dependabot-fix.yml — and if this "
+    "line is about that workflow, name it on the same line."
 )
 
 assert "claude-dependabot-fix.yml" in dependabot_prose, (
@@ -427,6 +449,23 @@ review_mutate 'prompt-regains-push-paraphrased' \
 # looking only at paragraphs containing "dependabot" never saw it.
 review_mutate 'prompt-regains-push-unnamed-paragraph' \
 	$'s|^            Diagnose only\\.|            Fix it and push to the PR branch so the update can merge.\\\n\\\n            Diagnose only.|' \
+	'tells this run to push to a Dependabot branch'
+
+# The instruction as a bullet, with the pointer as the bullet under it. Neither
+# bullet ends in a full stop, so to a sentence splitter the two are one
+# sentence — and that sentence names the trusted path, so the whole thing was
+# excused. This is the shape the instruction most plausibly comes back in:
+# nobody rewriting a prompt writes prose where a list will do.
+review_mutate 'prompt-regains-push-in-a-list' \
+	$'s|^            Diagnose only\\.|            When the bump is broken:\\\n            - fix it and push the fix to the PR branch\\\n            - the trusted path is .github/workflows/claude-dependabot-fix.yml\\\n\\\n            Diagnose only.|' \
+	'tells this run to push to a Dependabot branch'
+
+# The same laundering without a list: the pointer as a parenthetical on the
+# next line. One sentence, one mention, and the instruction rides along. Where
+# the name falls relative to the instruction is the author's choice, so it
+# cannot be what decides.
+review_mutate 'prompt-regains-push-named-on-the-next-line' \
+	$'s|^            Diagnose only\\.|            If it breaks, fix it and push to the PR branch\\\n            (the trusted path is .github/workflows/claude-dependabot-fix.yml).\\\n\\\n            Diagnose only.|' \
 	'tells this run to push to a Dependabot branch'
 
 # The pointer removed: the diagnosis is then correct and useless.
