@@ -75,8 +75,7 @@ Example:
 		if err != nil {
 			// The guard already printed its per-commit report; wrapping it
 			// again would bury the explanation under a generic prefix.
-			var blocked *gitsign.ResignError
-			if errors.As(err, &blocked) {
+			if blocked, ok := errors.AsType[*gitsign.ResignError](err); ok {
 				err = blocked
 			} else {
 				err = fmt.Errorf("sign-commit failed: %w", err)
@@ -113,8 +112,7 @@ type signCommitResult struct {
 // its per-commit report exists precisely to be consumed.
 func signCommitFailure(result *gitsign.Result, err error) signCommitResult {
 	document := signCommitResult{Error: err.Error(), Result: result}
-	var blocked *gitsign.ResignError
-	if errors.As(err, &blocked) {
+	if blocked, ok := errors.AsType[*gitsign.ResignError](err); ok {
 		document.Resign = blocked
 	}
 	return document
