@@ -53,6 +53,7 @@ tasks:
       - task: test:sign-commits
       - task: test:sign-commit-example
       - task: test:review-gate
+      - task: test:dependabot-fix
       - task: test:session-start
 
   test:gnupg-interop:
@@ -80,6 +81,11 @@ tasks:
     desc: Test the Claude review job's no-token gate and its fork path
     cmd: bash .github/scripts/test-claude-review-gate.sh
 
+  test:dependabot-fix:
+    desc: Test the trusted Dependabot write path's authorization, allowlist and privilege boundary
+    aliases: [dbf]
+    cmd: bash .github/scripts/test-dependabot-fix.sh
+
   test:session-start:
     desc: Test the cloud-session hook's shared mise tree, trust and install gating
     cmd: bash scripts/test-session-start-hook.sh
@@ -99,6 +105,7 @@ tasks:
       - task: test:sign-commits
       - task: test:sign-commit-example
       - task: test:review-gate
+      - task: test:dependabot-fix
       - task: test:session-start
 
   test:watch:

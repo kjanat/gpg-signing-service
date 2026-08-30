@@ -16,6 +16,11 @@ The deployment operator and Cloudflare infrastructure are trusted with:
 
 There is no HSM, external KMS, per-tenant vault, or operator role model.
 
+This section is about the deployed service. The repository's CI carries a second
+and unrelated trust boundary, between a job that executes a Dependabot pull
+request and a job that can push to its branch. It is described in
+[the Dependabot fix path](dependabot-fix-path.md).
+
 ## Signing authority
 
 `POST /sign` accepts any non-empty text. It does not prove that the text is a
