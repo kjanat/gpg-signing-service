@@ -549,26 +549,27 @@ The one non-2xx JSON body without a `code` is the degraded
 [`GET /health`](#get-health) 503, which is a `HealthResponse` rather than an
 error envelope and therefore has no `docs` either.
 
-| Code                     | HTTP  | Description                                                           |
-| ------------------------ | ----- | --------------------------------------------------------------------- |
-| `AUTH_MISSING`           | `401` | Authorization header not provided                                     |
-| `AUTH_INVALID`           | `401` | A credential was presented and the credential was refused             |
-| `AUTH_SUBJECT_UNTRUSTED` | `401` | The OIDC identity verified; it holds no active trust rule             |
-| `KEY_NOT_FOUND`          | `404` | Requested key does not exist                                          |
-| `KEY_NOT_ALLOWED`        | `403` | Credential is trusted; its grant does not cover this key              |
-| `KEY_PROCESSING_ERROR`   | `500` | Error processing key data (extraction, parsing)                       |
-| `KEY_LIST_ERROR`         | `500` | Error retrieving list of keys                                         |
-| `KEY_UPLOAD_ERROR`       | `500` | Error uploading or storing new key                                    |
-| `KEY_DELETE_ERROR`       | `500` | Error deleting key                                                    |
-| `SIGN_ERROR`             | `500` | Signing operation failed                                              |
-| `RATE_LIMIT_ERROR`       | `503` | Rate limiter service unavailable                                      |
-| `RATE_LIMITED`           | `429` | Rate limit exceeded for this identity                                 |
-| `INVALID_REQUEST`        | `400` | Malformed request (missing fields, invalid format)                    |
-| `AUDIT_ERROR`            | `500` | Failed to retrieve audit logs                                         |
-| `NOT_FOUND`              | `404` | Endpoint not found                                                    |
-| `INTERNAL_ERROR`         | `500` | Unexpected server error                                               |
-| `SERVICE_DEGRADED`       | `503` | A dependency was unreachable; the request was never judged            |
-| `SERVICE_MISCONFIGURED`  | `500` | The deployment's own configuration stopped it; retrying will not help |
+| Code                      | HTTP  | Description                                                           |
+| ------------------------- | ----- | --------------------------------------------------------------------- |
+| `AUTH_MISSING`            | `401` | Authorization header not provided                                     |
+| `AUTH_INVALID`            | `401` | A credential was presented and the credential was refused             |
+| `AUTH_SUBJECT_UNTRUSTED`  | `401` | The OIDC identity verified; it holds no active trust rule             |
+| `KEY_NOT_FOUND`           | `404` | Requested key does not exist                                          |
+| `KEY_NOT_ALLOWED`         | `403` | Credential is trusted; its grant does not cover this key              |
+| `AUTH_SCOPE_INSUFFICIENT` | `403` | Credential is valid; its scope does not cover this method             |
+| `KEY_PROCESSING_ERROR`    | `500` | Error processing key data (extraction, parsing)                       |
+| `KEY_LIST_ERROR`          | `500` | Error retrieving list of keys                                         |
+| `KEY_UPLOAD_ERROR`        | `500` | Error uploading or storing new key                                    |
+| `KEY_DELETE_ERROR`        | `500` | Error deleting key                                                    |
+| `SIGN_ERROR`              | `500` | Signing operation failed                                              |
+| `RATE_LIMIT_ERROR`        | `503` | Rate limiter service unavailable                                      |
+| `RATE_LIMITED`            | `429` | Rate limit exceeded for this identity                                 |
+| `INVALID_REQUEST`         | `400` | Malformed request (missing fields, invalid format)                    |
+| `AUDIT_ERROR`             | `500` | Failed to retrieve audit logs                                         |
+| `NOT_FOUND`               | `404` | Endpoint not found                                                    |
+| `INTERNAL_ERROR`          | `500` | Unexpected server error                                               |
+| `SERVICE_DEGRADED`        | `503` | A dependency was unreachable; the request was never judged            |
+| `SERVICE_MISCONFIGURED`   | `500` | The deployment's own configuration stopped it; retrying will not help |
 
 Two of these are `503` and only one of them carries a `Retry-After`
 (`SERVICE_DEGRADED`), so a client deciding whether to wait must read the `code`
