@@ -41,6 +41,7 @@ design records.
 - Durable Object key storage and rate limiting
 - D1 audit records and service-token hashes
 - KV-backed OIDC JWKS caching
+- Optional Sentry error tracking and tracing, off unless `SENTRY_DSN` is set
 - Generated OpenAPI 3.0 contract and Go client
 
 ## Access summary
@@ -52,6 +53,14 @@ design records.
 | Call `/sign`                                    | Accepted OIDC JWT or `gst_` service token |
 | Call `/admin/*`                                 | Deployment's static `ADMIN_TOKEN`         |
 | Read `/admin/*` and change nothing              | Optional `ADMIN_READONLY_TOKEN`           |
+
+Error reporting is the one outbound dependency and it is opt-in: with
+`SENTRY_DSN` unset the Worker reports nothing, installs none of the SDK's
+integrations, and behaves exactly as it does without it. With it set, secrets —
+passphrases, admin tokens, private key material, raw JWTs, `gst_` tokens,
+`Authorization` headers — are scrubbed by name and by value shape before an
+event leaves the Worker, and request bodies are never collected. See
+[What Sentry receives](docs/security-model.md#what-sentry-receives).
 
 A verified OIDC token is not an authorized one. `ALLOWED_ISSUERS` is not a
 repository allowlist — every repository on GitHub Actions gets a token from the
@@ -144,7 +153,8 @@ GitHub Actions / GitLab CI / other automation
              ├─ KV: OIDC JWKS cache
              ├─ D1: audit records and token hashes
              ├─ RateLimiter Durable Object
-             └─ KeyStorage Durable Object
+             ├─ KeyStorage Durable Object
+             └─ Sentry (optional, off without SENTRY_DSN)
                     │
                     ▼
         detached OpenPGP or PKCS#7 signature

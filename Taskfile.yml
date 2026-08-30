@@ -60,6 +60,15 @@ tasks:
       - task: test:session-start
       - task: test:go-modernize-gate
 
+  test:sentry:
+    desc: Run the Sentry boundary suite alone — the inner loop of the mutation set
+    aliases: [tse, sentry]
+    deps: [install:noscripts]
+    # Coverage is on by default in vitest.config.ts and its thresholds are
+    # global, so a single-file run trips them on the 33 files it did not load.
+    # `task test:coverage` is what enforces them; this is the fast inner loop.
+    cmd: bun run test --coverage.enabled=false src/__tests__/sentry.test.ts
+
   test:gnupg-interop:
     desc: Verify signatures against real gpg and git (skips if gpg is absent)
     aliases: [interop]
