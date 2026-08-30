@@ -16,15 +16,13 @@ import { HEADERS, HTTP, TIME } from "#types";
  * so the naive `ceil((resetAt - now) / 1000)` reaches zero or below by the time
  * the answer is read. `RateLimitErrorSchema` declares `retryAfter` positive, and
  * the Go client only honours it when it is (`retry.go:57`), so an underflowed
- * hint is both off-spec and silently discarded. The limiter's own `Retry-After`
- * header already floors at one; this is the same floor on the field callers
- * actually receive, since that header never leaves the Durable Object.
+ * hint is both off-spec and silently discarded.
  *
  * Here rather than at each refusal for the same reason the headers are: the
- * floor was written out twice, once in the sign route and once in the admin
- * limiter, and a third refusal deriving its own hint is a refusal that can send
- * `retryAfter: 0` — which `rateLimitExceeded` would then copy into
- * `X-RateLimit-Reset` as *now*.
+ * floor was written out three times — the sign route, the admin limiter, and the
+ * limiter's own `Retry-After` header — and a fourth refusal deriving its own
+ * hint is a refusal that can send `retryAfter: 0`, which `rateLimitExceeded`
+ * would then copy into `X-RateLimit-Reset` as *now*.
  *
  * @param resetAt - The denial's reset timestamp, in epoch milliseconds
  * @returns Whole seconds to wait, never below one

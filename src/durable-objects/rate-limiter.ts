@@ -1,5 +1,6 @@
 import type { RateLimitResult } from "#types";
 import { createRateLimitAllowed, createRateLimitDenied, HTTP, MediaType } from "#types";
+import { retryAfterSeconds } from "#utils/rate-limit";
 
 interface TokenBucket {
 	tokens: number;
@@ -137,7 +138,10 @@ export class RateLimiter implements DurableObject {
 				status: HTTP.TooManyRequests,
 				headers: {
 					"Content-Type": MediaType.ApplicationJson,
-					"Retry-After": String(Math.max(1, Math.ceil((retryAt - Date.now()) / 1000))),
+					// The same floor the body's `retryAfter` gets, from the same
+					// function: this header and that field describe one wait, and two
+					// spellings of one expression are two things that can drift.
+					"Retry-After": String(retryAfterSeconds(retryAt)),
 				},
 			});
 		}
