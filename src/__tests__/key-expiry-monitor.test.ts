@@ -456,6 +456,28 @@ describe("bindingMailSender", () => {
 		await expect(send(REFUSED_MAIL, { alert: "key-expiry" })).rejects.toBe(refusal);
 	});
 
+	it("records the attempt even when the binding throws instead of rejecting", async () => {
+		// A rejection handler attached to the returned promise never runs for a
+		// binding that throws before returning one, and that is the same outage
+		// from an operator's side. Both refusals have to leave the same event, or
+		// the query is silent in the case the change exists for.
+		const refusal = new Error("E_INVALID_DESTINATION");
+		const binding = {
+			send: vi.fn(() => {
+				throw refusal;
+			}),
+		};
+		const send = bindingMailSender(monitorEnv({ KEY_EXPIRY_ALERTS: binding }));
+
+		await expect(send(REFUSED_MAIL, { alert: "key-expiry" })).rejects.toBe(refusal);
+
+		expect(alertEventsWith("sent")).toEqual([]);
+		expect(alertEventsWith("failed").map((event) => event.context)).toEqual([
+			{ action: "key-expiry-alert", alert: "key-expiry", outcome: "failed", to: ALERT_TO },
+		]);
+		expect(JSON.stringify(alertEvents())).not.toContain("E_INVALID_DESTINATION");
+	});
+
 	it("sends byte-identical mail whichever kind it is told, so the discriminator is log-only", async () => {
 		const { sent, binding } = recordingBinding();
 		const send = bindingMailSender(monitorEnv({ KEY_EXPIRY_ALERTS: binding }));

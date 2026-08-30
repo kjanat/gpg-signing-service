@@ -213,27 +213,35 @@ export function bindingMailSender(env: Env): MailSender {
 	const { binding, from, to } = mailConfig(env);
 
 	return async (mail, delivery) => {
-		const { messageId } = await binding
-			.send({
+		let messageId: string;
+
+		// `try`/`catch` rather than `.catch()` on the returned promise, because a
+		// binding that throws where it was declared to reject would never reach a
+		// rejection handler at all — and "the binding refused before it even had a
+		// promise to reject with" is precisely the state this event exists to make
+		// visible. The statement form covers both, so the invariant is the code's
+		// rather than the runtime's to keep.
+		try {
+			({ messageId } = await binding.send({
 				from,
 				to,
 				subject: mail.subject,
 				text: mail.text,
 				html: mail.html,
-			})
-			.catch((error: unknown) => {
-				// Recorded and rethrown unchanged. The log is an observation, not a
-				// handler: there is no retry, no fallback channel and no second send,
-				// so a failed alert is still exactly as failed as it was — see the two
-				// callers, both of which depend on this rejecting.
-				//
-				// The exception is deliberately not handed to the logger. A send error
-				// is written by the mail provider, and this event has to stay safe to
-				// read in bulk; `outcome` and `alert` already say what happened, and
-				// the exception itself reaches the cron invocation intact.
-				logger.error(ALERT_MESSAGE[delivery.alert].failed, undefined, alertEvent(delivery, "failed", to));
-				throw error;
-			});
+			}));
+		} catch (error) {
+			// Recorded and rethrown unchanged. The log is an observation, not a
+			// handler: there is no retry, no fallback channel and no second send,
+			// so a failed alert is still exactly as failed as it was — see the two
+			// callers, both of which depend on this rejecting.
+			//
+			// The exception is deliberately not handed to the logger. A send error
+			// is written by the mail provider, and this event has to stay safe to
+			// read in bulk; `outcome` and `alert` already say what happened, and
+			// the exception itself reaches the cron invocation intact.
+			logger.error(ALERT_MESSAGE[delivery.alert].failed, undefined, alertEvent(delivery, "failed", to));
+			throw error;
+		}
 
 		// `alert` is the discriminator the caller passed, not anything read back
 		// out of `mail`: what was sent is the operator's copy, and the log line
