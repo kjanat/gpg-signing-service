@@ -63,6 +63,12 @@ tasks:
     aliases: [l]
     cmds:
       - golangci-lint run --config={{.GOLANGCI_LINT_CONFIG}} {{.CLI_ARGS}}
+      # golangci-lint carries none of the toolchain's modernize analyzers, so a
+      # 1.27 modernization lands with the line above green -- #115 did exactly
+      # that, and only an explicit `task c:m -- -diff` caught it. Chaining the
+      # dry run here is what puts it in CI: `.github/workflows/ci.yml` runs
+      # `task c:l` in the Go client job, and nothing else in that job would.
+      - task: modernize:check
 
   lint:fix:
     desc: Lint and fix Go code *args
@@ -84,3 +90,16 @@ tasks:
     desc: Modernize Go code *args
     aliases: [m]
     cmd: go fix {{.CLI_ARGS}} ./...
+
+  # The enforcement half of `modernize`, spelled through it so the fixer
+  # invocation stays defined once. `-diff` writes nothing and exits non-zero on
+  # a non-empty fixer diff, which is the whole gate -- there is no Go version
+  # pinned anywhere in it, the fixers are whichever ones the toolchain that
+  # client/go.mod selects happens to ship. scripts/test-go-modernize-gate.sh
+  # holds both of those properties down.
+  modernize:check:
+    desc: Fail on a pending toolchain modernization (dry run, writes nothing)
+    aliases: [mc]
+    cmds:
+      - task: modernize
+        vars: { CLI_ARGS: -diff }
