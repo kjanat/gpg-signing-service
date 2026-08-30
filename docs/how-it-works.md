@@ -29,8 +29,12 @@ The service is a Hono application running on Cloudflare Workers. It uses:
 
 - a `KeyStorage` Durable Object for key records;
 - a `RateLimiter` Durable Object for token buckets;
-- D1 for audit records and service-token hashes; and
-- KV for cached OIDC JSON Web Key Sets.
+- D1 for audit records and service-token hashes;
+- KV for cached OIDC JSON Web Key Sets; and
+- optionally Sentry, for error tracking and tracing. It is off unless
+  `SENTRY_DSN` is set, and secrets are scrubbed before anything leaves the
+  Worker — see
+  [What Sentry receives](security-model.md#what-sentry-receives).
 
 All key records share one named `KeyStorage` Durable Object. This is a
 single-deployment service, not a multi-tenant key vault.
