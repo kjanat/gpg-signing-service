@@ -169,8 +169,8 @@ func occurrences(env []string, entry string) int {
 func lastValue(env []string, name string) string {
 	value := ""
 	for _, entry := range env {
-		if strings.HasPrefix(entry, name+"=") {
-			value = strings.TrimPrefix(entry, name+"=")
+		if after, ok := strings.CutPrefix(entry, name+"="); ok {
+			value = after
 		}
 	}
 	return value
