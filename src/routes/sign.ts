@@ -19,6 +19,7 @@ import { fetchKeyStorage, fetchRateLimiter } from "#utils/durable-objects";
 import { scheduleBackgroundTask } from "#utils/execution";
 import { logger } from "#utils/logger";
 import { rateLimitExceeded, retryAfterSeconds } from "#utils/rate-limit";
+import { captureRefusalEvent } from "#utils/sentry";
 import { signCommitData } from "#utils/signing";
 import { signCommitDataX509 } from "#utils/x509";
 
@@ -320,6 +321,22 @@ app.openapi(signRoute, async (c) => {
 				keyId: keyIdParam,
 			});
 		}
+
+		// The second of the two alertable refusals. Reaching it needs a credential
+		// this service already accepted, used to ask for a key it was not scoped
+		// to — which is either a misconfigured pipeline or someone probing the
+		// scope boundary, and an operator wants to know either way. Raised outside
+		// the metering branch on purpose: the audit row is what must stay metered,
+		// and Sentry's own quota is what bounds this.
+		captureRefusalEvent("Key scope denied", {
+			requestId,
+			action: "sign",
+			errorCode: "KEY_NOT_ALLOWED",
+			issuer: claims.iss,
+			subject: claims.sub,
+			keyId: keyIdParam,
+			subjectPolicy: c.get("subjectPolicyName"),
+		});
 
 		return c.json(
 			{
