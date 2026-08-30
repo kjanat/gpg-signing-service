@@ -6,18 +6,19 @@ implementation disagree.
 
 ## Start here
 
-| If you want to…                            | Read                                  |
-| ------------------------------------------ | ------------------------------------- |
-| Understand the components and signing flow | [How it works](how-it-works.md)       |
-| Install `gpg-sign` in GitHub Actions       | [GitHub Action](github-action.md)     |
-| Choose or configure credentials            | [Authentication](authentication.md)   |
-| Use the command-line client                | [CLI](cli.md)                         |
-| Integrate a CI job                         | [CI integrations](integrations.md)    |
-| Deploy your own instance                   | [Self-hosting](self-hosting.md)       |
-| Understand the trust boundary              | [Security model](security-model.md)   |
-| Look up an endpoint                        | [API guide](api.md)                   |
-| Diagnose a failure                         | [Troubleshooting](troubleshooting.md) |
-| Look up an error code                      | [Error reference](errors.md)          |
+| If you want to…                            | Read                                          |
+| ------------------------------------------ | --------------------------------------------- |
+| Understand the components and signing flow | [How it works](how-it-works.md)               |
+| Install `gpg-sign` in GitHub Actions       | [GitHub Action](github-action.md)             |
+| Choose or configure credentials            | [Authentication](authentication.md)           |
+| Use the command-line client                | [CLI](cli.md)                                 |
+| Integrate a CI job                         | [CI integrations](integrations.md)            |
+| Deploy your own instance                   | [Self-hosting](self-hosting.md)               |
+| Understand the trust boundary              | [Security model](security-model.md)           |
+| Review how CI writes to Dependabot PRs     | [Dependabot fix path](dependabot-fix-path.md) |
+| Look up an endpoint                        | [API guide](api.md)                           |
+| Diagnose a failure                         | [Troubleshooting](troubleshooting.md)         |
+| Look up an error code                      | [Error reference](errors.md)                  |
 
 ## Components
 
