@@ -135,4 +135,68 @@ for name in ("claude.yml", "claude-scheduled.yml"):
     )
 TRUSTED
 
+# --- the review workflow actually wires this up ------------------------------
+#
+# Everything above tests the gate script in isolation, which proves nothing
+# about the workflow that has to call it. #46 was not a broken script; it was a
+# correct script the workflow never ran, with signing setup still unconditional
+# in front of it. So assert the wiring: checkout before the gate (the script
+# lives in the tree being reviewed), the gate before both steps that read its
+# decision, and one shared condition so the two can never drift apart.
+python3 - "${repo_root}" <<'REVIEW'
+import sys, pathlib, yaml
+
+wf = yaml.safe_load(
+    (pathlib.Path(sys.argv[1]) / ".github/workflows/claude-code-review.yml").read_text()
+)
+steps = wf["jobs"]["claude-review"]["steps"]
+
+
+def index_of(predicate, what):
+    for i, step in enumerate(steps):
+        if predicate(step):
+            return i
+    raise AssertionError(f"claude-code-review.yml has no {what}")
+
+
+gate = index_of(lambda s: "claude-review-gate.sh" in s.get("run", ""), "gate step")
+signing = index_of(
+    lambda s: s.get("uses", "").endswith("setup-claude-signing"), "signing setup step"
+)
+review = index_of(
+    lambda s: s.get("uses", "").startswith("anthropics/claude-code-action"),
+    "claude-code-action step",
+)
+checkout = index_of(
+    lambda s: s.get("uses", "").startswith("actions/checkout"), "checkout step"
+)
+
+assert checkout < gate, "the gate step runs before actions/checkout"
+assert gate < signing < review, (
+    "the gate must run before the signing setup, which must run before the review"
+)
+
+condition = "env.HAS_CLAUDE_TOKEN == 'true'"
+assert steps[signing].get("if") == condition, (
+    "the signing setup is no longer gated on HAS_CLAUDE_TOKEN — a fork pull "
+    "request will fail on setup it was never going to use"
+)
+assert steps[review].get("if") == condition, (
+    "the review step and the signing setup no longer share a condition"
+)
+
+gate_env = steps[gate].get("env", {})
+assert "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}" in gate_env.get(
+    "CLAUDE_CODE_OAUTH_TOKEN", ""
+), "the gate step no longer receives CLAUDE_CODE_OAUTH_TOKEN"
+assert "head.repo.full_name" in gate_env.get("PR_HEAD_REPO", ""), (
+    "the gate step no longer receives the head repository, so it cannot "
+    "distinguish a fork from a missing secret"
+)
+
+assert steps[signing]["with"]["disable-signing"] == "${{ vars.GPG_SIGN_DISABLE }}", (
+    "the GPG_SIGN_DISABLE escape hatch is no longer wired up"
+)
+REVIEW
+
 printf 'claude review gate tests passed\n'
