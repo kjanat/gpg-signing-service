@@ -104,4 +104,10 @@ accepts 'an empty range' "${bot_committer}..${bot_committer}"
 
 refuses 'a missing range' 'usage:' ''
 
+# A range git cannot resolve is not an empty range. Reading it as one would
+# make every guarded push pass the moment the ref name went stale, which is the
+# quietest way a fail-closed check turns into a fail-open one.
+refuses 'a range git cannot resolve' 'could not resolve the revision range' \
+	'refs/heads/never-existed..HEAD'
+
 printf 'commit provenance guard: all cases passed\n'

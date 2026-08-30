@@ -22,10 +22,13 @@
 set -Eeuo pipefail
 
 readonly range="${1-}"
-[[ -n "${range}" ]] || {
-	printf '::error::usage: check-commit-provenance.sh <revision-range>\n'
+
+die() {
+	printf '::error::%s\n' "$1"
 	exit 1
 }
+
+[[ -n "${range}" ]] || die 'usage: check-commit-provenance.sh <revision-range>'
 
 # The committer address the web and REST merge paths stamp on a commit they
 # built themselves. A person never has it.
@@ -51,7 +54,19 @@ allowed() {
 # it in IFS, so a NUL-delimited record silently reads back as one field. git
 # does forbid a newline inside an ident, which makes %n the one separator that
 # cannot be forged from inside a name.
-mapfile -t commits < <(git rev-list --reverse "${range}")
+#
+# The rev-list is run on its own rather than inside the process substitution
+# `mapfile` would otherwise read from: errexit does not reach into one, so a
+# range git cannot resolve — a typo, a ref a shallow clone never fetched —
+# would read back as zero commits and this guard would report that history it
+# never looked at is clean.
+listed="$(git rev-list --reverse "${range}")" \
+	|| die "could not resolve the revision range ${range}"
+
+commits=()
+if [[ -n "${listed}" ]]; then
+	mapfile -t commits <<<"${listed}"
+fi
 
 failures=0
 for commit in ${commits[@]+"${commits[@]}"}; do
