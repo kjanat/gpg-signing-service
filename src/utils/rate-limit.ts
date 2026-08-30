@@ -8,6 +8,32 @@ import type { ErrorCode } from "#schemas/errors";
 import { HEADERS, HTTP, TIME } from "#types";
 
 /**
+ * A denial's `resetAt` as whole seconds to wait, floored at one.
+ *
+ * `resetAt` on a denial is when the bucket next holds a token, and refill is
+ * proportional to capacity — 60ms on the 1000-wide row bucket, 600ms on the
+ * default. Both are shorter than a Worker-to-Durable-Object round trip can be,
+ * so the naive `ceil((resetAt - now) / 1000)` reaches zero or below by the time
+ * the answer is read. `RateLimitErrorSchema` declares `retryAfter` positive, and
+ * the Go client only honours it when it is (`retry.go:57`), so an underflowed
+ * hint is both off-spec and silently discarded. The limiter's own `Retry-After`
+ * header already floors at one; this is the same floor on the field callers
+ * actually receive, since that header never leaves the Durable Object.
+ *
+ * Here rather than at each refusal for the same reason the headers are: the
+ * floor was written out twice, once in the sign route and once in the admin
+ * limiter, and a third refusal deriving its own hint is a refusal that can send
+ * `retryAfter: 0` — which `rateLimitExceeded` would then copy into
+ * `X-RateLimit-Reset` as *now*.
+ *
+ * @param resetAt - The denial's reset timestamp, in epoch milliseconds
+ * @returns Whole seconds to wait, never below one
+ */
+export function retryAfterSeconds(resetAt: number): number {
+	return Math.max(1, Math.ceil((resetAt - Date.now()) / TIME.SECOND));
+}
+
+/**
  * The headers describing the budget that just refused a request.
  *
  * A 429 used to carry none, so the one response where a caller most needs to
