@@ -310,7 +310,9 @@ assert re.search(
     "the review prompt no longer says this run has no write authority over a "
     "Dependabot branch — without that, 'diagnose only' reads as a style note. "
     "Say it in terms of the credential: a read-only token, or no write "
-    "authority, or that this run cannot push."
+    "authority. Note that wording it as 'cannot push' trips the no-push "
+    "assertion above unless that same sentence names claude-dependabot-fix.yml "
+    "— the two checks read the same prose, so prefer the other two phrasings."
 )
 print("review workflow ok")
 REVIEW
@@ -333,18 +335,31 @@ REVIEW
 activation="$(activation_state)"
 deferred_failure=''
 
-if [[ "${activation}" == active ]]; then
-	review_workflow="${ACTIVATION_REVIEW}"
-else
-	if ! activation_apply "${tmp_dir}/activated"; then
-		echo 'FAIL: the trusted Dependabot fix path is not active, and the' >&2
-		echo '      checked-in activation patch cannot produce it (above).' >&2
+#
+# Dispatched by state rather than active/not-active. `both` and `absent` are not
+# waiting on anything a human can apply — in `both` the patch refuses outright,
+# because the live file it renames onto already exists — so they take the shared
+# diagnosis instead of the activation procedure. test-dependabot-fix.sh reaches
+# the same two messages through the same helper.
+case "${activation}" in
+	active)
+		review_workflow="${ACTIVATION_REVIEW}"
+		;;
+	pending)
+		if ! activation_apply "${tmp_dir}/activated"; then
+			echo 'FAIL: the trusted Dependabot fix path is not active, and the' >&2
+			echo '      checked-in activation patch cannot produce it (above).' >&2
+			exit 1
+		fi
+		review_workflow="${tmp_dir}/activated/.github/workflows/claude-code-review.yml"
+		deferred_failure='pending'
+		printf '  activation: pending — asserting against the patched tree\n'
+		;;
+	*)
+		activation_unusable "${activation}"
 		exit 1
-	fi
-	review_workflow="${tmp_dir}/activated/.github/workflows/claude-code-review.yml"
-	deferred_failure="${activation}"
-	printf '  activation: %s — asserting against the patched tree\n' "${activation}"
-fi
+		;;
+esac
 
 # Deliberately not the `fail` helper: that one dumps ${tmp_dir}/out and
 # ${tmp_dir}/github_env, which at this point still hold leftovers from the last
