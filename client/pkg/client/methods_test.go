@@ -644,8 +644,7 @@ func TestUnauthorizedWithoutMessageFallsBackToSentinel(t *testing.T) {
 		t.Errorf("a 401 with no message must report as an unexpected status, got %T (%v)", err, err)
 	}
 
-	var authErr *AuthError
-	if errors.As(err, &authErr) {
+	if authErr, ok := errors.AsType[*AuthError](err); ok {
 		t.Errorf("a message-less 401 must not become an AuthError: %q", authErr.Error())
 	}
 

@@ -4,7 +4,7 @@
 "cargo:runner-run" = "latest"
 biome              = "latest"
 cargo-binstall     = "latest"
-golangci-lint      = "latest"
+golangci-lint      = "2.13.2"
 lefthook           = "latest"
 shellcheck         = "latest"
 task               = "latest"

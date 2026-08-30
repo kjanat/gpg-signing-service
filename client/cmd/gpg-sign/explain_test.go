@@ -14,11 +14,9 @@ import (
 func TestReportFailurePrintsEachFieldOnItsOwnLine(t *testing.T) {
 	var out bytes.Buffer
 	err := &client.AuthError{
-		Guidance: client.Guidance{
-			Subject: "repo:kjanat/kjanat:ref:refs/heads/master",
-			Hint:    "No active trust rule matches this subject.",
-			Docs:    "https://gpg.kajkowalski.nl/e/AUTH_SUBJECT_UNTRUSTED",
-		},
+		Subject:   "repo:kjanat/kjanat:ref:refs/heads/master",
+		Hint:      "No active trust rule matches this subject.",
+		Docs:      "https://gpg.kajkowalski.nl/e/AUTH_SUBJECT_UNTRUSTED",
 		Code:      client.ErrCodeAuthSubjectUntrusted,
 		Message:   "Subject is not trusted for signing",
 		RequestID: "628c9a74-c46d-403c-84c6-9c873298a17f",
@@ -46,7 +44,7 @@ func TestReportFailurePrintsEachFieldOnItsOwnLine(t *testing.T) {
 func TestReportFailureSeesThroughWrapping(t *testing.T) {
 	var out bytes.Buffer
 	inner := &client.ServiceError{
-		Guidance:   client.Guidance{Docs: "https://gpg.kajkowalski.nl/e/KEY_NOT_ALLOWED"},
+		Docs:       "https://gpg.kajkowalski.nl/e/KEY_NOT_ALLOWED",
 		Code:       client.ErrCodeKeyNotAllowed,
 		StatusCode: 403,
 		RequestID:  "11111111-2222-3333-4444-555555555555",
@@ -99,8 +97,8 @@ func TestReportFailurePrintsRequestIDWithoutGuidance(t *testing.T) {
 func TestReportFailureSkipsAbsentFields(t *testing.T) {
 	var out bytes.Buffer
 	reportFailure(&out, &client.RateLimitError{
-		Guidance: client.Guidance{Hint: "Wait for the bucket to refill."},
-		Message:  "Rate limit exceeded",
+		Hint:    "Wait for the bucket to refill.",
+		Message: "Rate limit exceeded",
 	})
 
 	got := strings.TrimRight(out.String(), "\n")
@@ -115,7 +113,7 @@ func TestReportFailureSkipsAbsentFields(t *testing.T) {
 func TestReportFailurePrintsRateLimitRequestID(t *testing.T) {
 	var out bytes.Buffer
 	reportFailure(&out, &client.RateLimitError{
-		Guidance:  client.Guidance{Hint: "Wait for the bucket to refill."},
+		Hint:      "Wait for the bucket to refill.",
 		Message:   "Rate limit exceeded",
 		RequestID: "0e2a8f3c-6b41-4d7e-9a55-1c8d0f6b2e77",
 	})
