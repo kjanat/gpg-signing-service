@@ -347,6 +347,9 @@ The run fails closed, before or during, on every one of these:
 - `HEAD` is not at `--expected-tip`. The tip is a lease, not a label: a branch
   that moved would leave the repaired chain built from commits the eventual
   force-with-lease is not replacing.
+- `--base` is not an ancestor of `--expected-tip`. A base on a divergent branch
+  still yields a non-empty range — one silently starting at their merge base —
+  so a mistyped ref would widen the rewrite instead of being refused.
 - The range is empty, or does not end at the expected tip.
 - Any author or committer address in the range was not named with
   `--expect-identity`. The refusal lists them, because naming them is the
@@ -374,6 +377,44 @@ rather than the CLI's own code
 
 On a dry run `tip` is absent, so a caller that pushes whatever that field holds
 cannot publish a plan.
+
+Publishing is opt-in there too: `repair-history.sh` repairs, asserts and stops
+unless it is given `PUSH=true`, and prints the exact push command instead.
+
+#### Which `gpg-sign` runs it
+
+`repair-history` is newer than any published release, so nothing should resolve
+the name from `PATH` and hope. Both scripts take the binary from
+`GPG_SIGN_BIN`, and `repair-history.sh` asks it for `repair-history --help`
+before anything else — a released binary that predates the command is named as
+such up front rather than discovered partway through a rewrite:
+
+```bash
+task client:build   # builds ./client/bin/gpg-sign from this checkout
+GPG_SIGN_BIN=./client/bin/gpg-sign \
+  BASE_REF=... EXPECTED_TIP=... IDENTITY=... EXPECT_IDENTITIES=... BRANCH=... \
+  .github/scripts/repair-history.sh
+```
+
+`.github/scripts/test-repair-history.sh` builds the checked-out command the same
+way, so the suite proves the orchestration against this tree rather than against
+whatever release is installed.
+
+#### Landing order
+
+The routine **Sign Commits** workflow still runs
+`.github/scripts/sign-commits.py`, and that is deliberate: it cannot be switched
+to a CLI that no release contains. The order is
+
+1. merge the `repair-history` capability (this is that step);
+2. publish a `gpg-sign` release containing it;
+3. point `.github/workflows/sign-commits.yml` at that released binary;
+4. delete the Python path once nothing invokes it;
+5. run the production repair, with `PUSH=true`, from a checkout that has the
+   released CLI.
+
+Steps 3 and 4 need a token with the `workflows` permission, which is why they
+are not in the same change as steps 1 and 2.
 
 #### Stopping it happening again
 

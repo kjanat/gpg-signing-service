@@ -15,7 +15,9 @@
 #                                                                 (required)
 #         BRANCH             branch to publish to                 (required)
 #         DRY_RUN            "true" plans and stops before signing anything
-#         PUSH               "false" repairs and asserts but does not publish
+#         PUSH               "true" publishes the repaired tip; anything else
+#                            repairs and asserts and stops
+#         GPG_SIGN_BIN       the gpg-sign to run; defaults to PATH's
 #         GPG_SIGN_TOKEN     OIDC token, read by gpg-sign
 #         GPG_SIGN_URL       service base URL, read by gpg-sign
 #
@@ -29,10 +31,28 @@ here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly here
 readonly base="${BASE_REF-}"
 readonly expected_tip="${EXPECTED_TIP-}"
-readonly identity="${IDENTITY-}"
 readonly branch="${BRANCH-}"
+
+# Trimmed the way ParseIdentity trims it. The CLI writes the trimmed form into
+# every rebuilt commit, so an IDENTITY with a stray leading or trailing space
+# would sign the whole range and then fail the assertions below comparing the
+# object's identity against the untrimmed string.
+identity="${IDENTITY-}"
+identity="${identity#"${identity%%[![:space:]]*}"}"
+identity="${identity%"${identity##*[![:space:]]}"}"
+readonly identity
 readonly dry_run="${DRY_RUN:-false}"
-readonly push="${PUSH:-true}"
+# Publishing is opt-in. Every other bound this command takes has to be named,
+# and `gpg-sign repair-history` moves no ref and pushes nothing by design; a
+# caller that supplied the four required inputs and nothing else should not
+# discover it force-pushed over published history.
+readonly push="${PUSH:-false}"
+
+# Which gpg-sign, said out loud. `repair-history` is newer than the released
+# binary the signing action installs, so a run that resolves the name from PATH
+# can silently reach a build that has never heard of the command; pointing
+# GPG_SIGN_BIN at a checked-out build is how you run the one you mean.
+readonly gpg_sign="${GPG_SIGN_BIN:-gpg-sign}"
 
 die() {
 	printf '::error::%s\n' "$1"
@@ -42,6 +62,14 @@ die() {
 for required in base expected_tip identity branch; do
 	[[ -n "${!required}" ]] || die "${required} is required; this command has no defaults by design"
 done
+
+command -v "${gpg_sign}" >/dev/null 2>&1 || die "${gpg_sign} is not executable; set GPG_SIGN_BIN to the gpg-sign to run"
+
+# The released binary predates this subcommand, and its failure without this
+# check is a rewrite that never starts for reasons buried in cobra's usage
+# text. Ask first, on the binary that is actually about to run.
+"${gpg_sign}" repair-history --help >/dev/null 2>&1 \
+	|| die "${gpg_sign} has no repair-history command; it predates it. Build the checked-out client (task c:b) and set GPG_SIGN_BIN to it, or install a release that has it"
 
 # One --expect-identity per line. Every address the range carries has to be
 # named: the CLI refuses any it was not told to expect, which is what stops a
@@ -62,7 +90,7 @@ head="$(git rev-parse HEAD)"
 tree="$(git rev-parse --verify "${expected_tip}^{tree}")"
 
 if [[ "${dry_run}" == "true" ]]; then
-	gpg-sign repair-history --dry-run \
+	"${gpg_sign}" repair-history --dry-run \
 		--base="${base}" --expected-tip="${expected_tip}" \
 		--identity="${identity}" "${expect[@]}"
 	printf 'Dry run only. Nothing was signed, written or pushed.\n'
@@ -71,7 +99,7 @@ fi
 
 # --json puts the machine-readable half on stdout and the progress lines on
 # stderr, so the tip can be read without scraping prose.
-report="$(gpg-sign --json repair-history \
+report="$("${gpg_sign}" --json repair-history \
 	--base="${base}" --expected-tip="${expected_tip}" \
 	--identity="${identity}" "${expect[@]}")"
 
@@ -82,7 +110,7 @@ jq -r '.mapping[] | "  \(.commit) -> \(.newCommit)"' <<<"${report}"
 # The independent check. It runs against the objects git stored, with git and
 # gpg rather than the CLI's own code, and it is the last thing between here and
 # a force push.
-"${here}/assert-repaired-range.sh" "${base}" "${tip}" "${tree}" "${identity}"
+GPG_SIGN_BIN="${gpg_sign}" "${here}/assert-repaired-range.sh" "${base}" "${tip}" "${tree}" "${identity}"
 
 if [[ "${push}" != "true" ]]; then
 	printf 'Repaired tip %s was not published (PUSH=%s). Publish it with:\n' "${tip}" "${push}"

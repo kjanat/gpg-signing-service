@@ -296,6 +296,33 @@ func TestRepairRefusesAnEmptyRange(t *testing.T) {
 	}
 }
 
+func TestRepairRefusesABaseTheTipDoesNotReach(t *testing.T) {
+	f := newRepairFixture(t)
+
+	// A commit off to one side of the fixture's chain, the shape a mistyped ref
+	// resolves to: a branch that forked earlier and went somewhere else.
+	sidetrack := git(t, f.dir, nil, "commit-tree", f.base+"^{tree}", "-p", f.base, "-m", "chore: sidetrack")
+
+	// Nothing about the walk itself would notice. rev-list sidetrack..tip is not
+	// empty — it silently starts at their merge base — so the range would come
+	// back wider than the one the caller described.
+	if reached := git(t, f.dir, nil, "rev-list", "--count", sidetrack+".."+f.tip); reached == "0" {
+		t.Fatalf("the fixture is wrong: %s..%s is empty, so the range check would catch this on its own",
+			short(sidetrack), short(f.tip))
+	}
+
+	_, _, err := f.repair(t, func(o *RepairOptions) { o.Base = sidetrack })
+	if err == nil {
+		t.Fatal("expected a refusal: base is not an ancestor of the tip")
+	}
+	if !strings.Contains(err.Error(), "is not an ancestor of") {
+		t.Errorf("the refusal does not say the base is off the tip's history: %v", err)
+	}
+	if f.signer.calls != 0 {
+		t.Errorf("the refusal came after %d signing call(s); it must come before any", f.signer.calls)
+	}
+}
+
 // repairSnapshot is everything about a commit the repair promises to keep,
 // alongside the identity it promises to change.
 type repairSnapshot struct {

@@ -50,6 +50,7 @@ tasks:
       - task: test:gnupg-interop
       - task: test:signing-shim
       - task: test:signing-preflight
+      - task: test:sign-commits
       - task: test:repair-history
       - task: test:commit-provenance
       - task: test:sign-commit-example
@@ -68,6 +69,10 @@ tasks:
   test:signing-preflight:
     desc: Test the CI signing preflight, its escape hatch and its failure classes
     cmd: bash .github/scripts/test-signing-preflight.sh
+
+  test:sign-commits:
+    desc: Test commit re-signing behavior
+    cmd: bash .github/scripts/test-sign-commits.sh
 
   test:repair-history:
     desc: Test the pre-push assertions guarding a history repair
@@ -101,6 +106,7 @@ tasks:
       - task: test:gnupg-interop
       - task: test:signing-shim
       - task: test:signing-preflight
+      - task: test:sign-commits
       - task: test:repair-history
       - task: test:commit-provenance
       - task: test:sign-commit-example

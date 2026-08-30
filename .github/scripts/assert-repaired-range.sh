@@ -3,8 +3,9 @@
 #
 #   usage:  assert-repaired-range.sh <base> <tip> <expected-tree> "<identity>"
 #
-#   env:    GNUPGHOME  optional; a keyring already holding the service key.
-#                      When unset, one is built from `gpg-sign public-key`.
+#   env:    GNUPGHOME     optional; a keyring already holding the service key.
+#                         When unset, one is built from the service's own key.
+#           GPG_SIGN_BIN  the gpg-sign to run for that; defaults to PATH's
 #
 #   exit:   0  every commit in <base>..<tip> claims <identity> as both its
 #              author and its committer, carries a signature the service key
@@ -20,6 +21,7 @@
 # signed, and reported Unverified.
 set -Eeuo pipefail
 
+readonly gpg_sign="${GPG_SIGN_BIN:-gpg-sign}"
 readonly base="${1-}"
 readonly tip="${2-}"
 readonly expected_tree="${3-}"
@@ -41,7 +43,7 @@ if [[ -z "${GNUPGHOME-}" ]]; then
 	export GNUPGHOME
 	chmod 700 "${GNUPGHOME}"
 	trap 'gpgconf --homedir "${GNUPGHOME}" --kill all >/dev/null 2>&1 || true; rm -rf "${GNUPGHOME}"' EXIT
-	gpg-sign public-key | gpg --batch --quiet --import \
+	"${gpg_sign}" public-key | gpg --batch --quiet --import \
 		|| die 'could not import the service public key'
 fi
 
