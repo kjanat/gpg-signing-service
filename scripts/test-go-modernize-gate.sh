@@ -156,10 +156,25 @@ fi
 # check out of CI with every assertion above still passing.
 new_case workflow-runs-client-lint
 workflow="${repo_root}/.github/workflows/ci.yml"
-# Every alias the include exposes, so renaming the invocation in the workflow
-# is not mistaken for removing it.
-if ! grep -qE 'run:[[:space:]]*task (c|client|gpg-sign):(l|lint)\b' "${workflow}"; then
-	fail "the Go client job in .github/workflows/ci.yml no longer runs 'task c:l'"
+
+# Scoped to the client-test job rather than grepped file-wide: `task c:l` living
+# in some other job would satisfy a whole-file match while the assertion's own
+# failure message claims to be about this one.
+client_job="$(awk '
+	/^  client-test:/ { in_job = 1; next }
+	in_job && /^  [^[:space:]]/ { exit }
+	in_job { print }
+' "${workflow}")"
+
+if [[ -z ${client_job} ]]; then
+	fail "no 'client-test' job in .github/workflows/ci.yml; the modernization check has no CI home"
+# Every alias the include exposes, so renaming the invocation in the workflow is
+# not mistaken for removing it -- but `lint` has to be terminated rather than
+# left on a \b, which `lint:fix` also satisfies. `client:lint:fix` deliberately
+# does not chain modernize:check, so a job that ran it would disarm the gate
+# with this case still green.
+elif ! grep -qE 'run:[[:space:]]*task (c|client|gpg-sign):(l|lint)([[:space:]]|,|}|$)' <<<"${client_job}"; then
+	fail "the Go client job in .github/workflows/ci.yml no longer runs 'task c:l'"$'\n'"${client_job}"
 fi
 
 if [[ ${failures} -ne 0 ]]; then
