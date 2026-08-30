@@ -225,6 +225,7 @@ const statusProbes: { code: ErrorCode; what: string; send: () => Promise<Respons
  */
 const unpinnedStatuses: Record<string, { suite: string; needs: string }> = {
 	AUTH_SUBJECT_UNTRUSTED: { suite: "middleware.test.ts", needs: "a verified token with no trust row" },
+	AUTH_SCOPE_INSUFFICIENT: { suite: "admin-scope.test.ts", needs: "ADMIN_READONLY_TOKEN bound into env" },
 	KEY_NOT_ALLOWED: { suite: "sign.test.ts", needs: "a trust row carrying a key allowlist" },
 	KEY_PROCESSING_ERROR: { suite: "admin.test.ts", needs: "damaged key material in storage" },
 	KEY_LIST_ERROR: { suite: "admin.test.ts", needs: "the key-storage DO stubbed into failure" },
