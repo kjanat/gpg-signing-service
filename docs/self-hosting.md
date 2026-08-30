@@ -402,6 +402,20 @@ the invocation rather than reporting success. The mail configuration is checked
 _before_ any key is read, so a broken alerting path surfaces on a quiet week
 rather than on the one where it had something to say.
 
+That ordering also means a monitor that breaks can say so. Once the mail path is
+established, a failure in the work that follows — an unreadable
+`KEY_EXPIRY_WARN_DAYS`, a `KEY_STORAGE` Durable Object that will not answer, a
+grant table that will not read — sends one alert under the subject
+`Signing key expiry check did not run`, and _then_ fails the invocation anyway.
+Otherwise the monitor's own breakage would be quieter than the condition it
+watches for, and its silence would stop meaning anything.
+
+That email carries a fixed sentence per failure class and nothing else. The
+underlying exception is not serialized into it: it goes to the Workers logs for
+the failed invocation, where it can be read without having crossed a mail
+server. And if the failure _is_ the send, it is not reported through the channel
+that just failed — it propagates and fails the invocation, as before.
+
 ## Key rotation
 
 The monitor buys time; this is what to do with it.
