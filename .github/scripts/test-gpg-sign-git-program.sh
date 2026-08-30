@@ -491,6 +491,145 @@ fi
 
 grep -q 'returned no token value' "${tmp_dir}/null-error"
 
+# --- a failed signature names its class --------------------------------------
+#
+# git reports every non-zero exit from gpg.program as the same "gpg failed to
+# sign the data", so an empty quota, a rotated key and a dead service were one
+# indistinguishable exit 128 at the end of a run. git does print what the
+# program wrote to the status fd underneath that sentence, which makes stderr
+# the one place a failure can say which of them it was.
+mkdir "${tmp_dir}/fail-bin"
+
+cat >"${tmp_dir}/fail-bin/gpg-sign" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+test "$1" = 'sign'
+cat >/dev/null
+printf '%s\n' "${STUB_STDERR}" >&2
+exit "${STUB_RC}"
+EOF
+chmod +x "${tmp_dir}/fail-bin/gpg-sign"
+
+run_failing_sign() {
+	local rc=0
+
+	printf 'commit object' | env \
+		-u GPG_OIDC_REQUEST_URL \
+		-u GPG_OIDC_REQUEST_TOKEN \
+		-u ACTIONS_ID_TOKEN_REQUEST_URL \
+		-u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+		PATH="${tmp_dir}/fail-bin:${PATH}" \
+		GPG_SIGN_URL='https://sign.example.test' \
+		GPG_SIGN_TOKEN='minted-token' \
+		STUB_RC="$1" \
+		STUB_STDERR="$2" \
+		"${shim}" --status-fd=2 -bsau test-key \
+		>"${tmp_dir}/fail-output" 2>"${tmp_dir}/fail-error" || rc=$?
+
+	printf '%s' "${rc}"
+}
+
+# One case per class an operator would act on differently. The three the issue
+# names are here plus the transport failure, which is the one that is not the
+# service's fault at all.
+while IFS='|' read -r class diagnostic; do
+	[[ -n "${class}" ]] || continue
+
+	fail_rc="$(run_failing_sign 1 "${diagnostic}")"
+
+	if [[ "${fail_rc}" -eq 0 ]]; then
+		echo "expected a failed ${class} signature to exit non-zero" >&2
+		exit 1
+	fi
+
+	# The class, on its own line and first. Everything git shows is this stderr
+	# inside its own sentence, and a leading token is what makes the difference
+	# between "the commit failed" and "the quota is empty".
+	grep -q "gpg-sign-git-program: signing failed \[${class}\]" "${tmp_dir}/fail-error"
+
+	# The client's diagnostic verbatim. It carries the service's message, hint,
+	# docs link and request id (client/cmd/gpg-sign/explain.go), which is what
+	# docs/troubleshooting.md asks an operator to quote and what no re-wording
+	# here could reconstruct.
+	grep -qF "${diagnostic}" "${tmp_dir}/fail-error"
+
+	# And the way out, in the same place as the failure.
+	grep -q 'GPG_SIGN_DISABLE' "${tmp_dir}/fail-error"
+	grep -q 'docs/troubleshooting.md' "${tmp_dir}/fail-error"
+
+	# The one assertion that is about correctness rather than legibility: git
+	# accepts a signature when the status fd carries SIG_CREATED, and this shim
+	# writes that line itself. A failure path that reached it would hand git a
+	# forged verdict over an empty signature.
+	if grep -q 'SIG_CREATED' "${tmp_dir}/fail-error"; then
+		echo "expected no SIG_CREATED on the ${class} failure path" >&2
+		exit 1
+	fi
+	if [[ -s "${tmp_dir}/fail-output" ]]; then
+		echo "expected no signature on stdout for ${class}" >&2
+		exit 1
+	fi
+done <<'EOF'
+RATE_LIMITED|Error: rate limit exceeded: rate limited: Rate limit exceeded (retry after 3s) (request req-429)
+AUTH_INVALID|Error: signing failed: authentication failed: AUTH_INVALID: Token verification failed (request req-401)
+AUTH_SUBJECT_UNTRUSTED|Error: signing failed: authentication failed: AUTH_SUBJECT_UNTRUSTED: Subject not trusted (request req-403)
+SERVICE_DEGRADED|Error: signing failed: SERVICE_DEGRADED: Could not reach the OIDC configuration (status 503, retry after 5s, request req-503)
+SERVICE_MISCONFIGURED|Error: signing failed: SERVICE_MISCONFIGURED: ALLOWED_ISSUERS names an unfetchable URL (status 500, request req-500)
+SERVICE_UNREACHABLE|Error: signing failed: Post "https://sign.example.test/sign": dial tcp: lookup sign.example.test: no such host
+UNKNOWN|Error: signing failed: a failure nobody has written a branch for
+EOF
+
+# The rate-limit case is the one the issue calls out by name, because "wait" and
+# "re-run now" are different actions and only one of them works. The class alone
+# does not say which.
+fail_rc="$(run_failing_sign 1 'Error: rate limit exceeded: rate limited: Rate limit exceeded (retry after 3s)')"
+grep -q 'wait for the bucket to refill' "${tmp_dir}/fail-error"
+
+# A code the classifier does not recognise still has to reach the log intact.
+# Degrading to UNKNOWN is a worse message, not a swallowed one.
+fail_rc="$(run_failing_sign 1 'Error: signing failed: a failure nobody has written a branch for')"
+grep -q 'signing failed \[UNKNOWN\]' "${tmp_dir}/fail-error"
+grep -qF 'a failure nobody has written a branch for' "${tmp_dir}/fail-error"
+
+# gpg-sign's own status, not a flattened 1. git cannot tell the difference, but
+# anything driving this shim directly can, and a wrapper that read 1 for every
+# failure would be reading a number this script invented.
+fail_rc="$(run_failing_sign 7 'Error: signing failed: SERVICE_DEGRADED: dependency unreachable (status 503)')"
+if [[ "${fail_rc}" -ne 7 ]]; then
+	echo "expected the shim to exit with gpg-sign's status 7, got ${fail_rc}" >&2
+	exit 1
+fi
+
+# The classifier is sourced only after signing has already failed, so its
+# absence must cost the class name and nothing else — not the diagnostic, not
+# the non-zero exit, and certainly not a successful signature.
+cp "${shim}" "${tmp_dir}/fail-bin/shim-without-classifier.sh"
+fail_rc=0
+printf 'commit object' | env \
+	-u GPG_OIDC_REQUEST_URL \
+	-u GPG_OIDC_REQUEST_TOKEN \
+	-u ACTIONS_ID_TOKEN_REQUEST_URL \
+	-u ACTIONS_ID_TOKEN_REQUEST_TOKEN \
+	PATH="${tmp_dir}/fail-bin:${PATH}" \
+	GPG_SIGN_URL='https://sign.example.test' \
+	GPG_SIGN_TOKEN='minted-token' \
+	STUB_RC=1 \
+	STUB_STDERR='Error: signing failed: SERVICE_DEGRADED: dependency unreachable (status 503)' \
+	"${tmp_dir}/fail-bin/shim-without-classifier.sh" --status-fd=2 -bsau test-key \
+	>"${tmp_dir}/nolib-output" 2>"${tmp_dir}/nolib-error" || fail_rc=$?
+
+if [[ "${fail_rc}" -eq 0 ]]; then
+	echo 'expected a failed signature to exit non-zero without the classifier' >&2
+	exit 1
+fi
+grep -q 'signing failed \[UNKNOWN\]' "${tmp_dir}/nolib-error"
+grep -qF 'dependency unreachable' "${tmp_dir}/nolib-error"
+if grep -q 'SIG_CREATED' "${tmp_dir}/nolib-error"; then
+	echo 'expected no SIG_CREATED without the classifier either' >&2
+	exit 1
+fi
+
 # --- end to end, against real git and real GnuPG -----------------------------
 #
 # Everything above stubs gpg, so it proves the shim hands over an invocation but

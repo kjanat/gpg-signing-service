@@ -19,6 +19,7 @@ jobs:
         with:
           service-url: "${{ vars.SIGNING_SERVICE_URL }}"
           claude-settings: "${{ vars.CLAUDE_SETTINGS }}"
+          disable-signing: "${{ vars.GPG_SIGN_DISABLE }}"
       - name: Run Claude Code Review
         id: claude-review
         if: env.HAS_CLAUDE_TOKEN == 'true'
