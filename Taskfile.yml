@@ -143,7 +143,9 @@ tasks:
     # hold shell this repo owns, and a find(1) sweep would silently stop
     # covering a new one the day someone adds .github/actions/*/entrypoint.sh.
     # examples/bash is in here because test:sign-commit-example runs it.
-    cmd: mise exec -- shellcheck .github/scripts/*.sh scripts/*.sh .claude/hooks/*.sh examples/bash/*.sh
+    # -x follows `source` directives, so a sourced helper is checked in the
+    # context of its caller rather than reported as an unresolved include.
+    cmd: mise exec -- shellcheck -x .github/scripts/*.sh scripts/*.sh .claude/hooks/*.sh examples/bash/*.sh
 
   lint:fix:
     desc: Lint and fix code

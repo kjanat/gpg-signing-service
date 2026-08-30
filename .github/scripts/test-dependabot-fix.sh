@@ -27,40 +27,76 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 gate="${repo_root}/.github/scripts/dependabot-fix-gate.sh"
 apply="${repo_root}/.github/scripts/dependabot-fix-apply.sh"
+
+# shellcheck source-path=SCRIPTDIR source=dependabot-activation.sh
+source "${repo_root}/.github/scripts/dependabot-activation.sh"
+
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "${tmp_dir}"' EXIT
+
 # The workflow must be at the live path, and that is an assertion rather than a
 # lookup. It was not always there: a GitHub App token has no `workflows`
 # permission, so the automation that wrote the file could not create it under
 # .github/workflows/ — the push is rejected outright, and the rejection kills
-# the whole push rather than just that file. It was parked in
-# .github/workflows-pending/ for a human to `git mv`, which has now happened.
+# the whole push rather than just that file. It waits in
+# .github/workflows-pending/ next to the patch that activates it, for a human
+# holding a credential that can write the directory.
 #
 # Requiring the live path is what stops that from being quietly undone. A
 # security suite whose subject is a file nothing runs goes green exactly as fast
 # as one guarding a live workflow, and the difference between the two is the
-# entire value of the thing. Absent, or present in both places, is a failure and
-# not a skip.
-workflow="${repo_root}/.github/workflows/claude-dependabot-fix.yml"
-pending_workflow="${repo_root}/.github/workflows-pending/claude-dependabot-fix.yml"
+# entire value of the thing. So `pending` exits non-zero, and always will.
+#
+# What it does NOT do is stop there. Before activation the suite runs in full
+# against the tree the checked-in patch produces, so every structural and
+# mutation assertion below keeps its meaning during the wait, and the patch
+# itself is proven to still apply — a patch nothing exercises is how the old
+# issue-comment handoff went stale unnoticed. The single deferred failure is
+# raised at the end, naming the two commands that clear it.
+#
+# This is not the live-first-with-fallback lookup that was here before #114 and
+# should not be mistaken for it: that one went GREEN on the pending file. This
+# one is red until the file GitHub executes is the file being guarded.
+activation="$(activation_state)"
+deferred_failure=''
 
-if [[ ! -f "${workflow}" ]]; then
-	echo "FAIL: ${workflow} is missing — the trusted Dependabot fix path is not active." >&2
-	if [[ -f "${pending_workflow}" ]]; then
-		echo "      It is still pending. Activate it:" >&2
-		echo "      git mv .github/workflows-pending/claude-dependabot-fix.yml .github/workflows/" >&2
-	fi
+case "${activation}" in
+	active)
+		workflow="${ACTIVATION_WORKFLOW}"
+		;;
+	pending)
+		if ! activation_apply "${tmp_dir}/activated"; then
+			echo 'FAIL: the trusted Dependabot fix path is not active, and the' >&2
+			echo '      checked-in activation patch cannot produce it (above).' >&2
+			exit 1
+		fi
+		workflow="${tmp_dir}/activated/.github/workflows/claude-dependabot-fix.yml"
+		deferred_failure='pending'
+		printf '  activation: pending — asserting against the patched tree\n'
+		;;
+	both)
+		echo 'FAIL: the workflow is active AND a copy is still in .github/workflows-pending/.' >&2
+		echo '      Two files claim to be this workflow; only one of them runs, and both' >&2
+		echo '      look authoritative in review. Delete the pending copy:' >&2
+		echo '        git rm .github/workflows-pending/claude-dependabot-fix.yml' >&2
+		echo '        git rm .github/workflows-pending/activate.patch' >&2
+		exit 1
+		;;
+	*)
+		echo 'FAIL: claude-dependabot-fix.yml is in neither .github/workflows/ nor' >&2
+		echo '      .github/workflows-pending/. The trusted Dependabot write path is' >&2
+		echo '      gone, and no checked-in patch can bring it back.' >&2
+		exit 1
+		;;
+esac
+
+# The activation patch is a one-shot artifact. Left behind next to a workflow
+# that is already live it is a second, stale description of the same change.
+if [[ "${activation}" == active && -f "${ACTIVATION_PATCH}" ]]; then
+	echo 'FAIL: the workflow is active but the activation patch is still checked in;' >&2
+	echo '      git rm .github/workflows-pending/activate.patch' >&2
 	exit 1
 fi
-
-# Both at once would mean two files claiming to be this workflow, with only one
-# of them running and both looking authoritative in review.
-if [[ -f "${pending_workflow}" ]]; then
-	echo "FAIL: the workflow is active AND a copy is still in .github/workflows-pending/;" >&2
-	echo "      delete ${pending_workflow}" >&2
-	exit 1
-fi
-
-tmp_dir="$(mktemp -d)"
-trap 'rm -rf "${tmp_dir}"' EXIT
 
 bin_dir="${tmp_dir}/bin"
 mkdir -p "${bin_dir}"
@@ -875,5 +911,20 @@ env GITHUB_REPOSITORY="${REPO}" PR_NUMBER='42' HEAD_REF="${BRANCH}" HEAD_SHA="${
 	|| fail 'the allowlist mutation did not reach a push, so the refusal test above proves less than it claims'
 printf '    caught: without the allowlist, a .github/workflows/ patch reaches the branch\n'
 git_quiet -C "${origin}" update-ref "refs/heads/${BRANCH}" "${head_sha}"
+
+# --- the deferred activation failure ------------------------------------------
+#
+# Everything above has now run for real. If the file GitHub executes is not the
+# file those assertions were read off, the suite is guarding a document, and
+# says so as its last act rather than its first — so the run reports the state
+# of the guards AND the state of the activation, instead of only the second.
+if [[ -n "${deferred_failure}" ]]; then
+	echo >&2
+	echo 'FAIL: every assertion above passed, against the tree the checked-in' >&2
+	echo '      activation patch produces — but .github/workflows/claude-dependabot-fix.yml' >&2
+	echo '      does not exist, so nothing they describe is running.' >&2
+	activation_procedure
+	exit 1
+fi
 
 printf 'dependabot fix path tests passed\n'
