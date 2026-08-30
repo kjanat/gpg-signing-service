@@ -121,11 +121,12 @@ app.openapi(uploadKeyRoute, async (c) => {
 			HTTP.Created,
 		);
 	} catch (error) {
-		logger.debug("Upload key route error handler", {
-			error: String(error),
-			requestId,
-		});
 		const message = error instanceof Error ? error.message : "Key upload failed";
+		// `logger.debug` is gated on `NODE_ENV === "development"`, so the only
+		// record a failed key upload used to leave in production was its D1 audit
+		// row -- which is written by the very call below, and so is missing
+		// exactly when D1 is what failed.
+		logger.error("Failed to upload key:", error, { requestId });
 
 		// Audit failed key upload attempt (non-blocking in production)
 		logger.debug("Scheduling background task for upload failure audit", {
@@ -250,6 +251,9 @@ app.openapi(uploadX509KeyRoute, async (c) => {
 		);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Key upload failed";
+		// The X.509 path logged nothing at all: same gap as the OpenPGP upload
+		// above, without even a debug line to delete.
+		logger.error("Failed to upload X.509 key:", error, { requestId });
 
 		await scheduleBackgroundTask(
 			c,
@@ -297,6 +301,8 @@ const listKeysRoute = createRoute({
 });
 
 app.openapi(listKeysRoute, async (c) => {
+	const requestId = c.get("requestId");
+
 	try {
 		const response = await fetchKeyStorage(c.env, "/list-keys");
 		if (!response.ok) {
@@ -313,7 +319,7 @@ app.openapi(listKeysRoute, async (c) => {
 		};
 		return c.json(result, HTTP.OK);
 	} catch (error) {
-		logger.error("Failed to list keys:", error);
+		logger.error("Failed to list keys:", error, { requestId });
 		return c.json(
 			{
 				error: "Failed to retrieve keys",
@@ -360,6 +366,7 @@ const getPublicKeyRoute = createRoute({
 
 app.openapi(getPublicKeyRoute, async (c) => {
 	const { keyId } = c.req.valid("param");
+	const requestId = c.get("requestId");
 
 	try {
 		const keyResponse = await fetchKeyStorage(c.env, `/get-key?keyId=${encodeURIComponent(keyId)}`);
@@ -388,7 +395,12 @@ app.openapi(getPublicKeyRoute, async (c) => {
 			"Content-Type": MediaType.ApplicationPgpKeys,
 		});
 	} catch (error) {
-		logger.error("Failed to get public key:", { keyId, error });
+		// `logger.error(message, error, context)`. Folded into the context object
+		// the caught value reached the error slot as a plain object, and
+		// `JSON.stringify` renders a nested `Error` as `{}`, so the one line
+		// written for a key-storage or OpenPGP failure said nothing about what
+		// failed, and carried no id to reach the request that hit it.
+		logger.error("Failed to get public key:", error, { keyId, requestId });
 		return c.json(
 			{
 				error: "Failed to process key",
@@ -467,7 +479,9 @@ app.openapi(deleteKeyRoute, async (c) => {
 		return c.json(result, HTTP.OK);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Delete failed";
-		logger.error("Failed to delete key:", { keyId, error });
+		// Same nesting as the public-key path: the cause survives only in the
+		// error slot the logger unpacks into `{ message, name, stack }`.
+		logger.error("Failed to delete key:", error, { keyId, requestId });
 
 		// Audit failed deletion attempt (non-blocking in production)
 		await scheduleBackgroundTask(
@@ -520,6 +534,8 @@ const getAuditLogsRoute = createRoute({
 });
 
 app.openapi(getAuditLogsRoute, async (c) => {
+	const requestId = c.get("requestId");
+
 	try {
 		const { limit, offset, action, subject, startDate, endDate } = c.req.valid("query");
 
@@ -535,7 +551,7 @@ app.openapi(getAuditLogsRoute, async (c) => {
 
 		return c.json({ logs, count: logs.length }, HTTP.OK);
 	} catch (error) {
-		logger.error("Failed to get audit logs:", error);
+		logger.error("Failed to get audit logs:", error, { requestId });
 		return c.json(
 			{
 				error: "Failed to retrieve audit logs",

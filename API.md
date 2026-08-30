@@ -554,9 +554,9 @@ error envelope and therefore has no `docs` either.
 | `AUTH_MISSING`            | `401` | Authorization header not provided                                     |
 | `AUTH_INVALID`            | `401` | A credential was presented and the credential was refused             |
 | `AUTH_SUBJECT_UNTRUSTED`  | `401` | The OIDC identity verified; it holds no active trust rule             |
-| `AUTH_SCOPE_INSUFFICIENT` | `403` | `ADMIN_READONLY_TOKEN` on an admin route that changes state           |
 | `KEY_NOT_FOUND`           | `404` | Requested key does not exist                                          |
 | `KEY_NOT_ALLOWED`         | `403` | Credential is trusted; its grant does not cover this key              |
+| `AUTH_SCOPE_INSUFFICIENT` | `403` | Credential is valid; its scope does not cover this method             |
 | `KEY_PROCESSING_ERROR`    | `500` | Error processing key data (extraction, parsing)                       |
 | `KEY_LIST_ERROR`          | `500` | Error retrieving list of keys                                         |
 | `KEY_UPLOAD_ERROR`        | `500` | Error uploading or storing new key                                    |

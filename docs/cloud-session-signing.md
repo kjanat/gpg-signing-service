@@ -139,6 +139,22 @@ The signature block must say `BEGIN PGP SIGNATURE`. If it says
 `BEGIN SSH SIGNATURE`, `gpg.format` did not take effect and you are still
 signing with the agent key.
 
+Git runs `gpg.program` to **verify** as well as to sign — `git log
+--show-signature`, `git tag -v`, `git merge --verify-signatures`. The shim
+claims only the detached-sign invocation and hands every other one to the GnuPG
+on `PATH` unchanged, so those keep working with it configured. What they need is
+the service's public key in the local keyring, which is not there by default:
+
+```bash
+curl -sf "$GPG_SIGN_URL/public-key" | gpg --import
+git log --show-signature -1
+```
+
+If GnuPG is installed somewhere `PATH` does not reach, set `GPG_SIGN_REAL_GPG`
+to its absolute path; the shim uses that in preference to searching. Without any
+`gpg` at all the shim exits `127` and says so, rather than reporting a signature
+it never checked.
+
 A misconfiguration is loud rather than silent once `gpg.format=openpgp` is set:
 with a bad or expired token the commit is refused outright, verified against the
 live service —
@@ -174,8 +190,9 @@ verified email matches the committer address. To get the badge:
    address is verified on the account.
 
 Until then the signature is real and verifiable locally — import the key and run
-`git log --show-signature` — GitHub simply doesn't recognise the signer. This is
-an account-registration gap, not a signature one; see
+`git log --show-signature`, as under [Verifying](#verifying) — GitHub simply
+doesn't recognise the signer. This is an account-registration gap, not a
+signature one; see
 [OpenPGP packet format](how-it-works.md#openpgp-packet-format) for what
 "correct signature" means on its own terms.
 
