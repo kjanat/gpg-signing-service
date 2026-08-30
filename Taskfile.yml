@@ -56,6 +56,7 @@ tasks:
       - task: test:sign-commit-example
       - task: test:review-gate
       - task: test:dependabot-fix
+      - task: test:agent-harness
       - task: test:session-start
 
   test:gnupg-interop:
@@ -96,6 +97,11 @@ tasks:
     aliases: [dbf]
     cmd: bash .github/scripts/test-dependabot-fix.sh
 
+  test:agent-harness:
+    desc: Test the @claude agent-mode harness's owner gate, ref selection and publishing guards
+    aliases: [ah]
+    cmd: bash .github/scripts/test-claude-agent-harness.sh
+
   test:session-start:
     desc: Test the cloud-session hook's shared mise tree, trust and install gating
     cmd: bash scripts/test-session-start-hook.sh
@@ -118,6 +124,7 @@ tasks:
       - task: test:sign-commit-example
       - task: test:review-gate
       - task: test:dependabot-fix
+      - task: test:agent-harness
       - task: test:session-start
 
   test:watch:
@@ -135,6 +142,7 @@ tasks:
       - bun eslint src/
       - mise exec -- biome lint
       - task: lint:shell
+      - task: lint:actions
 
   lint:shell:
     desc: Shellcheck the CI scripts, the cloud-session hook and their test suites
@@ -144,6 +152,21 @@ tasks:
     # covering a new one the day someone adds .github/actions/*/entrypoint.sh.
     # examples/bash is in here because test:sign-commit-example runs it.
     cmd: mise exec -- shellcheck .github/scripts/*.sh scripts/*.sh .claude/hooks/*.sh examples/bash/*.sh
+
+  lint:actions:
+    desc: Static-check the GitHub Actions workflows
+    aliases: [la, actions]
+    # The @claude workflow is now a hand-written agent-mode harness whose `if:`
+    # is the only thing standing between a public comment and a job holding
+    # contents: write and unrestricted Bash. A typo in that expression is a
+    # silently-true condition, and no test run reaches it — actionlint does.
+    #
+    # workflows-pending/ is included because that is where the workflows this
+    # repository's own automation cannot push wait for a human `git mv`. They
+    # are the ones nobody has run yet, so they are the ones most worth linting.
+    cmd: >-
+      find .github/workflows .github/workflows-pending -maxdepth 1 -name '*.yml' 2>/dev/null
+      | xargs -r mise exec -- actionlint
 
   lint:fix:
     desc: Lint and fix code
