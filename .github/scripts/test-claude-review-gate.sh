@@ -254,21 +254,37 @@ assert steps[signing]["with"]["disable-signing"] == "${{ vars.GPG_SIGN_DISABLE }
 # because a prompt is prose: nothing else in the repository would notice it
 # drifting back.
 prompt = steps[review]["with"]["prompt"]
-paragraphs = [p for p in re.split(r"\n\s*\n", prompt) if "dependabot" in p.lower()]
-assert paragraphs, "the review prompt no longer says anything about Dependabot pull requests"
-dependabot_prose = "\n".join(paragraphs)
+paragraphs = re.split(r"\n\s*\n", prompt)
+mentions = [i for i, p in enumerate(paragraphs) if "dependabot" in p.lower()]
+assert mentions, "the review prompt no longer says anything about Dependabot pull requests"
 
-# "push ... to the PR/branch/pull request" — an instruction to this run to write.
-# Deliberately not a bare search for "push": the paragraph has to be able to say
-# that the trusted path pushes, which is the whole point of naming it.
-directive = re.compile(
-    r"push\w*\s+(?:\S+\s+){0,3}?to\s+the\s+(?:PR\b|pull[ -]request|dependabot|branch)",
-    re.IGNORECASE,
-)
-found = directive.search(dependabot_prose)
-assert not found, (
+# The whole span from the first Dependabot paragraph to the last, not only the
+# paragraphs that happen to contain the word. A paragraph wedged between two of
+# them reads as part of the same instruction to any model, and picking out only
+# the ones saying "dependabot" left the retired sentence a hole to come back
+# through: an unnamed paragraph carrying "push to the PR branch so the update
+# can merge" was invisible to this check.
+dependabot_prose = "\n\n".join(paragraphs[mentions[0] : mentions[-1] + 1])
+
+# Any imperative to push, matched as the word rather than as a hand-written
+# shape of the sentence it came from. The first version of this required
+# "push ... to the PR/branch" with at most three words in between, which is the
+# shape of exactly one sentence — the pre-#71 one the mutation below restores.
+# "push directly to the head branch" and "push the corrected lockfile commit
+# straight to the PR branch" both went through it untouched.
+#
+# The paragraph still has to be able to say that the trusted path pushes, so the
+# escape is per sentence and by name: a sentence may mention a push only while
+# naming the workflow that actually holds the token.
+offenders = [
+    s.strip()
+    for s in re.split(r"(?<=[.!?])\s+", dependabot_prose)
+    if re.search(r"\bpush\w*\b", s, re.IGNORECASE)
+    and "claude-dependabot-fix.yml" not in s
+]
+assert not offenders, (
     "the review prompt tells this run to push to a Dependabot branch: "
-    f"{found.group(0)!r}. A Dependabot-triggered pull_request run has a "
+    f"{offenders[0]!r}. A Dependabot-triggered pull_request run has a "
     "read-only token, so that push cannot succeed. Diagnose here and leave "
     "the write to .github/workflows/claude-dependabot-fix.yml."
 )
@@ -293,9 +309,14 @@ python3 "${tmp_dir}/check_review_workflow.py" \
 
 # --- mutation: prove the prompt guard is the thing doing the work ------------
 #
-# Two ways the Dependabot paragraph can rot back into #71. Each is applied to a
+# Four ways the Dependabot paragraph can rot back into #71. Each is applied to a
 # copy and the checker is required to name it; a mutation that changes nothing
 # has drifted off its anchor and is itself a failure.
+#
+# The first restores the literal pre-#71 sentence, and on its own that proves
+# very little: a guard written from one sentence is guaranteed to catch it. The
+# two paraphrases are the ones that earn the check — they are how the
+# instruction would actually come back, worded by someone who never read #71.
 
 # review_mutate NAME SED_SCRIPT EXPECTED — weaken the prompt, require a catch.
 review_mutate() {
@@ -323,6 +344,19 @@ review_mutate() {
 # The exact instruction that was there before #71, restored.
 review_mutate 'prompt-regains-direct-push' \
 	's|^            Diagnose only\..*|            it, verify tests pass, and push to the PR branch so the update|' \
+	'tells this run to push to a Dependabot branch'
+
+# The same instruction in someone else's words. Nothing about "push directly to
+# the head branch" is milder than the sentence above it.
+review_mutate 'prompt-regains-push-paraphrased' \
+	's|^            Diagnose only\..*|            If it breaks, fix it and push directly to the head branch.|' \
+	'tells this run to push to a Dependabot branch'
+
+# The instruction in its own paragraph, never naming the bot. Between two
+# paragraphs that do, it is read as part of the same instruction; a guard
+# looking only at paragraphs containing "dependabot" never saw it.
+review_mutate 'prompt-regains-push-unnamed-paragraph' \
+	$'s|^            Diagnose only\\.|            Fix it and push to the PR branch so the update can merge.\\\n\\\n            Diagnose only.|' \
 	'tells this run to push to a Dependabot branch'
 
 # The pointer removed: the diagnosis is then correct and useless.
