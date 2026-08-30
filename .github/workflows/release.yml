@@ -1,6 +1,15 @@
 name: Release
 
-on: { push: { tags: ["v*.*.*"] } }
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing vX.Y.Z tag to publish
+        type: string
+        required: true
+
 permissions: { contents: write }
 
 jobs:
@@ -8,7 +17,29 @@ jobs:
     name: Build and Release
     runs-on: ubuntu-latest
     steps:
-      - { name: Checkout code, uses: actions/checkout@v7, with: { fetch-depth: 0 } }
+      - name: Checkout release tag
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag must match vX.Y.Z, got '$RELEASE_TAG'"
+            exit 1
+          fi
+          tag_commit="$(git rev-parse "$RELEASE_TAG^{commit}")"
+          head_commit="$(git rev-parse HEAD)"
+          if [[ "$tag_commit" != "$head_commit" ]]; then
+            echo "::error::Checked out $head_commit, but $RELEASE_TAG resolves to $tag_commit"
+            exit 1
+          fi
+          printf 'Publishing %s at %s\n' "$RELEASE_TAG" "$head_commit"
+
       - { uses: jdx/mise-action@v4, with: { working_directory: client } }
 
       - name: Build binaries
@@ -32,6 +63,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: |
             dist/gpg-sign-linux-amd64
             dist/gpg-sign-linux-arm64
