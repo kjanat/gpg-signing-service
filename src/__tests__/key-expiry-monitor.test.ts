@@ -23,7 +23,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import app from "#gpg-signing-service";
 import type { Env } from "#types";
 import { fetchKeyStorage } from "#utils/durable-objects";
-import type { AlertMail, MailSender } from "#utils/key-expiry-monitor";
+import type { AlertKind, AlertMail, MailSender } from "#utils/key-expiry-monitor";
 import { bindingMailSender, mailConfig, runKeyExpiryMonitor } from "#utils/key-expiry-monitor";
 import { logger } from "#utils/logger";
 import { insertOIDCSubject } from "#utils/oidc-subjects";
@@ -70,10 +70,40 @@ function recordingBinding() {
 	};
 }
 
-/** A mail sender that records what it was handed */
-function recordingSender(): { sent: AlertMail[]; send: MailSender } {
+/**
+ * A mail sender that records what it was handed.
+ *
+ * `sent` and `kinds` are kept apart on purpose: `sent` is the mail, and every
+ * assertion about rendering reads it unchanged, so the alert-kind discriminator
+ * cannot quietly become part of what an operator receives.
+ */
+function recordingSender(): { sent: AlertMail[]; kinds: AlertKind[]; send: MailSender } {
 	const sent: AlertMail[] = [];
-	return { sent, send: async (mail) => void sent.push(mail) };
+	const kinds: AlertKind[] = [];
+	return {
+		sent,
+		kinds,
+		send: async (mail, kind) => {
+			sent.push(mail);
+			kinds.push(kind);
+		},
+	};
+}
+
+/** The `alert` classifications `bindingMailSender` logged, in send order */
+function loggedAlertKinds(): unknown[] {
+	return vi
+		.mocked(logger.info)
+		.mock.calls.filter(([, context]) => context?.action === "key-expiry-alert")
+		.map(([, context]) => context?.alert);
+}
+
+/** The messages successful sends were logged under, in send order */
+function loggedAlertMessages(): string[] {
+	return vi
+		.mocked(logger.info)
+		.mock.calls.filter(([, context]) => context?.action === "key-expiry-alert")
+		.map(([message]) => message);
 }
 
 /** The test environment, with the alerting path configured */
@@ -194,7 +224,7 @@ describe("bindingMailSender", () => {
 		const { sent, binding } = recordingBinding();
 		const send = bindingMailSender(monitorEnv({ KEY_EXPIRY_ALERTS: binding }));
 
-		await send({ subject: "Subject", text: "plain", html: "<p>rich</p>" });
+		await send({ subject: "Subject", text: "plain", html: "<p>rich</p>" }, "key-expiry");
 
 		expect(sent).toEqual([{ from: ALERT_FROM, to: ALERT_TO, subject: "Subject", text: "plain", html: "<p>rich</p>" }]);
 	});
@@ -203,6 +233,104 @@ describe("bindingMailSender", () => {
 		// Checked when the sender is *built*, which the monitor does before it
 		// reads any state — so a broken alerting path fails on a quiet week.
 		expect(() => bindingMailSender({ ...env } as unknown as Env)).toThrow(/cannot send mail/);
+	});
+
+	it("logs an ordinary expiry alert under its own message and classification", async () => {
+		const { binding } = recordingBinding();
+		const send = bindingMailSender(monitorEnv({ KEY_EXPIRY_ALERTS: binding }));
+
+		await send({ subject: "Subject", text: "plain", html: "<p>rich</p>" }, "key-expiry");
+
+		expect(logger.info).toHaveBeenCalledWith("Key expiry alert sent", {
+			action: "key-expiry-alert",
+			alert: "key-expiry",
+			messageId: "test-1",
+			to: ALERT_TO,
+		});
+	});
+
+	it("logs a monitor-self-failure alert as a different event entirely", async () => {
+		// The two sends are the same shape at this boundary and mean opposite
+		// things: one is a verdict, the other is the absence of any verdict.
+		const { binding } = recordingBinding();
+		const send = bindingMailSender(monitorEnv({ KEY_EXPIRY_ALERTS: binding }));
+
+		await send({ subject: "Subject", text: "plain", html: "<p>rich</p>" }, "monitor-failure");
+
+		expect(logger.info).toHaveBeenCalledWith("Key expiry monitor self-failure alert sent", {
+			action: "key-expiry-alert",
+			alert: "monitor-failure",
+			messageId: "test-1",
+			to: ALERT_TO,
+		});
+	});
+
+	it("gives the two kinds distinct, stable log values rather than one collapsed event", async () => {
+		const { binding } = recordingBinding();
+		const send = bindingMailSender(monitorEnv({ KEY_EXPIRY_ALERTS: binding }));
+		const mail: AlertMail = { subject: "Subject", text: "plain", html: "<p>rich</p>" };
+
+		await send(mail, "key-expiry");
+		await send(mail, "monitor-failure");
+
+		expect(loggedAlertKinds()).toEqual(["key-expiry", "monitor-failure"]);
+		expect(new Set(loggedAlertMessages()).size).toBe(2);
+	});
+
+	it("never logs the rendered subject or either body", async () => {
+		const { binding } = recordingBinding();
+		const send = bindingMailSender(monitorEnv({ KEY_EXPIRY_ALERTS: binding }));
+
+		await send({ subject: `Subject ${PRODUCTION_KEY_ID}`, text: "plain body", html: "<p>rich body</p>" }, "key-expiry");
+
+		const logged = JSON.stringify(vi.mocked(logger.info).mock.calls);
+		expect(logged).not.toContain("plain body");
+		expect(logged).not.toContain("rich body");
+		expect(logged).not.toContain("Subject");
+		expect(logged).not.toContain(SECRET_ADMIN_TOKEN);
+	});
+
+	it("sends byte-identical mail whichever kind it is told, so the discriminator is log-only", async () => {
+		const { sent, binding } = recordingBinding();
+		const send = bindingMailSender(monitorEnv({ KEY_EXPIRY_ALERTS: binding }));
+		const mail: AlertMail = { subject: "Subject", text: "plain", html: "<p>rich</p>" };
+
+		await send(mail, "key-expiry");
+		await send(mail, "monitor-failure");
+
+		const expected = { from: ALERT_FROM, to: ALERT_TO, subject: "Subject", text: "plain", html: "<p>rich</p>" };
+		expect(sent).toEqual([expected, expected]);
+	});
+});
+
+describe("the alert kind is decided by the caller", () => {
+	it("classifies a run that found an actionable key as an ordinary expiry alert", async () => {
+		await storeKey(PRODUCTION_KEY_ID, await keyExpiringIn(30, "kind-expiry@test.com"));
+		const mail = recordingSender();
+
+		await runKeyExpiryMonitor(monitorEnv(), { sendMail: mail.send });
+
+		expect(mail.kinds).toEqual(["key-expiry"]);
+	});
+
+	it("classifies a run that resolved no key as an ordinary expiry alert too", async () => {
+		// It checked nothing, but the monitor itself completed: that verdict is
+		// news about the keys, not about the monitor being unable to run.
+		const mail = recordingSender();
+
+		await runKeyExpiryMonitor(monitorEnv({ KEY_ID: "  " }), { sendMail: mail.send });
+
+		expect(mail.kinds).toEqual(["key-expiry"]);
+	});
+
+	it("classifies a run that could not complete as a monitor-failure alert", async () => {
+		const mail = recordingSender();
+
+		await expect(
+			runKeyExpiryMonitor(monitorEnv({ KEY_EXPIRY_WARN_DAYS: REJECTED_THRESHOLD }), { sendMail: mail.send }),
+		).rejects.toThrow(/KEY_EXPIRY_WARN_DAYS must be a positive whole number/);
+
+		expect(mail.kinds).toEqual(["monitor-failure"]);
 	});
 });
 
@@ -748,6 +876,37 @@ describe("the scheduled handler", () => {
 		expect(sent[0]).toMatchObject({ from: ALERT_FROM, to: ALERT_TO });
 		expect(sent[0]?.subject).toContain("did not run");
 		expect(sent[0]?.html).toContain("KEY_EXPIRY_WARN_DAYS");
+	});
+
+	it("distinguishes the two alert kinds in the logs a real cron run emits", async () => {
+		// End to end through `bindingMailSender`, because the collapsed event this
+		// replaces was only ever visible in Workers logs: the classification has
+		// to survive the real boundary, not just the test double.
+		await storeKey(PRODUCTION_KEY_ID, await keyExpiringIn(30, "cron-kind@test.com"));
+		const { binding } = recordingBinding();
+		const ctx = createExecutionContext();
+
+		await app.scheduled(controller(), monitorEnv({ KEY_EXPIRY_ALERTS: binding }), ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(loggedAlertKinds()).toEqual(["key-expiry"]);
+		expect(loggedAlertMessages()).toEqual(["Key expiry alert sent"]);
+	});
+
+	it("logs a self-failure send as a self-failure, not as an expiry alert", async () => {
+		const { sent, binding } = recordingBinding();
+		const ctx = createExecutionContext();
+
+		await expect(
+			app.scheduled(controller(), monitorEnv({ KEY_EXPIRY_ALERTS: binding, KEY_EXPIRY_WARN_DAYS: "0" }), ctx),
+		).rejects.toThrow(/KEY_EXPIRY_WARN_DAYS must be a positive whole number/);
+		await waitOnExecutionContext(ctx);
+
+		expect(loggedAlertKinds()).toEqual(["monitor-failure"]);
+		expect(loggedAlertMessages()).toEqual(["Key expiry monitor self-failure alert sent"]);
+		// The mail itself is what it always was; only the log line is new.
+		expect(sent[0]).toMatchObject({ from: ALERT_FROM, to: ALERT_TO });
+		expect(sent[0]?.subject).toContain("did not run");
 	});
 
 	it("leaves the HTTP surface untouched", async () => {
