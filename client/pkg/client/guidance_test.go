@@ -11,8 +11,6 @@ import (
 	"github.com/kjanat/gpg-signing-service/client/pkg/api"
 )
 
-func strptr(s string) *string { return &s }
-
 // The refusal from the issue: a valid token whose subject nobody trusted. The
 // point of the test is that all three actionable fields survive the trip into
 // a typed error, because the old client dropped every one of them and left the
@@ -21,9 +19,9 @@ func TestAuthErrorCarriesGuidance(t *testing.T) {
 	body := &api.ErrorResponse{
 		Error:   testMsgUntrusted,
 		Code:    api.AUTHSUBJECTUNTRUSTED,
-		Subject: strptr("repo:kjanat/kjanat:ref:refs/heads/master"),
-		Hint:    strptr("No active trust rule matches this subject."),
-		Docs:    strptr("https://gpg.example/e/AUTH_SUBJECT_UNTRUSTED"),
+		Subject: new("repo:kjanat/kjanat:ref:refs/heads/master"),
+		Hint:    new("No active trust rule matches this subject."),
+		Docs:    new("https://gpg.example/e/AUTH_SUBJECT_UNTRUSTED"),
 	}
 
 	err := newAuthErrorFromResponse(body, http.Header{})
@@ -59,7 +57,9 @@ func TestAuthErrorCarriesGuidance(t *testing.T) {
 // is read off the fields or printed by the CLI, never folded into the string.
 func TestAuthErrorStringStaysOneLine(t *testing.T) {
 	err := &AuthError{
-		Guidance:  Guidance{Hint: "a hint", Docs: "https://gpg.example/e/X", Subject: "repo:a/b"},
+		Hint:      "a hint",
+		Docs:      "https://gpg.example/e/X",
+		Subject:   "repo:a/b",
 		Code:      ErrCodeAuthSubjectUntrusted,
 		Message:   testMsgUntrusted,
 		RequestID: "628c9a74-c46d-403c-84c6-9c873298a17f",
@@ -75,7 +75,8 @@ func TestAuthErrorStringStaysOneLine(t *testing.T) {
 
 func TestGuidanceForFindsWrappedErrors(t *testing.T) {
 	inner := &ServiceError{
-		Guidance:   Guidance{Hint: "add a trust rule", Docs: "https://gpg.example/e/KEY_NOT_ALLOWED"},
+		Hint:       "add a trust rule",
+		Docs:       "https://gpg.example/e/KEY_NOT_ALLOWED",
 		Code:       ErrCodeKeyNotAllowed,
 		StatusCode: 403,
 	}

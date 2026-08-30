@@ -35,14 +35,17 @@ func (i Identity) String() string { return i.Name + " <" + i.Email + ">" }
 // that is, and "<info@example.test>" alone would produce headers git renders
 // with an empty name.
 func ParseIdentity(value string) (Identity, error) {
+	// The *last* bracket pair delimits the address, so a name that itself
+	// contains a bracket splits in the operator's favour and is then refused
+	// below by name rather than quietly becoming part of the address.
 	trimmed := strings.TrimSpace(value)
-	opening := strings.LastIndex(trimmed, "<")
-	if opening <= 0 || !strings.HasSuffix(trimmed, ">") {
+	inner, closed := strings.CutSuffix(trimmed, ">")
+	rawName, email, opened := strings.CutLast(inner, "<")
+	if !closed || !opened || rawName == "" {
 		return Identity{}, fmt.Errorf("identity %q is not in \"Name <address>\" form", value)
 	}
 
-	name := strings.TrimSpace(trimmed[:opening])
-	email := trimmed[opening+1 : len(trimmed)-1]
+	name := strings.TrimSpace(rawName)
 	if name == "" {
 		return Identity{}, fmt.Errorf("identity %q carries no name", value)
 	}
@@ -94,29 +97,26 @@ func parseIdent(header, value string) (ident, error) {
 		return ident{}, fmt.Errorf("the %s header %q is not in \"Name <address> seconds ±hhmm\" form: %s", header, value, why)
 	}
 
-	closing := strings.LastIndex(value, ">")
-	if closing < 0 {
+	beforeClose, when, closed := strings.CutLast(value, ">")
+	if !closed {
 		return malformed("no closing angle bracket")
 	}
-	opening := strings.LastIndex(value[:closing], "<")
-	if opening < 0 {
+	name, email, opened := strings.CutLast(beforeClose, "<")
+	if !opened {
 		return malformed("no opening angle bracket")
 	}
 
-	name := value[:opening]
 	if name != "" && !strings.HasSuffix(name, " ") {
 		return malformed("no space between the name and the address")
 	}
-	email := value[opening+1 : closing]
 	if strings.ContainsAny(email, "<>") {
 		return malformed("nested angle brackets around the address")
 	}
 
-	when := value[closing+1:]
-	if !strings.HasPrefix(when, " ") {
+	when, spaced := strings.CutPrefix(when, " ")
+	if !spaced {
 		return malformed("no space between the address and the timestamp")
 	}
-	when = when[1:]
 
 	seconds, offset, found := strings.Cut(when, " ")
 	if !found {
@@ -170,7 +170,7 @@ func treeHeader(payload []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for _, line := range bytes.Split(head, []byte("\n")) {
+	for line := range bytes.SplitSeq(head, []byte("\n")) {
 		if bytes.HasPrefix(line, treePrefix) {
 			return string(line[len(treePrefix):]), nil
 		}
@@ -191,7 +191,7 @@ func readIdents(payload []byte) (author, committer ident, err error) {
 
 	seen := map[string]int{}
 	found := map[string]ident{}
-	for _, line := range bytes.Split(head, []byte("\n")) {
+	for line := range bytes.SplitSeq(head, []byte("\n")) {
 		// A continuation line of a multi-line header is indented by one
 		// space, so it can never be mistaken for a header of its own.
 		for _, header := range identityHeaders {
