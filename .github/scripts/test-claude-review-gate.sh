@@ -180,12 +180,18 @@ TRUSTED
 # in front of it. So assert the wiring: checkout before the gate (the script
 # lives in the tree being reviewed), the gate before both steps that read its
 # decision, and one shared condition so the two can never drift apart.
-python3 - "${repo_root}" <<'REVIEW'
-import sys, pathlib, yaml
+#
+# Written to a file rather than piped, because the mutation section below runs
+# it against deliberately broken copies. A checker that has only ever seen a
+# correct file is a checker nobody has watched work.
+cat >"${tmp_dir}/check_review_workflow.py" <<'REVIEW'
+"""Assert the review workflow's wiring. Argument: the workflow file."""
+import re
+import sys
+import pathlib
+import yaml
 
-wf = yaml.safe_load(
-    (pathlib.Path(sys.argv[1]) / ".github/workflows/claude-code-review.yml").read_text()
-)
+wf = yaml.safe_load(pathlib.Path(sys.argv[1]).read_text())
 steps = wf["jobs"]["claude-review"]["steps"]
 
 
@@ -234,6 +240,94 @@ assert "head.repo.full_name" in gate_env.get("PR_HEAD_REPO", ""), (
 assert steps[signing]["with"]["disable-signing"] == "${{ vars.GPG_SIGN_DISABLE }}", (
     "the GPG_SIGN_DISABLE escape hatch is no longer wired up"
 )
+
+# --- the prompt must not ask for a push this run cannot make ------------------
+#
+# This workflow once told Claude, on a Dependabot pull request, to fix the bump
+# and push to the branch. That instruction was never executable: GitHub hands a
+# Dependabot-triggered `pull_request` run a read-only GITHUB_TOKEN whatever the
+# `permissions:` block above says. The cost of a dead instruction in a prompt is
+# not nothing — it sends a model that believes it into a loop of retrying a push
+# that will never work, and it reads to a human as though the path exists.
+#
+# The repair belongs to the trusted `workflow_run` path (#71). Asserted here
+# because a prompt is prose: nothing else in the repository would notice it
+# drifting back.
+prompt = steps[review]["with"]["prompt"]
+paragraphs = [p for p in re.split(r"\n\s*\n", prompt) if "dependabot" in p.lower()]
+assert paragraphs, "the review prompt no longer says anything about Dependabot pull requests"
+dependabot_prose = "\n".join(paragraphs)
+
+# "push ... to the PR/branch/pull request" — an instruction to this run to write.
+# Deliberately not a bare search for "push": the paragraph has to be able to say
+# that the trusted path pushes, which is the whole point of naming it.
+directive = re.compile(
+    r"push\w*\s+(?:\S+\s+){0,3}?to\s+the\s+(?:PR\b|pull[ -]request|dependabot|branch)",
+    re.IGNORECASE,
+)
+found = directive.search(dependabot_prose)
+assert not found, (
+    "the review prompt tells this run to push to a Dependabot branch: "
+    f"{found.group(0)!r}. A Dependabot-triggered pull_request run has a "
+    "read-only token, so that push cannot succeed. Diagnose here and leave "
+    "the write to .github/workflows/claude-dependabot-fix.yml."
+)
+
+assert "claude-dependabot-fix.yml" in dependabot_prose, (
+    "the review prompt no longer names the trusted fix path, so a run that "
+    "finds a broken bump has nowhere to send it"
+)
+assert re.search(r"read-only|no write|cannot|can't", dependabot_prose, re.IGNORECASE), (
+    "the review prompt no longer says this run has no write authority over a "
+    "Dependabot branch — without that, 'diagnose only' reads as a style note"
+)
+print("review workflow ok")
 REVIEW
+
+python3 "${tmp_dir}/check_review_workflow.py" \
+	"${repo_root}/.github/workflows/claude-code-review.yml" \
+	>"${tmp_dir}/out" 2>"${tmp_dir}/err" || {
+	cat "${tmp_dir}/err" >&2
+	fail 'claude-code-review.yml as committed fails its own wiring checks'
+}
+
+# --- mutation: prove the prompt guard is the thing doing the work ------------
+#
+# Two ways the Dependabot paragraph can rot back into #71. Each is applied to a
+# copy and the checker is required to name it; a mutation that changes nothing
+# has drifted off its anchor and is itself a failure.
+
+# review_mutate NAME SED_SCRIPT EXPECTED — weaken the prompt, require a catch.
+review_mutate() {
+	local name="$1" script="$2" expected="$3" rc=0
+	sed -e "${script}" "${repo_root}/.github/workflows/claude-code-review.yml" \
+		>"${tmp_dir}/mutant.yml"
+	if cmp -s "${tmp_dir}/mutant.yml" "${repo_root}/.github/workflows/claude-code-review.yml"; then
+		echo "FAIL: mutation '${name}' changed nothing; its anchor has drifted" >&2
+		exit 1
+	fi
+	python3 "${tmp_dir}/check_review_workflow.py" "${tmp_dir}/mutant.yml" \
+		>"${tmp_dir}/out" 2>"${tmp_dir}/err" || rc=$?
+	if [[ "${rc}" == 0 ]]; then
+		echo "FAIL: mutation '${name}' was NOT caught — the guard for it does nothing" >&2
+		exit 1
+	fi
+	grep -qF -- "${expected}" "${tmp_dir}/err" || {
+		echo "FAIL: mutation '${name}' was caught by the wrong check; wanted: ${expected}" >&2
+		cat "${tmp_dir}/err" >&2
+		exit 1
+	}
+	printf '  caught: %s\n' "${name}"
+}
+
+# The exact instruction that was there before #71, restored.
+review_mutate 'prompt-regains-direct-push' \
+	's|^            Diagnose only\..*|            it, verify tests pass, and push to the PR branch so the update|' \
+	'tells this run to push to a Dependabot branch'
+
+# The pointer removed: the diagnosis is then correct and useless.
+review_mutate 'prompt-drops-trusted-path' \
+	's|claude-dependabot-fix\.yml|some-other-workflow.yml|' \
+	'no longer names the trusted fix path'
 
 printf 'claude review gate tests passed\n'

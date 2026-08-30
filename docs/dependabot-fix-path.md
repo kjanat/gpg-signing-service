@@ -39,7 +39,7 @@ job and the untrusted pull request are one `if:` apart for the whole file.
 
 ## What this repository does instead
 
-[`claude-dependabot-fix.yml`](../.github/workflows-pending/claude-dependabot-fix.yml)
+[`claude-dependabot-fix.yml`](../.github/workflows/claude-dependabot-fix.yml)
 triggers on `workflow_run`, on completion of CI. That gives the same elevation
 with a different shape:
 
@@ -144,25 +144,39 @@ The escape hatch and the fail-closed contract are unchanged from #107. A job
 that means to sign and cannot fails, rather than quietly producing an unsigned
 commit; `GPG_SIGN_DISABLE` remains the only way to sign nothing on purpose.
 
-## Activating it
+## Where it lives, and why the tests care
 
-The workflow ships in `.github/workflows-pending/`, not `.github/workflows/`,
-and is therefore **not running yet**. This is a platform constraint rather than
-a design choice: a GitHub App token has no `workflows` permission, so the
-automation that opened this change could not create a file under
-`.github/workflows/`. The push is rejected outright, and the rejection kills
-the whole push rather than just that one file.
+`.github/workflows/claude-dependabot-fix.yml`. It is active.
 
-A human activates it with one command:
+It briefly was not. The file was first committed to
+`.github/workflows-pending/`, because a GitHub App token has no `workflows`
+permission and the automation that wrote it could not create a file under
+`.github/workflows/` — the push is rejected outright, and the rejection kills
+the whole push rather than just that one file. A human completed the move with
+a `git mv`.
 
-```bash
-git mv .github/workflows-pending/claude-dependabot-fix.yml .github/workflows/
-```
+`task test:dependabot-fix` now **requires** the live path and fails if the file
+is missing, or if a copy is left behind in `.github/workflows-pending/`. That is
+deliberate rather than tidiness: a security suite whose subject is a file
+nothing runs goes green exactly as fast as one guarding a live workflow, and the
+difference between the two is the entire point. Every structural and mutation
+assertion in that suite is read off the file GitHub actually executes.
 
-Nothing else has to change. `task test:dependabot-fix` resolves the live path
-first and falls back to the pending one, so it starts guarding the file where it
-lands, and refuses to pass if the file is in neither place — or, after a
-half-finished move, in both.
+## What the review workflow says about Dependabot
+
+[`claude-code-review.yml`](../.github/workflows/claude-code-review.yml) once
+told Claude, on a Dependabot pull request, to fix the bump and push to the
+branch. That instruction was never executable — see
+[the section above](#why-the-review-workflow-cannot-do-it) — and it is gone. The
+prompt now scopes that run to **diagnosis**: reproduce the failure, name the
+mechanical repair, and leave the commit to this path.
+
+`test-claude-review-gate.sh` asserts that, because a prompt is prose and nothing
+else in the repository would notice it drifting back. It rejects any instruction
+of the shape "push … to the PR/branch" in the Dependabot paragraphs, requires
+the paragraph to name `claude-dependabot-fix.yml`, and requires it to state that
+the run has no write authority. Both guards are mutation-tested against a copy
+with the pre-#71 wording restored.
 
 ## Secret provisioning
 
