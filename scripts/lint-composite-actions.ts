@@ -38,13 +38,16 @@
  * Usage:
  *   bun scripts/lint-composite-actions.ts [--list] [paths...]
  *
- * With no paths it discovers `action.yml` at the repo root plus every
- * `.github/actions/**\/action.{yml,yaml}`. `--list` prints the blocks it found
- * and exits 0; that is the coverage assertion's hook, so a block silently
- * dropping out of scope is itself detectable.
+ * With no paths it walks the whole repository for `action.{yml,yaml}`, skipping
+ * only trees that hold no source this repo owns (`.git`, `node_modules`, build
+ * and coverage output). A composite action is a composite action wherever it
+ * lives, and scoping discovery to `.github/actions/` meant one `git mv` could
+ * take a file out of the gate silently. `--list` prints the blocks it found and
+ * exits 0; that is the coverage assertion's hook, so a block dropping out of
+ * scope is itself detectable.
  */
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { type Dirent, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { isMap, isSeq, LineCounter, parseDocument } from "yaml";
 
@@ -83,41 +86,59 @@ interface RunBlock {
 
 const ACTION_FILENAMES = new Set(["action.yml", "action.yaml"]);
 
+/**
+ * Directory names never descended into.
+ *
+ * This is a deny list rather than an allow list on purpose. An allow list is
+ * what the first version of this gate had -- root plus `.github/actions/` --
+ * and it made "is this file linted?" depend on where someone happened to put
+ * it. A deny list can only ever fail by linting something extra, which is a
+ * visible failure; an allow list fails by linting nothing, which is silent.
+ *
+ * Everything here is a tree this repo does not author: dependency and VCS
+ * metadata, and generated output. `action.yml` files under `node_modules/`
+ * belong to third-party actions and are their authors' to fix.
+ */
+const SKIP_DIRS = new Set([
+	".git",
+	".direnv",
+	".venv",
+	"node_modules",
+	"vendor",
+	"dist",
+	"build",
+	"out",
+	"coverage",
+	".wrangler",
+	".turbo",
+	".next",
+	".cache",
+]);
+
 function discoverActionFiles(root: string): string[] {
 	const found: string[] = [];
-
-	for (const name of ACTION_FILENAMES) {
-		const candidate = join(root, name);
-		if (safeIsFile(candidate)) found.push(candidate);
-	}
-
-	const actionsDir = join(root, ".github", "actions");
-	if (safeIsDir(actionsDir)) walk(actionsDir, found);
-
+	walk(root, found);
 	return found.sort();
 }
 
 function walk(dir: string, out: string[]): void {
-	for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+	let entries: Dirent[];
+	try {
+		entries = readdirSync(dir, { withFileTypes: true });
+	} catch {
+		// An unreadable directory is not a reason to fail the whole lint run;
+		// the coverage assertion in test-composite-action-lint.sh is what
+		// notices if something that should be linted stops being reachable.
+		return;
+	}
+
+	for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
 		const full = join(dir, entry.name);
-		if (entry.isDirectory()) walk(full, out);
-		else if (ACTION_FILENAMES.has(entry.name)) out.push(full);
-	}
-}
-
-function safeIsFile(path: string): boolean {
-	try {
-		return statSync(path).isFile();
-	} catch {
-		return false;
-	}
-}
-
-function safeIsDir(path: string): boolean {
-	try {
-		return statSync(path).isDirectory();
-	} catch {
-		return false;
+		if (entry.isDirectory()) {
+			if (!SKIP_DIRS.has(entry.name)) walk(full, out);
+		} else if (ACTION_FILENAMES.has(entry.name) && !entry.isSymbolicLink()) {
+			out.push(full);
+		}
 	}
 }
 
