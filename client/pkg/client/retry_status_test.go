@@ -426,8 +426,7 @@ func TestTimeoutBoundsOneAttemptNotTheCall(t *testing.T) {
 	_, err = c.Sign(context.Background(), "commit data", "")
 	elapsed := time.Since(start)
 
-	var se *ServiceError
-	if !errors.As(err, &se) {
+	if _, ok := errors.AsType[*ServiceError](err); !ok {
 		t.Fatalf("expected a *ServiceError, got %T: %v", err, err)
 	}
 	if requests != 4 {

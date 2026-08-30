@@ -168,8 +168,7 @@ func verifyReason(err error) string {
 
 	// A wrong signature over the right key is reported as a typed
 	// SignatureError rather than a sentinel.
-	var mismatch pgperrors.SignatureError
-	if errors.As(err, &mismatch) {
+	if _, ok := errors.AsType[pgperrors.SignatureError](err); ok {
 		return reasonMismatch
 	}
 	// Anything else — an SSH signature in the gpgsig header, a truncated armor
