@@ -52,6 +52,8 @@ tasks:
       - task: test:signing-preflight
       - task: test:sign-commits
       - task: test:sign-commit-example
+      - task: test:review-gate
+      - task: test:session-start
 
   test:gnupg-interop:
     desc: Verify signatures against real gpg and git (skips if gpg is absent)
@@ -74,6 +76,14 @@ tasks:
     desc: Test the Bash example's retry, clamping and transport handling
     cmd: bash .github/scripts/test-sign-commit-example.sh
 
+  test:review-gate:
+    desc: Test the Claude review job's no-token gate and its fork path
+    cmd: bash .github/scripts/test-claude-review-gate.sh
+
+  test:session-start:
+    desc: Test the cloud-session hook's shared mise tree, trust and install gating
+    cmd: bash scripts/test-session-start-hook.sh
+
   test:coverage:
     desc: Run tests with coverage
     aliases: [tc]
@@ -88,6 +98,8 @@ tasks:
       - task: test:signing-preflight
       - task: test:sign-commits
       - task: test:sign-commit-example
+      - task: test:review-gate
+      - task: test:session-start
 
   test:watch:
     desc: Run tests in watch mode
@@ -103,6 +115,16 @@ tasks:
       - task: format
       - bun eslint src/
       - mise exec -- biome lint
+      - task: lint:shell
+
+  lint:shell:
+    desc: Shellcheck the CI scripts, the cloud-session hook and their test suites
+    aliases: [ls, sh]
+    # Directories enumerated rather than discovered: these are the ones that
+    # hold shell this repo owns, and a find(1) sweep would silently stop
+    # covering a new one the day someone adds .github/actions/*/entrypoint.sh.
+    # examples/bash is in here because test:sign-commit-example runs it.
+    cmd: mise exec -- shellcheck .github/scripts/*.sh scripts/*.sh .claude/hooks/*.sh examples/bash/*.sh
 
   lint:fix:
     desc: Lint and fix code
