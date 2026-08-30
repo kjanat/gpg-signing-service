@@ -574,8 +574,7 @@ func TestPerAttemptTimeoutIsNotAnAnswer(t *testing.T) {
 	if !errors.Is(signErr, context.DeadlineExceeded) {
 		t.Errorf("expected a deadline error, got %T: %v", signErr, signErr)
 	}
-	var serviceErr *ServiceError
-	if errors.As(signErr, &serviceErr) {
+	if serviceErr, ok := errors.AsType[*ServiceError](signErr); ok {
 		t.Errorf("attempt one's %d was reported in place of the timeout: %v",
 			serviceErr.StatusCode, signErr)
 	}

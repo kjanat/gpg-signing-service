@@ -49,12 +49,17 @@ case "${1-}" in
 esac
 EOF
 
+# The toolchain this stub reports is deliberately *not* the one the repo pins
+# today: the hook has to take whatever `go env GOVERSION` answers, so a fixture
+# that matched client/go.mod would pass even if the hook hardcoded a version.
+# GOTOOLCHAIN is logged alongside the arguments because that is where the hook
+# passes it, and passing the derived one is the whole point of the rebuild.
 cat >"${bin}/go" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$*" >>"${STUB_LOG_DIR}/go"
+printf 'GOTOOLCHAIN=%s %s\n' "${GOTOOLCHAIN-unset}" "$*" >>"${STUB_LOG_DIR}/go"
 case "${1-} ${2-}" in
-	'env GOVERSION') printf 'go1.26.5\n' ;;
+	'env GOVERSION') printf '%s\n' "${STUB_GO_VERSION:-go1.99.0}" ;;
 	*) : ;;
 esac
 EOF
@@ -64,7 +69,7 @@ cat >"${bin}/golangci-lint" <<'EOF'
 set -euo pipefail
 printf '%s\n' "$*" >>"${STUB_LOG_DIR}/golangci-lint"
 case "${1-}" in
-	--version) printf 'golangci-lint has version 2.12.2\n' ;;
+	--version) printf 'golangci-lint has version 2.13.2\n' ;;
 	config) exit "${STUB_GOLANGCI_RC:-0}" ;;
 	*) : ;;
 esac
@@ -293,5 +298,24 @@ rc="$(run_hook MISE_DATA_DIR="${tmp_dir}/gl-bad" STUB_MISE_TOOLS="${ALL_TOOLS}" 
 expect_rc 0 "${rc}"
 expect_called golangci-lint 'config path --config=.golangci.yml'
 expect_called go 'install github.com/golangci/golangci-lint'
+# The rebuild is worthless unless it uses the toolchain client/go.mod asks for,
+# so pin that it forwards the *probed* version rather than a version baked into
+# the hook. The stub answers go1.99.0, which no go.mod in this repo names.
+expect_called go 'GOTOOLCHAIN=go1.99.0 install github.com/golangci/golangci-lint'
+
+# --- a stale GOTOOLCHAIN pin must not decide the rebuild ----------------------
+#
+# docs/cloud-sessions.md has you pin GOTOOLCHAIN in the environment, and a pin
+# beats go.mod. Probing without GOTOOLCHAIN=auto would therefore report the
+# pinned version and exit 0 — rebuilding golangci-lint with the very toolchain
+# that causes the mismatch, while logging success. Both halves are asserted:
+# the probe overrides the pin, and the rebuild follows the probe.
+new_case golangci-stale-toolchain-pin
+rc="$(run_hook MISE_DATA_DIR="${tmp_dir}/gl-pin" STUB_MISE_TOOLS="${ALL_TOOLS}" \
+	STUB_GOLANGCI_RC=7 STUB_GO_VERSION=go1.98.0 GOTOOLCHAIN=go1.1.0)"
+expect_rc 0 "${rc}"
+expect_called go 'GOTOOLCHAIN=auto env GOVERSION'
+expect_called go 'GOTOOLCHAIN=go1.98.0 install github.com/golangci/golangci-lint'
+refute_called go 'GOTOOLCHAIN=go1.1.0 install github.com/golangci/golangci-lint'
 
 printf 'session-start hook tests passed\n'
