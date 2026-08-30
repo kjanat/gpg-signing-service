@@ -1,7 +1,10 @@
 import { swaggerUI } from "@hono/swagger-ui";
 import { createRoute } from "@hono/zod-openapi";
+import * as Sentry from "@sentry/cloudflare";
 import { logger } from "hono/logger";
 import * as openpgp from "openpgp";
+import { KeyStorage as KeyStorageClass } from "#durable-objects/key-storage";
+import { RateLimiter as RateLimiterClass } from "#durable-objects/rate-limiter";
 import { createOpenAPIApp, openApiConfig, registerSecuritySchemes } from "#lib/openapi";
 import { callerAuth } from "#middleware/caller-auth";
 import { errorDocs } from "#middleware/error-docs";
@@ -21,10 +24,33 @@ import { fetchKeyStorage } from "#utils/durable-objects";
 import { errorDocsTarget } from "#utils/error-docs";
 import { runKeyExpiryMonitor } from "#utils/key-expiry-monitor";
 import { logger as customLogger } from "#utils/logger";
+import { sentryOptions } from "#utils/sentry";
 
 // Export Durable Objects
-export { KeyStorage } from "#durable-objects/key-storage";
-export { RateLimiter } from "#durable-objects/rate-limiter";
+//
+// Wrapped rather than re-exported so a fault inside either object is reported
+// with the same options — and through the same scrubber — as one in the request
+// path. Both are otherwise invisible: nothing in `fetchKeyStorage` or the
+// limiter's caller logs the far side of the stub, and `RateLimiter.alarm()`
+// runs with no request to attach to at all.
+//
+// The wrapper is a Proxy whose `construct` trap returns the real instance, so
+// the class name Cloudflare matches against `[[migrations]]`, the constructor
+// signature, and every method's behaviour are unchanged. The base classes stay
+// importable from their own modules, which is what the Durable Object suites
+// use.
+export const KeyStorage = instrumentDurableObject(KeyStorageClass);
+export const RateLimiter = instrumentDurableObject(RateLimiterClass);
+
+// The instance types, re-exported alongside the wrapped constructors.
+// `wrangler types` writes `DurableObjectNamespace<import("./src/index").KeyStorage>`
+// into worker-configuration.d.ts, and the previous `export { KeyStorage } from
+// ...` carried the class's type as well as its value. A `const` carries only
+// the value, so without these two lines every stub in the generated env — and
+// the `runInDurableObject` calls typed off it — degrades to the bare
+// `DurableObject` interface.
+export type KeyStorage = KeyStorageClass;
+export type RateLimiter = RateLimiterClass;
 
 const app = createOpenAPIApp();
 
@@ -245,7 +271,7 @@ app.onError((err, c) => {
  * require. The runtime asks only that `fetch` and `scheduled` be callable
  * properties of the default export, and both are.
  */
-export default Object.assign(app, {
+const handler = Object.assign(app, {
 	/**
 	 * The Cron Trigger. Warns before an active signing key lapses.
 	 *
@@ -267,3 +293,30 @@ export default Object.assign(app, {
 		}
 	},
 });
+
+/**
+ * Instrument a Durable Object class without changing what it is.
+ *
+ * The SDK types this against the `DurableObject` base class exported from
+ * `cloudflare:workers`. Neither of this Worker's objects extends it — they
+ * implement the ambient `DurableObject` interface and take only `state` — so
+ * the constraint cannot be satisfied structurally even though the runtime
+ * contract (constructed with `(state, env)`, dispatched through `fetch` and
+ * `alarm`) is exactly what the instrumentation expects. The casts are confined
+ * to this helper, and its signature returns the class it was handed, so no
+ * caller loses a type.
+ */
+function instrumentDurableObject<C extends new (state: DurableObjectState, env: Env) => object>(target: C): C {
+	return Sentry.instrumentDurableObjectWithSentry(sentryOptions as never, target as never) as unknown as C;
+}
+
+/**
+ * The exported handler, wrapped.
+ *
+ * `withSentry` mutates and returns the same object, so `getOpenAPIDocument` and
+ * everything else `scripts/generate-openapi.ts` and two suites read off the
+ * default export survive the wrapping. With no `SENTRY_DSN` configured the
+ * options carry `enabled: false` and no integrations at all, which is what
+ * makes the wrap a real no-op rather than a quiet one.
+ */
+export default Sentry.withSentry(sentryOptions, handler);

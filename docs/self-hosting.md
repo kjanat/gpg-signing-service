@@ -157,6 +157,36 @@ in operator secret stores.
 
 For staging, add `--env staging` to both commands.
 
+### Optional error reporting
+
+```bash
+wrangler secret put SENTRY_DSN
+```
+
+Optional, and off unless you set it. Unset — or set to whitespace — the Worker
+reports nothing to Sentry, installs none of the SDK's integrations, and behaves
+exactly as it does without the binding: the same `console.log` lines reach
+Workers Logs, and `audit_logs` is written the same way. Self-hosting this
+service does not put a third-party processor in the path.
+
+Set it and uncaught exceptions, every `logger.error`, and the two
+security-relevant refusals — `KEY_NOT_ALLOWED`, and a revoked trust presented
+again — become events that outlive Workers Logs' 3-to-7-day retention. Each one
+carries the `requestId` from the caller's failing response as a tag, so an id
+pasted out of a CI log finds the event.
+
+Secrets never travel: `KEY_PASSPHRASE`, `ADMIN_TOKEN`, armored or PEM private
+key material, raw OIDC JWTs, `gst_` service tokens, `Bearer` credentials and the
+`Authorization` header are redacted by name _and_ by value shape before an
+event leaves the Worker, request bodies are never collected at all, and
+`sendDefaultPii` is off. Key ids, fingerprints, issuers and subjects do travel —
+they are already public through `/public-key`, `GET /admin/subjects` and the
+audit trail, and they are the diagnostic value. See
+[Security model](security-model.md#what-sentry-receives).
+
+`SENTRY_TRACES_SAMPLE_RATE` is an optional plain var between `0` and `1`,
+defaulting to `0.1`. It has no effect without a DSN.
+
 ### The read-only admin credential
 
 `ADMIN_READONLY_TOKEN` is an optional third secret: a bearer accepted on `GET`

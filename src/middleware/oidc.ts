@@ -13,6 +13,7 @@ import { fetchWithTimeout } from "#utils/fetch";
 import { logger } from "#utils/logger";
 import type { OIDCSubjectResolution, RefusalContext } from "#utils/oidc-subjects";
 import { resolveOIDCSubject } from "#utils/oidc-subjects";
+import { addRefusalBreadcrumb, captureRefusalEvent } from "#utils/sentry";
 import { validateUrl } from "#utils/url-validation";
 
 /**
@@ -425,8 +426,37 @@ export const oidcAuth: MiddlewareHandler<{
 				subjectPolicy: resolution.name,
 				revokedAt: resolution.revokedAt,
 			});
+			// An event, not a breadcrumb. Reaching this arm means a credential
+			// someone deliberately killed is still being presented, by a caller
+			// whose `sub` the issuer binds to their repository — a bounded,
+			// already-vetted population. That is an incident, and it is one of the
+			// two refusals worth an alert rule. None of the fields here is secret:
+			// every one of them is readable through GET /admin/subjects.
+			captureRefusalEvent("Revoked OIDC trust presented", {
+				requestId,
+				action: "sign",
+				errorCode: "AUTH_INVALID",
+				reason: "revoked_trust_presented",
+				issuer: payload.iss,
+				subject: payload.sub,
+				subjectId: resolution.id,
+				subjectPolicy: resolution.name,
+				revokedAt: resolution.revokedAt,
+			});
 		} else if (resolution.status === "expired") {
 			logger.warn("Expired OIDC trust presented", {
+				requestId,
+				issuer: payload.iss,
+				subject: payload.sub,
+				subjectId: resolution.id,
+				subjectPolicy: resolution.name,
+				expiresAt: resolution.expiresAt,
+			});
+			// A breadcrumb, not an event. A lapsed trust is routine maintenance and
+			// the row owner's problem; raising it would bury the two refusals that
+			// are actually alertable. As a breadcrumb it costs nothing and is still
+			// there, in order, on whatever event does get raised.
+			addRefusalBreadcrumb("Expired OIDC trust presented", {
 				requestId,
 				issuer: payload.iss,
 				subject: payload.sub,
@@ -451,6 +481,19 @@ export const oidcAuth: MiddlewareHandler<{
 			// answer to it is GET /admin/subjects. `requestId`, `issuer` and
 			// `subject` stay so the pasted CI log still joins to this line.
 			logger.warn("Rejected untrusted OIDC subject", {
+				requestId,
+				issuer: payload.iss,
+				subject: payload.sub,
+				issuerRuleCount: resolution.issuerRuleCount,
+				activePrefixCount: resolution.activePrefixes.length,
+			});
+			// Also a breadcrumb, and for the sharper version of the same reason:
+			// this arm is reachable by anyone who can mint a token on a shared
+			// issuer, so an event per occurrence would be a caller-controlled bill.
+			// The counts ride along because they are what separates "never
+			// configured for this issuer" from "configured and all dead" from
+			// "live, and this subject is not among them".
+			addRefusalBreadcrumb("Rejected untrusted OIDC subject", {
 				requestId,
 				issuer: payload.iss,
 				subject: payload.sub,

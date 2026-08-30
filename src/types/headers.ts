@@ -13,4 +13,9 @@ export const HEADERS = {
 	RATE_LIMIT_LIMIT: "X-RateLimit-Limit",
 	/** RFC 9110 §10.2.3 wait hint, sent with a 429 or a 503 */
 	RETRY_AFTER: "Retry-After",
+	/**
+	 * RFC 9110 §11.6.2. Named rather than spelled out at each use so the Sentry
+	 * scrubber's denylist and the middlewares that read it cannot drift apart.
+	 */
+	AUTHORIZATION: "Authorization",
 } as const;
