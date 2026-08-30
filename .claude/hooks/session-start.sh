@@ -128,16 +128,24 @@ if command -v mise >/dev/null 2>&1; then
 	# 403. So the common case has to be *no install at all*: provisioning
 	# already put these in the shared tree, and asking mise to reinstall them
 	# burns a minute to arrive at the same 403 every time.
+	# Bin names, not tool names, because that is what `mise which` resolves.
+	# Keep this in step with .mise.toml: a tool missing from the list is a tool
+	# the hook will report as present. `tombi` is here because .dprint.jsonc
+	# shells out to it for TOML, so `task format` fails without it exactly the
+	# way it does without golangci-lint.
 	missing=()
-	for tool in task run shellcheck biome wrangler golangci-lint; do
+	for tool in task run shellcheck biome wrangler golangci-lint tombi; do
 		mise which "$tool" >/dev/null 2>&1 || missing+=("$tool")
 	done
 
 	if [ ${#missing[@]} -eq 0 ]; then
 		log "mise tools present, skipping install"
-	elif [ ! -w "$MISE_DATA_DIR" ]; then
+	elif ! mkdir -p "$MISE_DATA_DIR" 2>/dev/null || [ ! -w "$MISE_DATA_DIR" ]; then
 		# Shared, provisioned, and read-only to this user. Installing is not an
-		# option and neither is silence.
+		# option and neither is silence. The mkdir comes first because the $HOME
+		# fallback names a directory that does not exist yet, and `-w` on a path
+		# that is absent is false — which would report the one tree this session
+		# is free to fill as unwritable and install nothing at all.
 		log "WARN: missing mise tools (${missing[*]}) and $MISE_DATA_DIR is not writable"
 	else
 		# One attempt. A 403 from the GitHub API is a property of the session's

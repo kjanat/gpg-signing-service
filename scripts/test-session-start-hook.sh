@@ -157,7 +157,7 @@ $(cat "${case_env_file}")"
 }
 
 # Every tool the hook probes for, so the default case is "provisioning worked".
-readonly ALL_TOOLS='task run shellcheck biome wrangler golangci-lint'
+readonly ALL_TOOLS='task run shellcheck biome wrangler golangci-lint tombi'
 
 # --- a local session is untouched -------------------------------------------
 #
@@ -250,6 +250,32 @@ new_case home-fallback
 rc="$(run_hook MISE_DATA_DIR=/proc/nonexistent/mise STUB_MISE_TOOLS="${ALL_TOOLS}")"
 expect_rc 0 "${rc}"
 expect_env_file "export MISE_DATA_DIR=\"${case_home}/.local/share/mise\""
+
+# ...and it then has to actually fill it. The fallback directory does not exist
+# yet, and `[ -w ]` on an absent path is false, so a writability test taken
+# before the directory is created reports the one tree this session is free to
+# write as read-only and installs nothing — leaving a session with no tools at
+# all, which is the case the fallback exists for.
+new_case home-fallback-installs
+rc="$(run_hook MISE_DATA_DIR=/proc/nonexistent/mise STUB_MISE_TOOLS='')"
+expect_rc 0 "${rc}"
+expect_called mise install
+if grep -q 'not writable' "${tmp_dir}/out"; then
+	fail 'the HOME fallback tree was reported unwritable instead of being created'
+fi
+
+# --- .mise.toml and the probe list do not drift ------------------------------
+#
+# A tool the loop forgets is a tool the hook reports as present, and the session
+# then discovers it is missing halfway through `task format`. Every bin the
+# Taskfile or dprint reaches for has to be probed.
+case_name=probe-list-drift
+for tool in task shellcheck biome wrangler golangci-lint tombi; do
+	grep -qF "${tool}" <<<"${ALL_TOOLS}" \
+		|| fail "the hook does not probe for ${tool}, which .mise.toml provides"
+	grep -q "for tool in .*\b${tool}\b" "${hook}" \
+		|| fail "the hook's probe loop is missing ${tool}"
+done
 
 # --- golangci-lint is judged by whether it works, not by whether it exists ----
 #
