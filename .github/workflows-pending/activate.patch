@@ -1,0 +1,54 @@
+diff --git a/.github/workflows/claude-code-review.yml b/.github/workflows/claude-code-review.yml
+index 7c50452..1ad754f 100644
+--- a/.github/workflows/claude-code-review.yml
++++ b/.github/workflows/claude-code-review.yml
+@@ -84,10 +84,18 @@ jobs:
+ 
+             If this PR was opened by dependabot: don't just review it. Check
+             whether the bump breaks anything (task typecheck, task t, and
+-            task c:t if the Go client is affected). If it breaks and the fix
+-            is mechanical (renamed API, changed types, lockfile drift), fix
+-            it, verify tests pass, and push to the PR branch so the update
+-            can actually merge instead of rotting.
++            task c:t if the Go client is affected) and say exactly what broke
++            and what the mechanical repair would be — a renamed API, a changed
++            type, lockfile drift, a client that needs regenerating.
++
++            Diagnose only. This run holds no write authority over a Dependabot
++            branch and never did: GitHub gives a Dependabot-triggered
++            `pull_request` run a read-only GITHUB_TOKEN whatever this file's
++            `permissions:` block says. The repair is made by the separate
++            trusted `workflow_run` path in
++            .github/workflows/claude-dependabot-fix.yml, which computes a fix
++            in a job holding no token and hands it to a job that never runs
++            the branch. Write the diagnosis down and leave the commit to it.
+ 
+             Always append your review as markdown to the file at $GITHUB_STEP_SUMMARY.
+             It is a plain writable file and it renders on the job page, so your work
+diff --git a/.github/workflows-pending/claude-dependabot-fix.yml b/.github/workflows/claude-dependabot-fix.yml
+similarity index 95%
+rename from .github/workflows-pending/claude-dependabot-fix.yml
+rename to .github/workflows/claude-dependabot-fix.yml
+index e005bab..932c3dc 100644
+--- a/.github/workflows-pending/claude-dependabot-fix.yml
++++ b/.github/workflows/claude-dependabot-fix.yml
+@@ -39,19 +39,6 @@
+ #
+ # See docs/dependabot-fix-path.md for the whole design, including the secret
+ # provisioning that is NOT needed here and why.
+-#
+-# NOT ACTIVE YET. This file is in .github/workflows-pending/ because a GitHub
+-# App token has no `workflows` permission and cannot create a file under
+-# .github/workflows/ — the push is rejected outright, and the rejection kills
+-# the whole push rather than just that one file. So the activation is checked
+-# in beside this file, as a patch for a human holding an ordinary credential:
+-#
+-#   git apply .github/workflows-pending/activate.patch
+-#   git rm .github/workflows-pending/activate.patch
+-#
+-# Until that lands `task test:dependabot-fix` and `task test:review-gate` both
+-# fail on purpose, each naming those two commands. See
+-# docs/dependabot-fix-path.md#activation.
+ name: Claude Dependabot Fix
+ 
+ on:
