@@ -2,6 +2,7 @@
 
 [tools]
 "cargo:runner-run" = "latest"
+actionlint         = "latest"
 biome              = "latest"
 cargo-binstall     = "latest"
 golangci-lint      = "2.13.2"
