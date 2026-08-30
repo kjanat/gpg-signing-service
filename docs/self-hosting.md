@@ -87,6 +87,10 @@ Update `[vars]` in `wrangler.toml`:
 | `SERVICE_BASE_URL`        | Public origin for the `docs` link on errors; defaults to the request's own origin           |
 | `ERROR_DOCS_URL`          | Optional target for `/e/<CODE>`; defaults to this repository's [error reference](errors.md) |
 | `DISCLOSE_TRUST_PATTERNS` | Optional `"true"` to name the trust list and the accepted issuers in a `401` hint           |
+| `ENVIRONMENT`             | Optional label for this deployment, e.g. `staging`; names the deployment in alert mail      |
+| `KEY_EXPIRY_ALERT_FROM`   | Address the expiry monitor mails from; must be on a domain onboarded to Email Service       |
+| `KEY_EXPIRY_ALERT_TO`     | Address the expiry monitor mails to; must be a verified Email Service destination           |
+| `KEY_EXPIRY_WARN_DAYS`    | Days ahead of expiry the monitor starts reporting a key; decimal digits, default `60`       |
 
 `SERVICE_BASE_URL` is worth setting on any deployment with a name of its own.
 Unset, the `docs` link is built from the origin the request arrived on — which
@@ -306,6 +310,124 @@ printf 'smoke test' |
   gpg --verify smoke-test.asc -
 ```
 
+## 9. Key expiry monitoring
+
+Nothing in the sign path refuses a key that is about to lapse, so without a
+monitor the first sign of an expiry is every caller failing at once. A Cron
+Trigger runs the check inside this same Worker and emails when — and only when —
+a key needs a human.
+
+```toml
+[triggers]
+crons = ["0 7 * * 2"]  # Tuesdays, 07:00 UTC
+
+[[send_email]]
+name                     = "KEY_EXPIRY_ALERTS"
+destination_address      = "ops@example.com"
+allowed_sender_addresses = ["gpg-signing-service@example.com"]
+
+[vars]
+KEY_EXPIRY_ALERT_FROM = "gpg-signing-service@example.com"
+KEY_EXPIRY_ALERT_TO   = "ops@example.com"
+```
+
+The monitor needs **no credential of any kind**. It reads the `KeyStorage`
+Durable Object and the grant tables directly, so it holds neither `ADMIN_TOKEN`
+nor `ADMIN_READONLY_TOKEN`, and Cloudflare Email Service is reached through a
+binding rather than an API token or an SMTP password. There is nothing here to
+copy into another system and nothing to rotate.
+
+Both addresses are plain `[vars]`, not secrets: an address is not a credential,
+and a threshold nobody can read is a threshold nobody can trust. The two
+restrictions on the binding are what actually constrain it —
+`destination_address` means the Worker cannot mail anyone else even if it is
+compromised, and `allowed_sender_addresses` pins the `From` line.
+
+**Dashboard setup**, once per account, in **Compute & AI → Email Service**:
+
+1. Onboard the sending domain and add the SPF and DKIM records it gives you.
+2. Verify the destination address, so it can receive from a binding.
+
+Neither step produces a secret.
+
+### What gets monitored
+
+The set is derived, not maintained by hand. A key is checked when this
+deployment could sign with it _right now_:
+
+- the deployment's own `KEY_ID`, which is what a caller that names no key gets;
+- every key a **live** grant — a trusted OIDC subject row or a service token —
+  permits, with revoked and expired grants ignored;
+- every stored key, when some live grant pins no key ids at all, because such a
+  grant reaches all of them.
+
+A stored key that no live grant reaches is deliberately left out, so retaining a
+superseded key raises nothing. A key that is configured or granted but _not_
+stored is reported as `missing` — signing through it is already broken.
+
+Expiry is read out of the key material itself rather than from a date typed into
+a config file: for a PGP key, the _latest_ still-usable signing subkey's
+expiration, capped by the primary key's — signing keeps working until the last
+usable subkey lapses, so reading the earliest instead would warn about an outage
+a valid replacement subkey already prevents. For an X.509 key, the certificate's
+`notAfter`.
+
+Revocation is reported **for PGP keys**, read out of the key material: a revoked
+primary key, and a signing subkey revoked under an otherwise healthy primary.
+The X.509 path checks `notAfter` and nothing else — there is no CRL or OCSP
+lookup, so a certificate that has been revoked but not yet expired is reported
+`ok`. Treat X.509 revocation as something you still track by hand.
+
+A run that resolves **no** active key at all is not a clean run and mails too,
+under the subject `No signing key was checked`. It is the state a deployment is
+in before its first `KEY_ID` is set, and the one it falls back into if that
+variable is lost; the alternative is a weekly all-clear earned by an empty set.
+
+### Checking it by hand
+
+```bash
+# Fire the scheduled handler against a local dev server.
+wrangler dev --test-scheduled
+curl "http://localhost:8787/__scheduled?cron=0+7+*+*+2"
+```
+
+Add `remote = true` to the `send_email` binding to send real mail from
+`wrangler dev`; without it the binding is simulated and the message is logged
+instead. The staging environment carries the binding but no cron
+(`[env.staging.triggers] crons = []`), because it signs with the same key id as
+production and a second schedule would mail the same warning twice.
+
+A run that cannot read its own state, or cannot send mail it had to send, fails
+the invocation rather than reporting success. The mail configuration is checked
+_before_ any key is read, so a broken alerting path surfaces on a quiet week
+rather than on the one where it had something to say.
+
+## Key rotation
+
+The monitor buys time; this is what to do with it.
+
+1. **Generate the replacement offline.** `task generate:key` writes to `.keys/`,
+   never `~/.gnupg`. Give it a lifetime you are willing to repeat.
+2. **Upload it** with `POST /admin/keys`, under its own key id. Both keys are
+   now stored; nothing has switched over yet.
+3. **Publish the new public key** to every verifier — GitHub/GitLab account
+   keys, and anyone pinning `GET /public-key?keyId=<new>`. Do this before
+   anything signs with it, or the first signature verifies nowhere.
+4. **Point callers at it.** Update `KEY_ID` in `wrangler.toml` and redeploy for
+   the default, and update the `keyIds` allowlist on every trusted subject and
+   service token that pinned the old id. A grant naming a key that no longer
+   exists is reported `missing` on the next run.
+5. **Verify.** Sign something and check it against the published key, then
+   confirm the next monitor run lists the new id and no longer lists the old
+   one as active.
+6. **Retire the old key.** Leaving it stored is fine — an unreachable key is not
+   monitored — but revoke it with GnuPG and publish the revocation if the
+   private half may have been exposed. `DELETE /admin/keys/{keyId}` removes it.
+
+Rotate the admin credentials the same way and on their own schedule; nothing
+automates either, and `ADMIN_READONLY_TOKEN` must never be set equal to
+`ADMIN_TOKEN`.
+
 ## Before production
 
 - Run `task db:migrate`, then trust at least one subject through
@@ -317,9 +439,15 @@ printf 'smoke test' |
 - Define private-key backup and restoration procedures; no export endpoint
   exists.
 - Define audit retention and monitoring; no cleanup or alert policy is built in.
-- Test key and admin-token rotation, including `ADMIN_READONLY_TOKEN` if
-  it is provisioned.
-- Give scheduled and monitoring workflows `ADMIN_READONLY_TOKEN` rather
-  than `ADMIN_TOKEN`; a job that only reads should not hold the authority
-  to delete a key or mint a service token.
+- Walk the [key rotation procedure](#key-rotation) end to end once, on a key
+  nothing depends on, before you need it on one that everything does. Rotate the
+  admin tokens the same way, including `ADMIN_READONLY_TOKEN` if it is
+  provisioned.
+- Configure the [expiry monitor](#9-key-expiry-monitoring): the cron trigger,
+  the `send_email` binding, and both alert addresses. Confirm it by running the
+  scheduled handler by hand — a monitor nobody has ever seen fire is a guess.
+- Give any scheduled or monitoring workflow that does call the admin API
+  `ADMIN_READONLY_TOKEN` rather than `ADMIN_TOKEN`; a job that only reads should
+  not hold the authority to delete a key or mint a service token. The expiry
+  monitor needs neither.
 - Review the [Security model](security-model.md).
