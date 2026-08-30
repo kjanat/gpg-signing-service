@@ -171,6 +171,67 @@ if [[ -z "${GPG_SIGN_TOKEN:-}" ]]; then
 fi
 export GPG_SIGN_TOKEN
 
-gpg-sign sign
+# git captures this process's stderr and prints it back under "gpg failed to
+# sign the data", so stderr is the only channel a failure has to explain itself
+# on — and it is the same fd git scans for SIG_CREATED. Holding gpg-sign's
+# diagnostic in a file until its exit status is known lets it be read and
+# classified before it is forwarded, without ever reordering it against the
+# status line.
+#
+# stdout is untouched: gpg-sign writes the armored signature straight through to
+# git, and writes nothing there when it fails.
+sign_stderr="$(mktemp)"
+trap 'rm -f "${sign_stderr}"' EXIT
+
+sign_rc=0
+gpg-sign sign 2>"${sign_stderr}" || sign_rc=$?
+
+if [[ "${sign_rc}" -ne 0 ]]; then
+	# Reached only once signing has already failed, which is why the classifier
+	# is sourced here and not at the top: a missing or broken
+	# gpg-sign-error-class.sh cannot cost a signature that would otherwise have
+	# been made, and the diagnostic below is forwarded either way. Only the
+	# class name degrades, to UNKNOWN.
+	class=UNKNOWN
+	class_lib="${BASH_SOURCE[0]%/*}/gpg-sign-error-class.sh"
+	if [[ -r "${class_lib}" ]]; then
+		# shellcheck source-path=SCRIPTDIR source=gpg-sign-error-class.sh
+		. "${class_lib}"
+		class="$(gpg_sign_error_class "$(<"${sign_stderr}")")"
+	fi
+
+	# The class first and on its own line. Everything git shows an operator is
+	# this stderr wrapped in its own sentence, and without a leading token the
+	# whole of it reads as "the commit failed" — a 429 indistinguishable from a
+	# rotated key, which is what made every one of these an exit 128 with no
+	# further information.
+	printf 'gpg-sign-git-program: signing failed [%s] (gpg-sign exit %d)\n' \
+		"${class}" "${sign_rc}" >&2
+
+	# Verbatim, unindented, unfiltered. gpg-sign already prints the service's
+	# message, the subject it refused, its hint, the docs link and the request
+	# id one field per line (client/cmd/gpg-sign/explain.go); re-wording any of
+	# it here would only lose detail an operator is asked to quote.
+	cat "${sign_stderr}" >&2
+
+	if declare -F gpg_sign_error_summary >/dev/null; then
+		printf '  %s\n' "$(gpg_sign_error_summary "${class}")" >&2
+	fi
+	printf '  %s\n' \
+		'The commit was not made: signing fails closed on purpose.' \
+		'To run one CI job without the service, set the GPG_SIGN_DISABLE' \
+		'repository variable to 1 and re-run it; its commits land unsigned.' \
+		'See docs/troubleshooting.md#ci-commit-signing.' >&2
+
+	# gpg-sign's own status, not a flattened 1: `git commit` reports any
+	# non-zero identically, but a human or a wrapper reading this script
+	# directly should see what the client actually exited with.
+	exit "${sign_rc}"
+fi
+
+# gpg-sign is silent on success, but forward anything it did say: this used to
+# go straight to git's status fd, and swallowing a warning is not this change's
+# business.
+cat "${sign_stderr}" >&2
 
 printf '\n[GNUPG:] SIG_CREATED \n' >&2

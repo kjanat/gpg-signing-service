@@ -21,11 +21,27 @@ inputs:
     description: Existing Claude Code settings JSON or path to a settings file
     required: false
     default: "{}"
+  disable-signing:
+    description: >-
+      Emergency escape hatch. Set to 1/true/yes/on — normally from the
+      GPG_SIGN_DISABLE repository variable — to run this job with commit
+      signing switched off, for the case where the service itself is what needs
+      fixing. Commits then succeed unsigned; nothing pretends they were signed.
+      Unset, empty, or 0/false/no/off keeps signing on, which is the default.
+    required: false
+    default: ""
 
 outputs:
   settings-file:
     description: Path to Claude settings extended with the signing environment
     value: ${{ steps.configure.outputs.settings-file }}
+  signing-enabled:
+    description: >-
+      "true" when this job is configured to sign its commits, "false" when the
+      escape hatch turned signing off. A preflight failure fails the step
+      instead of reporting "false" here, so a job that reads this is choosing
+      between signed and deliberately-unsigned, never between signed and broken.
+    value: ${{ steps.configure.outputs.signing-enabled }}
 
 runs:
   using: composite
@@ -38,6 +54,7 @@ runs:
       env:
         CLAUDE_SETTINGS: "${{ inputs.claude-settings }}"
         SERVICE_URL: "${{ inputs.service-url }}"
+        DISABLE_SIGNING: "${{ inputs.disable-signing }}"
       run: |
         set -Eeuo pipefail
 
@@ -56,20 +73,45 @@ runs:
         fi
 
         readonly shim="${github_workspace}/.github/scripts/gpg-sign-git-program.sh"
+        readonly preflight="${github_workspace}/.github/scripts/signing-preflight.sh"
 
-        if [[ -z "${service_url}" ]]; then
-          printf '%s\n' '::error title=Commit signing unavailable::service-url is empty'
-          exit 1
-        fi
-        if [[ -z "${oidc_request_url}" || -z "${oidc_request_token}" ]]; then
-          printf '%s\n' '::error title=Commit signing unavailable::The job must grant id-token: write'
-          exit 1
-        fi
+        # Everything that decides whether this job signs lives in the preflight
+        # script: the escape hatch, the configuration guards that used to be inline
+        # here, and one bounded question to the service. It is a script rather than
+        # more of this `run:` block because a composite action cannot be run outside
+        # a workflow, and every one of those paths is a path this repo needs a test
+        # for — see .github/scripts/test-signing-preflight.sh.
+        #
+        # Asking here rather than at `git commit` is the whole point: git invokes the
+        # shim only when the agent commits, which is after it has done the work, so
+        # an outage discovered there costs the entire run and reports itself as exit
+        # 128. The guards stay ahead of `commit.gpgsign true`, exactly as before.
+        preflight_rc=0
+        GPG_SIGN_DISABLE="${DISABLE_SIGNING-}" bash "${preflight}" "${service_url}" \
+          || preflight_rc=$?
 
-        chmod +x "${shim}"
-        git config --local gpg.program "${shim}"
-        git config --local gpg.format openpgp
-        git config --local commit.gpgsign true
+        case "${preflight_rc}" in
+          0) signing_enabled=true ;;
+          3) signing_enabled=false ;;
+          # The preflight has already printed an ::error naming the failure class.
+          # Anything it did not anticipate is still a refusal to configure signing:
+          # this is the fail-closed half, and it must not fall through to the
+          # unsigned path, which is only ever reached deliberately.
+          *) exit 1 ;;
+        esac
+
+        if [[ "${signing_enabled}" == true ]]; then
+          chmod +x "${shim}"
+          git config --local gpg.program "${shim}"
+          git config --local gpg.format openpgp
+          git config --local commit.gpgsign true
+        else
+          # Written rather than left alone. A checked-in .gitconfig, a previous step
+          # or a future default could turn signing on, and with no gpg.program set
+          # the agent would then meet git's own "gpg failed to sign the data" — the
+          # exact failure the hatch was opened to avoid.
+          git config --local commit.gpgsign false
+        fi
 
         # The regular action environment reaches claude-code-action itself, but
         # only settings.env is guaranteed to reach Claude Code's Bash tools.
@@ -94,14 +136,20 @@ runs:
         # trusted by any external OIDC relying party (AWS/GCP/Vault role, etc).
         # Before adding one, switch to a pre-minted audience-scoped token or a
         # gst_ service token instead. See docs/cloud-session-signing.md.
-        printf '::add-mask::%s\n' "${oidc_request_url}"
-        printf '::add-mask::%s\n' "${oidc_request_token}"
+        #
+        # None of it is re-granted on the disabled path: a run that is not going to
+        # sign has no use for the minting endpoint, and the narrower the window that
+        # capability is open for, the better.
+        if [[ "${signing_enabled}" == true ]]; then
+          printf '::add-mask::%s\n' "${oidc_request_url}"
+          printf '::add-mask::%s\n' "${oidc_request_token}"
 
-        {
-          printf 'GPG_SIGN_URL=%s\n' "${service_url}"
-          printf 'GPG_OIDC_REQUEST_URL=%s\n' "${oidc_request_url}"
-          printf 'GPG_OIDC_REQUEST_TOKEN=%s\n' "${oidc_request_token}"
-        } >>"${github_env}"
+          {
+            printf 'GPG_SIGN_URL=%s\n' "${service_url}"
+            printf 'GPG_OIDC_REQUEST_URL=%s\n' "${oidc_request_url}"
+            printf 'GPG_OIDC_REQUEST_TOKEN=%s\n' "${oidc_request_token}"
+          } >>"${github_env}"
+        fi
 
         if [[ -z "${claude_settings}" ]]; then
           settings='{}'
@@ -116,18 +164,27 @@ runs:
           exit 1
         fi
 
+        # The settings file is written either way, because the caller passes it to
+        # claude-code-action unconditionally and an unwritten path is a broken job
+        # rather than an unsigned one. On the disabled path it carries the caller's
+        # own settings and none of the signing environment.
         umask 077
         settings_file="$(mktemp "${runner_temp}/claude-signing-settings.XXXXXX")"
-        jq \
-          --arg service_url "${service_url}" \
-          --arg oidc_url "${oidc_request_url}" \
-          --arg oidc_token "${oidc_request_token}" \
-          '.env = ((.env // {}) + {
-            "GPG_SIGN_URL": $service_url,
-            "GPG_OIDC_REQUEST_URL": $oidc_url,
-            "GPG_OIDC_REQUEST_TOKEN": $oidc_token
-          })' <<<"${settings}" >"${settings_file}"
+        if [[ "${signing_enabled}" == true ]]; then
+          jq \
+            --arg service_url "${service_url}" \
+            --arg oidc_url "${oidc_request_url}" \
+            --arg oidc_token "${oidc_request_token}" \
+            '.env = ((.env // {}) + {
+              "GPG_SIGN_URL": $service_url,
+              "GPG_OIDC_REQUEST_URL": $oidc_url,
+              "GPG_OIDC_REQUEST_TOKEN": $oidc_token
+            })' <<<"${settings}" >"${settings_file}"
+        else
+          jq '.' <<<"${settings}" >"${settings_file}"
+        fi
         printf 'settings-file=%s\n' "${settings_file}" >>"${github_output}"
+        printf 'signing-enabled=%s\n' "${signing_enabled}" >>"${github_output}"
 
         # GitHub will show commits as "Unverified" unless the service's public key
         # (/public-key) is uploaded to a GitHub account whose email matches the

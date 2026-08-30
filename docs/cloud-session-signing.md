@@ -207,5 +207,14 @@ the fallback. The shim tries `GPG_SIGN_TOKEN` first and only reaches for OIDC
 when it is absent, so the same script covers CI, cloud sessions, and laptops
 without branching per environment.
 
+The one thing CI has that a cloud session does not is an escape hatch. A CI job
+signs through a service it may itself be in the middle of breaking, so
+`.github/actions/setup-claude-signing` runs a bounded health check before the
+agent starts and honours a `GPG_SIGN_DISABLE` repository variable that leaves
+one run deliberately unsigned — see
+[CI commit signing](troubleshooting.md#ci-commit-signing). A cloud session needs
+neither: its credential is static, and unsetting `GPG_SIGN_TOKEN` or dropping
+`commit.gpgSign` from the environment block is already the same switch.
+
 [claude.ai/code]: https://claude.ai/code
 [github.com/settings/keys]: https://github.com/settings/keys

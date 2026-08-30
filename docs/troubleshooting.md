@@ -181,6 +181,91 @@ expands. That one is caught at create time with a `400` whose `issues[].path` is
 message — but the same quoting mistake in `subjectPrefix` stores a prefix nothing
 will match.
 
+## CI commit signing
+
+This is about the workflows in this repository, which sign their own commits
+through the service — `.github/actions/setup-claude-signing`, the preflight it
+runs, and the `gpg.program` shim git invokes at commit time. Nothing here
+applies to an ordinary consumer of the API.
+
+### The setup step failed with a class in the title
+
+The setup action asks the service one bounded question before the job does any
+work, because git only invokes the signing shim when `git commit` runs — in a
+Claude job, after the agent has finished editing. An outage discovered there
+costs the whole run. The annotation names the class:
+
+```console
+::error title=Commit signing unavailable (SERVICE_DEGRADED)::gpg-sign health failed against https://gpg.kajkowalski.nl (exit 1)
+```
+
+- `CONFIG_SERVICE_URL`, `CONFIG_OIDC` — configuration, not the service. The
+  `SIGNING_SERVICE_URL` variable is empty, or the job lost `id-token: write`.
+  Both are checked before `commit.gpgsign` is turned on, so nothing was
+  configured.
+- `CLIENT_MISSING` — `gpg-sign` never reached `PATH`. The shim runs the same
+  binary for every commit, so the job could not sign even against a healthy
+  service. Check the installer step.
+- `SERVICE_UNREACHABLE` — no HTTP response at all: DNS, TLS, connection, or the
+  preflight's own deadline. Check the URL and the runner network first.
+- `RATE_LIMITED`, `SERVICE_DEGRADED`, `SERVICE_MISCONFIGURED`, `AUTH_*` — the
+  service answered, and the class is the one documented above on this page and
+  in the [error reference](errors.md). The `gpg-sign` diagnostic is reproduced
+  under the annotation with the hint, docs link and request id intact.
+
+The preflight is bounded twice: `--timeout` is the Go client's own deadline over
+the whole call including its retries, and `timeout(1)` is the outer bound for a
+client that does not honour it. It adds no retry of its own — the client already
+retries `429` and `5xx` and honours `Retry-After`, and a second loop on top
+would only make an outage take longer to report.
+
+### `git commit` failed with `gpg failed to sign the data`
+
+Git reports every non-zero exit from `gpg.program` with that one sentence, but
+it also prints what the program wrote to the status fd underneath it. The shim
+puts the class on the first line there:
+
+```console
+gpg-sign-git-program: signing failed [RATE_LIMITED] (gpg-sign exit 1)
+Error: rate limit exceeded: rate limited: Rate limit exceeded (retry after 3s)
+  hint:    Two tiers meter this call.
+  docs:    https://gpg.kajkowalski.nl/e/RATE_LIMITED
+  request: req-…
+  Quota: the caller was metered. …
+```
+
+Read the class first, then the `gpg-sign` block underneath it, which is
+forwarded verbatim and carries everything the service sent. `RATE_LIMITED` in
+particular is not a "re-run it" failure: the client has already waited out
+`Retry-After` and spent its retries by the time this appears, so the limit is a
+standing one — see [`429`](#429).
+
+Signing fails closed. The commit is not made, and no `SIG_CREATED` reaches git,
+so a failed signature can never be mistaken for a successful one.
+
+### Disabling signing for one run
+
+`GPG_SIGN_DISABLE` is the escape hatch, for the case where the service is what
+needs fixing and CI cannot commit the fix. Set it as a **repository variable**
+to `1` (`true`, `yes` and `on` also work), re-run the workflow, and clear it
+afterwards:
+
+```console
+gh variable set GPG_SIGN_DISABLE --body 1
+# … run the workflow, land the fix …
+gh variable delete GPG_SIGN_DISABLE
+```
+
+While it is set, the setup step configures no signing at all: `gpg.program` is
+left unset, `commit.gpgsign` is written `false` rather than merely left alone,
+and the OIDC request variables are not re-exported to the session. Commits from
+that run succeed and land **unsigned** — nothing pretends otherwise. The run
+says so in an annotation and in its job summary, and branch protection that
+requires signed commits will reject them.
+
+An unrecognised value is refused rather than ignored, so a typo during an
+incident cannot look like a service failure.
+
 ## Keys and signatures
 
 ### Invalid key ID
