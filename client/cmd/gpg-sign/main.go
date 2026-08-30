@@ -35,9 +35,10 @@ func main() {
 // execute runs the root command and reports the process exit status. It is
 // separate from main so the signal handler's cleanup runs before the exit.
 func execute() int {
-	// Ctrl-C has to reach the running command: sign-commit rewrites objects and
-	// makes one signing call per commit, and an operator who interrupts it
-	// expects the walk to stop rather than run to the end of the range.
+	// Ctrl-C has to reach the running command: sign-commit and repair-history
+	// both rewrite objects and make one signing call per commit, and an operator
+	// who interrupts either expects the walk to stop rather than run to the end
+	// of the range.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -70,6 +71,7 @@ This tool allows you to:
   - Retrieve public keys
   - Sign commit data
   - Apply signatures to commits in a local repository
+  - Repair the identity headers of a range of commits and sign them
   - Manage keys (admin)
   - Query audit logs (admin)
 
@@ -91,6 +93,7 @@ func init() {
 	rootCmd.AddCommand(publicKeyCmd)
 	rootCmd.AddCommand(signCmd)
 	rootCmd.AddCommand(signCommitCmd)
+	rootCmd.AddCommand(repairHistoryCmd)
 	rootCmd.AddCommand(adminCmd)
 }
 
