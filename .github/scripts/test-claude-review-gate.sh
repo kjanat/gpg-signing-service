@@ -13,6 +13,9 @@ gate="${repo_root}/.github/scripts/claude-review-gate.sh"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
+# shellcheck source-path=SCRIPTDIR source=dependabot-activation.sh
+source "${repo_root}/.github/scripts/dependabot-activation.sh"
+
 # run_gate [VAR=value ...] — a job-shaped environment, then the case's overrides.
 run_gate() {
 	local rc=0
@@ -180,12 +183,18 @@ TRUSTED
 # in front of it. So assert the wiring: checkout before the gate (the script
 # lives in the tree being reviewed), the gate before both steps that read its
 # decision, and one shared condition so the two can never drift apart.
-python3 - "${repo_root}" <<'REVIEW'
-import sys, pathlib, yaml
+#
+# Written to a file rather than piped, because the mutation section below runs
+# it against deliberately broken copies. A checker that has only ever seen a
+# correct file is a checker nobody has watched work.
+cat >"${tmp_dir}/check_review_workflow.py" <<'REVIEW'
+"""Assert the review workflow's wiring. Argument: the workflow file."""
+import re
+import sys
+import pathlib
+import yaml
 
-wf = yaml.safe_load(
-    (pathlib.Path(sys.argv[1]) / ".github/workflows/claude-code-review.yml").read_text()
-)
+wf = yaml.safe_load(pathlib.Path(sys.argv[1]).read_text())
 steps = wf["jobs"]["claude-review"]["steps"]
 
 
@@ -234,6 +243,265 @@ assert "head.repo.full_name" in gate_env.get("PR_HEAD_REPO", ""), (
 assert steps[signing]["with"]["disable-signing"] == "${{ vars.GPG_SIGN_DISABLE }}", (
     "the GPG_SIGN_DISABLE escape hatch is no longer wired up"
 )
+
+# --- the prompt must not ask for a push this run cannot make ------------------
+#
+# This workflow once told Claude, on a Dependabot pull request, to fix the bump
+# and push to the branch. That instruction was never executable: GitHub hands a
+# Dependabot-triggered `pull_request` run a read-only GITHUB_TOKEN whatever the
+# `permissions:` block above says. The cost of a dead instruction in a prompt is
+# not nothing — it sends a model that believes it into a loop of retrying a push
+# that will never work, and it reads to a human as though the path exists.
+#
+# The repair belongs to the trusted `workflow_run` path (#71). Asserted here
+# because a prompt is prose: nothing else in the repository would notice it
+# drifting back.
+prompt = steps[review]["with"]["prompt"]
+paragraphs = re.split(r"\n\s*\n", prompt)
+mentions = [i for i, p in enumerate(paragraphs) if "dependabot" in p.lower()]
+assert mentions, "the review prompt no longer says anything about Dependabot pull requests"
+
+# The whole span from the first Dependabot paragraph to the last, not only the
+# paragraphs that happen to contain the word. A paragraph wedged between two of
+# them reads as part of the same instruction to any model, and picking out only
+# the ones saying "dependabot" left the retired sentence a hole to come back
+# through: an unnamed paragraph carrying "push to the PR branch so the update
+# can merge" was invisible to this check.
+dependabot_prose = "\n\n".join(paragraphs[mentions[0] : mentions[-1] + 1])
+
+# Any imperative to push, matched as the word rather than as a hand-written
+# shape of the sentence it came from. The first version of this required
+# "push ... to the PR/branch" with at most three words in between, which is the
+# shape of exactly one sentence — the pre-#71 one the mutation below restores.
+# "push directly to the head branch" and "push the corrected lockfile commit
+# straight to the PR branch" both went through it untouched.
+#
+# The paragraph still has to be able to say that the trusted path pushes, so the
+# escape is per unit and by name: a unit may mention a push only while naming
+# the workflow that actually holds the token.
+#
+# A unit is a line, then split again at sentence ends — not a sentence spanning
+# lines. Sentences alone were launderable, because the name only had to land
+# somewhere in the same run of text as the instruction, and "the same sentence"
+# is decided by punctuation the author controls. Both of these passed:
+#
+#     - fix it and push the fix to the PR branch
+#     - the trusted path is .github/workflows/claude-dependabot-fix.yml
+#
+#     If it breaks, fix it and push to the PR branch
+#     (the trusted path is .github/workflows/claude-dependabot-fix.yml).
+#
+# The first has no full stop, so both bullets are one "sentence"; the second is
+# one sentence by construction. Per line, the instruction stands alone and is
+# named. The cost is that a legitimate sentence about the trusted path has to
+# keep the word and the file name on one line, which the message below says.
+units = [
+    u.strip()
+    for line in dependabot_prose.split("\n")
+    for u in re.split(r"(?<=[.!?])\s+", line)
+]
+offenders = [
+    u
+    for u in units
+    if re.search(r"\bpush\w*\b", u, re.IGNORECASE)
+    and "claude-dependabot-fix.yml" not in u
+]
+assert not offenders, (
+    "the review prompt tells this run to push to a Dependabot branch: "
+    f"{offenders[0]!r}. A Dependabot-triggered pull_request run has a "
+    "read-only token, so that push cannot succeed. Diagnose here and leave "
+    "the write to .github/workflows/claude-dependabot-fix.yml — and if this "
+    "line is about that workflow, name it on the same line."
+)
+
+assert "claude-dependabot-fix.yml" in dependabot_prose, (
+    "the review prompt no longer names the trusted fix path, so a run that "
+    "finds a broken bump has nowhere to send it"
+)
+# Pinned to a statement about the credential, not to any negation anywhere in
+# the span. The first version accepted a bare "cannot", which a sentence about
+# something else entirely satisfies for free — "you cannot run the Go tests
+# unless the client changed" would have passed a check whose message claims the
+# prompt explains the token.
+assert re.search(
+    r"(read[- ]only\s+\S*\s*token|no write (authority|access|permission)"
+    r"|cannot (push|write|commit)|can't (push|write|commit))",
+    dependabot_prose,
+    re.IGNORECASE,
+), (
+    "the review prompt no longer says this run has no write authority over a "
+    "Dependabot branch — without that, 'diagnose only' reads as a style note. "
+    "Say it in terms of the credential: a read-only token, or no write "
+    "authority. Note that wording it as 'cannot push' trips the no-push "
+    "assertion above unless that same sentence names claude-dependabot-fix.yml "
+    "— the two checks read the same prose, so prefer the other two phrasings."
+)
+print("review workflow ok")
 REVIEW
+
+# Which copy of claude-code-review.yml the checks below are read off.
+#
+# Two of them — the prompt guards — assert text that arrives with the trusted
+# fix path's activation, and that activation cannot be pushed from CI: a GitHub
+# App token has no `workflows` permission. So before activation the committed
+# file fails those assertions by construction, which is correct but useless on
+# its own: the whole mutation suite underneath would then be running against a
+# base that already fails, and every mutation would "pass" without proving
+# anything.
+#
+# So while the activation is pending, the subject is the committed file with
+# the checked-in patch applied — the same bytes the maintainer commits — and
+# the pending state is reported once, at the end, as a deferred failure naming
+# the commands that clear it. The suite is still red; it is red about the one
+# thing that is actually wrong, and the guards keep their meaning while it is.
+activation="$(activation_state)"
+deferred_failure=''
+
+#
+# Dispatched by state rather than active/not-active. `both` and `absent` are not
+# waiting on anything a human can apply — in `both` the patch refuses outright,
+# because the live file it renames onto already exists — so they take the shared
+# diagnosis instead of the activation procedure. test-dependabot-fix.sh reaches
+# the same two messages through the same helper.
+case "${activation}" in
+	active)
+		review_workflow="${ACTIVATION_REVIEW}"
+		;;
+	pending)
+		if ! activation_apply "${tmp_dir}/activated"; then
+			echo 'FAIL: the trusted Dependabot fix path is not active, and the' >&2
+			echo '      checked-in activation patch cannot produce it (above).' >&2
+			exit 1
+		fi
+		review_workflow="${tmp_dir}/activated/.github/workflows/claude-code-review.yml"
+		deferred_failure='pending'
+		printf '  activation: pending — asserting against the patched tree\n'
+		;;
+	*)
+		activation_unusable "${activation}"
+		exit 1
+		;;
+esac
+
+# Deliberately not the `fail` helper: that one dumps ${tmp_dir}/out and
+# ${tmp_dir}/github_env, which at this point still hold leftovers from the last
+# run_gate call above. A wiring failure ending in "HAS_CLAUDE_TOKEN=" reads as
+# though the gate were involved, and it is not.
+if ! python3 "${tmp_dir}/check_review_workflow.py" "${review_workflow}" \
+	>"${tmp_dir}/review_out" 2>"${tmp_dir}/review_err"; then
+	echo "FAIL: ${review_workflow} fails its own wiring checks" >&2
+	sed 's/^/      /' "${tmp_dir}/review_err" >&2
+	if [[ -n "${deferred_failure}" ]]; then
+		echo >&2
+		echo '      Note: read off the checked-in activation patch, not the committed' >&2
+		echo '      file — so this is a real regression in one of the two, not the' >&2
+		echo '      pending activation.' >&2
+	fi
+	exit 1
+fi
+
+# --- mutation: prove the prompt guard is the thing doing the work ------------
+#
+# Five ways the Dependabot paragraph can rot back into #71. Each is applied to a
+# copy and the checker is required to name it; a mutation that changes nothing
+# has drifted off its anchor and is itself a failure.
+#
+# The first restores the literal pre-#71 sentence, and on its own that proves
+# very little: a guard written from one sentence is guaranteed to catch it. The
+# two paraphrases are the ones that earn the check — they are how the
+# instruction would actually come back, worded by someone who never read #71.
+
+# review_mutate NAME SED_SCRIPT EXPECTED — weaken the prompt, require a catch.
+review_mutate() {
+	local name="$1" script="$2" expected="$3" rc=0
+	sed -e "${script}" "${review_workflow}" >"${tmp_dir}/mutant.yml"
+	if cmp -s "${tmp_dir}/mutant.yml" "${review_workflow}"; then
+		echo "FAIL: mutation '${name}' changed nothing; its anchor has drifted" >&2
+		exit 1
+	fi
+	python3 "${tmp_dir}/check_review_workflow.py" "${tmp_dir}/mutant.yml" \
+		>"${tmp_dir}/out" 2>"${tmp_dir}/err" || rc=$?
+	if [[ "${rc}" == 0 ]]; then
+		echo "FAIL: mutation '${name}' was NOT caught — the guard for it does nothing" >&2
+		exit 1
+	fi
+	grep -qF -- "${expected}" "${tmp_dir}/err" || {
+		echo "FAIL: mutation '${name}' was caught by the wrong check; wanted: ${expected}" >&2
+		cat "${tmp_dir}/err" >&2
+		exit 1
+	}
+	printf '  caught: %s\n' "${name}"
+}
+
+# The exact instruction that was there before #71, restored.
+review_mutate 'prompt-regains-direct-push' \
+	's|^            Diagnose only\..*|            it, verify tests pass, and push to the PR branch so the update|' \
+	'tells this run to push to a Dependabot branch'
+
+# The same instruction in someone else's words. Nothing about "push directly to
+# the head branch" is milder than the sentence above it.
+review_mutate 'prompt-regains-push-paraphrased' \
+	's|^            Diagnose only\..*|            If it breaks, fix it and push directly to the head branch.|' \
+	'tells this run to push to a Dependabot branch'
+
+# The instruction in its own paragraph, never naming the bot. Between two
+# paragraphs that do, it is read as part of the same instruction; a guard
+# looking only at paragraphs containing "dependabot" never saw it.
+review_mutate 'prompt-regains-push-unnamed-paragraph' \
+	$'s|^            Diagnose only\\.|            Fix it and push to the PR branch so the update can merge.\\\n\\\n            Diagnose only.|' \
+	'tells this run to push to a Dependabot branch'
+
+# The instruction as a bullet, with the pointer as the bullet under it. Neither
+# bullet ends in a full stop, so to a sentence splitter the two are one
+# sentence — and that sentence names the trusted path, so the whole thing was
+# excused. This is the shape the instruction most plausibly comes back in:
+# nobody rewriting a prompt writes prose where a list will do.
+review_mutate 'prompt-regains-push-in-a-list' \
+	$'s|^            Diagnose only\\.|            When the bump is broken:\\\n            - fix it and push the fix to the PR branch\\\n            - the trusted path is .github/workflows/claude-dependabot-fix.yml\\\n\\\n            Diagnose only.|' \
+	'tells this run to push to a Dependabot branch'
+
+# The same laundering without a list: the pointer as a parenthetical on the
+# next line. One sentence, one mention, and the instruction rides along. Where
+# the name falls relative to the instruction is the author's choice, so it
+# cannot be what decides.
+review_mutate 'prompt-regains-push-named-on-the-next-line' \
+	$'s|^            Diagnose only\\.|            If it breaks, fix it and push to the PR branch\\\n            (the trusted path is .github/workflows/claude-dependabot-fix.yml).\\\n\\\n            Diagnose only.|' \
+	'tells this run to push to a Dependabot branch'
+
+# The pointer removed: the diagnosis is then correct and useless.
+# Global, and per line. Without the `g` this replaces the first occurrence on
+# each line only: two mentions on one line and the mutant keeps a live
+# reference, so the checker passes and the mutation reports a guard that was
+# never exercised. There is one mention today, which is exactly the condition
+# under which the bug is invisible.
+review_mutate 'prompt-drops-trusted-path' \
+	's|claude-dependabot-fix\.yml|some-other-workflow.yml|g' \
+	'no longer names the trusted fix path'
+
+# Every statement about the credential removed, leaving "Diagnose only" as an
+# unexplained preference. Both are needed: the paragraph says it twice, and a
+# guard that accepted either one alone would be satisfied by the other surviving.
+# This is the mutation the write-authority assertion never had — before it was
+# pinned to the credential, a stray "cannot" elsewhere in the span kept it green.
+review_mutate 'prompt-drops-write-authority' \
+	's|read-only GITHUB_TOKEN|GITHUB_TOKEN|g; s|holds no write authority over|should not modify|g' \
+	'no longer says this run has no write authority'
+
+# --- the deferred activation failure ------------------------------------------
+#
+# The prompt guards above passed, but against a file assembled here rather than
+# the one GitHub runs. Saying so last rather than first is what makes the two
+# suites agree: `task test:dependabot-fix` reports the same state in the same
+# words, and neither of them reports a wiring regression for something that is
+# only waiting on a human.
+if [[ -n "${deferred_failure}" ]]; then
+	echo >&2
+	echo 'FAIL: the prompt guards passed, against the tree the checked-in activation' >&2
+	echo '      patch produces — but the committed .github/workflows/claude-code-review.yml' >&2
+	echo '      still carries the retired instruction, and' >&2
+	echo '      .github/workflows/claude-dependabot-fix.yml does not exist.' >&2
+	activation_procedure
+	exit 1
+fi
 
 printf 'claude review gate tests passed\n'

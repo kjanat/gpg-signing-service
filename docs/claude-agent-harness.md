@@ -259,7 +259,7 @@ tokens, so any push touching `.github/workflows/` is rejected outright — and t
 rejection kills the whole push rather than just that one file.
 
 The agent-mode workflow therefore ships in `.github/workflows-pending/`, the
-same convention [`claude-dependabot-fix.yml`](../.github/workflows-pending/claude-dependabot-fix.yml)
+same convention [`claude-dependabot-fix.yml`](../.github/workflows/claude-dependabot-fix.yml)
 uses. It **replaces** the tag-mode workflow still live at
 `.github/workflows/claude.yml`. Activate it with one command:
 

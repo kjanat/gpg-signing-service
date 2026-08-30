@@ -39,15 +39,6 @@
 #
 # See docs/dependabot-fix-path.md for the whole design, including the secret
 # provisioning that is NOT needed here and why.
-#
-# NOT ACTIVE YET. This file is in .github/workflows-pending/ because a GitHub
-# App token has no `workflows` permission and cannot create a file under
-# .github/workflows/ — the push is rejected outright. Activate it with:
-#
-#   git mv .github/workflows-pending/claude-dependabot-fix.yml .github/workflows/
-#
-# Nothing else changes: `task test:dependabot-fix` resolves the live path first
-# and starts guarding this file where it lands.
 name: Claude Dependabot Fix
 
 on:

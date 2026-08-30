@@ -39,9 +39,8 @@ job and the untrusted pull request are one `if:` apart for the whole file.
 
 ## What this repository does instead
 
-[`claude-dependabot-fix.yml`](../.github/workflows-pending/claude-dependabot-fix.yml)
-triggers on `workflow_run`, on completion of CI. That gives the same elevation
-with a different shape:
+`claude-dependabot-fix.yml` triggers on `workflow_run`, on completion of CI.
+That gives the same elevation with a different shape:
 
 - `workflow_run` is not a Dependabot event, so it gets the Actions secrets and
   a write token — _"The workflow started by the `workflow_run` event is able to
@@ -144,25 +143,113 @@ The escape hatch and the fail-closed contract are unchanged from #107. A job
 that means to sign and cannot fails, rather than quietly producing an unsigned
 commit; `GPG_SIGN_DISABLE` remains the only way to sign nothing on purpose.
 
-## Activating it
+## Activation
 
-The workflow ships in `.github/workflows-pending/`, not `.github/workflows/`,
-and is therefore **not running yet**. This is a platform constraint rather than
-a design choice: a GitHub App token has no `workflows` permission, so the
-automation that opened this change could not create a file under
-`.github/workflows/`. The push is rejected outright, and the rejection kills
-the whole push rather than just that one file.
+The workflow is live at
+[`.github/workflows/claude-dependabot-fix.yml`](../.github/workflows/claude-dependabot-fix.yml).
+Putting it there was a step no automation in this repository could take, and
+that is worth recording, because the same wall stands in front of the next
+workflow anyone tries to add this way.
 
-A human activates it with one command:
+A GitHub App token has no `workflows` permission. Any push that touches
+`.github/workflows/` is rejected outright, and the rejection kills the whole
+push rather than just the offending file — so the CI job that wrote this design
+could commit the scripts, the tests and this document, and not the workflow. It
+waited in `.github/workflows-pending/` with the activation checked in beside it
+as `activate.patch`: a rename into `.github/workflows/`, plus the replacement of
+the retired instruction in `claude-code-review.yml`. A human holding an ordinary
+credential applied it, and both halves are now in the tree; the patch is spent
+and has been deleted.
 
-```bash
-git mv .github/workflows-pending/claude-dependabot-fix.yml .github/workflows/
-```
+Checking the activation in rather than pasting it into a pull-request comment is
+the part worth keeping. A comment would not appear in the diff anybody reviews,
+would not be covered by branch protection, could be edited afterwards with no
+signal here, and nothing would notice it going stale against a moving
+`claude-code-review.yml`. In the tree it was reviewed with everything else, and
+both suites applied it on every run — so a patch that stopped applying was a red
+build rather than a surprise on the day someone tried to use it.
 
-Nothing else has to change. `task test:dependabot-fix` resolves the live path
-first and falls back to the pending one, so it starts guarding the file where it
-lands, and refuses to pass if the file is in neither place — or, after a
-half-finished move, in both.
+The suites were red for the whole wait, deliberately and in both files: one had
+no live workflow to guard, the other was asserting prompt text that arrived with
+the patch. Neither was a stub — each resolved its subject from the patch applied
+to a scratch copy and ran every behavioural, structural and mutation assertion
+for real, reporting the activation last as a single deferred failure. An earlier
+version instead resolved the live path first and fell back to the pending file,
+and went **green**. That is the shape to refuse: a security suite whose subject
+is a file nothing runs goes green exactly as fast as one guarding a live
+workflow, and the difference between those two is the entire point.
+
+### The states the guards still refuse
+
+`activation_state` in
+[`.github/scripts/dependabot-activation.sh`](../.github/scripts/dependabot-activation.sh)
+is read by both suites, so they cannot describe the same repository two ways.
+Only `active` passes:
+
+- **`pending`** — back in `.github/workflows-pending/`. The deferred failure
+  returns, naming the patch procedure.
+- **`both`** — live _and_ a copy still pending: two files claiming to be this
+  workflow, one of them running, both looking authoritative in review. This is
+  what a half-applied activation leaves behind, and the fix is `git rm` on the
+  leftovers, **not** a re-run of `git apply` — the patch renames onto a file
+  that now exists, so git refuses it with `already exists in working directory`.
+  Both suites say so, from `activation_unusable`.
+- **`absent`** — in neither place. The write path is gone and no patch brings it
+  back.
+- A spent `activate.patch` left checked in next to the live workflow also fails:
+  a one-shot artifact sitting there is a second, stale description of a change
+  already made.
+
+## What the review workflow says about Dependabot
+
+[`claude-code-review.yml`](../.github/workflows/claude-code-review.yml) once
+told Claude, on a Dependabot pull request, to fix the bump and push to the
+branch. That instruction was never executable — see
+[the section above](#why-the-review-workflow-cannot-do-it) — and the patch
+removes it. The prompt scopes that run to **diagnosis**: reproduce the failure,
+name the mechanical repair, and leave the commit to this path.
+
+`test-claude-review-gate.sh` asserts that, because a prompt is prose and nothing
+else in the repository would notice it drifting back. Its subject is the whole
+span from the first Dependabot paragraph to the last, not only the paragraphs
+containing the word — an instruction wedged between two of them reads as part of
+the same instruction to any model, and scoping by keyword left exactly that hole.
+Within the span it requires:
+
+- no line containing the word `push`, unless that same line also names
+  `claude-dependabot-fix.yml`. Matching the word rather than a hand-written
+  sentence shape is deliberate: an earlier version required
+  "push … to the PR/branch" with at most three words in between, and
+  "push directly to the head branch" went straight through it. The unit is a
+  line — split again at sentence ends, never joined across them — for the same
+  reason: a sentence is delimited by punctuation the author chooses, so
+  `- fix it and push the fix to the PR branch` followed by a bullet naming the
+  workflow was one unpunctuated "sentence" that named the trusted path, and the
+  instruction rode along inside it. Per line it stands alone. The cost is that
+  prose about the trusted path has to keep the word and the file name on one
+  line;
+- the paragraph names `claude-dependabot-fix.yml`, so a diagnosis has somewhere
+  to go; and
+- it states the credential fact — a read-only token, or no write authority.
+  Pinned to the credential rather than to any negation, because a bare "cannot"
+  is satisfied by a sentence about something else entirely. Note that the two
+  assertions read the same prose, so "this run cannot push" is not a third
+  option: that sentence contains the word `push` without naming
+  `claude-dependabot-fix.yml`, and the rule above rejects it.
+
+The escape valve is trust-based on purpose. `push to the PR branch, the same
+thing claude-dependabot-fix.yml does` passes — that is a sentence somebody has
+to write deliberately while looking at the name of the workflow holding the
+token, which is a different failure mode from drift.
+
+Seven mutations exercise it: the pre-#71 sentence restored verbatim, two
+paraphrases of it, the same instruction in an unnamed paragraph between two that
+do name the bot, the instruction as a bullet above a bullet naming the workflow,
+the instruction with the workflow named in a parenthetical on the next line, the
+trusted-path pointer removed, and every statement about the credential removed.
+The literal restore is the least informative of them — a guard written from one
+sentence is guaranteed to catch that sentence — and the paraphrases and the two
+laundering shapes are the ones that earn the check.
 
 ## Secret provisioning
 
@@ -185,15 +272,26 @@ is unaffected.
 
 ```bash
 task test:dependabot-fix   # alias: task dbf
+task test:review-gate
 ```
 
-The suite has three parts. It drives both scripts against fixtures, including
-every shape the gate must decline and every patch the apply script must refuse.
-It reads the privilege boundary off the workflow YAML — which jobs may hold a
-write permission, which may check out the pull request, and that those two sets
-do not intersect. And it then breaks each of those guards in turn and requires
-the checker to catch it, because a structural assertion that has never been
-watched failing is one nobody knows works.
+The first suite has three parts. It drives both scripts against fixtures,
+including every shape the gate must decline and every patch the apply script
+must refuse. It reads the privilege boundary off the workflow YAML — which jobs
+may hold a write permission, which may check out the pull request, and that
+those two sets do not intersect. And it then breaks each of those guards in turn
+and requires the checker to catch it, because a structural assertion that has
+never been watched failing is one nobody knows works.
+
+The second owns the review job's no-token gate and, since #71, the prompt
+guards described above. Both also assert the activation state, and agree about
+it by construction: the states and their diagnoses come from the one helper
+they share.
+
+Neither suite reads the workflow as YAML the way GitHub will, so `task lint`
+also runs `actionlint` over `.github/workflows/` **and**
+`.github/workflows-pending/` — the second so that a workflow still waiting on
+the activation wall is checked before it goes live, not after.
 
 ## What is still trusted
 
