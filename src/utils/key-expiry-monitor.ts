@@ -138,6 +138,14 @@ export interface MonitorResult {
 	scope: ActiveKeySet;
 	/** The rendered report, sent or not */
 	report: ReportDocument;
+	/**
+	 * Whether the run resolved no active signing key at all.
+	 *
+	 * Separate from `actionable` because it is a different kind of news: there
+	 * is no key to rotate, but nothing was verified either. It is its own field
+	 * so the condition is assertable rather than inferred from `rows.length`.
+	 */
+	checkedNothing: boolean;
 	/** Whether an alert was actually handed to the mail boundary */
 	alerted: boolean;
 }
@@ -160,6 +168,11 @@ export interface MonitorOptions {
  * that arrives every week is one nobody reads by the week it matters. The
  * result is returned either way, so the caller can log the verdict it did not
  * mail.
+ *
+ * A run that resolved *no* active key is not a clean run and does send: it
+ * checked nothing, so its silence would be a green light nothing earned. That
+ * is the state every fresh deployment passes through, and the one a deployment
+ * that loses its `KEY_ID` falls back into.
  *
  * @throws when the alerting path is misconfigured, when the deployment's own
  * state cannot be read, or when the send fails — all three mean the monitor did
@@ -190,26 +203,43 @@ export async function runKeyExpiryMonitor(env: Env, options: MonitorOptions = {}
 	const context: ReportContext = { warnDays, now, service: serviceLabel(env), scope };
 	const report = renderReport(rows, context);
 	const actionable = actionableRows(rows);
+	const checkedNothing = rows.length === 0;
 
-	if (actionable.length === 0) {
+	if (actionable.length === 0 && !checkedNothing) {
 		logger.info("Key expiry check clear", {
 			action: "key-expiry-check",
 			checked: rows.length,
 			warnDays,
 		});
-		return { rows, actionable, scope, report, alerted: false };
+		return { rows, actionable, scope, report, checkedNothing, alerted: false };
 	}
 
-	logger.warn("Key expiry check found keys needing attention", {
-		action: "key-expiry-check",
-		checked: rows.length,
-		actionable: actionable.map((row) => ({ keyId: row.keyId, state: row.state, daysRemaining: row.daysRemaining })),
-		warnDays,
-	});
+	if (checkedNothing) {
+		// A run that resolved no active key verified nothing, and "nothing to
+		// report" and "nothing to check" are opposite pieces of news. Reported
+		// through the same channel as any other finding, because the dashboard is
+		// not a channel anyone watches and a green light earned by an empty set
+		// is the failure this monitor exists to prevent.
+		logger.warn("Key expiry check verified nothing: no active signing key was resolved", {
+			action: "key-expiry-check",
+			checked: 0,
+			declaredKeyId: scope.defaultKey.keyId,
+			liveGrantCount: scope.liveGrantCount,
+			totalGrantCount: scope.totalGrantCount,
+			warnDays,
+		});
+	} else {
+		logger.warn("Key expiry check found keys needing attention", {
+			action: "key-expiry-check",
+			checked: rows.length,
+			actionable: actionable.map((row) => ({ keyId: row.keyId, state: row.state, daysRemaining: row.daysRemaining })),
+			warnDays,
+		});
+	}
 
 	await sendMail(report);
 
-	return { rows, actionable, scope, report, alerted: true };
+	return { rows, actionable, scope, report, checkedNothing, alerted: true };
 }
 
 /** How this deployment names itself, so two environments' alerts read apart */

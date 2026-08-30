@@ -90,7 +90,7 @@ Update `[vars]` in `wrangler.toml`:
 | `ENVIRONMENT`             | Optional label for this deployment, e.g. `staging`; names the deployment in alert mail      |
 | `KEY_EXPIRY_ALERT_FROM`   | Address the expiry monitor mails from; must be on a domain onboarded to Email Service       |
 | `KEY_EXPIRY_ALERT_TO`     | Address the expiry monitor mails to; must be a verified Email Service destination           |
-| `KEY_EXPIRY_WARN_DAYS`    | Days ahead of expiry the monitor starts reporting a key; defaults to `60`                   |
+| `KEY_EXPIRY_WARN_DAYS`    | Days ahead of expiry the monitor starts reporting a key; decimal digits, default `60`       |
 
 `SERVICE_BASE_URL` is worth setting on any deployment with a name of its own.
 Unset, the `docs` link is built from the origin the request arrived on — which
@@ -370,8 +370,18 @@ a config file: for a PGP key, the _latest_ still-usable signing subkey's
 expiration, capped by the primary key's — signing keeps working until the last
 usable subkey lapses, so reading the earliest instead would warn about an outage
 a valid replacement subkey already prevents. For an X.509 key, the certificate's
-`notAfter`. Revocation is reported too, including a signing subkey revoked
-under an otherwise healthy primary key.
+`notAfter`.
+
+Revocation is reported **for PGP keys**, read out of the key material: a revoked
+primary key, and a signing subkey revoked under an otherwise healthy primary.
+The X.509 path checks `notAfter` and nothing else — there is no CRL or OCSP
+lookup, so a certificate that has been revoked but not yet expired is reported
+`ok`. Treat X.509 revocation as something you still track by hand.
+
+A run that resolves **no** active key at all is not a clean run and mails too,
+under the subject `No signing key was checked`. It is the state a deployment is
+in before its first `KEY_ID` is set, and the one it falls back into if that
+variable is lost; the alternative is a weekly all-clear earned by an empty set.
 
 ### Checking it by hand
 

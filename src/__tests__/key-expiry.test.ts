@@ -59,6 +59,34 @@ describe("parseWarnDays", () => {
 			expect(() => parseWarnDays(bad)).toThrow(/KEY_EXPIRY_WARN_DAYS/);
 		}
 	});
+
+	it("rejects every numeric spelling that is not plain decimal digits", () => {
+		// `Number` reads all of these as integers, so each would otherwise be
+		// accepted as a threshold nobody wrote: `1e3` as 1000 days, `0x3C` as
+		// exactly the default it was meant to override, `+60` and `60.` as 60.
+		for (const [bad, wouldHaveMeant] of [
+			["1e3", 1000],
+			["0x3C", 60],
+			["0b111100", 60],
+			["0o74", 60],
+			["+60", 60],
+			["60.", 60],
+			["6_0", null],
+			["9007199254740993", null],
+		] as const) {
+			expect(() => parseWarnDays(bad)).toThrow(/KEY_EXPIRY_WARN_DAYS must be a positive whole number/);
+			// Pinned so the mutation is visible: the rejection is the point only
+			// because `Number` would have produced a usable number instead.
+			if (wouldHaveMeant !== null) expect(Number(bad)).toBe(wouldHaveMeant);
+		}
+	});
+
+	it("keeps accepting the plain decimal forms an operator actually writes", () => {
+		expect(parseWarnDays("7")).toBe(7);
+		expect(parseWarnDays("060")).toBe(60);
+		expect(parseWarnDays("\t120\n")).toBe(120);
+		expect(parseWarnDays("365")).toBe(365);
+	});
 });
 
 describe("daysUntil", () => {

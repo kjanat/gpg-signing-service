@@ -83,8 +83,10 @@ export interface Env {
 	/** Key-expiry monitor */
 	/**
 	 * Optional: days ahead of expiry the scheduled monitor starts reporting a
-	 * key. Defaults to 60. A positive whole number; anything else fails the run
-	 * rather than silently reverting to the default.
+	 * key. Defaults to 60. Plain decimal digits naming a positive whole number —
+	 * `1e3` and `0x3C` are refused rather than read as 1000 and 60 — and
+	 * anything else fails the run rather than silently reverting to the
+	 * default.
 	 */
 	KEY_EXPIRY_WARN_DAYS?: string;
 	/**

@@ -49,13 +49,24 @@ export const KEY_ROTATION_DOCS_URL =
  * Rejects anything that is not a positive whole number rather than silently
  * falling back to the default: a typo'd threshold that quietly becomes 60 is a
  * check that lies about what it enforced.
+ *
+ * Deliberately narrower than `Number`, which reads `1e3` as 1000 and `0x3C` as
+ * 60. Both are integers and both would pass, so an operator who typed either
+ * would get a threshold they did not write — the same silent reinterpretation
+ * the explicit rejection exists to prevent. Plain decimal digits only, with
+ * surrounding whitespace still tolerated because a `.toml` value can carry it.
  */
 export function parseWarnDays(raw: string | undefined): number {
 	if (raw === undefined || raw.trim() === "") return DEFAULT_WARN_DAYS;
 
-	const value = Number(raw.trim());
-	if (!Number.isInteger(value) || value <= 0) {
-		throw new Error(`${WARN_DAYS_VAR} must be a positive whole number of days, got ${JSON.stringify(raw)}`);
+	const trimmed = raw.trim();
+	const value = /^\d+$/.test(trimmed) ? Number(trimmed) : Number.NaN;
+	// `isSafeInteger` and not `isInteger`: a digit string past 2^53 parses to a
+	// number that is an integer but is no longer the one that was written.
+	if (!Number.isSafeInteger(value) || value <= 0) {
+		throw new Error(
+			`${WARN_DAYS_VAR} must be a positive whole number of days in plain decimal digits, got ${JSON.stringify(raw)}`,
+		);
 	}
 
 	return value;
@@ -922,7 +933,9 @@ export function reportBlocks(rows: readonly KeyExpiryRow[], context: ReportConte
 			kind: "paragraph",
 			text:
 				"No key was checked. This deployment resolved no active signing key, so nothing about " +
-				"expiry was verified — see the scope note below for why the set came out empty.",
+				"expiry was verified — see the scope note below for why the set came out empty. Until " +
+				"that is fixed this monitor reports on nothing: set KEY_ID on the deployment, or grant a " +
+				"stored key to a live trusted subject or service token.",
 		});
 	} else if (actionable.length === 0) {
 		blocks.push({

@@ -75,8 +75,9 @@ KEY_ID          = "62E75E54497815DD"
 KEY_EXPIRY_ALERT_FROM = "gpg-signing-service@kjanat.dev"
 KEY_EXPIRY_ALERT_TO   = "info@kajkowalski.nl"
 # KEY_EXPIRY_WARN_DAYS: days ahead of expiry a key starts being reported.
-# Unset means 60. A positive whole number; anything else fails the run rather
-# than silently reverting to the default.
+# Unset means 60. Plain decimal digits naming a positive whole number; anything
+# else — including `1e3` and `0x3C`, which Number() would read as 1000 and 60 —
+# fails the run rather than silently reverting to or reinterpreting the default.
 
 # ALLOWED_ORIGINS: comma-separated CORS allowlist. Left unset on purpose — CORS
 # then fails closed and no browser origin is granted anything, which is correct

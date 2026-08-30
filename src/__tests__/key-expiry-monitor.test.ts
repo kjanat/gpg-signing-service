@@ -432,15 +432,51 @@ describe("runKeyExpiryMonitor: the reviewed active-key semantics", () => {
 		expect(result.scope.defaultKey).toEqual({ env: "staging", keyId: PRODUCTION_KEY_ID });
 	});
 
-	it("checks nothing, and says so, when the deployment declares no default key and grants nothing", async () => {
+	it("mails the no-key report when the deployment declares no default key and grants nothing", async () => {
+		// The regression this pins: an empty set used to return `alerted: false`
+		// and log "clear", so a deployment that resolved no key at all — the state
+		// every fresh one passes through — was reported green while verifying
+		// nothing. There is no key to rotate, but there is nothing being watched
+		// either, and only one of those two facts used to leave the Worker.
 		const mail = recordingSender();
 
 		const result = await runKeyExpiryMonitor(monitorEnv({ KEY_ID: "  " }), { sendMail: mail.send });
 
 		expect(result.rows).toEqual([]);
-		expect(result.report.text).toContain("No key was checked.");
-		// An empty set is not an all-clear, but it is also not an alert: there is
-		// no key to rotate. The report is what carries the warning.
+		expect(result.actionable).toEqual([]);
+		expect(result.checkedNothing).toBe(true);
+		expect(result.alerted).toBe(true);
+		expect(mail.sent).toHaveLength(1);
+		expect(mail.sent[0]?.subject).toBe("[gpg-signing-service] No signing key was checked");
+		expect(mail.sent[0]?.text).toContain("No key was checked.");
+		expect(mail.sent[0]?.text).toContain("declares no KEY_ID");
+	});
+
+	it("does not log an empty run as a clear one", async () => {
+		// The log line is the other half of the same regression: `info` plus the
+		// word "clear" is what a human skimming a tail reads as "checked, fine".
+		const info = vi.spyOn(logger, "info").mockImplementation(() => undefined);
+		const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+
+		await runKeyExpiryMonitor(monitorEnv({ KEY_ID: "" }), { sendMail: recordingSender().send });
+
+		expect(info).not.toHaveBeenCalledWith("Key expiry check clear", expect.anything());
+		expect(warn).toHaveBeenCalledWith(
+			"Key expiry check verified nothing: no active signing key was resolved",
+			expect.objectContaining({ checked: 0, declaredKeyId: null }),
+		);
+	});
+
+	it("still sends nothing when a non-empty set is genuinely clean", async () => {
+		// The other side of the same rule: mailing the empty case must not turn
+		// the monitor into a weekly newsletter about healthy keys.
+		await storeKey(PRODUCTION_KEY_ID, await keyExpiringIn(400, "quiet@test.com"));
+		const mail = recordingSender();
+
+		const result = await runKeyExpiryMonitor(monitorEnv(), { sendMail: mail.send });
+
+		expect(result.checkedNothing).toBe(false);
+		expect(result.alerted).toBe(false);
 		expect(mail.sent).toEqual([]);
 	});
 });
@@ -497,6 +533,20 @@ describe("the scheduled handler", () => {
 		await waitOnExecutionContext(ctx);
 
 		expect(sent).toEqual([]);
+	});
+
+	it("mails on a scheduled run that resolved no key at all", async () => {
+		// End to end, because the false green this replaces was only visible in
+		// production: `scheduled()` discards the result, so the report is either
+		// mailed or it never leaves the Worker.
+		const { sent, binding } = recordingBinding();
+		const ctx = createExecutionContext();
+
+		await app.scheduled(controller(), monitorEnv({ KEY_ID: "  ", KEY_EXPIRY_ALERTS: binding }), ctx);
+		await waitOnExecutionContext(ctx);
+
+		expect(sent).toHaveLength(1);
+		expect(sent[0]?.subject).toContain("No signing key was checked");
 	});
 
 	it("rethrows so the cron invocation is recorded as failed", async () => {

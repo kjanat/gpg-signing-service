@@ -209,9 +209,10 @@ Use **openpgp.js v6** as the cryptographic library with passphrase-encrypted pri
 - No automated key rotation; the procedure is manual and documented in
   [Self-hosting](../self-hosting.md#key-rotation)
 - No key expiration _enforcement_ in the sign path — a key inside the warning
-  window, revoked, or already lapsed is still signed with. Expiry and revocation
-  are _detected_ by a scheduled monitor (below) rather than left to be checked
-  by hand
+  window, revoked, or already lapsed is still signed with. Expiry is _detected_
+  by a scheduled monitor (below) rather than left to be checked by hand, as is
+  PGP revocation; the X.509 path reads `notAfter` only and does no CRL or OCSP
+  lookup, so a revoked-but-unexpired certificate is still reported healthy
 - No revocation certificate handling
 
 **JavaScript Crypto Performance**:
@@ -269,7 +270,7 @@ A Cron Trigger in this same Worker (`scheduled()` in `src/index.ts`) runs
 `send_email` binding when a key needs attention.
 
 1. `src/utils/key-expiry.ts` — the I/O-free core: which keys count as active,
-   and what the key material says about expiry and revocation
+   and what the key material says about expiry and — for PGP — revocation
 2. `src/utils/key-expiry-monitor.ts` — reads the `KeyStorage` Durable Object and
    the grant tables through the modules the request path already uses, then
    renders and sends the report

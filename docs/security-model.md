@@ -80,10 +80,17 @@ whose operator cannot read where their own monitor reports to.
 
 The monitored set is derived from live state rather than from a maintained
 list: the deployment's `KEY_ID`, plus every key a live grant permits, minus
-what no live grant reaches. Expiry and revocation are read out of the key
-material. Two consequences worth stating: a grant added after a run is not
-covered until the next one, and a key nothing can currently sign with is not
-monitored at all — retaining it raises nothing, and so does forgetting it.
+what no live grant reaches. Expiry is read out of the key material, as is
+revocation **for PGP keys** — a revoked primary, or a signing subkey revoked
+under a healthy one. The X.509 path reads the certificate's `notAfter` only:
+there is no CRL or OCSP lookup, so a revoked-but-unexpired certificate is
+reported `ok`. Two further consequences worth stating: a grant added after a run
+is not covered until the next one, and a key nothing can currently sign with is
+not monitored at all — retaining it raises nothing, and so does forgetting it.
+
+A run that resolves no active key is reported, not treated as clean. It has
+verified nothing, and a monitor whose green light can mean "I checked nothing"
+is the failure this one exists to prevent.
 
 Reporting is not enforcement. Nothing in the sign path refuses a key that is
 near expiry, revoked, or already lapsed; the monitor exists so that the first
@@ -277,6 +284,8 @@ Before relying on the service for protected production branches, account for:
   [Key rotation](self-hosting.md#key-rotation);
 - no enforcement of expiry in the sign path, so a key inside the warning window,
   revoked, or already lapsed is still signed with;
+- no X.509 revocation checking: the monitor reads `notAfter` and performs no CRL
+  or OCSP lookup, so a revoked-but-unexpired certificate raises nothing;
 - a read-only admin credential that is narrower in _authority_ than
   `ADMIN_TOKEN` but not in _disclosure_: it still reads every key id,
   trust rule, token name and audit record;
