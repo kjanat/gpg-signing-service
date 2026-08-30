@@ -10,14 +10,17 @@ import {
 	describeActivation,
 	effectiveExpiry,
 	isGrantLive,
+	KEY_EXPIRY_MONITOR_DOCS_URL,
 	KEY_ROTATION_DOCS_URL,
 	type KeyExpiryRow,
 	type KeyGrant,
 	keyMaterialExpiry,
+	type MonitorFailureKind,
 	missingKeyRow,
 	parseWarnDays,
 	pgpKeyExpiry,
 	type ReportContext,
+	renderFailureReport,
 	renderReport,
 	reportSubject,
 	resolveActiveKeys,
@@ -1735,5 +1738,58 @@ describe("reportSubject", () => {
 		expect(reportSubject(rows, context("gpg-signing-service (staging)"))).toBe(
 			"[gpg-signing-service (staging)] 1 signing key healthy",
 		);
+	});
+});
+
+describe("renderFailureReport", () => {
+	/** Every member of the closed vocabulary, so none of them ships unread */
+	const KINDS: MonitorFailureKind[] = ["threshold", "key-storage", "grants", "report"];
+
+	const context = { service: "gpg-signing-service", now: NOW };
+
+	it.each(KINDS)("says the check did not run, for the %s failure", (kind) => {
+		const { subject, text, html } = renderFailureReport(kind, context);
+
+		expect(subject).toBe("[gpg-signing-service] Signing key expiry check did not run");
+		// Every kind reaches a headline of its own: a `Record` miss would render
+		// "could not complete at <date>: undefined" rather than throw.
+		expect(text).toMatch(/could not complete at .+: \S/);
+		expect(text).not.toContain("undefined");
+		expect(text).toContain(NOW.toISOString());
+		expect(text).toContain(KEY_EXPIRY_MONITOR_DOCS_URL);
+		expect(html).toContain(KEY_EXPIRY_MONITOR_DOCS_URL);
+	});
+
+	it("gives each failure class copy an operator can act on", () => {
+		expect(renderFailureReport("threshold", context).text).toContain("its warning threshold could not be read");
+		expect(renderFailureReport("key-storage", context).text).toContain(
+			"the deployment's key storage could not be read",
+		);
+		expect(renderFailureReport("grants", context).text).toContain("the grant tables could not be read");
+		// The fallback class, reached by anything thrown outside a tagged stage.
+		// Untested it is the one arm of the vocabulary nobody has ever read.
+		expect(renderFailureReport("report", context).text).toContain("the check failed after reading its state");
+	});
+
+	it("names the deployment, so a staging failure is not read as production's", () => {
+		expect(renderFailureReport("grants", { ...context, service: "gpg-signing-service (staging)" }).subject).toBe(
+			"[gpg-signing-service (staging)] Signing key expiry check did not run",
+		);
+	});
+
+	it("says the silence means nothing until it is fixed", () => {
+		// The sentence that makes the alert worth sending: an operator who reads
+		// only this one must not conclude the keys were checked and found fine.
+		expect(renderFailureReport("grants", context).text).toContain("No signing key was checked on this run");
+		expect(renderFailureReport("grants", context).text).toContain("the absence of an expiry warning means nothing");
+	});
+
+	it("escapes the deployment label into the HTML body", () => {
+		// `ENVIRONMENT` is an operator-set variable that reaches the body
+		// verbatim; the renderer, not the caller, is what keeps it inert.
+		const { html } = renderFailureReport("report", { ...context, service: 'gpg <b id="x">' });
+
+		expect(html).toContain("gpg &lt;b id=&quot;x&quot;&gt;");
+		expect(html).not.toContain("<b id=");
 	});
 });

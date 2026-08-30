@@ -47,6 +47,15 @@ const ALERT_TO = "info@kajkowalski.nl";
  */
 const SECRET_ADMIN_TOKEN = "not-in-any-email-abcdef0123456789";
 
+/**
+ * A rejected `KEY_EXPIRY_WARN_DAYS`, chosen to be unmistakable in a body.
+ *
+ * A plausible typo like `"soon"` would make the "not quoted back" assertion
+ * pass for the wrong reason: it is a word that could appear in the fixed copy,
+ * and it already appears in this file inside a test address.
+ */
+const REJECTED_THRESHOLD = "zzq-not-a-number-9f3c";
+
 /** A `send_email` binding that records instead of sending */
 function recordingBinding() {
 	const sent: { from: string; to: string; subject: string; text: string; html: string }[] = [];
@@ -382,7 +391,7 @@ describe("runKeyExpiryMonitor: reporting its own failure", () => {
 		const mail = recordingSender();
 
 		await expect(
-			runKeyExpiryMonitor(monitorEnv({ KEY_EXPIRY_WARN_DAYS: "soon" }), { sendMail: mail.send }),
+			runKeyExpiryMonitor(monitorEnv({ KEY_EXPIRY_WARN_DAYS: REJECTED_THRESHOLD }), { sendMail: mail.send }),
 		).rejects.toThrow(/KEY_EXPIRY_WARN_DAYS must be a positive whole number/);
 
 		expect(mail.sent).toHaveLength(1);
@@ -392,8 +401,9 @@ describe("runKeyExpiryMonitor: reporting its own failure", () => {
 		expect(alert?.text).toContain("KEY_EXPIRY_WARN_DAYS");
 		// The rejected value is an operator's typo, not something to quote back
 		// through mail: the vocabulary is fixed, so nothing from the environment
-		// rides along with it.
-		expect(alert?.text).not.toContain("soon");
+		// rides along with it. The sentinel is deliberately unlike English — a
+		// short word would pass this assertion by never having been at risk.
+		expect(alert?.text).not.toContain(REJECTED_THRESHOLD);
 		if (alert) expectNothingSensitive(alert);
 	});
 
@@ -415,6 +425,7 @@ describe("runKeyExpiryMonitor: reporting its own failure", () => {
 		// The thrown message names a status code and the stub's body; neither is
 		// part of what an operator is told by mail.
 		expect(alert?.text).not.toContain("503");
+		expect(alert?.text).not.toContain("key storage answered");
 		if (alert) expectNothingSensitive(alert);
 	});
 
@@ -501,7 +512,11 @@ describe("runKeyExpiryMonitor: reporting its own failure", () => {
 		// boundary is established first, so there is no half-built sender for the
 		// failure path to reach for.
 		await expect(
-			runKeyExpiryMonitor({ ...env, KEY_EXPIRY_ALERTS: undefined, KEY_EXPIRY_WARN_DAYS: "soon" } as unknown as Env),
+			runKeyExpiryMonitor({
+				...env,
+				KEY_EXPIRY_ALERTS: undefined,
+				KEY_EXPIRY_WARN_DAYS: REJECTED_THRESHOLD,
+			} as unknown as Env),
 		).rejects.toThrow(/cannot send mail/);
 	});
 });
