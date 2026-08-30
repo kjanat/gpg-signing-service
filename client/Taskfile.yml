@@ -63,10 +63,13 @@ tasks:
     aliases: [l]
     cmds:
       - golangci-lint run --config={{.GOLANGCI_LINT_CONFIG}} {{.CLI_ARGS}}
-      # golangci-lint carries none of the toolchain's modernize analyzers, so a
-      # 1.27 modernization lands with the line above green -- #115 did exactly
-      # that, and only an explicit `task c:m -- -diff` caught it. Chaining the
-      # dry run here is what puts it in CI: `.github/workflows/ci.yml` runs
+      # `modernize` is not in .golangci.yml's enable list, so a 1.27
+      # modernization lands with the line above green -- #115 did exactly that,
+      # and only an explicit `task c:m -- -diff` caught it. Enabling it there
+      # would not be this check either: golangci-lint's `modernize` is its own
+      # vendored copy of x/tools, while `go fix` is by construction the fixer
+      # set shipped by the toolchain client/go.mod selects. Chaining the dry run
+      # here is what puts those fixers in CI: `.github/workflows/ci.yml` runs
       # `task c:l` in the Go client job, and nothing else in that job would.
       - task: modernize:check
 

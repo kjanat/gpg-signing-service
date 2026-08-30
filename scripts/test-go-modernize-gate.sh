@@ -8,9 +8,12 @@
 #   * `go fix -diff` exits non-zero on a non-empty fixer diff, and writes nothing
 #
 # Drop any link and the tree still lints green while a modernization sits in it
-# unnoticed, which is precisely what happened in #115: golangci-lint carries
-# none of the toolchain's modernize analyzers, so the drift only surfaced
-# because someone ran the task by hand. The last link is the one worth
+# unnoticed, which is precisely what happened in #115: `modernize` is not in
+# .golangci.yml's enable list, so the drift only surfaced because someone ran
+# the task by hand. Enabling it there would not be this check -- golangci-lint
+# carries its own vendored x/tools copy of those analyzers, while `go fix` is by
+# construction the fixer set shipped by the toolchain client/go.mod selects, and
+# that is the invariant held down here. The last link is the one worth
 # distrusting hardest -- the whole gate is an exit code from a flag whose
 # contract is "print the diff", and a toolchain that started reporting success
 # for a non-empty diff would disarm CI without changing a line in this repo.
@@ -139,11 +142,25 @@ fi
 # Asserted against the resolved command list rather than the Taskfile text, so
 # it follows a rename or a move between tasks and only goes red when the fixer
 # genuinely stops running. `task c:l` is the command the Go client job invokes.
+#
+# Flag and package scope are asserted separately on the resolved `go fix` line.
+# `-diff` alone is not the gate: narrowing the invocation to `./cmd/...` would
+# leave a real `go fix ... -diff` in the plan while everything outside that one
+# package stopped being checked, and this case would have gone on passing.
 new_case lint-chains-the-dry-run
 if command -v task >/dev/null 2>&1; then
 	lint_plan="$(cd "${repo_root}" && task c:l --dry 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
-	if ! grep -qE 'go fix .*-diff' <<<"${lint_plan}"; then
+	# `|| true` because no match is the failure this case exists to report: under
+	# `set -e` a bare grep miss kills the script before the message is printed and
+	# before the workflow case below ever runs.
+	fixer_line="$(grep -E '(^|[[:space:]])go fix([[:space:]]|$)' <<<"${lint_plan}" | head -n 1 || true)"
+
+	if [[ -z ${fixer_line} ]]; then
 		fail "task c:l no longer reaches the modernization dry run:"$'\n'"${lint_plan}"
+	elif ! grep -qE '(^|[[:space:]])-diff([[:space:]]|$)' <<<"${fixer_line}"; then
+		fail "task c:l runs the fixer without -diff; CI would mutate the checkout: ${fixer_line}"
+	elif ! grep -qE '(^|[[:space:]])\./\.\.\.([[:space:]]|$)' <<<"${fixer_line}"; then
+		fail "task c:l narrowed the fixer off ./...; part of the client is unchecked: ${fixer_line}"
 	fi
 else
 	printf '    task absent, skipping the lint wiring assertion\n'
