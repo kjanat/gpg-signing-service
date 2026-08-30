@@ -227,13 +227,26 @@ jobs:
                `pr-token` must pass before you create it. It proves the session
                is not authenticated as the workflow's own GITHUB_TOKEN, which
                would open a pull request that triggers no CI at all.
-            4. Post exactly ONE comment reporting the outcome, with
-               `gh issue comment ${{ steps.harness.outputs.entity-number }}` or
-               `gh pr comment ${{ steps.harness.outputs.entity-number }}`. It
-               should say what changed, what you ran and what it said, anything
-               you deliberately left out, and the pull request link when you
-               opened one. Run the `attribution` guard over the comment body
-               file first. Do not narrate progress in extra comments.
+
+               If `pr-token` FAILS, do not open the pull request and do not
+               look for another way to open it. The branch is already pushed,
+               so the work is not lost: report in your comment that the pull
+               request was not opened, quote what the guard said, and give the
+               compare link
+               `${{ github.server_url }}/${{ github.repository }}/compare/${{ steps.harness.outputs.base-branch }}...${{ steps.harness.outputs.work-branch }}`
+               so a maintainer can open it in one click. A missing pull request
+               with a reason is a better outcome than one no CI will ever see.
+            4. Post exactly ONE comment reporting the outcome. Write the body to
+               a file, scan it, then post it — the same order as above, because
+               a published comment is not something you can take back:
+
+                   bash .github/scripts/claude-agent-guard.sh attribution /tmp/comment.md
+                   gh issue comment ${{ steps.harness.outputs.entity-number }} --body-file /tmp/comment.md
+                   # ...or `gh pr comment` when the entity is a pull request.
+
+               It should say what changed, what you ran and what it said,
+               anything you deliberately left out, and the pull request link
+               when you opened one. Do not narrate progress in extra comments.
 
             ## Attribution policy — a hard rule
 
