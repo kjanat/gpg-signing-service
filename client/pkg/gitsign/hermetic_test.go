@@ -65,6 +65,11 @@ func TestFixtureGitWritesObjectsWithoutAHostIdentity(t *testing.T) {
 
 // A host that exports an identity must not be able to lend it to a fixture
 // either, or a test asserting on authorship would read the developer's name.
+//
+// The commit is written with no caller environment on purpose. Going through
+// commit() would name an identity that outranks the ambient one by itself,
+// appended last and winning with or without the scrub, so the pin under test
+// would never be the thing deciding and this would pass either way.
 func TestFixtureGitIgnoresAnAmbientIdentity(t *testing.T) {
 	requireGit(t)
 	t.Setenv(envAuthorName, "Ambient")
@@ -73,10 +78,10 @@ func TestFixtureGitIgnoresAnAmbientIdentity(t *testing.T) {
 	t.Setenv(envCommitterEmail, "ambient@example.invalid")
 
 	dir := initRepo(t)
-	sha := commit(t, dir, "chore: ambient", foreignEmail)
+	git(t, dir, nil, "commit", "--allow-empty", "-m", "chore: ambient")
 
-	got := git(t, dir, nil, "show", "--no-patch", "--format=%an <%ae>|%cn <%ce>", sha)
-	want := fixtureName + " <" + foreignEmail + ">|" + fixtureName + " <" + foreignEmail + ">"
+	got := git(t, dir, nil, "show", "--no-patch", "--format=%an <%ae>|%cn <%ce>", head(t, dir))
+	want := fixtureName + " <" + serviceEmail + ">|" + fixtureName + " <" + serviceEmail + ">"
 	if got != want {
 		t.Errorf("an ambient identity reached the fixture:\n got %s\nwant %s", got, want)
 	}
@@ -105,22 +110,39 @@ func TestFixtureGitIgnoresInjectedHostConfig(t *testing.T) {
 	}
 }
 
-// A global config file the host points at must not reach a fixture either.
+// A global config file on the host must not reach a fixture either.
+//
+// The file is put where git finds it on its own rather than named through
+// GIT_CONFIG_GLOBAL, because the scrub deletes that variable before git is
+// started: pointed at through the environment, the hostile file is unreachable
+// whether or not this package pins GIT_CONFIG_GLOBAL, and the guard would be
+// held up by the scrub instead of by the pin it is named for.
+//
+// It is read back through a key of its own as well as the authorship, since
+// user.name and user.email are settled by the environment long before a config
+// file is consulted — an authorship assertion alone proves only that the
+// identity is pinned, which the two tests above already cover.
 func TestFixtureGitIgnoresAHostGlobalConfig(t *testing.T) {
 	requireGit(t)
 
-	hostile := filepath.Join(t.TempDir(), "gitconfig")
-	if err := os.WriteFile(hostile, []byte("[user]\n\tname = Hostile\n\temail = hostile@example.invalid\n"+
-		"[commit]\n\tgpgsign = true\n"), 0o600); err != nil {
+	home := t.TempDir()
+	hostile := []byte("[user]\n\tname = Hostile\n\temail = hostile@example.invalid\n" +
+		"[hostile]\n\tmarker = reached\n")
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), hostile, 0o600); err != nil {
 		t.Fatalf("could not write the hostile config: %v", err)
 	}
-	t.Setenv("GIT_CONFIG_GLOBAL", hostile)
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	dir := initRepo(t)
-	sha := commit(t, dir, "chore: hostile global config", serviceEmail)
+	git(t, dir, nil, "commit", "--allow-empty", "-m", "chore: hostile global config")
 
-	if email := git(t, dir, nil, "show", "--no-patch", "--format=%ae", sha); email != serviceEmail {
-		t.Errorf("a host global config chose the fixture's author: %q", email)
+	if marker := git(t, dir, nil, "config", "--default", "", "--get", "hostile.marker"); marker != "" {
+		t.Errorf("a host global config reached the fixture: hostile.marker is %q", marker)
+	}
+	got := git(t, dir, nil, "show", "--no-patch", "--format=%an <%ae>", head(t, dir))
+	if want := fixtureName + " <" + serviceEmail + ">"; got != want {
+		t.Errorf("a host global config chose the fixture's author:\n got %s\nwant %s", got, want)
 	}
 }
 
@@ -169,8 +191,8 @@ func occurrences(env []string, entry string) int {
 func lastValue(env []string, name string) string {
 	value := ""
 	for _, entry := range env {
-		if strings.HasPrefix(entry, name+"=") {
-			value = strings.TrimPrefix(entry, name+"=")
+		if after, ok := strings.CutPrefix(entry, name+"="); ok {
+			value = after
 		}
 	}
 	return value

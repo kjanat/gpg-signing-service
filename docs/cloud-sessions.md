@@ -38,8 +38,8 @@ Cloud VMs ship Ubuntu 24.04 with `bun`, `go`, `node`, `dprint`, `jq`, and
    load its config:
 
    ```text
-   can't load config: the Go language version (go1.25) used to build
-   golangci-lint is lower than the targeted Go version (1.26)
+   can't load config: the Go language version (go1.26) used to build
+   golangci-lint is lower than the targeted Go version (1.27)
    ```
 
    This breaks more than Go linting: `task format` and `dprint fmt` shell out
@@ -105,7 +105,7 @@ In the environment dialog's **Environment variables** box, `.env` format, one
 
 ```text
 MISE_DATA_DIR=/opt/mise
-GOTOOLCHAIN=go1.26.5
+GOTOOLCHAIN=go1.27.0
 GIT_AUTHOR_NAME=Kaj Kowalski
 GIT_AUTHOR_EMAIL=info@kajkowalski.nl
 GIT_COMMITTER_NAME=Kaj Kowalski
@@ -223,7 +223,7 @@ command -v task >/dev/null 2>&1 || npm install -g @go-task/cli || true
 (cd "$repo/client" && golangci-lint config path --config=.golangci.yml) \
   >/dev/null 2>&1 \
   || GOBIN=/usr/local/bin go install \
-    github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2 || true
+    github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2 || true
 
 # Optional: the released gpg-sign CLI. Use the direct download URL — the
 # releases API returns 403 through the proxy, but the asset URL itself is fine.
