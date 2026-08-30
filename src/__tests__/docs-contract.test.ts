@@ -157,7 +157,8 @@ describe("the documented status of every code", () => {
 
 /**
  * A refusal this suite can provoke with nothing but a request and the admin
- * token the test environment already configures.
+ * tokens the test environment already configures — both of them: the scope
+ * probe below is refused *because* the bearer it presents is the read-only one.
  *
  * Deliberately cheap. A probe that needed a JWKS mock, a trust row and a stubbed
  * Durable Object would be a second copy of the route suite that owns those
@@ -196,6 +197,18 @@ const statusProbes: { code: ErrorCode; what: string; send: () => Promise<Respons
 		send: () => adminRequest("/admin/audit?limit=-1"),
 	},
 	{
+		code: "AUTH_SCOPE_INSUFFICIENT",
+		what: "a state-changing admin route with the read-only admin bearer",
+		// The scope check is in the admin auth middleware, so this is refused
+		// before the route touches the key store: no seeded key, no stub, and the
+		// id in the path never has to exist.
+		send: () =>
+			request("/admin/keys/FFFFFFFFFFFFFFFF", {
+				method: "DELETE",
+				headers: { Authorization: `Bearer ${env.ADMIN_READONLY_TOKEN}` },
+			}),
+	},
+	{
 		code: "INTERNAL_ERROR",
 		what: "a handler that throws, caught by `app.onError`",
 		send: async () => {
@@ -225,7 +238,6 @@ const statusProbes: { code: ErrorCode; what: string; send: () => Promise<Respons
  */
 const unpinnedStatuses: Record<string, { suite: string; needs: string }> = {
 	AUTH_SUBJECT_UNTRUSTED: { suite: "middleware.test.ts", needs: "a verified token with no trust row" },
-	AUTH_SCOPE_INSUFFICIENT: { suite: "admin-scope.test.ts", needs: "ADMIN_READONLY_TOKEN bound into env" },
 	KEY_NOT_ALLOWED: { suite: "sign.test.ts", needs: "a trust row carrying a key allowlist" },
 	KEY_PROCESSING_ERROR: { suite: "admin.test.ts", needs: "damaged key material in storage" },
 	KEY_LIST_ERROR: { suite: "admin.test.ts", needs: "the key-storage DO stubbed into failure" },
