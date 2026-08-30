@@ -287,7 +287,26 @@ describe("bindingMailSender", () => {
 		expect(logged).not.toContain("plain body");
 		expect(logged).not.toContain("rich body");
 		expect(logged).not.toContain("Subject");
+		// The key id is why the subject is interpolated rather than fixed: it is
+		// the piece of the rendered copy an operator would most mind seeing in a
+		// log aggregator, so the fixture that plants it also has to check for it.
+		expect(logged).not.toContain(PRODUCTION_KEY_ID);
 		expect(logged).not.toContain(SECRET_ADMIN_TOKEN);
+	});
+
+	it("logs no send at all when the binding refuses the mail", async () => {
+		// A success line emitted for a send that did not happen is worse than the
+		// collapsed event this change replaces: it reads as an alert that reached
+		// someone. The log has to sit after the await, and nothing else may fill in.
+		const binding = { send: vi.fn(async () => Promise.reject(new Error("E_RATE_LIMIT_EXCEEDED"))) };
+		const send = bindingMailSender(monitorEnv({ KEY_EXPIRY_ALERTS: binding }));
+
+		await expect(send({ subject: "Subject", text: "plain", html: "<p>rich</p>" }, "key-expiry")).rejects.toThrow(
+			"E_RATE_LIMIT_EXCEEDED",
+		);
+
+		expect(loggedAlertKinds()).toEqual([]);
+		expect(loggedAlertMessages()).toEqual([]);
 	});
 
 	it("sends byte-identical mail whichever kind it is told, so the discriminator is log-only", async () => {

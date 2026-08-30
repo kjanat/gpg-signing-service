@@ -70,9 +70,11 @@ export type AlertMail = ReportDocument;
  * A closed union, passed at the call site rather than derived at the boundary.
  * The two alerts read differently in an inbox but are the same shape in a log
  * line, and they mean opposite things: `key-expiry` is the monitor completing
- * and finding a key that needs a human, `monitor-failure` is the monitor
- * reporting that it reached no verdict on any key at all. Collapsing them in
- * Workers logs would make "the monitor sent something" unreadable as either.
+ * and having something to say about the keys — one that needs a human, or no
+ * active key to check at all — while `monitor-failure` is the monitor reporting
+ * that it reached no verdict on any key because it could not run. Collapsing
+ * them in Workers logs would make "the monitor sent something" unreadable as
+ * either.
  *
  * The sender is told which; it does not read the rendered subject or body to
  * find out. Text is written for operators and may be reworded, so a log
