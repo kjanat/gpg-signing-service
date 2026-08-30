@@ -114,8 +114,7 @@ func (r *Retrier) capped(wait time.Duration) time.Duration {
 
 func (r *Retrier) shouldRetry(err error) bool {
 	// Always retry rate limits if enabled
-	var rateLimitErr *RateLimitError
-	if errors.As(err, &rateLimitErr) {
+	if _, ok := errors.AsType[*RateLimitError](err); ok {
 		return r.retryOnRateLimit
 	}
 
@@ -183,8 +182,7 @@ func (r *Retrier) shouldRetry(err error) bool {
 	// fault: the body is already in hand and the next attempt parses exactly as
 	// badly, so a blanket default would spend the whole backoff budget re-reading
 	// a malformed 200.
-	var urlErr *url.Error
-	if errors.As(err, &urlErr) {
+	if _, ok := errors.AsType[*url.Error](err); ok {
 		return true
 	}
 
