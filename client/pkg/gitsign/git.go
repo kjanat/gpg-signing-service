@@ -74,6 +74,22 @@ func (r *repo) mergeBase(ctx context.Context, ref string) (string, error) {
 	return r.gitLine(ctx, "merge-base", detachedHead, ref)
 }
 
+// isAncestor reports whether base is an ancestor of tip.
+//
+// Asked as "how much of base does tip not reach" rather than with `merge-base
+// --is-ancestor`, whose answer is an exit status: a false answer and a git that
+// failed outright are the same nonzero exit, and unrelated histories make
+// `merge-base` itself exit nonzero. `rev-list --count` exits 0 for all three
+// shapes and prints 0 only when every commit base reaches is one tip reaches
+// too.
+func (r *repo) isAncestor(ctx context.Context, base, tip string) (bool, error) {
+	count, err := r.gitLine(ctx, "rev-list", "--count", tip+".."+base)
+	if err != nil {
+		return false, err
+	}
+	return count == "0", nil
+}
+
 // revList returns the commits in base..head, parents before children. The
 // upper bound is the commit the run captured rather than HEAD, so the range
 // and the ref the update is guarded against are provably the same object.
