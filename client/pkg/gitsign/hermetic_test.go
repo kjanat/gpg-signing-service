@@ -112,22 +112,34 @@ func TestFixtureGitIgnoresInjectedHostConfig(t *testing.T) {
 
 // A global config file the host points at must not reach a fixture either.
 //
-// As above, the commit names no identity of its own: user.name and user.email
-// in a config file only ever get consulted when the environment is silent, so
-// a fixture that pinned them here would be isolated from this file by the
-// caller rather than by GIT_CONFIG_GLOBAL.
+// The file is put where git finds it on its own rather than named through
+// GIT_CONFIG_GLOBAL, because the scrub deletes that variable before git is
+// started: pointed at through the environment, the hostile file is unreachable
+// whether or not this package pins GIT_CONFIG_GLOBAL, and the guard would be
+// held up by the scrub instead of by the pin it is named for.
+//
+// It is read back through a key of its own as well as the authorship, since
+// user.name and user.email are settled by the environment long before a config
+// file is consulted — an authorship assertion alone proves only that the
+// identity is pinned, which the two tests above already cover.
 func TestFixtureGitIgnoresAHostGlobalConfig(t *testing.T) {
 	requireGit(t)
 
-	hostile := filepath.Join(t.TempDir(), "gitconfig")
-	if err := os.WriteFile(hostile, []byte("[user]\n\tname = Hostile\n\temail = hostile@example.invalid\n"), 0o600); err != nil {
+	home := t.TempDir()
+	hostile := []byte("[user]\n\tname = Hostile\n\temail = hostile@example.invalid\n" +
+		"[hostile]\n\tmarker = reached\n")
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), hostile, 0o600); err != nil {
 		t.Fatalf("could not write the hostile config: %v", err)
 	}
-	t.Setenv("GIT_CONFIG_GLOBAL", hostile)
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	dir := initRepo(t)
 	git(t, dir, nil, "commit", "--allow-empty", "-m", "chore: hostile global config")
 
+	if marker := git(t, dir, nil, "config", "--default", "", "--get", "hostile.marker"); marker != "" {
+		t.Errorf("a host global config reached the fixture: hostile.marker is %q", marker)
+	}
 	got := git(t, dir, nil, "show", "--no-patch", "--format=%an <%ae>", head(t, dir))
 	if want := fixtureName + " <" + serviceEmail + ">"; got != want {
 		t.Errorf("a host global config chose the fixture's author:\n got %s\nwant %s", got, want)
