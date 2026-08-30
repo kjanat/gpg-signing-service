@@ -261,6 +261,21 @@ rc="$(run_harness "$(issue_payload 11 'x' 'no mention here')" issues)"
 expect_rc 1 "${rc}" 'a payload without the trigger phrase is not a request'
 expect_stdout '::error title=Claude harness: no trigger phrase::'
 
+# ...but the workflow `if:` accepts the phrase in an issue TITLE as well as in
+# its body, and an issue opened as "@claude do X" with an empty body is the
+# ordinary way to ask. The two must agree: a job that starts and then refuses
+# itself reads as a broken workflow, not as a request nobody made.
+git -C "${tmp_dir}/repo/work" checkout -q master
+rc="$(run_harness "$(issue_payload 12 '@claude add retries to the signer' '')" issues)"
+expect_rc 0 "${rc}" 'the trigger phrase in an issue title is a request, as the workflow if: says'
+expect_output 'work-branch=issue-12-claude-add-retries-to-the'
+expect_output 'branch-is-new=true'
+
+git -C "${tmp_dir}/repo/work" checkout -q master
+rc="$(run_harness "$(issue_comment_payload 11 'no mention here' false)" issue_comment)"
+expect_rc 1 "${rc}" 'a comment without the phrase is not a request, whatever the issue title says'
+expect_stdout '::error title=Claude harness: no trigger phrase::'
+
 rc="$(run_harness "$(issue_payload 11 'x' '@claude go')" issues RUNNER_TEMP=)"
 expect_rc 1 "${rc}" 'missing runner environment must refuse, not improvise'
 expect_stdout 'RUNNER_TEMP is not set'
@@ -592,8 +607,21 @@ expect_prompt() {
 # mode's defaults, silently.
 expect_workflow_re '^[[:space:]]+prompt: \|$' 'a literal-block prompt is what selects agent mode'
 expect_workflow 'github.actor == github.repository_owner' 'the owner gate is the trust boundary'
+# The workflow decides which events start a job and the harness decides which
+# of those are real requests. Where the condition reads a field, the harness
+# has to read it too; the issue title is the one field that is easy to add to
+# one side only.
+expect_workflow 'contains(github.event.issue.title' \
+	'the issue title is a trigger field, and the harness checks it (trigger_text)'
+# shellcheck disable=SC2016  # the harness's literal source line is the pattern
+grep -qF 'trigger_text="${entity_title}"' "${repo_root}/.github/scripts/claude-agent-harness.sh" \
+	|| fail 'the workflow triggers on the issue title, so the harness must accept it as a trigger too'
 expect_prompt 'claude-agent-guard.sh pr-token' 'the session must prove its token before opening a pull request'
 expect_prompt 'claude-agent-guard.sh attribution' 'the session must scan what it publishes'
+# The policy names pull request TITLES, and the guard only sees files it is
+# pointed at — so the title has to be one, or the rule covers something nothing
+# checks.
+expect_prompt '/tmp/pr-title.txt' 'a pull request title is covered by the policy, so it must be scannable'
 expect_prompt 'claude-agent-guard.sh commits' 'the session must scan its own commit messages'
 expect_workflow './.github/actions/setup-claude-signing' 'service-signed commits must survive the rewrite'
 expect_workflow 'GIT_AUTHOR_EMAIL' 'the owner git identity must survive the rewrite'

@@ -201,17 +201,27 @@ jobs:
 
             ## Finishing
 
-            1. Commit and push your work.
-            2. Check your own commit messages:
-               `bash .github/scripts/claude-agent-guard.sh commits origin/${{ steps.harness.outputs.base-branch }}`
+            1. Commit your work. Then check your own commit messages, BEFORE
+               you push — a message that fails this check is one `git commit
+               --amend` away from fixed while it is local, and a force-push
+               away once it is not:
+
+                   bash .github/scripts/claude-agent-guard.sh commits origin/${{ steps.harness.outputs.base-branch }}
+
+               On an existing branch that range also covers commits you did not
+               write. If it fails on one of those, leave the history alone and
+               say so in your comment.
+            2. Push.
             3. If branch-is-new is `true` and you changed anything, open a REAL
-               pull request. Not a compare URL — an open pull request:
+               pull request. Not a compare URL — an open pull request. The
+               title is covered by the attribution policy too, so it goes
+               through a file rather than straight onto the command line:
 
                    bash .github/scripts/claude-agent-guard.sh pr-token
-                   bash .github/scripts/claude-agent-guard.sh attribution /tmp/pr-body.md
+                   bash .github/scripts/claude-agent-guard.sh attribution /tmp/pr-title.txt /tmp/pr-body.md
                    gh pr create --base ${{ steps.harness.outputs.base-branch }} \
                      --head ${{ steps.harness.outputs.work-branch }} \
-                     --title '<conventional-commit-style title>' \
+                     --title "$(cat /tmp/pr-title.txt)" \
                      --body-file /tmp/pr-body.md
 
                `pr-token` must pass before you create it. It proves the session

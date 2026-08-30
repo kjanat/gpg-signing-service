@@ -116,6 +116,10 @@ request_body=''
 request_url=''
 request_author=''
 review_location=''
+# What the trigger phrase is searched in. It is the request body for every
+# event except `issues`, where the workflow condition also accepts the phrase
+# in the title — see the check below.
+trigger_text=''
 
 case "${event_name}" in
 	issues)
@@ -127,6 +131,11 @@ case "${event_name}" in
 		request_body="$(payload '.issue.body')"
 		request_url="${entity_url}"
 		request_author="$(payload '.issue.user.login')"
+		# The workflow condition accepts the phrase in the title OR the body for
+		# this event, so this check has to accept both or an issue titled
+		# "@claude do X" starts a job that then refuses itself. The body is still
+		# the request; the title only decides whether there is one.
+		trigger_text="${entity_title}"$'\n'"${request_body}"
 		;;
 	issue_comment)
 		if jq -e '.issue.pull_request' >/dev/null 2>&1 <"${event_path}"; then
@@ -182,9 +191,12 @@ fi
 # guards the case the condition cannot see: a payload that reached this step by
 # some other route (workflow_dispatch during debugging, a re-run against an
 # edited event) is not a request anybody made.
-if ! grep -qiF -- "${trigger_phrase}" <<<"${request_body}"; then
+if ! grep -qiF -- "${trigger_phrase}" <<<"${trigger_text:-${request_body}}"; then
 	refuse 'no trigger phrase' \
-		"The ${request_kind} does not contain ${trigger_phrase}, so there is no request to act on."
+		"The ${request_kind} does not contain ${trigger_phrase}, so there is no request to act on." \
+		'This check and the workflow if: condition must accept the same events. If they' \
+		'disagree, the job starts and then refuses itself, which reads as a broken' \
+		'workflow rather than as a request nobody made.'
 fi
 
 # --- pick the ref ------------------------------------------------------------

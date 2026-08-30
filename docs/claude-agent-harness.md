@@ -81,7 +81,9 @@ write:
 
 - the actor is not the repository owner;
 - the event is not one of the four it normalizes;
-- the request body has no trigger phrase;
+- the request carries no trigger phrase (the body, or the title as well for a
+  new issue — the same fields the workflow condition reads, because a harness
+  that refuses what the condition admitted is a job that fails itself);
 - the pull request head is on a fork (`GITHUB_TOKEN` is read-only there anyway,
   so the alternative is discovering it at `git push`, after the work);
 - the pull request is closed or merged;
