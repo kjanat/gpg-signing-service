@@ -214,16 +214,15 @@ func newSignCommitFixture(t *testing.T) (dir, base string) {
 	apiURL, timeout = server.URL, 30*time.Second
 	t.Cleanup(func() { apiURL, timeout = previousURL, previousTimeout })
 
+	// No identity is passed: gitEnv pins the fixture's own, so a caller that
+	// repeated it here would only be shadowing an identical value and the pin
+	// itself would go unexercised.
 	dir = t.TempDir()
-	env := []string{
-		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=" + testSignCommitEmail,
-		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=" + testSignCommitEmail,
-	}
-	gitRun(t, dir, env, "init", "--initial-branch=master")
-	gitRun(t, dir, env, "config", "commit.gpgsign", "false")
-	gitRun(t, dir, env, "commit", "--allow-empty", "-m", "root")
-	base = strings.TrimSpace(gitRun(t, dir, env, "rev-parse", "HEAD"))
-	gitRun(t, dir, env, "commit", "--allow-empty", "-m", "signable")
+	gitRun(t, dir, "init", "--initial-branch=master")
+	gitRun(t, dir, "config", "commit.gpgsign", "false")
+	gitRun(t, dir, "commit", "--allow-empty", "-m", "root")
+	base = strings.TrimSpace(gitRun(t, dir, "rev-parse", "HEAD"))
+	gitRun(t, dir, "commit", "--allow-empty", "-m", "signable")
 	return dir, base
 }
 
@@ -256,14 +255,51 @@ func gpgRun(t *testing.T, home string, stdin []byte, args ...string) string {
 	return out
 }
 
-func gitRun(t *testing.T, dir string, env []string, args ...string) string {
+// hermeticGit is the environment every git command in this suite runs under.
+//
+// The developer's global and system config must not decide what the fixtures
+// look like, and a git command that writes an object otherwise guesses an
+// identity from the host's username and hostname — a guess that works on a
+// workstation and fails on a clean CI runner with "Author identity unknown".
+// Naming both here means no fixture depends on the host having either.
+//
+// Caller entries are appended after these and win, since for a duplicate
+// environment key the last occurrence is the one that takes effect.
+func hermeticGit() []string {
+	return []string{
+		"GIT_CONFIG_GLOBAL=" + os.DevNull,
+		"GIT_CONFIG_SYSTEM=" + os.DevNull,
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_TERMINAL_PROMPT=0",
+		envAuthorName + "=" + fixtureName, envAuthorEmail + "=" + testSignCommitEmail,
+		envCommitterName + "=" + fixtureName, envCommitterEmail + "=" + testSignCommitEmail,
+	}
+}
+
+// gitEnv is the full environment for a fixture git command. Every ambient
+// GIT_* variable is dropped rather than shadowed: GIT_CONFIG_COUNT and its
+// GIT_CONFIG_KEY_n companions inject config outranking every file, so a host
+// that sets them could otherwise still reach into a fixture.
+func gitEnv() []string {
+	environ := os.Environ()
+	kept := make([]string, 0, len(environ))
+	for _, entry := range environ {
+		if strings.HasPrefix(entry, "GIT_") {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return append(kept, hermeticGit()...)
+}
+
+func gitRun(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 
 	var stdout, stderr bytes.Buffer
 	// #nosec G204 -- test fixture; every argument is a literal from this file.
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = gitEnv()
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -278,12 +314,8 @@ func gitRun(t *testing.T, dir string, env []string, args ...string) string {
 func TestSignCommitCommandJSONOnRefusal(t *testing.T) {
 	dir, root := newSignCommitFixture(t)
 
-	env := []string{
-		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=" + testSignCommitEmail,
-		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=" + testSignCommitEmail,
-	}
-	first := strings.TrimSpace(gitRun(t, dir, env, "rev-parse", "HEAD"))
-	gitRun(t, dir, env, "commit", "--allow-empty", "-m", "second")
+	first := strings.TrimSpace(gitRun(t, dir, "rev-parse", "HEAD"))
+	gitRun(t, dir, "commit", "--allow-empty", "-m", "second")
 
 	// Sign only the top commit, so the one below it is still unsigned. The next
 	// run has to rewrite that one, which invalidates the signature above it.
