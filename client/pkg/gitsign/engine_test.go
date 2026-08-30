@@ -346,8 +346,7 @@ func TestRunReportsResignForCommitsTheKeyCovers(t *testing.T) {
 
 	_, out, err := runEngine(t, dir, svc.api, Options{Base: base})
 
-	var blocked *ResignError
-	if !errors.As(err, &blocked) {
+	if _, ok := errors.AsType[*ResignError](err); !ok {
 		t.Fatalf("expected a ResignError, got %v", err)
 	}
 	if !strings.Contains(out, "would re-sign") {

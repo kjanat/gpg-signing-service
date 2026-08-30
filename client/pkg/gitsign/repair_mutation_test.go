@@ -202,8 +202,8 @@ func swapIdent(payload []byte, header, from, to string) []byte {
 // retime replaces one header's timestamp and offset, keeping its identity.
 func retime(payload []byte, header, when string) []byte {
 	return replaceHeader(payload, header, func(value string) string {
-		if closing := strings.LastIndex(value, ">"); closing >= 0 {
-			return value[:closing+1] + " " + when
+		if identity, _, closed := strings.CutLast(value, ">"); closed {
+			return identity + "> " + when
 		}
 		return value
 	})
