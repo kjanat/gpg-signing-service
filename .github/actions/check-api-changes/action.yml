@@ -51,4 +51,4 @@ runs:
             | tee -a "${GITHUB_STEP_SUMMARY}"
           }
          	exit "${EXIT_CODE}"
-        else echo "::notice:API is up to date"; exit 0; fi
+        else echo "::notice::API is up to date"; exit 0; fi
