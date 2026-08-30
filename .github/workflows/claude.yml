@@ -27,6 +27,7 @@ jobs:
         with:
           service-url: "${{ vars.SIGNING_SERVICE_URL }}"
           claude-settings: "${{ vars.CLAUDE_SETTINGS }}"
+          disable-signing: "${{ vars.GPG_SIGN_DISABLE }}"
       - uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ github.token }}
