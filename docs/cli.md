@@ -75,20 +75,26 @@ deployment is public or suitable for your workload.
 
 ## Commands
 
-| Command                                         | Authentication        | Purpose                                   |
-| ----------------------------------------------- | --------------------- | ----------------------------------------- |
-| `gpg-sign health`                               | None                  | Check service and storage health          |
-| `gpg-sign public-key [--key-id ID]`             | None                  | Retrieve a PGP public key                 |
-| `gpg-sign sign [--key-id ID]`                   | OIDC or service token | Sign stdin and print a detached signature |
-| `gpg-sign sign-commit [flags]`                  | OIDC or service token | Embed signatures in commits and move HEAD |
-| `gpg-sign admin upload --key-id ID --file FILE` | Admin                 | Upload an armored PGP private key         |
-| `gpg-sign admin list`                           | Admin                 | List stored key metadata                  |
-| `gpg-sign admin delete --key-id ID`             | Admin                 | Delete a key                              |
-| `gpg-sign admin public-key --key-id ID`         | Admin                 | Retrieve public material for a key        |
-| `gpg-sign admin audit [flags]`                  | Admin                 | Query audit records                       |
+| Command                                         | Authentication        | Purpose                                     |
+| ----------------------------------------------- | --------------------- | ------------------------------------------- |
+| `gpg-sign health`                               | None                  | Check service and storage health            |
+| `gpg-sign public-key [--key-id ID]`             | None                  | Retrieve a PGP public key                   |
+| `gpg-sign sign [--key-id ID]`                   | OIDC or service token | Sign stdin and print a detached signature   |
+| `gpg-sign sign-commit [flags]`                  | OIDC or service token | Embed signatures in commits and move HEAD   |
+| `gpg-sign repair-history [flags]`               | OIDC or service token | Rewrite a range's identity headers and sign |
+| `gpg-sign admin upload --key-id ID --file FILE` | Admin                 | Upload an armored PGP private key           |
+| `gpg-sign admin list`                           | Admin                 | List stored key metadata                    |
+| `gpg-sign admin delete --key-id ID`             | Admin                 | Delete a key                                |
+| `gpg-sign admin public-key --key-id ID`         | Admin                 | Retrieve public material for a key          |
+| `gpg-sign admin audit [flags]`                  | Admin                 | Query audit records                         |
 
 `sign-commit` flags: `--base`, `--default-branch`, `--allow-resign`,
 `--sign-others`, `--scan-limit`, `--repo`, `--key-id`.
+
+`repair-history` flags: `--base`, `--expected-tip`, `--identity`,
+`--expect-identity` (repeatable), `--dry-run`, `--repo`, `--key-id`. All but
+`--dry-run`, `--repo` and `--key-id` are required; see
+[Repair manufactured provenance](#repair-manufactured-provenance).
 
 Run `gpg-sign <command> --help` for all flags.
 
@@ -282,6 +288,103 @@ be moved to, so on any run that did not get that far it still holds `head`;
 `refUpdated` is what says whether the ref actually moved. `pushed` is always
 `false` — the command has no push path.
 
+### Repair manufactured provenance
+
+`sign-commit` attests to what a commit already says. `repair-history` changes
+what it says about who wrote it, and is a separate command for exactly that
+reason.
+
+It exists for one failure. Merging through GitHub's REST squash endpoint builds
+the commit itself and stamps its own identities on it:
+
+```text
+author    claude[bot] <209825114+claude[bot]@users.noreply.github.com>
+committer GitHub <noreply@github.com>
+```
+
+Neither wrote the code. Signing such a commit does not fix it — the signature
+is valid and the provenance under it is still wrong, which is how a branch ends
+up reported `Unverified` / `unknown_key` after a successful signing run. The
+only correct repair is to rebuild the commits claiming the identity the signing
+key actually represents.
+
+Plan first. `--dry-run` validates the whole range and prints what it would do
+without requesting a signature or writing an object:
+
+```bash
+gpg-sign repair-history --dry-run \
+  --base a1cdfe318686cac582fc955243966d04236afb58 \
+  --expected-tip 42e3400c7b10ee4fbdfc3638801d5776849d1353 \
+  --identity "Kaj Kowalski <info@kajkowalski.nl>" \
+  --expect-identity "209825114+claude[bot]@users.noreply.github.com" \
+  --expect-identity "noreply@github.com"
+```
+
+Drop `--dry-run` to perform it. Every commit is rebuilt oldest-to-newest with
+its parents remapped, its existing `gpgsig` stripped, its identity headers
+replaced, and the reconstructed payload signed by the service. Each result is
+read back out of the object store and checked before the walk continues.
+
+```text
+  plan     42e3400c claude[bot] <209825114+...> -> Kaj Kowalski <info@kajkowalski.nl>
+  repaired 42e3400c -> 8c1d0a94
+Repaired 20 commit(s) in a1cdfe31..42e3400c as Kaj Kowalski <info@kajkowalski.nl>.
+Repaired tip 8c1d0a94... carries tree 6f2ab103, the same tree as 42e3400c.
+No ref was moved and nothing was pushed. Publish with:
+  git push origin 8c1d0a94...:refs/heads/<branch> --force-with-lease=<branch>:42e3400c...
+```
+
+#### What it preserves, and what it refuses
+
+Preserved byte for byte: the tree, the message, each header's own timestamp and
+timezone offset, unknown and multi-line headers, and the order and topology of
+the range.
+
+The run fails closed, before or during, on every one of these:
+
+- `--base` or `--expected-tip` missing, or `--identity` not in `Name <address>`
+  form, or no `--expect-identity` at all. None of them has a default.
+- `HEAD` is not at `--expected-tip`. The tip is a lease, not a label: a branch
+  that moved would leave the repaired chain built from commits the eventual
+  force-with-lease is not replacing.
+- The range is empty, or does not end at the expected tip.
+- Any author or committer address in the range was not named with
+  `--expect-identity`. The refusal lists them, because naming them is the
+  remedy. The target identity's own address is always allowed.
+- An identity header outside `Name <address> seconds ±hhmm`. Git tolerates
+  shapes this command will not reproduce; guessing at one moves a commit's
+  timestamp rather than failing.
+- A rewritten commit that reads back with the wrong identity, a moved
+  timestamp, a different tree, different message bytes, unremapped parents, or
+  a signature the service key does not verify.
+- A repaired tip whose tree differs from the tip it replaces.
+
+`--expect-identity` is what stops a widened range from quietly reattributing a
+commit nobody looked at, so it is required rather than defaulted.
+
+#### It publishes nothing
+
+`repair-history` writes objects and moves no ref. The repaired tip is printed —
+and put in `tip` under `--json` — for a caller that has checked it to publish
+under its own lease. `.github/scripts/repair-history.sh` is that caller in CI:
+it runs the command, re-checks every commit in the range with `git` and `gpg`
+rather than the CLI's own code
+(`.github/scripts/assert-repaired-range.sh`), and only then performs one
+`--force-with-lease` naming the exact object it replaces.
+
+On a dry run `tip` is absent, so a caller that pushes whatever that field holds
+cannot publish a plan.
+
+#### Stopping it happening again
+
+`.github/scripts/check-commit-provenance.sh <range>` refuses commits whose
+committer is `GitHub <noreply@github.com>` or whose author or committer name
+ends in `[bot]`. Run it on pushes to the default branch, over the commits the
+push added, so a merge that manufactures identities is a red build immediately
+rather than twenty commits later. `PROVENANCE_ALLOW` takes addresses to permit
+anyway, one per line. A `Co-authored-by:` trailer is a message trailer and is
+not affected.
+
 ### Upload a PGP key
 
 ```bash
@@ -331,6 +434,16 @@ gpg-sign --json admin audit \
   legacy charset — what git's `encoding` header records — would be signed with
   a replacement character in place of those bytes and the signature would not
   match the commit. Re-encode such commits before signing.
+- `repair-history` rewrites the author and committer headers of published
+  history. It is destructive, has no defaults, and is not a substitute for
+  merging correctly in the first place; `check-commit-provenance.sh` is.
+- `repair-history` moves no ref and never pushes. It writes objects and hands
+  back a tip; publishing it is a force push the caller performs after checking
+  it. A failed run therefore leaves only unreferenced objects behind.
+- `repair-history` refuses an identity header outside
+  `Name <address> seconds ±hhmm`, which is narrower than what Git accepts. The
+  shapes it refuses are the ones released go-git reads back as a different
+  timestamp, so reproducing them is not something this command can promise.
 - `sign-commit` refuses to move `HEAD` if the branch changed while it was
   signing. The rewritten objects are left unreferenced and the branch is
   untouched; re-run once the branch is settled.
