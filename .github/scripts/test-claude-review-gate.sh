@@ -21,6 +21,7 @@ run_gate() {
 	env \
 		-u CLAUDE_CODE_OAUTH_TOKEN \
 		-u PR_HEAD_REPO \
+		-u GITHUB_ACTOR \
 		GITHUB_REPOSITORY='kjanat/gpg-signing-service' \
 		GITHUB_ENV="${tmp_dir}/github_env" \
 		GITHUB_STEP_SUMMARY="${tmp_dir}/summary" \
@@ -79,6 +80,42 @@ grep -qF 'fork pull request' "${tmp_dir}/summary" || fail 'the fork skip should 
 if grep -qxF 'HAS_CLAUDE_TOKEN=false' "${tmp_dir}/github_env"; then
 	fail 'HAS_CLAUDE_TOKEN should be empty, not the string false'
 fi
+
+# --- the Dependabot pull request ---------------------------------------------
+#
+# Same-repo, so the fork test above does not catch it, and the secret really is
+# absent — but not because anything is misconfigured. GitHub resolves `secrets.*`
+# for a Dependabot-triggered run from the Dependabot store rather than the
+# Actions store, so a CLAUDE_CODE_OAUTH_TOKEN that exists as an Actions secret is
+# simply not visible here.
+#
+# Before this branch existed the run landed in the "repository is misconfigured"
+# warning below and told the operator to set a secret that was already set. The
+# level is the assertion: a notice, because skipping is correct until someone
+# decides they want Dependabot pull requests reviewed too.
+rc="$(run_gate PR_HEAD_REPO='kjanat/gpg-signing-service' GITHUB_ACTOR='dependabot[bot]')"
+expect_rc 0 "${rc}"
+expect_env 'HAS_CLAUDE_TOKEN='
+expect_stdout '::notice title=Claude review skipped (Dependabot secrets store)::'
+refute_stdout '::warning'
+
+# And it must say where the secret goes, because that is the only actionable
+# thing about this case — no workflow file can provision it.
+grep -qF 'Secrets and variables > Dependabot' "${tmp_dir}/out" \
+	|| fail 'the Dependabot skip should name the store the secret has to go in'
+
+# It must NOT claim the branch cannot be fixed. Pushing a mechanical fix never
+# depended on this run: that is the trusted workflow_run path, which reads the
+# ordinary Actions secrets and needs nothing added to the Dependabot store.
+grep -qF 'claude-dependabot-fix.yml' "${tmp_dir}/out" \
+	|| fail 'the Dependabot skip should point at the trusted fix path'
+
+# A Dependabot pull request from a fork is still a fork first: that is the
+# platform withholding secrets, and naming the Dependabot store there would be
+# advice that does not help.
+rc="$(run_gate PR_HEAD_REPO='someone-else/gpg-signing-service' GITHUB_ACTOR='dependabot[bot]')"
+expect_rc 0 "${rc}"
+expect_stdout '::notice title=Claude review skipped (fork pull request)::'
 
 # --- the missing secret on a trusted run -------------------------------------
 #
