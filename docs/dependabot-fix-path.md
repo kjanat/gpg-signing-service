@@ -278,6 +278,11 @@ guards described above. Both suites also apply
 `.github/workflows-pending/activate.patch` and assert it still produces what it
 claims to, for as long as it is checked in.
 
+Neither suite reads the workflow as YAML the way GitHub will, so `task lint`
+also runs `actionlint` over `.github/workflows/` **and**
+`.github/workflows-pending/`. That covers this workflow in both of its
+locations: while it waits, and after the patch moves it.
+
 ## What is still trusted
 
 `propose` runs Dependabot's branch: `bun install` executes whatever install
