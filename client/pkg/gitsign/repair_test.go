@@ -301,7 +301,11 @@ func TestRepairRefusesABaseTheTipDoesNotReach(t *testing.T) {
 
 	// A commit off to one side of the fixture's chain, the shape a mistyped ref
 	// resolves to: a branch that forked earlier and went somewhere else.
-	sidetrack := git(t, f.dir, nil, "commit-tree", f.base+"^{tree}", "-p", f.base, "-m", "chore: sidetrack")
+	// The identity is named because commit-tree writes a commit object: with
+	// nothing pinned, git falls back to guessing one from the host and a clean
+	// CI runner has none to guess from.
+	sidetrack := git(t, f.dir, identity(serviceEmail), "commit-tree",
+		f.base+"^{tree}", "-p", f.base, "-m", "chore: sidetrack")
 
 	// Nothing about the walk itself would notice. rev-list sidetrack..tip is not
 	// empty — it silently starts at their merge base — so the range would come
