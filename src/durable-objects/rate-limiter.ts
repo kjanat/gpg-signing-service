@@ -1,5 +1,6 @@
 import type { RateLimitResult } from "#types";
 import { createRateLimitAllowed, createRateLimitDenied, HTTP, MediaType } from "#types";
+import { logger } from "#utils/logger";
 import { retryAfterSeconds } from "#utils/rate-limit";
 
 interface TokenBucket {
@@ -68,6 +69,11 @@ export class RateLimiter implements DurableObject {
 					return new Response("Not found", { status: HTTP.NotFound });
 			}
 		} catch (error) {
+			// Same reasoning as `KeyStorage.fetch`: this catch is the end of the
+			// line, so the fault has to be reported here or not at all. The identity
+			// is deliberately not logged — it is the caller's subject, and the path
+			// is what says which operation failed.
+			logger.error("Rate limiter request failed", error, { action: "rate-limit", path });
 			const message = error instanceof Error ? error.message : "Unknown error";
 			return new Response(JSON.stringify({ error: message }), {
 				status: HTTP.InternalServerError,

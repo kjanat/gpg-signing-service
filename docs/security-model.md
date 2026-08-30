@@ -225,11 +225,25 @@ available but optional; see below.
 ## What Sentry receives
 
 Error reporting is **off unless `SENTRY_DSN` is set**. Unset — or set to
-whitespace — the Worker builds its Sentry options with `enabled: false` and no
-integrations at all: nothing wraps `console`, nothing reads request bodies,
-nothing is sent, and Workers Logs and `audit_logs` behave exactly as they do
-without the binding. Self-hosting does not conscript you into a third-party
-processor.
+whitespace — the Worker builds its Sentry options with `enabled: false`, no DSN,
+no tunnel, no debug logging, a trace sample rate of `0`, and no integrations at
+all: nothing wraps `console`, nothing reads request bodies, nothing is sent, and
+Workers Logs and `audit_logs` behave exactly as they do without the binding.
+Self-hosting does not conscript you into a third-party processor.
+
+That is a statement about what the Worker **emits**, not about its call stack.
+The SDK's entry-point wrappers install before any option is read, so even with
+no DSN the `env` bindings and Durable Object storage handles the Worker sees are
+proxies, and prepared D1 statements carry span shims. They record into a client
+that does not exist, so nothing is produced and nothing is kept. The whole test
+suite runs on this branch — `wrangler.test.toml` sets no `SENTRY_DSN` — which is
+what makes "an unset DSN changes nothing observable" a property every test
+checks rather than an assertion in one of them.
+
+Only the configured DSN decides where anything goes. `spotlight` and `tunnel`
+are both pinned off in code, because each would otherwise be filled from a
+`SENTRY_SPOTLIGHT` or `SENTRY_TUNNEL` variable and each can redirect events away
+from the DSN — `spotlight` even without one.
 
 With a DSN set, the boundary is `src/utils/sentry.ts`, and it is the only path
 out. What is reported:
@@ -257,6 +271,33 @@ messages and nested values:
 - the `Authorization` header, and cookies;
 - request bodies, which are not collected at all: the SDK's body capture is
   pinned off and `request.data` is deleted on the way out regardless.
+
+The deployment's own `KEY_PASSPHRASE`, `ADMIN_TOKEN`, `ADMIN_READONLY_TOKEN` and
+DSN are swept out of every string **by literal value**, with no minimum length —
+a short secret is still this deployment's secret, and that sweep is the only
+rule that catches one arriving under a name nobody predicted. Only an empty or
+all-whitespace value is skipped, because it is not a configured secret. The
+credential rule is the same shape: `Bearer`/`Basic` redaction is decided by
+credential syntax (RFC 7235 `token68`), not by length, so `Bearer x` is redacted
+while `Bearer <token>` in a documentation hint and a `Bearer realm="…"`
+challenge stay readable.
+
+With a DSN set, the SDK also collects the following on its own. None of it is
+requested by this service and none of it carries a secret past the scrubber, but
+a document that enumerates what leaves the Worker should name it:
+
+- **D1 query text**, as `query` breadcrumbs and `db.query` span names. Statements
+  are parameterised, so values do not travel, but the schema does.
+- **Durable Object storage operations**, as `durable_object_storage_*` spans —
+  the operation and the object, not the stored value.
+- **Outbound `fetch` calls** as spans: the OIDC JWKS fetches and the key-expiry
+  mail delivery.
+- **The inbound request URL and its full header set.** `Authorization` is
+  redacted by name and cookies are dropped outright; the rest — `User-Agent`,
+  `Content-Type`, `CF-Ray` and so on — travel.
+
+Traces are sampled at `SENTRY_TRACES_SAMPLE_RATE`, default `0.1`. Setting it to
+`0` keeps error events and drops all of the above.
 
 `sendDefaultPii` is `false`, so no IP address or cookie-derived user is attached.
 Key ids, fingerprints, issuers, subjects and subject-policy names _are_ reported:

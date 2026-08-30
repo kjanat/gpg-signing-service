@@ -101,6 +101,12 @@ KEY_EXPIRY_ALERT_TO   = "info@kajkowalski.nl"
 # SENTRY_TRACES_SAMPLE_RATE: optional plain var, 0..1, default 0.1. Not a
 # secret — it is a sampling knob, not a credential — but left unset here so the
 # default applies. It has no effect without a DSN.
+#
+# The SDK also reads SENTRY_SPOTLIGHT and SENTRY_TUNNEL from the environment, and
+# either can send events somewhere the DSN never named. Both are pinned off in
+# src/utils/sentry.ts, so setting them here or as secrets does nothing. Same for
+# SENTRY_DEBUG on a deployment with no DSN, which would otherwise start writing
+# SDK chatter into Workers Logs.
 
 # =============================================================================
 # STAGING ENVIRONMENT

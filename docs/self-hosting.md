@@ -179,10 +179,20 @@ Secrets never travel: `KEY_PASSPHRASE`, `ADMIN_TOKEN`, armored or PEM private
 key material, raw OIDC JWTs, `gst_` service tokens, `Bearer` credentials and the
 `Authorization` header are redacted by name _and_ by value shape before an
 event leaves the Worker, request bodies are never collected at all, and
-`sendDefaultPii` is off. Key ids, fingerprints, issuers and subjects do travel —
-they are already public through `/public-key`, `GET /admin/subjects` and the
-audit trail, and they are the diagnostic value. See
-[Security model](security-model.md#what-sentry-receives).
+`sendDefaultPii` is off. The values you configured are also swept out by literal
+value with no minimum length, so a short `ADMIN_TOKEN` is covered like any
+other. Key ids, fingerprints, issuers and subjects do travel — they are already
+public through `/public-key`, `GET /admin/subjects` and the audit trail, and
+they are the diagnostic value.
+
+With a DSN set the SDK additionally traces D1 queries, Durable Object storage
+operations, outbound fetches, and the inbound request URL and headers. That list
+and its reasoning is in
+[What Sentry receives](security-model.md#what-sentry-receives); read it before
+pointing this at a Sentry project you do not control.
+
+`SENTRY_SPOTLIGHT` and `SENTRY_TUNNEL` are read by the SDK but pinned off here:
+the DSN you set is the only thing that decides where events go.
 
 `SENTRY_TRACES_SAMPLE_RATE` is an optional plain var between `0` and `1`,
 defaulting to `0.1`. It has no effect without a DSN.

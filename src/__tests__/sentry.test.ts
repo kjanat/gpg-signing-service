@@ -1,5 +1,5 @@
 import type { Breadcrumb, ErrorEvent, Event } from "@sentry/cloudflare";
-import { CloudflareClient, getCurrentScope, withScope } from "@sentry/cloudflare";
+import { captureException, CloudflareClient, getCurrentScope, withScope } from "@sentry/cloudflare";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "#types";
 import { logger } from "#utils/logger";
@@ -140,9 +140,14 @@ describe("Sentry option construction", () => {
 	it("disables everything when no DSN is configured", () => {
 		const options = buildSentryOptions(unconfiguredEnv);
 
-		expect(options.dsn).toBeUndefined();
+		// "" rather than omitted: the SDK's `getFinalOptions` fills any key left
+		// `undefined` from `env`, so omitting `dsn` would put `env.SENTRY_DSN`
+		// straight back. Empty is falsy everywhere the SDK reads a DSN.
+		expect(options.dsn).toBe("");
 		expect(options.enabled).toBe(false);
 		expect(options.tracesSampleRate).toBe(0);
+		// A stray SENTRY_DEBUG must not start writing to Workers Logs either.
+		expect(options.debug).toBe(false);
 		// No default integrations means no console wrapping, no fetch patching and
 		// no request-body reader — the guarantee that an unset DSN leaves Workers
 		// Logs and `audit_logs` exactly as they were.
@@ -153,7 +158,7 @@ describe("Sentry option construction", () => {
 	it("treats a whitespace-only DSN as unset", () => {
 		const options = buildSentryOptions({ ...unconfiguredEnv, SENTRY_DSN: "   " });
 
-		expect(options.dsn).toBeUndefined();
+		expect(options.dsn).toBe("");
 		expect(options.enabled).toBe(false);
 		expect(isSentryConfigured({ SENTRY_DSN: "   " })).toBe(false);
 	});
@@ -180,6 +185,19 @@ describe("Sentry option construction", () => {
 	it("pins spotlight off so a stray variable cannot enable forwarding", () => {
 		expect(buildSentryOptions(configuredEnv).spotlight).toBe(false);
 		expect(buildSentryOptions(unconfiguredEnv).spotlight).toBe(false);
+	});
+
+	it("pins the tunnel so only the configured DSN decides where events go", () => {
+		// `getFinalOptions` reads SENTRY_TUNNEL into `tunnel`, which replaces the
+		// envelope destination outright. Left unset it wins via `??`; "" does not.
+		expect(buildSentryOptions(configuredEnv).tunnel).toBe("");
+		expect(buildSentryOptions(unconfiguredEnv).tunnel).toBe("");
+	});
+
+	it("leaves debug to the operator once a DSN is configured", () => {
+		// Pinned only on the disabled branch, where console output is the property
+		// under guarantee. With a DSN set, SENTRY_DEBUG is the operator's call.
+		expect(buildSentryOptions(configuredEnv).debug).toBeUndefined();
 	});
 
 	it("honours a valid trace sample rate override", () => {
@@ -280,10 +298,24 @@ describe("collectEnvSecrets", () => {
 		);
 	});
 
-	it("skips values too short to search for safely", () => {
-		// A one-character passphrase would otherwise redact every word containing
-		// that letter, turning the whole event into noise.
-		expect(collectEnvSecrets({ KEY_PASSPHRASE: "x", ADMIN_TOKEN: "  " })).toEqual([]);
+	it("collects a short secret too, because shortness is not a licence to leak", () => {
+		// The rule that catches a secret arriving under a name nobody predicted
+		// must not switch itself off for the deployments least able to afford it.
+		// Nothing in this repo imposes a minimum length on these values.
+		expect(collectEnvSecrets({ KEY_PASSPHRASE: "x" })).toEqual(["x"]);
+		expect(collectEnvSecrets({ ADMIN_TOKEN: "pw" })).toEqual(["pw"]);
+	});
+
+	it("drops only values that are empty or entirely whitespace", () => {
+		// Not configured secrets at all: `""` matches at every position, and would
+		// replace an event with nothing but redaction markers.
+		expect(collectEnvSecrets({ KEY_PASSPHRASE: "", ADMIN_TOKEN: "  ", ADMIN_READONLY_TOKEN: "\t\n" })).toEqual([]);
+	});
+
+	it("collects both the raw and the trimmed spelling of a padded value", () => {
+		expect(collectEnvSecrets({ ADMIN_TOKEN: " padded-token " })).toEqual(
+			expect.arrayContaining([" padded-token ", "padded-token"]),
+		);
 	});
 
 	it("orders longest first so a containing secret is redacted whole", () => {
@@ -373,9 +405,36 @@ describe("redactString", () => {
 		expect(redacted).not.toContain("YWRtaW46aHVudGVyMg==");
 	});
 
+	it("redacts a short Bearer credential: length is not the boundary", () => {
+		// The old rule had an 8-character floor, which made a genuinely short
+		// credential in free text survive. Credential *syntax* is the boundary now.
+		expect(redactString("Authorization: Bearer s3cr3t")).toBe(`Authorization: Bearer ${REDACTED}`);
+		expect(redactString("Authorization: Bearer x")).toBe(`Authorization: Bearer ${REDACTED}`);
+		expect(redactString("Basic YWI=")).toBe(`Basic ${REDACTED}`);
+	});
+
+	it("redacts a credential embedded in a stringified JSON blob", () => {
+		// The trailing punctuation is not part of the credential, and must not be
+		// an excuse to leave the credential alone.
+		expect(redactString('{"authorization":"Bearer abc123"}')).toBe(`{"authorization":"Bearer ${REDACTED}"}`);
+	});
+
 	it("leaves the documentation prose about Bearer readable", () => {
-		const hint = "Send `Authorization: Bearer <token>` with an OIDC token minted for this service's audience.";
-		expect(redactString(hint)).toBe(hint);
+		for (const hint of [
+			"Send `Authorization: Bearer <token>` with an OIDC token minted for this service's audience.",
+			"Admin routes take `Authorization: Bearer <ADMIN_TOKEN>`.",
+			'curl -H "Authorization: Bearer $ADMIN_TOKEN" "$GPG_SIGN_URL/admin/keys"',
+			"The Authorization header was `Bearer ` with nothing after it.",
+		]) {
+			// Readable because none of these starts with a token68 character, not
+			// because any of them is short.
+			expect(redactString(hint), hint).toBe(hint);
+		}
+	});
+
+	it("leaves a WWW-Authenticate challenge readable, because it is not a credential", () => {
+		const challenge = 'Bearer realm="gpg-signing-service", error="insufficient_scope"';
+		expect(redactString(challenge)).toBe(challenge);
 	});
 
 	it("redacts armored PGP private key material", () => {
@@ -810,6 +869,110 @@ describe("outgoing envelopes", () => {
 			},
 			{ integrations: [] },
 		);
+	});
+
+	it("redacts a short configured secret under an unrelated name and inside a message", async () => {
+		// The literal sweep is the only rule that catches a secret arriving under a
+		// name nobody predicted, and it must not switch itself off for short
+		// values. `detail` and `retryHint` are not on the denylist and neither
+		// value has a recognisable shape, so nothing else here would catch them.
+		const shortSecretEnv = {
+			SENTRY_DSN: FAKE_DSN,
+			KEY_PASSPHRASE: "pw7",
+			ADMIN_TOKEN: "tk9",
+		} satisfies Partial<Env>;
+
+		await withRecordingClient(shortSecretEnv, async (envelopes) => {
+			captureError("Signing failed", new Error("openpgp rejected the value pw7 the operator supplied"), {
+				requestId: "b3c1c0e0-0000-4000-8000-000000000000",
+				action: "sign",
+				detail: "operator note: tk9",
+				retryHint: "compare against pw7",
+			});
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			expect(envelopes).toHaveLength(1);
+			const serialized = JSON.stringify(envelopes[0]);
+			expect(serialized).not.toContain("pw7");
+			expect(serialized).not.toContain("tk9");
+			// Still worth having: the tags an alert filters on survive.
+			expect(eventFrom(envelopes).tags).toMatchObject({
+				requestId: "b3c1c0e0-0000-4000-8000-000000000000",
+				action: "sign",
+			});
+		});
+	});
+
+	it("does not double-report an Error the SDK re-captures after a rethrow", async () => {
+		await withRecordingClient(configuredEnv, async (envelopes) => {
+			const error = new Error("key expiry monitor could not reach D1");
+
+			// What `scheduled` does: report through the chokepoint, which is the only
+			// thing that knows `action` and `cron`...
+			captureError("Scheduled key expiry monitor failed", error, {
+				action: "key-expiry-check",
+				cron: "0 9 * * *",
+			});
+			// ...and then rethrow, so the invocation is recorded as failed. This is
+			// what the SDK's own `scheduled` wrapper does with the rethrow, and there
+			// is no `shouldHandleError` knob for that door. Exactly one event, and it
+			// is the tagged one, because `captureException` marked the object the
+			// first time and refuses to capture it again.
+			captureException(error, { mechanism: { handled: false, type: "auto.faas.cloudflare.scheduled" } });
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			expect(envelopes).toHaveLength(1);
+			expect(eventFrom(envelopes).tags).toMatchObject({ action: "key-expiry-check" });
+			expect(eventFrom(envelopes).extra).toMatchObject({ cron: "0 9 * * *" });
+		});
+	});
+
+	it("does not double-report a non-Error the SDK re-captures after a rethrow", async () => {
+		// The case the SDK's own guard misses: `toReportableError` reports a fresh
+		// `Error` built around this bag, so the SDK marks the wrapper and leaves the
+		// bag — the thing actually rethrown — unmarked. `captureError` marks it too.
+		await withRecordingClient(configuredEnv, async (envelopes) => {
+			const thrown = { error: "monitor state unreadable", stack: "Error: monitor state unreadable\n    at run" };
+
+			captureError("Scheduled key expiry monitor failed", thrown, { action: "key-expiry-check" });
+			captureException(thrown, { mechanism: { handled: false, type: "auto.faas.cloudflare.scheduled" } });
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			expect(envelopes).toHaveLength(1);
+			expect(eventFrom(envelopes).tags).toMatchObject({ action: "key-expiry-check" });
+		});
+	});
+
+	it("marks the rethrown value without making it visible in an event", async () => {
+		await withRecordingClient(configuredEnv, async (envelopes) => {
+			const thrown = { error: "monitor state unreadable" };
+			captureError("Scheduled key expiry monitor failed", thrown);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			// Non-enumerable, exactly as the SDK sets it, so nothing serializes it.
+			expect(Object.keys(thrown)).toEqual(["error"]);
+			expect(JSON.stringify(envelopes[0])).not.toContain("__sentry_captured__");
+		});
+	});
+
+	it("survives a frozen thrown value rather than failing the report", async () => {
+		await withRecordingClient(configuredEnv, async (envelopes) => {
+			expect(() => captureError("Frozen failure", Object.freeze({ error: "no writes here" }))).not.toThrow();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			expect(envelopes).toHaveLength(1);
+		});
+	});
+
+	it("still reports two genuinely distinct failures", async () => {
+		// Nothing here dedupes on message, so a second real failure is not lost.
+		await withRecordingClient(configuredEnv, async (envelopes) => {
+			captureError("First failure", new Error("boom"));
+			captureError("Second failure", new Error("boom"));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			expect(envelopes).toHaveLength(2);
+		});
 	});
 
 	it("attaches a routine refusal as a breadcrumb rather than an event", async () => {
