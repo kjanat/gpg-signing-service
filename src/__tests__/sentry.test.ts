@@ -1,5 +1,5 @@
 import type { Breadcrumb, ErrorEvent, Event } from "@sentry/cloudflare";
-import { captureException, CloudflareClient, getCurrentScope, withScope } from "@sentry/cloudflare";
+import { CloudflareClient, captureException, getCurrentScope, withScope } from "@sentry/cloudflare";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "#types";
 import { logger } from "#utils/logger";

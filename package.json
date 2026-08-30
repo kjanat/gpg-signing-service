@@ -78,7 +78,8 @@
     "jose": "6.2.8",
     "typescript": "<7.0.2",
     "typescript-eslint": "8.67.0",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.0",
+    "wrangler": "4.123.0"
   },
   "overrides": {
     "typescript": {
