@@ -73,13 +73,28 @@ fi
 printf 'bun.lock pins wrangler@%s (workerd %s)\n' "${locked_wrangler}" "${locked_workerd}"
 
 new_case 'the committed types record the lockfile wrangler workerd'
+# Read the *committed* blob out of the index, not the copy on disk. Every CI job
+# that uses .github/actions/setup-bun runs a bare `bun install` first, which
+# fires `prepare` -> scripts/cf.sh -> `run typegen` and rewrites
+# worker-configuration.d.ts in place with the very wrangler this case compares
+# against -- and the Test job, the one that runs this script, is one of them.
+# Off disk the comparison is therefore between the pinned wrangler and itself:
+# it passes unconditionally, including on a tree carrying exactly the #123
+# drift. `:path` is the index, which is the checked-out commit in CI and still
+# holds the pre-regeneration content after `bun install` has run.
+#
 # Header line written by `wrangler types`:
 #   // Runtime types generated with workerd@1.20260811.1 2026-07-12 nodejs_compat
-header_workerd="$(sed -nE 's|^// Runtime types generated with workerd@([^ ]+).*|\1|p' "${types_file}" | head -1)"
-if [[ -z ${header_workerd} ]]; then
-	fail 'worker-configuration.d.ts has no "Runtime types generated with workerd@..." header'
-elif [[ ${header_workerd} != "${locked_workerd}" ]]; then
-	fail "worker-configuration.d.ts was generated with workerd ${header_workerd}, but bun.lock pins wrangler@${locked_wrangler} which ships workerd ${locked_workerd} -- regenerate with 'task typegen'"
+committed_types="$(git -C "${repo_root}" cat-file blob :worker-configuration.d.ts 2>/dev/null || true)"
+if [[ -z ${committed_types} ]]; then
+	fail 'worker-configuration.d.ts is not in the index -- cannot check what is committed'
+else
+	header_workerd="$(sed -nE 's|^// Runtime types generated with workerd@([^ ]+).*|\1|p' <<<"${committed_types}" | head -1)"
+	if [[ -z ${header_workerd} ]]; then
+		fail 'worker-configuration.d.ts has no "Runtime types generated with workerd@..." header'
+	elif [[ ${header_workerd} != "${locked_workerd}" ]]; then
+		fail "worker-configuration.d.ts is committed as generated with workerd ${header_workerd}, but bun.lock pins wrangler@${locked_wrangler} which ships workerd ${locked_workerd} -- regenerate with 'task typegen' and commit the result"
+	fi
 fi
 
 new_case 'typegen does not regenerate through the unpinned mise wrangler'
