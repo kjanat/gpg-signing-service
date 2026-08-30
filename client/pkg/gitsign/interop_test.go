@@ -154,7 +154,7 @@ func TestGitVerifiesTheCommitsARunWrites(t *testing.T) {
 			verify := exec.Command(gitProgram, "-c", "gpg.program=gpg", "-c", "gpg.format=openpgp",
 				"-c", "gpg.minTrustLevel=undefined", "verify-commit", "--raw", result.Tip)
 			verify.Dir = dir
-			verify.Env = append(os.Environ(), "GNUPGHOME="+home)
+			verify.Env = gitEnv([]string{"GNUPGHOME=" + home})
 			var stderr bytes.Buffer
 			verify.Stderr = &stderr
 			if err := verify.Run(); err != nil {
