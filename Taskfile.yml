@@ -58,6 +58,7 @@ tasks:
       - task: test:dependabot-fix
       - task: test:agent-harness
       - task: test:session-start
+      - task: test:go-modernize-gate
 
   test:gnupg-interop:
     desc: Verify signatures against real gpg and git (skips if gpg is absent)
@@ -106,6 +107,11 @@ tasks:
     desc: Test the cloud-session hook's shared mise tree, trust and install gating
     cmd: bash scripts/test-session-start-hook.sh
 
+  test:go-modernize-gate:
+    desc: Test that a pending Go modernization fails CI (skips if go is absent)
+    aliases: [mg]
+    cmd: bash scripts/test-go-modernize-gate.sh
+
   test:coverage:
     desc: Run tests with coverage
     aliases: [tc]
@@ -126,6 +132,7 @@ tasks:
       - task: test:dependabot-fix
       - task: test:agent-harness
       - task: test:session-start
+      - task: test:go-modernize-gate
 
   test:watch:
     desc: Run tests in watch mode
