@@ -22,6 +22,7 @@
 #   env:    CLAUDE_CODE_OAUTH_TOKEN  the secret; read for presence only
 #           PR_HEAD_REPO             github.event.pull_request.head.repo.full_name
 #           GITHUB_REPOSITORY        the repo the workflow belongs to
+#           GITHUB_ACTOR             who the run is for; distinguishes Dependabot
 #           GITHUB_ENV               where HAS_CLAUDE_TOKEN is written
 #           GITHUB_STEP_SUMMARY      optional; the skip reason is repeated here
 #
@@ -32,9 +33,12 @@
 # it exists to prevent.
 set -Eeuo pipefail
 
+readonly DEPENDABOT='dependabot[bot]'
+
 readonly token="${CLAUDE_CODE_OAUTH_TOKEN-}"
 readonly head_repo="${PR_HEAD_REPO-}"
 readonly this_repo="${GITHUB_REPOSITORY-}"
+readonly actor="${GITHUB_ACTOR-}"
 readonly github_env="${GITHUB_ENV-}"
 
 if [[ -z "${github_env}" ]]; then
@@ -69,6 +73,36 @@ if [[ -n "${head_repo}" && -n "${this_repo}" && "${head_repo}" != "${this_repo}"
 		'CLAUDE_CODE_OAUTH_TOKEN and id-token: write from the run. The review'
 		'step and the commit-signing setup are both skipped; nothing here is'
 		'broken and nothing needs to be re-run.'
+	)
+elif [[ "${actor}" == "${DEPENDABOT}" ]]; then
+	# A Dependabot pull request is same-repo, so the fork test above does not
+	# catch it, and without this branch it lands in the "misconfigured
+	# repository" case below and tells the operator to set a secret that is
+	# already set. It is a third thing.
+	#
+	# GitHub treats a run triggered by Dependabot from `push`, `pull_request`,
+	# `pull_request_review` or `pull_request_review_comment` as if it came from
+	# a fork, and resolves `secrets.*` from the *Dependabot* secrets store
+	# rather than the Actions store. A CLAUDE_CODE_OAUTH_TOKEN that exists as
+	# an Actions secret is therefore simply not visible here. The only fix is
+	# to add it to the Dependabot store as well — no workflow file can do it,
+	# and this script deliberately does not pretend otherwise.
+	#
+	# Notice rather than warning, because skipping is the correct outcome until
+	# an operator makes that choice, and this is the platform behaving as
+	# designed. Note what is NOT affected: pushing a mechanical fix to the
+	# branch never depended on this run at all. That happens on the separate
+	# trusted `workflow_run` path, which reads the ordinary Actions secrets —
+	# see docs/dependabot-fix-path.md.
+	level='notice'
+	title='Claude review skipped (Dependabot secrets store)'
+	detail=(
+		'Dependabot-triggered runs resolve secrets from the Dependabot store, not'
+		'the Actions store, so CLAUDE_CODE_OAUTH_TOKEN is not visible to this run'
+		'even when it exists as an Actions secret. Add it under Settings >'
+		'Secrets and variables > Dependabot to have Dependabot pull requests'
+		'reviewed. Pushing mechanical fixes does not need this: that runs on the'
+		'trusted workflow_run path (.github/workflows/claude-dependabot-fix.yml).'
 	)
 else
 	level='warning'
