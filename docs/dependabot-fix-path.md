@@ -201,6 +201,16 @@ behind in `.github/workflows-pending/`, or if `activate.patch` is still checked
 in — a spent one-shot artifact sitting next to a live workflow is a second,
 stale description of the same change.
 
+A half-applied activation — the workflow copied to `.github/workflows/` while
+the pending copy, the patch and the old review prompt all stay put — is its own
+state, and both suites report it with the same message, from
+`activation_unusable` in `.github/scripts/dependabot-activation.sh`. That
+message deliberately does **not** repeat the procedure above: `git apply`
+refuses once the live file exists (`already exists in working directory`), so
+the way out is `git rm` on the two leftovers plus a check that
+`claude-code-review.yml` picked up the prompt correction. The rename is only
+half of what the patch does.
+
 ## What the review workflow says about Dependabot
 
 [`claude-code-review.yml`](../.github/workflows/claude-code-review.yml) once
@@ -224,10 +234,12 @@ Within the span it requires:
   "push directly to the head branch" went straight through it;
 - the paragraph names `claude-dependabot-fix.yml`, so a diagnosis has somewhere
   to go; and
-- it states the credential fact — a read-only token, no write authority, or
-  that this run cannot push. Pinned to the credential rather than to any
-  negation, because a bare "cannot" is satisfied by a sentence about something
-  else entirely.
+- it states the credential fact — a read-only token, or no write authority.
+  Pinned to the credential rather than to any negation, because a bare "cannot"
+  is satisfied by a sentence about something else entirely. Note that the two
+  assertions read the same prose, so "this run cannot push" is not a third
+  option: that sentence contains the word `push` without naming
+  `claude-dependabot-fix.yml`, and the rule above rejects it.
 
 The escape valve is trust-based on purpose. `push to the PR branch, the same
 thing claude-dependabot-fix.yml does` passes — that is a sentence somebody has

@@ -74,18 +74,10 @@ case "${activation}" in
 		deferred_failure='pending'
 		printf '  activation: pending — asserting against the patched tree\n'
 		;;
-	both)
-		echo 'FAIL: the workflow is active AND a copy is still in .github/workflows-pending/.' >&2
-		echo '      Two files claim to be this workflow; only one of them runs, and both' >&2
-		echo '      look authoritative in review. Delete the pending copy:' >&2
-		echo '        git rm .github/workflows-pending/claude-dependabot-fix.yml' >&2
-		echo '        git rm .github/workflows-pending/activate.patch' >&2
-		exit 1
-		;;
 	*)
-		echo 'FAIL: claude-dependabot-fix.yml is in neither .github/workflows/ nor' >&2
-		echo '      .github/workflows-pending/. The trusted Dependabot write path is' >&2
-		echo '      gone, and no checked-in patch can bring it back.' >&2
+		# both and absent, from the shared helper, so test-claude-review-gate.sh
+		# cannot describe the same state in different words.
+		activation_unusable "${activation}"
 		exit 1
 		;;
 esac
