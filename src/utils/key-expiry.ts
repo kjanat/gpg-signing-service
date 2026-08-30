@@ -43,6 +43,10 @@ export const WARN_DAYS_VAR = "KEY_EXPIRY_WARN_DAYS";
 export const KEY_ROTATION_DOCS_URL =
 	"https://github.com/kjanat/gpg-signing-service/blob/master/docs/self-hosting.md#key-rotation";
 
+/** Where the monitor itself is documented, for an alert about the monitor */
+export const KEY_EXPIRY_MONITOR_DOCS_URL =
+	"https://github.com/kjanat/gpg-signing-service/blob/master/docs/self-hosting.md#9-key-expiry-monitoring";
+
 /**
  * Parse the warning threshold.
  *
@@ -973,6 +977,109 @@ export function renderReport(rows: readonly KeyExpiryRow[], context: ReportConte
 
 	return {
 		subject: reportSubject(rows, context),
+		text: renderText(blocks),
+		html: renderHtml(blocks),
+	};
+}
+
+// ---------------------------------------------------------------------------
+// When the monitor itself is what failed
+// ---------------------------------------------------------------------------
+
+/**
+ * Which part of the monitor could not complete.
+ *
+ * A closed vocabulary, and the only thing about a failure that reaches the
+ * mail. The alternative — serializing the exception — would put an arbitrary
+ * string into an email: a message built from a Durable Object response body, a
+ * stack trace naming internals, or a binding value that was never meant to
+ * leave the Worker. The underlying error is logged and fails the cron
+ * invocation, which is where an operator can read it without it having crossed
+ * a mail server.
+ */
+export type MonitorFailureKind = "threshold" | "key-storage" | "grants" | "report";
+
+/**
+ * The whole of what an operator is told about a monitor failure.
+ *
+ * Fixed strings, one per {@link MonitorFailureKind}: nothing here is
+ * interpolated from an exception, a binding or a stored value, so there is no
+ * path by which key material or a credential reaches the alert. `headline`
+ * completes "could not complete: …" and `detail` says what to do.
+ */
+const FAILURE_COPY: Record<MonitorFailureKind, { headline: string; detail: string }> = {
+	threshold: {
+		headline: `its warning threshold could not be read`,
+		detail:
+			`${WARN_DAYS_VAR} is not a positive whole number of days written in plain decimal digits, ` +
+			`so the check has no threshold to measure against and refuses to invent one. Correct the ` +
+			`variable on this deployment and redeploy. The rejected value is in the Workers logs; it is ` +
+			`not quoted here.`,
+	},
+	"key-storage": {
+		headline: "the deployment's key storage could not be read",
+		detail:
+			"The KEY_STORAGE Durable Object did not answer the monitor, so no key's expiry could be " +
+			"determined. Keys already stored are unaffected by this failure — it is the check that is " +
+			"blind, not the signing path — but nothing about expiry has been verified since it started.",
+	},
+	grants: {
+		headline: "the grant tables could not be read",
+		detail:
+			"The trusted OIDC subject and service token tables in D1 did not answer, so the monitor " +
+			"could not work out which keys this deployment can currently sign with, and checked none " +
+			"of them.",
+	},
+	report: {
+		headline: "the check failed after reading its state",
+		detail:
+			"The monitor read its configuration and state but could not finish the run, so no verdict " +
+			"was reached for any key.",
+	},
+};
+
+/** What a self-failure alert has to say, kept to what cannot leak */
+export interface FailureContext {
+	/** Which deployment this is, the same label the ordinary report carries */
+	service: string;
+	/** The instant the failed run was relative to */
+	now: Date;
+}
+
+/**
+ * Render the alert that says the monitor itself could not complete.
+ *
+ * Deliberately shaped like the ordinary report — same subject prefix, same
+ * renderers — so it lands in the same mail filter an operator already made for
+ * this monitor. What it must never share is the ordinary report's data: this
+ * one is built entirely from {@link FAILURE_COPY} and the deployment label,
+ * because the run that produced it is the run whose state could not be trusted
+ * to be read.
+ */
+export function renderFailureReport(kind: MonitorFailureKind, context: FailureContext): ReportDocument {
+	const { headline, detail } = FAILURE_COPY[kind];
+	const blocks: ReportBlock[] = [
+		{ kind: "heading", text: "Signing key expiry check did not run" },
+		{
+			kind: "paragraph",
+			text:
+				`The scheduled expiry check on ${context.service} could not complete at ` +
+				`${context.now.toISOString()}: ${headline}. No signing key was checked on this run.`,
+		},
+		{ kind: "paragraph", text: detail },
+		{
+			kind: "paragraph",
+			text:
+				"Until this is fixed the absence of an expiry warning means nothing: a key could lapse " +
+				"between now and the next successful run without this monitor saying so. The failing " +
+				"invocation is recorded as failed in Workers observability, where the underlying error " +
+				"is logged in full.",
+		},
+		{ kind: "link", text: "Key expiry monitoring", href: KEY_EXPIRY_MONITOR_DOCS_URL },
+	];
+
+	return {
+		subject: `[${context.service}] Signing key expiry check did not run`,
 		text: renderText(blocks),
 		html: renderHtml(blocks),
 	};
