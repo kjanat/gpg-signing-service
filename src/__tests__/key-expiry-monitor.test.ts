@@ -39,6 +39,23 @@ const SECOND_KEY_ID = "AAAABBBBCCCCDDDD";
 const ALERT_FROM = "gpg-signing-service@kjanat.dev";
 const ALERT_TO = "info@kajkowalski.nl";
 
+/**
+ * A recognisable admin credential in the monitor's environment.
+ *
+ * Present so the self-failure alerts can be asserted *not* to contain it: the
+ * failure path is the one place tempted to serialize whatever it was holding.
+ */
+const SECRET_ADMIN_TOKEN = "not-in-any-email-abcdef0123456789";
+
+/**
+ * A rejected `KEY_EXPIRY_WARN_DAYS`, chosen to be unmistakable in a body.
+ *
+ * A plausible typo like `"soon"` would make the "not quoted back" assertion
+ * pass for the wrong reason: it is a word that could appear in the fixed copy,
+ * and it already appears in this file inside a test address.
+ */
+const REJECTED_THRESHOLD = "zzq-not-a-number-9f3c";
+
 /** A `send_email` binding that records instead of sending */
 function recordingBinding() {
 	const sent: { from: string; to: string; subject: string; text: string; html: string }[] = [];
@@ -63,6 +80,7 @@ function recordingSender(): { sent: AlertMail[]; send: MailSender } {
 function monitorEnv(overrides: Partial<Record<string, unknown>> = {}): Env {
 	return {
 		...env,
+		ADMIN_TOKEN: SECRET_ADMIN_TOKEN,
 		KEY_EXPIRY_ALERTS: recordingBinding().binding,
 		KEY_EXPIRY_ALERT_FROM: ALERT_FROM,
 		KEY_EXPIRY_ALERT_TO: ALERT_TO,
@@ -350,6 +368,159 @@ describe("runKeyExpiryMonitor: failures are operational failures", () => {
 	});
 });
 
+describe("runKeyExpiryMonitor: reporting its own failure", () => {
+	/** A D1 binding that refuses, for the grant-read branch */
+	const brokenGrantDb = {
+		prepare: () => {
+			throw new Error("D1_ERROR: no such table: oidc_subjects");
+		},
+	};
+
+	/** Every string a self-failure alert must never carry out of the Worker */
+	function expectNothingSensitive(mail: AlertMail): void {
+		for (const body of [mail.subject, mail.text, mail.html]) {
+			expect(body).not.toContain("storage is unwell");
+			expect(body).not.toContain("D1_ERROR");
+			expect(body).not.toContain("StagedFailure");
+			expect(body).not.toContain("at Object.");
+			expect(body).not.toContain(SECRET_ADMIN_TOKEN);
+		}
+	}
+
+	it("mails that the check did not run when the threshold is unreadable", async () => {
+		const mail = recordingSender();
+
+		await expect(
+			runKeyExpiryMonitor(monitorEnv({ KEY_EXPIRY_WARN_DAYS: REJECTED_THRESHOLD }), { sendMail: mail.send }),
+		).rejects.toThrow(/KEY_EXPIRY_WARN_DAYS must be a positive whole number/);
+
+		expect(mail.sent).toHaveLength(1);
+		const [alert] = mail.sent;
+		expect(alert?.subject).toBe("[gpg-signing-service] Signing key expiry check did not run");
+		expect(alert?.text).toContain("its warning threshold could not be read");
+		expect(alert?.text).toContain("KEY_EXPIRY_WARN_DAYS");
+		// The rejected value is an operator's typo, not something to quote back
+		// through mail: the vocabulary is fixed, so nothing from the environment
+		// rides along with it. The sentinel is deliberately unlike English — a
+		// short word would pass this assertion by never having been at risk.
+		expect(alert?.text).not.toContain(REJECTED_THRESHOLD);
+		if (alert) expectNothingSensitive(alert);
+	});
+
+	it("mails that the check did not run when key storage cannot be listed", async () => {
+		const spy = breakKeyStorage("/list-keys", 503);
+		const mail = recordingSender();
+
+		try {
+			await expect(runKeyExpiryMonitor(monitorEnv(), { sendMail: mail.send })).rejects.toThrow(
+				/could not list stored keys: key storage answered 503/,
+			);
+		} finally {
+			spy.mockRestore();
+		}
+
+		expect(mail.sent).toHaveLength(1);
+		const [alert] = mail.sent;
+		expect(alert?.text).toContain("the deployment's key storage could not be read");
+		// The thrown message names a status code and the stub's body; neither is
+		// part of what an operator is told by mail.
+		expect(alert?.text).not.toContain("503");
+		expect(alert?.text).not.toContain("key storage answered");
+		if (alert) expectNothingSensitive(alert);
+	});
+
+	it("mails that the check did not run when the grant tables cannot be read", async () => {
+		const mail = recordingSender();
+
+		await expect(runKeyExpiryMonitor(monitorEnv({ AUDIT_DB: brokenGrantDb }), { sendMail: mail.send })).rejects.toThrow(
+			/no such table: oidc_subjects/,
+		);
+
+		expect(mail.sent).toHaveLength(1);
+		const [alert] = mail.sent;
+		expect(alert?.text).toContain("the grant tables could not be read");
+		if (alert) expectNothingSensitive(alert);
+	});
+
+	it("still throws the original failure after the alert is sent", async () => {
+		// The email is an extra channel, not a substitute for failing: a cron run
+		// that mailed an operator and then reported success is a run nobody has to
+		// look at.
+		const mail = recordingSender();
+		let thrown: unknown;
+
+		try {
+			await runKeyExpiryMonitor(monitorEnv({ AUDIT_DB: brokenGrantDb }), { sendMail: mail.send });
+		} catch (error) {
+			thrown = error;
+		}
+
+		expect(mail.sent).toHaveLength(1);
+		expect(thrown).toBeInstanceOf(Error);
+		// The failure as thrown, not a wrapper built to carry the classification.
+		expect((thrown as Error).name).toBe("Error");
+		expect((thrown as Error).message).toContain("no such table: oidc_subjects");
+	});
+
+	it("does not lose the original failure when the alert cannot be sent either", async () => {
+		const send = vi.fn(() => Promise.reject(new Error("E_SENDER_NOT_VERIFIED")));
+
+		await expect(runKeyExpiryMonitor(monitorEnv({ AUDIT_DB: brokenGrantDb }), { sendMail: send })).rejects.toThrow(
+			/no such table: oidc_subjects/,
+		);
+		// One attempt, and a mail problem did not overwrite the diagnosis of the
+		// problem it was reporting.
+		expect(send).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not report a failing send through the channel that just failed", async () => {
+		// The recursion this rules out: the ordinary alert throws, and the monitor
+		// tries to mail an operator about the mail. One send, and the send error
+		// itself is what escapes.
+		await storeKey(PRODUCTION_KEY_ID, await keyExpiringIn(30, "no-recursion@test.com"));
+		const send = vi.fn(() => Promise.reject(new Error("E_RATE_LIMIT_EXCEEDED")));
+
+		await expect(runKeyExpiryMonitor(monitorEnv(), { sendMail: send })).rejects.toThrow("E_RATE_LIMIT_EXCEEDED");
+
+		expect(send).toHaveBeenCalledTimes(1);
+	});
+
+	it("says nothing at all on a run that merely found nothing to report", async () => {
+		// The whole point of the addition is that a broken monitor is loud. A
+		// working one on a quiet week stays exactly as quiet as before.
+		await storeKey(PRODUCTION_KEY_ID, await keyExpiringIn(400, "still-quiet@test.com"));
+		const mail = recordingSender();
+
+		const result = await runKeyExpiryMonitor(monitorEnv(), { sendMail: mail.send });
+
+		expect(result.alerted).toBe(false);
+		expect(mail.sent).toEqual([]);
+	});
+
+	it("names the environment in the failure subject, like every other alert", async () => {
+		const mail = recordingSender();
+
+		await expect(
+			runKeyExpiryMonitor(monitorEnv({ ENVIRONMENT: "staging", AUDIT_DB: brokenGrantDb }), { sendMail: mail.send }),
+		).rejects.toThrow();
+
+		expect(mail.sent[0]?.subject).toBe("[gpg-signing-service (staging)] Signing key expiry check did not run");
+	});
+
+	it("refuses to mail a self-failure when the mail path was never usable", async () => {
+		// Nothing changes for a deployment whose alerting is misconfigured: the
+		// boundary is established first, so there is no half-built sender for the
+		// failure path to reach for.
+		await expect(
+			runKeyExpiryMonitor({
+				...env,
+				KEY_EXPIRY_ALERTS: undefined,
+				KEY_EXPIRY_WARN_DAYS: REJECTED_THRESHOLD,
+			} as unknown as Env),
+		).rejects.toThrow(/cannot send mail/);
+	});
+});
+
 describe("runKeyExpiryMonitor: the reviewed active-key semantics", () => {
 	it("honours the configured warning threshold", async () => {
 		await storeKey(PRODUCTION_KEY_ID, await keyExpiringIn(90, "ninety@test.com"));
@@ -560,6 +731,23 @@ describe("the scheduled handler", () => {
 			"E_SENDER_NOT_VERIFIED",
 		);
 		await waitOnExecutionContext(ctx);
+	});
+
+	it("mails through the binding that the check did not run, then fails the invocation", async () => {
+		// End to end, because `scheduled()` discards the result: either the alert
+		// reaches the binding or it never leaves the Worker.
+		const { sent, binding } = recordingBinding();
+		const ctx = createExecutionContext();
+
+		await expect(
+			app.scheduled(controller(), monitorEnv({ KEY_EXPIRY_ALERTS: binding, KEY_EXPIRY_WARN_DAYS: "0" }), ctx),
+		).rejects.toThrow(/KEY_EXPIRY_WARN_DAYS must be a positive whole number/);
+		await waitOnExecutionContext(ctx);
+
+		expect(sent).toHaveLength(1);
+		expect(sent[0]).toMatchObject({ from: ALERT_FROM, to: ALERT_TO });
+		expect(sent[0]?.subject).toContain("did not run");
+		expect(sent[0]?.html).toContain("KEY_EXPIRY_WARN_DAYS");
 	});
 
 	it("leaves the HTTP surface untouched", async () => {

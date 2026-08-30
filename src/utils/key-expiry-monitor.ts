@@ -21,6 +21,14 @@
  * fails on a *quiet* week rather than on the one where it had something to say.
  * An alerter that cannot alert is already broken; the only question is whether
  * anyone finds out before it matters.
+ *
+ * That ordering buys one more thing. Once the mail boundary has proved usable,
+ * everything after it that can fail — an unreadable threshold, a Durable Object
+ * that will not answer, a grant table that will not read — is reported to the
+ * same inbox as a monitor that *could not run*, and then rethrown. A monitor
+ * whose own breakage is quieter than the condition it watches for is a monitor
+ * whose silence means nothing; see {@link reportSelfFailure} for what that
+ * alert may and may not say, and why the sending sits outside the guarded work.
  */
 
 import type { AnyStoredKey } from "#schemas/keys";
@@ -32,6 +40,7 @@ import type {
 	DeclaredDefaultKey,
 	KeyExpiryRow,
 	KeyGrant,
+	MonitorFailureKind,
 	ReportContext,
 	ReportDocument,
 } from "#utils/key-expiry";
@@ -41,6 +50,7 @@ import {
 	keyMaterialExpiry,
 	missingKeyRow,
 	parseWarnDays,
+	renderFailureReport,
 	renderReport,
 	resolveActiveKeys,
 } from "#utils/key-expiry";
@@ -177,30 +187,30 @@ export interface MonitorOptions {
  * @throws when the alerting path is misconfigured, when the deployment's own
  * state cannot be read, or when the send fails — all three mean the monitor did
  * not do its job, and a cron run that reports success in that state is worse
- * than no monitor at all
+ * than no monitor at all. The second of those is additionally mailed first, on
+ * a best-effort basis, and the original failure is what escapes either way.
  */
 export async function runKeyExpiryMonitor(env: Env, options: MonitorOptions = {}): Promise<MonitorResult> {
 	const now = options.now ?? new Date();
-	const warnDays = parseWarnDays(env.KEY_EXPIRY_WARN_DAYS);
-	// Resolved before any state is read so a broken alerting path fails the run
-	// it is cheap to fail — see the module note.
+	// Resolved before anything else is read, so a broken alerting path fails the
+	// run it is cheap to fail — see the module note — and so everything after
+	// this line has a mail path that has already proved usable.
 	const sendMail = options.sendMail ?? bindingMailSender(env);
+	const service = serviceLabel(env);
 
-	const scope = resolveActiveKeys({
-		storedKeyIds: await storedKeyIds(env),
-		defaultKey: defaultKeyOf(env),
-		grants: await readGrants(env),
-		now,
-	});
-
-	const rows: KeyExpiryRow[] = [];
-	for (const key of scope.keys) {
-		rows.push(
-			key.stored ? classifyExpiry(key.keyId, await storedKeyExpiry(env, key.keyId), now, warnDays) : missingKeyRow(key),
-		);
+	let checked: CheckedKeys;
+	try {
+		checked = await checkKeys(env, now);
+	} catch (error) {
+		// Best-effort, and outside the send path on purpose: the ordinary alert
+		// below is sent after this block, so a failing `send_email` cannot land
+		// here and try to report itself through the channel that just failed.
+		await reportSelfFailure(sendMail, error, { service, now });
+		throw failureCause(error);
 	}
 
-	const context: ReportContext = { warnDays, now, service: serviceLabel(env), scope };
+	const { warnDays, scope, rows } = checked;
+	const context: ReportContext = { warnDays, now, service, scope };
 	const report = renderReport(rows, context);
 	const actionable = actionableRows(rows);
 	const checkedNothing = rows.length === 0;
@@ -240,6 +250,114 @@ export async function runKeyExpiryMonitor(env: Env, options: MonitorOptions = {}
 	await sendMail(report);
 
 	return { rows, actionable, scope, report, checkedNothing, alerted: true };
+}
+
+/** Everything the report needs, once the deployment's state has been read */
+interface CheckedKeys {
+	warnDays: number;
+	scope: ActiveKeySet;
+	rows: KeyExpiryRow[];
+}
+
+/**
+ * A failure carrying the stage it happened in.
+ *
+ * The stage is recorded where the failure occurs rather than guessed from its
+ * message afterwards. Sniffing an error's text to decide what to tell an
+ * operator is how an unrelated failure ends up described as a threshold
+ * problem, and how a message that was never meant to be read aloud gets read
+ * aloud.
+ */
+class StagedFailure extends Error {
+	readonly kind: MonitorFailureKind;
+	/** The failure as thrown, which is what the cron invocation must still see */
+	readonly failure: unknown;
+
+	constructor(kind: MonitorFailureKind, failure: unknown) {
+		super(`Key expiry monitor failed while reading ${kind}`);
+		this.name = "StagedFailure";
+		this.kind = kind;
+		this.failure = failure;
+	}
+}
+
+/** Run one stage, tagging anything it throws with what was being read */
+async function inStage<T>(kind: MonitorFailureKind, run: () => Promise<T> | T): Promise<T> {
+	try {
+		return await run();
+	} catch (error) {
+		// Stages do not nest, so nothing arriving here is already tagged.
+		throw new StagedFailure(kind, error);
+	}
+}
+
+/** Which class of failure to report; anything untagged is the generic one */
+function failureKindOf(error: unknown): MonitorFailureKind {
+	return error instanceof StagedFailure ? error.kind : "report";
+}
+
+/** The failure as originally thrown, so the rethrow loses nothing */
+function failureCause(error: unknown): unknown {
+	return error instanceof StagedFailure ? error.failure : error;
+}
+
+/**
+ * Read the deployment's state and reach a verdict on every active key.
+ *
+ * Split out of {@link runKeyExpiryMonitor} because this is exactly the work
+ * that can fail *after* the mail boundary has proved usable, and so exactly the
+ * work worth reporting by mail when it does. The sending happens in the caller;
+ * nothing here sends, which is what makes recursion structurally impossible
+ * rather than merely guarded against.
+ */
+async function checkKeys(env: Env, now: Date): Promise<CheckedKeys> {
+	const warnDays = await inStage("threshold", () => parseWarnDays(env.KEY_EXPIRY_WARN_DAYS));
+	const stored = await inStage("key-storage", () => storedKeyIds(env));
+	const grants = await inStage("grants", () => readGrants(env));
+
+	const scope = await inStage("report", () =>
+		resolveActiveKeys({ storedKeyIds: stored, defaultKey: defaultKeyOf(env), grants, now }),
+	);
+
+	const rows: KeyExpiryRow[] = [];
+	for (const key of scope.keys) {
+		rows.push(
+			key.stored
+				? classifyExpiry(key.keyId, await inStage("key-storage", () => storedKeyExpiry(env, key.keyId)), now, warnDays)
+				: missingKeyRow(key),
+		);
+	}
+
+	return { warnDays, scope, rows };
+}
+
+/**
+ * Tell the operator the monitor itself could not run.
+ *
+ * Best effort by design. The alert is an extra channel, not a replacement for
+ * the throw: if this send fails too, the failure that broke the run is still
+ * the one that escapes, because a mail problem must not be allowed to overwrite
+ * the diagnosis of the problem it was reporting.
+ */
+async function reportSelfFailure(
+	sendMail: MailSender,
+	error: unknown,
+	context: { service: string; now: Date },
+): Promise<void> {
+	const kind = failureKindOf(error);
+	logger.error("Key expiry monitor could not complete", failureCause(error), {
+		action: "key-expiry-check",
+		failure: kind,
+	});
+
+	try {
+		await sendMail(renderFailureReport(kind, context));
+	} catch (sendError) {
+		logger.error("Key expiry monitor could not report its own failure", sendError, {
+			action: "key-expiry-check",
+			failure: kind,
+		});
+	}
 }
 
 /** How this deployment names itself, so two environments' alerts read apart */
