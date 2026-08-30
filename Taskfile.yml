@@ -49,6 +49,7 @@ tasks:
       - bun run test
       - task: test:gnupg-interop
       - task: test:signing-shim
+      - task: test:signing-preflight
       - task: test:sign-commits
       - task: test:sign-commit-example
 
@@ -60,6 +61,10 @@ tasks:
   test:signing-shim:
     desc: Test the Git commit signing shim credential paths
     cmd: bash .github/scripts/test-gpg-sign-git-program.sh
+
+  test:signing-preflight:
+    desc: Test the CI signing preflight, its escape hatch and its failure classes
+    cmd: bash .github/scripts/test-signing-preflight.sh
 
   test:sign-commits:
     desc: Test commit re-signing behavior
@@ -80,6 +85,7 @@ tasks:
       - bun run test:coverage
       - task: test:gnupg-interop
       - task: test:signing-shim
+      - task: test:signing-preflight
       - task: test:sign-commits
       - task: test:sign-commit-example
 
