@@ -83,4 +83,4 @@ tasks:
   modernize:
     desc: Modernize Go code *args
     aliases: [m]
-    cmd: go fix ./... {{.CLI_ARGS}}
+    cmd: go fix {{.CLI_ARGS}} ./...
