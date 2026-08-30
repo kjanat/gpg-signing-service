@@ -286,6 +286,15 @@ structured logs:
 > alert on from these two lines has to be shipped off-platform first. The
 > durable events are the `audit_logs` rows above.
 
+Setting the optional [`SENTRY_DSN`](self-hosting.md#optional-error-reporting) is
+one way to ship them. Both lines become Sentry **breadcrumbs** rather than
+events — deliberately, because an unknown subject on a shared issuer is
+caller-controlled volume — so they arrive as context on whatever event is
+raised rather than as alerts of their own. The two refusals that _are_ raised as
+alertable events are `KEY_NOT_ALLOWED` and a revoked trust presented again,
+which is the same pair the table above names. With no DSN configured nothing
+leaves the Worker and these two lines remain log-only.
+
 Every refusal returns the same `401 AUTH_SUBJECT_UNTRUSTED` body regardless of
 which of the three it was: telling a caller that its subject matches a revoked
 row would confirm the row exists. The body does echo the `subject` presented and

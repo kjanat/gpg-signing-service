@@ -43,6 +43,12 @@ KEY_ID          = "62E75E54497815DD"
 ADMIN_TOKEN     = "test-admin-token"
 KEY_PASSPHRASE  = "test-passphrase"
 
+# SENTRY_DSN is deliberately absent. The whole suite therefore runs against the
+# disabled path, which is what makes "an unset DSN changes nothing" a property
+# every one of these tests checks rather than an assertion in one of them.
+# `sentry.test.ts` builds its own client, with a recording transport and a DSN
+# that resolves to nothing, to exercise the enabled path.
+
 # The read-only admin credential the monitoring workflow holds. Distinct from
 # ADMIN_TOKEN on purpose — equal values are a refused configuration, and
 # `admin-scope.test.ts` pins that refusal.

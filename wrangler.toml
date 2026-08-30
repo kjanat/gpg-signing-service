@@ -90,6 +90,23 @@ KEY_EXPIRY_ALERT_TO   = "info@kajkowalski.nl"
 # - ADMIN_TOKEN: Token for admin endpoints
 # - ADMIN_READONLY_TOKEN (optional): Second admin bearer, GET/HEAD only. Must
 #   differ from ADMIN_TOKEN — equal values refuse the whole admin surface.
+# - SENTRY_DSN (optional): Error tracking and tracing. Unset — which is the
+#   default, and why there is no value here — disables Sentry completely: no
+#   events, no traces, and none of the SDK's integrations are installed, so
+#   Workers Logs and audit_logs behave exactly as they do without it. Secrets
+#   are scrubbed by name and by value shape before anything leaves the Worker;
+#   see src/utils/sentry.ts and docs/security-model.md. A DSN authorizes writes
+#   into a Sentry project, so it is a secret and never a tracked var.
+
+# SENTRY_TRACES_SAMPLE_RATE: optional plain var, 0..1, default 0.1. Not a
+# secret — it is a sampling knob, not a credential — but left unset here so the
+# default applies. It has no effect without a DSN.
+#
+# The SDK also reads SENTRY_SPOTLIGHT and SENTRY_TUNNEL from the environment, and
+# either can send events somewhere the DSN never named. Both are pinned off in
+# src/utils/sentry.ts, so setting them here or as secrets does nothing. Same for
+# SENTRY_DEBUG on a deployment with no DSN, which would otherwise start writing
+# SDK chatter into Workers Logs.
 
 # =============================================================================
 # STAGING ENVIRONMENT

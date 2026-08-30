@@ -5,6 +5,7 @@
 
 import type { Context } from "hono";
 import { HEADERS } from "#types";
+import { captureError } from "#utils/sentry";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -46,6 +47,19 @@ class Logger {
 		this.log("warn", message, context);
 	}
 
+	/**
+	 * Error-level log, and the one place this service reports to Sentry.
+	 *
+	 * The `console.log` below is emitted first and unchanged — Workers Logs and
+	 * Logpush see byte-for-byte what they saw before this method learned to
+	 * report anywhere. `captureError` is additive, and is a no-op unless a
+	 * `SENTRY_DSN` is configured.
+	 *
+	 * Every error path in the service already funnels through here, including
+	 * `app.onError` and `handleUnknownError`, which is why this is the chokepoint
+	 * rather than the global handler: `LoggerWithContext.error` delegates to this
+	 * method, so a request-scoped logger reports once, not twice.
+	 */
 	error(message: string, error?: Error | unknown, context?: LogContext) {
 		const errorContext = {
 			...context,
@@ -59,6 +73,13 @@ class Logger {
 					: error,
 		};
 		this.log("error", message, errorContext);
+
+		captureError(message, error, {
+			...context,
+			// `code` is this codebase's name for what Sentry should call
+			// `errorCode`; the tag is what an alert filters on.
+			...(typeof context?.code === "string" && { errorCode: context.code }),
+		});
 	}
 
 	/**

@@ -1,6 +1,7 @@
 import type { AnyStoredKey } from "#schemas/keys";
-import { isX509Key } from "#schemas/keys";
 import { HTTP, MediaType } from "#types";
+import { isX509Key } from "#schemas/keys";
+import { logger } from "#utils/logger";
 
 export class KeyStorage implements DurableObject {
 	private state: DurableObjectState;
@@ -44,6 +45,12 @@ export class KeyStorage implements DurableObject {
 					return new Response("Not found", { status: HTTP.NotFound });
 			}
 		} catch (error) {
+			// Logged before it is turned into a 500 body. The caller across the stub
+			// sees only a status, so without this line a fault inside the object that
+			// holds the private key is invisible in Workers Logs and — because
+			// nothing escapes this catch to the Sentry wrapper around the class —
+			// invisible to error reporting too.
+			logger.error("Key storage request failed", error, { action: "key-storage", path });
 			const message = error instanceof Error ? error.message : "Unknown error";
 			return new Response(JSON.stringify({ error: message }), {
 				status: HTTP.InternalServerError,

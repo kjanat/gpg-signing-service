@@ -89,6 +89,11 @@ src/
 
 - `KEY_PASSPHRASE` - Passphrase for encrypted private key
 - `ADMIN_TOKEN` - Token for admin endpoints
+- `ADMIN_READONLY_TOKEN` (optional) - Admin bearer for GET/HEAD only; must
+  differ from `ADMIN_TOKEN`
+- `SENTRY_DSN` (optional) - Error tracking. Unset means Sentry is fully
+  disabled and the Worker behaves as it does without it. Never commit a real
+  DSN; scrubbing lives in `src/utils/sentry.ts`
 
 ## Claude Instructions
 

@@ -38,6 +38,12 @@ interface Env {
 
 	/** "true" to name the trusted subject prefixes in an untrusted-subject 401. */
 	DISCLOSE_TRUST_PATTERNS?: string;
+
+	/** Sentry DSN. Absent from wrangler.test.toml on purpose; see the note there. */
+	SENTRY_DSN?: string;
+
+	/** Fraction of requests traced, 0..1. */
+	SENTRY_TRACES_SAMPLE_RATE?: string;
 }
 
 // Vite's `?raw` suffix, used by the error-docs suite to read `docs/errors.md`.
