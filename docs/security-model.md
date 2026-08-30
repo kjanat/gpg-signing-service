@@ -219,7 +219,53 @@ return before any audit is scheduled. An unknown subject and an expired trust ar
 logged only, the first because it is reachable by any holder of any token the
 issuer will mint.
 
-There is no built-in retention, export, alerting, or tamper-evident log chain.
+There is no built-in retention, export, or tamper-evident log chain. Alerting is
+available but optional; see below.
+
+## What Sentry receives
+
+Error reporting is **off unless `SENTRY_DSN` is set**. Unset — or set to
+whitespace — the Worker builds its Sentry options with `enabled: false` and no
+integrations at all: nothing wraps `console`, nothing reads request bodies,
+nothing is sent, and Workers Logs and `audit_logs` behave exactly as they do
+without the binding. Self-hosting does not conscript you into a third-party
+processor.
+
+With a DSN set, the boundary is `src/utils/sentry.ts`, and it is the only path
+out. What is reported:
+
+- uncaught exceptions and every `logger.error`, tagged with `requestId` and,
+  where the code has them, `action` and `errorCode`;
+- the two refusals worth alerting on as their own events — `KEY_NOT_ALLOWED`,
+  and a revoked OIDC trust presented again (`errorCode: AUTH_INVALID`,
+  `reason: revoked_trust_presented`);
+- the two log-only refusals as **breadcrumbs**, not events. An unknown subject
+  is reachable by any holder of any token a shared issuer will mint, so an event
+  per occurrence would be a caller-controlled bill; a lapsed trust is routine
+  maintenance. Both still ride along on whatever event is raised, which is what
+  closes the retention gap the log-only refusals had.
+
+What is never reported, redacted by property name _and_ by value shape,
+recursively, across request data, extras, contexts, breadcrumbs, exception
+messages and nested values:
+
+- `KEY_PASSPHRASE`, `ADMIN_TOKEN`, `ADMIN_READONLY_TOKEN` — both under their own
+  names and as literal values, wherever they appear;
+- armored PGP or PEM private key material, including a block truncated
+  mid-transit;
+- raw OIDC JWTs, `gst_` service tokens, and `Bearer`/`Basic` credentials;
+- the `Authorization` header, and cookies;
+- request bodies, which are not collected at all: the SDK's body capture is
+  pinned off and `request.data` is deleted on the way out regardless.
+
+`sendDefaultPii` is `false`, so no IP address or cookie-derived user is attached.
+Key ids, fingerprints, issuers, subjects and subject-policy names _are_ reported:
+each is already readable through `/public-key`, `GET /admin/subjects` or the
+audit trail, and they are what makes an event worth having.
+
+Sentry does not replace `audit_logs`. That table remains the durable record of
+who signed what, it is queried by the admin API, and none of it moves to a third
+party.
 
 ## Browser access
 
@@ -294,7 +340,8 @@ Before relying on the service for protected production branches, account for:
 - a read-only admin credential that is narrower in _authority_ than
   `ADMIN_TOKEN` but not in _disclosure_: it still reads every key id,
   trust rule, token name and audit record;
-- no audit retention or alert configuration;
+- no audit retention, and no alerting unless the optional `SENTRY_DSN` is
+  configured (see [What Sentry receives](#what-sentry-receives));
 - PGP-only behavior in the high-level CLI and Go wrapper; and
 - Git history rewriting when a detached signature is attached after commit
   creation.

@@ -114,6 +114,26 @@ export interface Env {
 	 */
 	KEY_EXPIRY_ALERT_TO?: string;
 
+	/** Error tracking */
+	/**
+	 * Optional: Sentry DSN. Unset — or set to whitespace — disables Sentry
+	 * entirely: no events, no traces, no breadcrumbs, and none of the SDK's
+	 * integrations are installed, so `console.log` reaches Workers Logs and
+	 * `audit_logs` is written exactly as it is without this binding. Set via
+	 * `wrangler secret put SENTRY_DSN`; a DSN is not a credential that grants
+	 * read access, but it does authorize writes into a project, so it is kept
+	 * out of tracked config.
+	 */
+	SENTRY_DSN?: string;
+	/**
+	 * Optional: fraction of requests traced, `0`..`1`. Defaults to 0.1 when a
+	 * DSN is configured, and is forced to 0 when one is not. Anything
+	 * unparseable or out of range falls back to the default rather than failing
+	 * the request — the cost of getting it wrong is a different amount of
+	 * telemetry, not a wrong answer.
+	 */
+	SENTRY_TRACES_SAMPLE_RATE?: string;
+
 	/** Secrets */
 	/** Passphrase for private key */
 	KEY_PASSPHRASE: string;
