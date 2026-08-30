@@ -13,11 +13,11 @@
 #
 # wrangler is deliberately the same version bun.lock resolves, not merely some
 # fixed one: `wrangler types` stamps its own workerd into the generated header,
-# so two channels at two versions are two producers again. The two channels
-# exist because they reach different places -- .github/workflows/d1-migrate.yml
-# and scripts/cf.sh's WORKERS_CI branch run wrangler on a checkout that has no
-# node_modules -- but they are one version, and scripts/test-tool-pins.sh fails
-# if they drift apart.
+# so two channels at two versions are two producers again. The second channel
+# exists because it reaches somewhere the lockfile one cannot:
+# .github/workflows/d1-migrate.yml is checkout + mise with no bun at all. They
+# are one version, and scripts/test-tool-pins.sh fails if they drift apart --
+# or if that last node_modules-less caller ever goes away.
 [tools]
 "cargo:runner-run" = "latest"
 actionlint         = "latest"

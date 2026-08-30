@@ -182,21 +182,39 @@ fi
 #
 # The decision recorded here is "keep both, pin both", and it is only correct
 # for as long as something genuinely runs wrangler without node_modules. Today
-# two things do: .github/workflows/d1-migrate.yml, which is checkout + mise and
-# no bun at all, and scripts/cf.sh's WORKERS_CI branch, which installs mise
-# before bun install has run. If both of those go away the honest move is to
-# drop the tool from .mise.toml and let package.json own wrangler outright --
-# so this case fails when the reason disappears, not when it holds.
+# one thing does: .github/workflows/d1-migrate.yml, which is checkout + mise and
+# no bun at all. If that goes away the honest move is to drop the tool from
+# .mise.toml and let package.json own wrangler outright -- so this case fails
+# when the reason disappears, not when it holds.
+#
+# Every candidate is asked the same two questions -- does this file invoke
+# wrangler, and does it do so before node_modules exists -- rather than being
+# vouched for by name. scripts/cf.sh was on this list on the strength of
+# `grep -q WORKERS_CI`, which is a string it contains for unrelated reasons:
+# that branch runs `mise install` and then `bun install --frozen-lockfile` and
+# never names wrangler at all, and the re-entrant `prepare` it fires returns at
+# the CF_MISE_BOOTSTRAPPED guard before typegen. A clause that cannot go red for
+# the reason it was written is not holding anything down.
 new_case 'the mise wrangler channel still has a caller without node_modules'
 nodeless_callers=()
+
+# Names wrangler as a command, not merely in prose or a package name.
+invokes_wrangler() {
+	grep -qE '(^|[^[:alnum:]_./-])wrangler([[:space:]]|$)' "$1"
+}
+
 d1_workflow="${repo_root}/.github/workflows/d1-migrate.yml"
 if [[ -f ${d1_workflow} ]] \
-	&& grep -qE '(^|[^[:alnum:]_-])wrangler[[:space:]]' "${d1_workflow}" \
+	&& invokes_wrangler "${d1_workflow}" \
 	&& ! grep -q 'setup-bun' "${d1_workflow}"; then
 	nodeless_callers+=('.github/workflows/d1-migrate.yml')
 fi
-if grep -q 'WORKERS_CI' "${repo_root}/scripts/cf.sh"; then
-	nodeless_callers+=('scripts/cf.sh (WORKERS_CI)')
+
+# cf.sh's WORKERS_CI branch reaches a tree with no node_modules, so it counts --
+# but only once it actually runs wrangler there.
+cf_sh="${repo_root}/scripts/cf.sh"
+if [[ -f ${cf_sh} ]] && invokes_wrangler "${cf_sh}"; then
+	nodeless_callers+=('scripts/cf.sh')
 fi
 
 if ((${#nodeless_callers[@]} == 0)); then

@@ -3,8 +3,8 @@
 #
 # There are two wranglers reachable from this repo:
 #
-#   * `.mise.toml`'s, which reaches checkouts that have no node_modules --
-#     .github/workflows/d1-migrate.yml and scripts/cf.sh's WORKERS_CI branch
+#   * `.mise.toml`'s, which reaches the one caller that has no node_modules --
+#     .github/workflows/d1-migrate.yml, checkout + mise with no bun at all
 #   * node_modules/.bin/wrangler, pinned by bun.lock and now a *direct*
 #     devDependency rather than a hoisted transitive of vitest-pool-workers
 #
