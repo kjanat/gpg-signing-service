@@ -83,15 +83,63 @@ export type AlertMail = ReportDocument;
 export type AlertKind = "key-expiry" | "monitor-failure";
 
 /**
- * The message each kind of successful send is logged under.
+ * Whether a delivery attempt reached the operator or died at the boundary.
  *
- * Fixed strings, one per {@link AlertKind}, so both classifications are stable
- * enough to build a log query on and neither can pick up rendered content.
+ * Recorded next to {@link AlertKind} rather than instead of it, under the same
+ * `action`, because "what did the monitor try to send?" and "did it get out?"
+ * are two questions about one event. Answering them under two different
+ * actions is what made the obvious query — everything the alert pipeline did —
+ * go quiet in the one case an operator most needs it: when the mail binding
+ * itself is the thing that has broken.
  */
-const ALERT_SENT_MESSAGE: Record<AlertKind, string> = {
-	"key-expiry": "Key expiry alert sent",
-	"monitor-failure": "Key expiry monitor self-failure alert sent",
+export type AlertOutcome = "sent" | "failed";
+
+/**
+ * One delivery attempt, as the call site classifies it.
+ *
+ * The kind is still decided by the caller and never derived from the rendered
+ * mail. A self-failure alert carries one field more: the stage the monitor
+ * died in, which is the same closed {@link MonitorFailureKind} the fixed mail
+ * copy is chosen from — a word from a four-value set, not an exception, not its
+ * message, and not anything else read back out of the failure.
+ */
+export type AlertDelivery = { alert: "key-expiry" } | { alert: "monitor-failure"; failure: MonitorFailureKind };
+
+/**
+ * The message every delivery attempt is logged under.
+ *
+ * Fixed strings, one per {@link AlertKind} and {@link AlertOutcome}, so all
+ * four classifications are stable enough to build a log query on and none of
+ * them can pick up rendered content.
+ */
+const ALERT_MESSAGE: Record<AlertKind, Record<AlertOutcome, string>> = {
+	"key-expiry": {
+		sent: "Key expiry alert sent",
+		failed: "Key expiry alert could not be sent",
+	},
+	"monitor-failure": {
+		sent: "Key expiry monitor self-failure alert sent",
+		failed: "Key expiry monitor self-failure alert could not be sent",
+	},
 };
+
+/**
+ * The fields one delivery attempt is logged under, whichever way it went.
+ *
+ * Built from the discriminator the caller passed and the configured recipient,
+ * and from nothing else: never the subject, never either body, never the
+ * exception. That is what makes the event safe to read in bulk — the mail is
+ * the operator's copy, and the log line is only the fact that it was attempted.
+ */
+function alertEvent(delivery: AlertDelivery, outcome: AlertOutcome, to: string) {
+	return {
+		action: "key-expiry-alert",
+		alert: delivery.alert,
+		outcome,
+		to,
+		...(delivery.alert === "monitor-failure" ? { failure: delivery.failure } : {}),
+	};
+}
 
 /**
  * Where an alert goes.
@@ -100,10 +148,10 @@ const ALERT_SENT_MESSAGE: Record<AlertKind, string> = {
  * have been sent without a live Email Service account — and so the one place
  * that talks to Cloudflare is one line long and separately assertable.
  *
- * The {@link AlertKind} rides along with the rendered mail so a sender can
- * classify the send without parsing it; see {@link bindingMailSender}.
+ * The {@link AlertDelivery} rides along with the rendered mail so a sender can
+ * classify the attempt without parsing it; see {@link bindingMailSender}.
  */
-export type MailSender = (mail: AlertMail, kind: AlertKind) => Promise<void>;
+export type MailSender = (mail: AlertMail, delivery: AlertDelivery) => Promise<void>;
 
 /** The binding and addresses this deployment sends alerts through */
 export interface MailConfig {
@@ -154,23 +202,44 @@ export function mailConfig(env: Env): MailConfig {
  * restricted to the same value. The restriction is what makes a compromised
  * Worker unable to mail anyone else; passing the address is what makes the code
  * say where the alert goes without the reader having to open `wrangler.toml`.
+ *
+ * It is also the one place a delivery attempt is observed. Both ways an attempt
+ * can end are logged here, under the same `key-expiry-alert` action and told
+ * apart by {@link AlertOutcome}, so `action = "key-expiry-alert"` is the whole
+ * pipeline rather than only the half of it that worked. Only the observation
+ * lives here: a rejected send rejects onward unchanged.
  */
 export function bindingMailSender(env: Env): MailSender {
 	const { binding, from, to } = mailConfig(env);
 
-	return async (mail, kind) => {
-		const { messageId } = await binding.send({
-			from,
-			to,
-			subject: mail.subject,
-			text: mail.text,
-			html: mail.html,
-		});
+	return async (mail, delivery) => {
+		const { messageId } = await binding
+			.send({
+				from,
+				to,
+				subject: mail.subject,
+				text: mail.text,
+				html: mail.html,
+			})
+			.catch((error: unknown) => {
+				// Recorded and rethrown unchanged. The log is an observation, not a
+				// handler: there is no retry, no fallback channel and no second send,
+				// so a failed alert is still exactly as failed as it was — see the two
+				// callers, both of which depend on this rejecting.
+				//
+				// The exception is deliberately not handed to the logger. A send error
+				// is written by the mail provider, and this event has to stay safe to
+				// read in bulk; `outcome` and `alert` already say what happened, and
+				// the exception itself reaches the cron invocation intact.
+				logger.error(ALERT_MESSAGE[delivery.alert].failed, undefined, alertEvent(delivery, "failed", to));
+				throw error;
+			});
+
 		// `alert` is the discriminator the caller passed, not anything read back
 		// out of `mail`: what was sent is the operator's copy, and the log line
 		// records which of the two things the monitor had to say — never either
 		// body, which is where the key ids and the deployment's state live.
-		logger.info(ALERT_SENT_MESSAGE[kind], { action: "key-expiry-alert", alert: kind, messageId, to });
+		logger.info(ALERT_MESSAGE[delivery.alert].sent, { ...alertEvent(delivery, "sent", to), messageId });
 	};
 }
 
@@ -283,7 +352,7 @@ export async function runKeyExpiryMonitor(env: Env, options: MonitorOptions = {}
 		});
 	}
 
-	await sendMail(report, "key-expiry");
+	await sendMail(report, { alert: "key-expiry" });
 
 	return { rows, actionable, scope, report, checkedNothing, alerted: true };
 }
@@ -387,7 +456,7 @@ async function reportSelfFailure(
 	});
 
 	try {
-		await sendMail(renderFailureReport(kind, context), "monitor-failure");
+		await sendMail(renderFailureReport(kind, context), { alert: "monitor-failure", failure: kind });
 	} catch (sendError) {
 		logger.error("Key expiry monitor could not report its own failure", sendError, {
 			action: "key-expiry-check",
