@@ -86,13 +86,21 @@ mutate_action() { # mutate_action <name> <source-rel> <sed-expr>
 	mutated_root="${root}"
 }
 
+# Writes a synthetic composite action at an arbitrary path and echoes the tree
+# root. The path is a parameter because "where does an action live" is exactly
+# the assumption that used to be baked into both the checker and this suite.
+fixture_action_at() { # fixture_action_at <name> <rel-path-to-action-file> <<<body
+	local name="$1" rel="$2"
+	local root="${workdir}/${name}"
+	mkdir -p "${root}/$(dirname "${rel}")"
+	cat >"${root}/${rel}"
+	printf '%s\n' "${root}"
+}
+
 # Writes a synthetic composite action and echoes the tree root.
 fixture_action() { # fixture_action <name> <<<body
 	local name="$1"
-	local root="${workdir}/${name}"
-	mkdir -p "${root}/.github/actions/${name}"
-	cat >"${root}/.github/actions/${name}/action.yml"
-	printf '%s\n' "${root}"
+	fixture_action_at "${name}" ".github/actions/${name}/action.yml"
 }
 
 printf 'composite-action lint gate\n'
@@ -108,18 +116,27 @@ fi
 # ---------------------------------------------------------------------------
 # Coverage: every run block in every composite action is actually visited.
 #
-# Computed against an independent grep for `run:` rather than trusting the
-# checker's own idea of scope, so an action file dropping out of discovery --
-# a new directory, a renamed key, a parser that stops understanding a file --
-# fails here instead of silently shrinking the gate.
+# The expected set comes from `git ls-files` -- the index -- not from a
+# directory walk. That matters more than it looks: the first version of this
+# assertion enumerated the repo root plus `.github/actions/**`, which was the
+# same assumption discoverActionFiles() made, so an action living anywhere else
+# was invisible to the checker *and* to the test written to catch exactly that.
+# A shared assumption is not a check. The index has no opinion about layout, so
+# the only way both sides agree now is if the file is genuinely linted.
+#
+# Tracked-only is the right scope for the oracle: an action.yml nobody committed
+# is not shipping shell. The gate itself still walks the filesystem, so it is a
+# superset -- which is the safe direction, and is what the out-of-tree fixture
+# below pins down.
 # ---------------------------------------------------------------------------
 new_case "every composite action holding a run block is in scope"
 listed="$(run_linter "${repo_root}" --list)"
 mapfile -t action_files < <(
-	{
-		[[ -f ${repo_root}/action.yml ]] && printf 'action.yml\n'
-		find .github/actions -name 'action.yml' -o -name 'action.yaml' | sed 's|^\./||'
-	} | sort
+	git -C "${repo_root}" ls-files -z -- '*action.yml' '*action.yaml' \
+		| tr '\0' '\n' \
+		| grep -E '(^|/)action\.ya?ml$' \
+		| grep -vE '(^|/)node_modules/' \
+		| sort
 )
 if ((${#action_files[@]} == 0)); then
 	fail "found no composite action files to check -- the test itself has gone blind"
@@ -131,12 +148,87 @@ for action_file in "${action_files[@]}"; do
 	fi
 done
 
+# The oracle above is only as good as its own reach. If `git ls-files` ever
+# stops finding the one action file this repo has always had, it has gone blind
+# in the same way the old find(1) did and every case using it is vacant.
+new_case "the coverage oracle reaches outside .github/actions/"
+if ! printf '%s\n' "${action_files[@]}" | grep -qxF 'action.yml'; then
+	fail "the tracked-file oracle does not see the root action.yml -- it cannot detect an out-of-tree action"
+fi
+
 # setup-bun writes its steps as a flow sequence of single-line flow mappings, so
 # it is the file that proves the extractor is a YAML parse and not a line regex:
 # nothing anchored to `^\s*run:` can see its `bun install`.
 new_case "flow-style steps are extracted, not just block-style ones"
 if ! grep -qF '.github/actions/setup-bun/action.yml:' <<<"${listed}"; then
 	fail "setup-bun's flow-mapping run: block is not in scope -- the extractor is line-based"
+fi
+
+# ---------------------------------------------------------------------------
+# Discovery is repo-wide, not two hard-coded locations.
+#
+# The original gate looked at the repo root plus `.github/actions/**`. An action
+# under any other directory -- `actions/`, one vendored beside a package, one a
+# `git mv` away from where it started -- was never linted, and because the
+# coverage assertion enumerated the same two places, nothing said so. These
+# cases assert on a path the old discovery provably could not reach.
+# ---------------------------------------------------------------------------
+new_case "an action outside .github/actions/ is discovered and linted"
+root="$(
+	fixture_action_at out-of-tree "actions/publish/action.yml" <<'YAML'
+name: out of tree
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: echo "::notice:never seen"
+YAML
+)"
+if output="$(run_linter "${root}")"; then
+	fail "an action.yml outside .github/actions/ was not linted:"$'\n'"${output}"
+elif ! grep -q 'CA002' <<<"${output}"; then
+	fail "out-of-tree action reached the gate but not the rules:"$'\n'"${output}"
+elif ! grep -qF 'actions/publish/action.yml:' <<<"${output}"; then
+	fail "finding does not name the out-of-tree file:"$'\n'"${output}"
+fi
+
+# Nested arbitrarily deep, and named action.yaml rather than action.yml, since
+# both are valid and a walk that only matches one spelling is the same hole.
+new_case "a deeply nested action.yaml is discovered too"
+root="$(
+	fixture_action_at nested-yaml "packages/tools/ci/deploy/action.yaml" <<'YAML'
+name: nested
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: echo "::warning:lost"
+YAML
+)"
+if output="$(run_linter "${root}")"; then
+	fail "a nested action.yaml was not linted:"$'\n'"${output}"
+elif ! grep -qF 'packages/tools/ci/deploy/action.yaml:' <<<"${output}"; then
+	fail "finding does not name the nested action.yaml:"$'\n'"${output}"
+fi
+
+# The other half of a repo-wide walk: it has to stay out of trees this repo does
+# not author. A third-party action.yml under node_modules/ is not ours to fail
+# on, and descending into it would make the gate depend on the dependency graph.
+new_case "node_modules is not descended into"
+root="$(
+	fixture_action_at skips-deps "node_modules/some-dep/action.yml" <<'YAML'
+name: vendored
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: echo "::notice:not our problem"
+YAML
+)"
+printf 'name: real\nruns:\n  using: composite\n  steps:\n    - shell: bash\n      run: echo ok\n' \
+	>"${root}/action.yml"
+if ! output="$(run_linter "${root}")"; then
+	fail "gate descended into node_modules and failed on a vendored action:"$'\n'"${output}"
 fi
 
 # ---------------------------------------------------------------------------
