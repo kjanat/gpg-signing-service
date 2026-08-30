@@ -387,6 +387,49 @@ describe("Branch Coverage Helpers", () => {
 			);
 		});
 
+		it("floors the admin refusal's hint at one second", async () => {
+			// The admin limiter is the second consumer of `retryAfterSeconds`, and the
+			// verdict test above stubs a `resetAt` 60s out, so nothing there would
+			// notice the floor going missing. A denial's `resetAt` is when the bucket
+			// next holds a token — sub-second at every capacity in use, and routinely
+			// already past by the time a Durable Object round trip resolves.
+			// `RateLimitErrorSchema` declares `retryAfter` positive, and
+			// `X-RateLimit-Reset` is derived from it, so an unfloored hint answers
+			// off-spec and names an instant already gone.
+			const customEnv = {
+				...env,
+				RATE_LIMITER: {
+					idFromName: () => ({}) as any,
+					get: () => ({
+						fetch: () =>
+							// Already elapsed: the worst case, a round trip longer than the debt.
+							Promise.resolve(Response.json({ allowed: false, resetAt: Date.now() - 40 }, { status: 429 })),
+					}),
+				},
+			};
+
+			const json = vi.fn();
+			const context = {
+				req: {
+					header: (name: string) => (name === "Authorization" ? "Bearer admin" : "1.2.3.4"),
+				},
+				env: customEnv,
+				json,
+			};
+
+			const before = Math.floor(Date.now() / 1000);
+			await import("#middleware/security").then(({ adminRateLimit }) =>
+				adminRateLimit(context as any, () => Promise.resolve()),
+			);
+
+			const [body, status, headers] = json.mock.calls[0] as [{ retryAfter: number }, number, Record<string, string>];
+			expect(status).toBe(429);
+			expect(Number.isInteger(body.retryAfter)).toBe(true);
+			expect(body.retryAfter).toBeGreaterThan(0);
+			// Derived from the same floored hint, so it cannot name a past instant.
+			expect(Number(headers["X-RateLimit-Reset"])).toBeGreaterThan(before);
+		});
+
 		it("fails closed when admin rate limiter fails", async () => {
 			const customEnv = {
 				...env,

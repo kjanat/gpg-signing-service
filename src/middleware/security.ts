@@ -4,7 +4,7 @@ import type { ErrorCode } from "#schemas/errors";
 import type { Env, RateLimitResult } from "#types";
 import { HEADERS, HTTP, TIME } from "#types";
 import { logger } from "#utils/logger";
-import { rateLimitExceeded } from "#utils/rate-limit";
+import { rateLimitExceeded, retryAfterSeconds } from "#utils/rate-limit";
 
 /**
  * Default CSP: every API route returns JSON, so nothing may be loaded at all.
@@ -236,13 +236,11 @@ export const adminRateLimit: MiddlewareHandler<{ Bindings: Env }> = async (c, ne
 		const rateLimit = (await rateLimitResponse.json()) as RateLimitResult;
 
 		if (!rateLimit.allowed) {
-			// Floored at one second. `resetAt` on a denial is when the bucket next
-			// holds a token, which is sub-second at every capacity in use, so the bare
-			// `ceil` underflows to zero across a Durable Object round trip — off-spec
-			// against `RateLimitErrorSchema`, and ignored by the Go client, which only
-			// honours a positive hint. Mirrors the sign route's `retryAfterSeconds`.
-			const retryAfter = Math.max(1, Math.ceil((rateLimit.resetAt - Date.now()) / TIME.SECOND));
-			return rateLimitExceeded(c, retryAfter);
+			// Floored at one second by `retryAfterSeconds`, which owns that floor for
+			// every refusal: `resetAt` on a denial is when the bucket next holds a
+			// token, which is sub-second at every capacity in use, so the bare `ceil`
+			// underflows to zero across a Durable Object round trip.
+			return rateLimitExceeded(c, retryAfterSeconds(rateLimit.resetAt));
 		}
 
 		// Add rate limit headers
