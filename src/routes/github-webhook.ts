@@ -4,14 +4,14 @@
  * **This is a scaffold and it acts on nothing.** Every verified delivery is
  * acknowledged and dropped. Auto-signing pushed commits, publishing a check
  * run, and dispatching `@claude` are all named in issue #26 and none of them
- * are here: they need to decide *which* key an installation may cause to sign,
- * and inventing that inside a webhook handler is how a signing service acquires
- * a second, weaker front door. What is here is the part that has to be right
- * before any of that can be written — the trust boundary, the credential
- * exchange behind it, and the two checks that stand between "this delivery is
- * genuine" and "this delivery may cause something": an operator-written
- * allowlist of `<installation, repository>` pairs, and a delivery-id ledger
- * that makes a replayed delivery a no-op.
+ * are here. What is here is the part that has to be right before any of them
+ * can be written — the trust boundary, the credential exchange behind it, and
+ * the three checks that stand between "this delivery is genuine" and "this
+ * delivery may cause something": an operator-written allowlist of
+ * `<installation, repository>` pairs, a delivery-id ledger that makes a
+ * replayed delivery a no-op, and the signing key that same allowlist entry
+ * binds — which is how a handler learns *which* key it may cause to sign,
+ * rather than deciding for itself inside a webhook handler.
  *
  * ### Why this is not in the OpenAPI document
  *
@@ -26,6 +26,7 @@
 
 import { createOpenAPIApp } from "#lib/openapi";
 import { HTTP } from "#types";
+import { requireSigningKey } from "#utils/github-signing-key";
 import { acknowledgement } from "#utils/github-webhook";
 import { logger } from "#utils/logger";
 
@@ -74,7 +75,16 @@ app.post("/webhook", (c) => {
 	// The authorized repository is logged rather than the payload's, for the same
 	// reason a handler must act on the authorized one: it is the operator's
 	// string, so a log line cannot be made to say a repository nobody granted.
+	//
+	// The bound key id is logged with it, and it is the same kind of value: it
+	// comes from the matched allowlist entry, so this line cannot be made to name
+	// a key nobody granted either. A key id is not a secret — `/public-key`
+	// serves the key it names — and it is the field that makes a binding
+	// diagnosable without an operator having to read `wrangler.toml` next to a
+	// delivery log. Read through `requireSigningKey` rather than off the field,
+	// so a line saying a key is the same thing a handler would be given.
 	const authorization = c.get("webhookAuthorization");
+	const signingKey = requireSigningKey(authorization);
 	logger.info("GitHub webhook delivery accepted", {
 		requestId: c.get("requestId"),
 		event: delivery.event,
@@ -82,6 +92,13 @@ app.post("/webhook", (c) => {
 		installationId: delivery.installationId,
 		scope: authorization?.scope,
 		repository: authorization?.repository,
+		keyId: signingKey.allowed ? signingKey.keyId : null,
+		// Why no key, when there is none. `not_repository_scope` is routine — a
+		// ping has no repository — and `no_key_bound` is the one an operator wants
+		// to see, because it means an allowlisted repository is missing the
+		// `=<keyId>` suffix and would be refused the moment a handler tried to
+		// sign for it.
+		signingKeyRefusal: signingKey.allowed ? null : signingKey.reason,
 	});
 
 	return c.json(acknowledgement(delivery, authorization, { duplicate: false }), HTTP.Accepted);

@@ -143,6 +143,17 @@ sign of one is not every caller failing at once.
   parsed. The repository a future handler acts on is taken from the matched
   allowlist entry, not from the payload, so a delivery cannot name its own
   subject even after passing the check.
+- A grant may bind one signing key: `<installationId>:<owner>/<repo>=<keyId>`.
+  The key rides inside the same entry as the pair it belongs to, so there is no
+  second list to drift out of step with the first, and a pair may appear at most
+  once — a duplicate refuses the whole allowlist rather than resolving to
+  whichever entry came first. A pair with no key bound may not cause a
+  signature, and there is deliberately **no default**: the service's own
+  `KEY_ID` is the default for `POST /sign`, where the caller's key grant has
+  already been checked, and inheriting it here would give every allowlisted
+  repository the service's key the moment it was allowlisted. The key is read
+  through `requireSigningKey`, never off the context field, so the three
+  situations in which no key is bound cannot be collapsed into a fall back.
 - A verified, authorized delivery is deduplicated on `X-GitHub-Delivery` in a
   Durable Object, so a replayed or redelivered event is a no-op. The claim is
   taken under `blockConcurrencyWhile`, which is what makes two simultaneous

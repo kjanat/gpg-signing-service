@@ -19,6 +19,7 @@ shipping this code does not advertise the feature.
 | `POST /github/webhook` | Verifies `X-Hub-Signature-256` and answers `202 Accepted`     |
 | Authorization          | `<installation, repository>` pairs from an operator allowlist |
 | Replay protection      | `X-GitHub-Delivery` claimed once, atomically, for four days   |
+| Signing key binding    | One key per grant, from the same allowlist entry, or none     |
 | Delivery semantics     | At-most-once: a claimed id is never released, even on failure |
 | App JWT minting        | RS256, from `GITHUB_APP_PRIVATE_KEY`                          |
 | Installation tokens    | Minted on demand, cached in KV under a namespaced key         |
@@ -27,17 +28,20 @@ shipping this code does not advertise the feature.
 
 Named in [#26](https://github.com/kjanat/gpg-signing-service/issues/26) and
 deliberately absent: auto-signing pushed commits, publishing a "GPG verified"
-check run, and dispatching `@claude`. What each still needs is the mapping from
-an authorized repository to a _signing key_ — which key an installation may
-cause to sign with — and inventing that inside a webhook handler is how a
-signing service acquires a second, weaker front door. `getInstallationToken` has
-no caller in the request path for the same reason.
+check run, and dispatching `@claude`. Each of those is a handler that _acts_,
+and before one can be written the at-most-once question in
+[Claimed before the handler runs](#claimed-before-the-handler-runs-at-most-once-not-at-least-once)
+has to be answered for the action it performs. `getInstallationToken` and
+`loadSigningKey` both have no caller in the request path for the same reason:
+they are what an acting handler will use, shipped ahead of it so it inherits
+their refusals rather than inventing its own.
 
 What is here is everything that has to be right _before_ any of that can be
-written: the trust boundary, the credential exchange, and the two checks
+written: the trust boundary, the credential exchange, and the three checks
 between "this delivery is genuine" and "this delivery may cause something" —
-[authorization](#repository-and-installation-authorization) and
-[replay protection](#replay-protection).
+[authorization](#repository-and-installation-authorization),
+[replay protection](#replay-protection) and
+[which key it may sign with](#which-key-a-delivery-may-sign-with).
 
 ## Setup
 
@@ -77,8 +81,10 @@ Then in `wrangler.toml`, under `[vars]`:
 GITHUB_APP_ENABLED = "true"
 GITHUB_APP_ID      = "123456"  # from the App's settings page
 
-# Which <installation, repository> pairs a delivery may be about.
-GITHUB_APP_ALLOWED_REPOSITORIES = "12345678:kjanat/gpg-signing-service"
+# Which <installation, repository> pairs a delivery may be about, and which
+# key each of them may cause to sign with. The `=<keyId>` suffix is optional;
+# without it the repository's events are received and may sign nothing.
+GITHUB_APP_ALLOWED_REPOSITORIES = "12345678:kjanat/gpg-signing-service=62E75E54497815DD"
 ```
 
 The installation id is in the URL of the App's "Configure" page for that
@@ -106,6 +112,7 @@ answers:
   "delivery": "…",
   "installation": false,
   "scope": "none",
+  "signingKey": false,
   "duplicate": false,
   "handled": false
 }
@@ -113,9 +120,11 @@ answers:
 
 `handled` is always `false` while this is a scaffold. `scope` is what the
 allowlist granted this delivery — `none` for the App-level ping, which names
-neither an installation nor a repository. `duplicate` marks a delivery id that
-was already claimed; redeliver the same event from the Advanced tab and the
-second answer is `200` with `"duplicate": true`.
+neither an installation nor a repository. `signingKey` says whether the matched
+grant binds a key, not which one; the id itself is in the delivery's log line
+rather than in the response, because the sender has no use for it. `duplicate`
+marks a delivery id that was already claimed; redeliver the same event from the
+Advanced tab and the second answer is `200` with `"duplicate": true`.
 
 ## What each answer means
 
@@ -130,7 +139,7 @@ second answer is `200` with `"duplicate": true`.
 | `404`  | `NOT_FOUND`              | `GITHUB_APP_ENABLED` is not `"true"`.                                        |
 | `413`  | `PAYLOAD_TOO_LARGE`      | Body over GitHub's 25 MiB cap. It was not read.                              |
 | `429`  | `RATE_LIMITED`           | Too many deliveries from this address. Not retried by GitHub.                |
-| `500`  | `SERVICE_MISCONFIGURED`  | Enabled, but `GITHUB_WEBHOOK_SECRET` is unset or the allowlist is malformed. |
+| `500`  | `SERVICE_MISCONFIGURED`  | Enabled, but `GITHUB_WEBHOOK_SECRET` is unset or the allowlist is unusable.  |
 | `503`  | `SERVICE_DEGRADED`       | The delivery ledger could not be reached, so replay could not be ruled out.  |
 
 `AUTH_SUBJECT_UNTRUSTED` rather than `AUTH_INVALID` for an unauthorized pair,
@@ -255,6 +264,129 @@ from the matched entry, not the payload's. A handler reading
 own subject, one layer further in — and doing so having passed a check, which is
 worse than having no check. Taking it from the decision makes the safe path the
 short one.
+
+## Which key a delivery may sign with
+
+Authorization says a delivery may be _about_ `owner/repo`. It does not say the
+service will sign anything for it, and those are different grants: a repository
+can be allowlisted so its events are received without being allowed to make a
+signing service sign.
+
+So an entry may bind exactly one key, in the same string:
+
+```toml
+GITHUB_APP_ALLOWED_REPOSITORIES = "12345678:kjanat/gpg-signing-service=62E75E54497815DD, 12345678:kjanat/tools"
+```
+
+`gpg-signing-service` may cause `62E75E54497815DD` to sign. `tools` may cause
+nothing to sign; its deliveries are still received, authorized and logged.
+
+### Why the key is in the entry and not in its own variable
+
+A second variable is a second list, and two lists have to be kept in step by
+hand. Anything that can drift can drift _open_ — a key entry for a pair nobody
+authorized, or a pair whose authorization was edited and whose key entry was
+not. With one entry there is nothing to reconcile, because there is only ever
+one string to read, and the atomic unit of configuration is the whole grant:
+installation, repository, key.
+
+It is the same argument as [why the entries are pairs](#why-the-entries-are-pairs),
+applied once more. Independent lists authorize combinations nobody wrote.
+
+### There is no default key
+
+Not `KEY_ID`, not the only key in storage, not the last key uploaded. A pair
+with no `=<keyId>` suffix may not cause a signature, full stop.
+
+`KEY_ID` is the default for `POST /sign`, and that is a different situation: a
+caller there has authenticated with OIDC or a service token and had _its own_
+key grant checked before the default is reached. A webhook delivery is a
+different caller with a different grant, and letting it inherit the API's
+default would mean every allowlisted repository silently acquired authority over
+the service's own key the moment it was allowlisted.
+
+The shape that would do it is `authorization.keyId ?? env.KEY_ID` — one
+operator, one afternoon, one `??`. Which is why the nullable field is not the
+interface: `requireSigningKey` in `src/utils/github-signing-key.ts` returns
+either a key id or a reason, and the three situations in which there is no key —
+a `none`-scope ping, an `installation`-scope event, and a `repository`-scope
+pair with nothing bound — are refusals rather than a null a caller has to
+remember to handle.
+
+### The key comes from the entry, never from the payload
+
+Same rule as the repository, and for the same reason. No function involved in
+resolving a key takes a payload argument at all, so a delivery cannot name a key
+it would like used, cannot add one at a level someone might later read, and
+cannot widen the one its own grant gave it. A delivery that names a _different_
+repository matches a different entry, or none — it does not borrow the key of
+the one it was checked against.
+
+### Canonicalisation
+
+Key ids are 16 hexadecimal characters. Comparison and storage use the
+upper-case spelling — `KeyIdSchema` normalises on the way in, so that is what
+`KeyStorage` keys its records by — and an entry is normalised to match. An
+operator who pastes `62e75e54497815dd` gets the key they meant rather than a
+lookup that misses.
+
+Repositories are matched case-insensitively, as before, and the key rides along
+with whatever spelling the operator used for the pair.
+
+### Fail closed, in every direction
+
+- **An unusable key refuses the whole allowlist**, the same `500` a malformed
+  pair produces. Not "drop the suffix and keep the pair": that turns a typo into
+  a repository that is still authorized to receive deliveries and has quietly
+  lost the binding an operator wrote, which is a policy change made by a
+  keystroke. `=` with nothing after it is refused for the same reason — it is a
+  binding someone started writing.
+- **A pair may appear at most once.** A repeated pair refuses the whole list
+  _even when the two entries agree_, because resolution takes the first match:
+  a second entry is either dead configuration or a second opinion about which
+  key a repository may use that nobody will notice being ignored. Compared
+  case-insensitively, so the conflict cannot be hidden by spelling the
+  repository differently the second time. One repository under two different
+  installations is not a duplicate — the pair is the unit — and may bind two
+  different keys.
+- **A key id that is not shaped like one is refused at the point of use too**,
+  not only at parse time. The value crosses a context boundary as a plain
+  string, and re-checking is what lets the resolved id be a branded `KeyId`
+  rather than a cast into a URL path.
+- **A bound key this deployment does not hold is a refusal**, distinct from a
+  key store that could not be reached. Different problems, different fixes: one
+  is an allowlist to edit, the other is an outage to wait out, and collapsing
+  them sends an operator to change configuration that is correct.
+
+### Where key existence is checked
+
+Not at parse time, and not as a pre-check. The allowlist is parsed per request,
+so validating existence there would put a `KeyStorage` round trip in front of
+every delivery — including the ones that were never going to sign, which today
+is all of them — to answer a question that goes stale the moment a key is
+deleted. The obvious repair for that cost is a cache, and a cache of "this key
+exists" is a cache whose stale entries point at a key that is gone.
+
+A pre-check immediately before use is no better: a separate "does it exist"
+fetch followed by a "give me the key" fetch is two round trips with a window
+between them, so the check establishes nothing the use does not and the code
+still has to handle the missing key at the point of use.
+
+So existence is established by **the fetch the signing action has to perform
+anyway**. `loadSigningKey` resolves the binding and reads the key in one go, and
+answers with the key or with `key_missing` / `key_storage_unavailable`. No
+separate check, therefore no cache, no staleness and no window — the same
+boundary `POST /sign` already uses.
+
+### What is logged
+
+An accepted delivery's log line carries the bound key id, and the reason when
+there is none — `no_key_bound` is the one worth watching for, because it means
+an allowlisted repository is missing its suffix and would be refused the moment
+a handler tried to sign for it. A key id is not a secret: `/public-key` serves
+the key it names. It is logged rather than returned because the sender has no
+use for it, and both the id and the repository come from the matched entry, so
+a log line cannot be made to name a key nobody granted.
 
 ## Replay protection
 

@@ -129,7 +129,7 @@ function pushPayload(installationId: number, fullName: string) {
 describe("allowlist parsing", () => {
 	it("reads a single pair", () => {
 		expect(parseRepositoryAllowlist(GRANT)).toEqual([
-			{ installationId: INSTALLATION, repository: REPOSITORY.toLowerCase(), spelling: REPOSITORY },
+			{ installationId: INSTALLATION, repository: REPOSITORY.toLowerCase(), spelling: REPOSITORY, keyId: null },
 		]);
 	});
 
@@ -273,7 +273,7 @@ describe("the decision", () => {
 
 		expect(decision).toEqual({
 			allowed: true,
-			authorization: { scope: "repository", installationId: INSTALLATION, repository: REPOSITORY },
+			authorization: { scope: "repository", installationId: INSTALLATION, repository: REPOSITORY, keyId: null },
 		});
 	});
 
@@ -352,7 +352,7 @@ describe("the decision", () => {
 	it("grants installation scope, and no repository, to an allowlisted installation", () => {
 		expect(authorizeDelivery(allowlist, { installation: { id: INSTALLATION } })).toEqual({
 			allowed: true,
-			authorization: { scope: "installation", installationId: INSTALLATION, repository: null },
+			authorization: { scope: "installation", installationId: INSTALLATION, repository: null, keyId: null },
 		});
 	});
 
@@ -368,7 +368,7 @@ describe("the decision", () => {
 		// writing an allowlist, and it authorizes exactly what it named: nothing.
 		expect(authorizeDelivery([], { zen: "Practicality beats purity." })).toEqual({
 			allowed: true,
-			authorization: { scope: "none", installationId: null, repository: null },
+			authorization: { scope: "none", installationId: null, repository: null, keyId: null },
 		});
 	});
 
