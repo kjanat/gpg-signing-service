@@ -121,6 +121,7 @@
           "RATE_LIMIT_ERROR",
           "RATE_LIMITED",
           "INVALID_REQUEST",
+          "PAYLOAD_TOO_LARGE",
           "AUDIT_ERROR",
           "NOT_FOUND",
           "INTERNAL_ERROR",

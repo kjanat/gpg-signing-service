@@ -8,7 +8,7 @@ import { RateLimiter as RateLimiterClass } from "#durable-objects/rate-limiter";
 import { createOpenAPIApp, openApiConfig, registerSecuritySchemes } from "#lib/openapi";
 import { callerAuth } from "#middleware/caller-auth";
 import { errorDocs } from "#middleware/error-docs";
-import { githubWebhookAuth, githubWebhookGate, webhookRateLimit } from "#middleware/github-webhook";
+import { githubWebhookAuth, githubWebhookGate, webhookBodyLimit, webhookRateLimit } from "#middleware/github-webhook";
 import { adminAuth } from "#middleware/oidc";
 import { requestIdMiddleware } from "#middleware/request-id";
 import { adminRateLimit, productionCors, securityHeaders } from "#middleware/security";
@@ -244,10 +244,14 @@ app.route(
 
 // GitHub App webhook, opt-in.
 //
-// Three middlewares rather than one, and in this order: the feature gate first
+// Four middlewares rather than one, and in this order: the feature gate first
 // so a deployment that has not set GITHUB_APP_ENABLED spends nothing at all on
-// a request to a route it does not serve, then the limiter, then the HMAC — the
-// same "meter before you verify" shape /admin uses, for the same reason.
+// a request to a route it does not serve; then the declared-size ceiling, which
+// is one header read and so cheaper than the round trip that follows it; then
+// the limiter; then the HMAC — the same "meter before you verify" shape /admin
+// uses, for the same reason. The ceiling is enforced a second time inside the
+// HMAC middleware, on the octets that actually arrive, because the header the
+// second gate reads is written by the sender under suspicion.
 //
 // Nothing under here is in the OpenAPI document; see the comment at the top of
 // `#routes/github-webhook` for why.
@@ -255,6 +259,7 @@ app.route(
 	"/github",
 	createOpenAPIApp()
 		.use("*", githubWebhookGate)
+		.use("*", webhookBodyLimit)
 		.use("*", webhookRateLimit)
 		.use("*", githubWebhookAuth)
 		.route("/", githubWebhookRoutes),

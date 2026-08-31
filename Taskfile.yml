@@ -72,6 +72,16 @@ tasks:
     # `task test:coverage` is what enforces them; this is the fast inner loop.
     cmd: bun run test --coverage.enabled=false src/__tests__/sentry.test.ts
 
+  test:webhook:
+    desc: Run the GitHub webhook trust-boundary suite alone — the inner loop of its mutation set
+    aliases: [twh, webhook]
+    deps: [install:noscripts]
+    # Same reason as `test:sentry` above: coverage thresholds are global, so a
+    # single-file run trips them on the files it did not load. `task
+    # test:coverage` is what enforces them; this is the fast inner loop for
+    # checking that a mutation to the webhook gates is caught.
+    cmd: bun run test --coverage.enabled=false src/__tests__/github-webhook.test.ts
+
   test:gnupg-interop:
     desc: Verify signatures against real gpg and git (skips if gpg is absent)
     aliases: [interop]

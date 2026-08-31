@@ -8,7 +8,7 @@
  * written on the assumption that a payload reaching it was signed with a secret
  * only GitHub and this deployment hold.
  *
- * Two properties carry that weight, and both are easy to lose by accident:
+ * Three properties carry that weight, and each is easy to lose by accident:
  *
  * **The bytes verified are the bytes that arrived.** GitHub signs the body
  * octet by octet. `JSON.parse` followed by `JSON.stringify` produces a different
@@ -23,6 +23,12 @@
  * comparison to a forgery. `crypto.subtle.timingSafeEqual` is what stops that,
  * and it only helps if it is reached — hence the fixed-width parse below, which
  * makes every well-formed candidate take the same path.
+ *
+ * **The verification is bounded.** The MAC covers the whole body, so the body
+ * has to be in memory before anything is known about the sender. The ceiling
+ * below — GitHub's own — is what turns "buffer whatever arrives" into a fixed
+ * cost, and it is enforced on the octets received rather than on the sender's
+ * account of how many it is about to send.
  */
 
 /** The header GitHub puts the HMAC in. */
@@ -138,4 +144,114 @@ export function installationIdOf(payload: unknown): number | null {
 	const id = (installation as { id?: unknown }).id;
 
 	return typeof id === "number" && Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+/**
+ * GitHub's own ceiling on a webhook payload, in bytes.
+ *
+ * 25 MiB, [documented on the events-and-payloads
+ * page](https://docs.github.com/en/webhooks/webhook-events-and-payloads#payload-cap):
+ * a delivery larger than this is not truncated, it is *not sent*. So this is
+ * not a policy invented here that honest traffic could grow into — it is the
+ * number above which a request cannot have come from GitHub, whatever its
+ * signature says.
+ *
+ * The ceiling exists because the HMAC runs over the whole body, and the body is
+ * read before anything is known about the sender. Workers accept up to 100 MB
+ * against a 128 MB isolate memory limit, and the rate limiter in front bounds
+ * request *count*, not bytes — so without this, one metered request per second
+ * is still an unbounded amount of buffering, and the failure mode is an
+ * "Exceeded memory limit" isolate kill that takes the other in-flight requests
+ * on that isolate with it.
+ */
+export const MAX_WEBHOOK_BODY_BYTES = 25 * 1024 * 1024;
+
+/**
+ * `Content-Length` as a byte count, or null when there is no usable one.
+ *
+ * Strict digits, because everything else about this header is attacker-chosen.
+ * `Number("")` is `0` and `Number(" 25 ")` is `25`, so a lenient parse would
+ * read an empty or padded value as a small declared body and wave it through
+ * the check below — which is fine only because nothing here *trusts* the
+ * answer: an unparseable value reads as "not declared", and an undeclared body
+ * is metered by {@link readBodyWithin} as it arrives.
+ */
+export function declaredBodyLength(value: string | null | undefined): number | null {
+	if (value === undefined || value === null || !/^\d+$/.test(value)) {
+		return null;
+	}
+
+	const length = Number(value);
+
+	return Number.isSafeInteger(length) ? length : null;
+}
+
+/**
+ * The request body, or null when it is larger than `limit` bytes.
+ *
+ * **Deliberately does not read `Content-Length`.** A guard that did would be
+ * satisfied by a sender that simply declares a smaller number than it sends,
+ * which is one line of client code — the header is a claim by the same party
+ * whose body is under suspicion. This counts the octets it actually receives
+ * and stops reading at the first chunk that crosses the ceiling, so the most
+ * memory a single delivery can cost is the limit plus one chunk. The header
+ * check that exists in the middleware is an optimisation on top of this, not
+ * the protection: it declines a request that has already told us it is too big
+ * before spending anything at all, and this is what catches the ones that lie.
+ *
+ * Returns null rather than throwing so the caller answers with a status rather
+ * than a fault: a body over the ceiling is a refusal, not a bug.
+ *
+ * @param request - The request whose body to read; its stream is consumed
+ * @param limit - Largest acceptable body, in bytes, inclusive
+ */
+export async function readBodyWithin(request: Request, limit: number): Promise<ArrayBuffer | null> {
+	const stream = request.body;
+
+	if (stream === null) {
+		// No stream to meter, which for a `Request` means no octets: `body` is null
+		// exactly when there is no body, and `arrayBuffer()` on one of those
+		// resolves empty. So there is nothing to count and nothing to buffer. The
+		// branch exists because a `GET` reaching this code must not throw — a fault
+		// here would be a 500 on a path whose whole design is to answer 401s and
+		// 404s — rather than because a bodyless request could be over a ceiling.
+		return request.arrayBuffer();
+	}
+
+	const reader = stream.getReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+
+	try {
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) {
+				break;
+			}
+
+			total += value.byteLength;
+			if (total > limit) {
+				// Stop pulling. Cancelling propagates back to the sender rather than
+				// draining the rest of the upload into a buffer nobody will read.
+				await reader.cancel();
+				return null;
+			}
+
+			chunks.push(value);
+		}
+	} finally {
+		reader.releaseLock();
+	}
+
+	// Concatenated by hand rather than through `new Blob(chunks).arrayBuffer()`:
+	// the exact octets are what the HMAC is computed over, and this keeps the
+	// copy visible and single.
+	const body = new Uint8Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		body.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+
+	return body.buffer;
 }
