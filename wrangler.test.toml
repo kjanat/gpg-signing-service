@@ -68,6 +68,10 @@ ADMIN_READONLY_TOKEN = "test-readonly-admin-token"
 # shipped default is what keeps "off" covered by every other suite in the tree
 # rather than by one assertion.
 GITHUB_APP_ENABLED    = "false"
+# Check-run reporting ships off too, and the suite asserts that an enabled
+# integration with this unset makes no Checks API call at all. The tests that
+# want it on supply their own env.
+GITHUB_APP_CHECK_RUNS = "false"
 GITHUB_APP_ID         = "123456"
 GITHUB_WEBHOOK_SECRET = "test-webhook-secret"
 

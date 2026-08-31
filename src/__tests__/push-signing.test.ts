@@ -1809,6 +1809,37 @@ describe("through the endpoint", () => {
 			expect(github.calls().some((call) => call.method === "PATCH")).toBe(true);
 		});
 
+		it.each([
+			[
+				"the repository is over its budget",
+				() => Response.json({ allowed: false, remaining: 0 }, { status: 429 }),
+				429,
+			],
+			["the budget cannot be read at all", () => new Response("boom", { status: 500 }), 503],
+		])("makes no Checks API call when %s", async (_case, pushMeter, status) => {
+			// The budget bounds this service *acting on* a repository under one
+			// `<installation, repository, key>` grant, and a check run is acting on
+			// it: a ref read, a commit read, a check-run lookup and a write, all
+			// under the installation token. Reporting after a refusal would let a
+			// delivery loop the budget refuses every time keep spending four calls
+			// per delivery, and would have this service publishing a verdict about a
+			// commit it had just declined to touch.
+			//
+			// Reporting is switched on here, so a zero is a decision rather than a
+			// deployment that never opted in — the same fixture with the budget
+			// allowing publishes one.
+			const github = stubGitHub();
+
+			const { response } = await deliverPush({
+				payload: pushPayload(INSTALLATION, REPOSITORY),
+				allowlist: `${INSTALLATION}:${REPOSITORY}=${KEY}`,
+				overrides: { ...limiterAnswering(pushMeter), GITHUB_APP_CHECK_RUNS: "true" },
+			});
+
+			expect(response.status).toBe(status);
+			expect(github.calls().some((call) => call.path.includes("check-runs"))).toBe(false);
+		});
+
 		it("fails closed when the limiter answers with an error rather than a verdict", async () => {
 			stubGitHub();
 
