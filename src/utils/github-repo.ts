@@ -514,7 +514,15 @@ export class RepositoryClient {
 	 * lists every app's runs, `check_name` is not unique across apps, and a
 	 * client that took the first match would try to update a run belonging to
 	 * somebody else — which GitHub refuses, so the visible failure would be a
-	 * 403 on a path that should have created its own run instead.
+	 * 403 on a path that should have created its own run instead. `app_id` is
+	 * *also* sent, so a page of somebody else's runs cannot crowd ours out of the
+	 * first hundred; the local filter is what decides, the query is what narrows.
+	 *
+	 * `filter=all` is not optional. This endpoint defaults to `filter=latest`,
+	 * which answers with the most recent run per name — which is precisely the
+	 * answer that hides the older duplicate a create race can leave behind, and
+	 * so the answer that makes the ordering rule below unable to do the one job
+	 * it exists for.
 	 *
 	 * Sorted by id, which is monotonic, so "the earliest one" is a stable choice
 	 * that two callers reach independently. That is what makes convergence
@@ -524,7 +532,7 @@ export class RepositoryClient {
 	async listCheckRuns(sha: string, name: string, appId: number): Promise<{ id: number }[]> {
 		const response = await this.call(
 			"GET",
-			`/commits/${encodeURIComponent(sha)}/check-runs?check_name=${encodeURIComponent(name)}&per_page=100`,
+			`/commits/${encodeURIComponent(sha)}/check-runs?check_name=${encodeURIComponent(name)}&filter=all&app_id=${appId}&per_page=100`,
 		);
 		const listed = await this.read(response, CheckRunListSchema, "a check run lookup");
 

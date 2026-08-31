@@ -292,14 +292,21 @@ async function verifiesUnder(signature: openpgp.Signature, payload: string, key:
 			format: "binary",
 		});
 
-		// `verified` rejects rather than resolving false, which is why these are
-		// awaited inside the try rather than returned out of it. The length is
-		// checked *after* awaiting rather than before: `Promise.all` over an empty
-		// list resolves happily, so a result carrying no signature at all would
-		// otherwise come back as a pass.
-		const verdicts = await Promise.all(result.signatures.map((each) => each.verified));
+		// `verified` rejects rather than resolving false, and openpgp builds one of
+		// them per signature *packet* — rejecting any whose issuer is not among
+		// `verificationKeys`. So each is settled on its own rather than through
+		// `Promise.all`: one armor can carry more than one packet, and under
+		// `Promise.all` a commit holding our own valid signature beside a
+		// stranger's would come back false — which is `invalid_signature`, the one
+		// state that is an accusation, published against a commit this service
+		// signed correctly.
+		//
+		// At least one has to have verified, so an empty list is still a failure:
+		// `Promise.allSettled` over nothing resolves happily, and a result carrying
+		// no signature at all must not read as a pass.
+		const verdicts = await Promise.allSettled(result.signatures.map((each) => each.verified));
 
-		return verdicts.length > 0;
+		return verdicts.some((verdict) => verdict.status === "fulfilled" && verdict.value === true);
 	} catch {
 		return false;
 	}

@@ -326,6 +326,30 @@ describe("what a commit's signature is allowed to prove", () => {
 		expect(finding.state).toBe("service_key_valid");
 	});
 
+	it("still attributes a commit carrying our signature beside a stranger's", async () => {
+		// One `gpgsig` armor, two signature packets. openpgp builds a verification
+		// per packet and *rejects* the one whose issuer it holds no key for, so a
+		// reader that required every packet to verify would publish
+		// `invalid_signature` — the one state that is an accusation — against a
+		// commit this service signed perfectly well.
+		const payload = payloadFor("co-signed");
+		const signature = (await openpgp.sign({
+			message: await openpgp.createMessage({ binary: new TextEncoder().encode(payload) }),
+			signingKeys: [
+				await openpgp.readPrivateKey({ armoredKey: key.armoredPrivateKey }),
+				await openpgp.readPrivateKey({ armoredKey: stranger.armoredPrivateKey }),
+			],
+			detached: true,
+			format: "armored",
+		})) as string;
+
+		const commit = await signedCommit(payload, signature);
+		const finding = await inspectCommitSignature(reported(commit), key.publicKey);
+
+		expect(finding.state).toBe("service_key_valid");
+		expect(finding.detail).toBe("verified");
+	});
+
 	it("still attributes a signature made before its key expired", async () => {
 		// A characterization test, and labelled as one because the property is
 		// openpgp.js's rather than this module's: `verify` looks a key up by id and
@@ -721,6 +745,12 @@ describe("the Checks API on the repository-scoped client", () => {
 		// The name is a query filter as well as a local one; GitHub's filter is not
 		// trusted to be the only thing that narrows the list.
 		expect(seen.at(-1)?.url).toContain(`check_name=${encodeURIComponent(CHECK_RUN_NAME)}`);
+		// `filter` defaults to `latest` on this endpoint, which answers with the
+		// most recent run per name — and so hides exactly the older duplicate the
+		// earliest-wins rule above exists to converge on. Asserted here because a
+		// stub that ignores the query string cannot tell the two apart.
+		expect(seen.at(-1)?.url).toContain("filter=all");
+		expect(seen.at(-1)?.url).toContain(`app_id=${APP_ID}`);
 	});
 
 	it("sends head_sha when creating and never when updating", async () => {

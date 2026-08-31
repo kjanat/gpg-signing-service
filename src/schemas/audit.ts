@@ -53,8 +53,8 @@ export const AuditQuerySchema = z
  * published about a commit's signature. It is separate from `push_sign` because
  * the two are different acts with different blast radii — one rewrites history
  * and one states a verdict about it — and because a delivery can do the second
- * without doing the first, which is exactly what happens on the redelivery that
- * follows a signing push.
+ * without doing the first, which is what happens whenever the tip is already
+ * signed and there is nothing left to rewrite.
  */
 export const AuditActionSchema = z
 	.enum([
