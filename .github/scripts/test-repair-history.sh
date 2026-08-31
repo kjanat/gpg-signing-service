@@ -19,6 +19,57 @@ repo_root="$(git rev-parse --show-toplevel)"
 assert_script="${repo_root}/.github/scripts/assert-repaired-range.sh"
 repair_script="${repo_root}/.github/scripts/repair-history.sh"
 
+# --- the wiring ---------------------------------------------------------------
+#
+# A repair nothing can dispatch is a repair that gets run by hand. The workflow
+# arrives the way the other workflow files this repository's bot writes do: in
+# .github/workflows-pending/, because a GitHub App token has no `workflows`
+# permission, activated by a human with one `git mv`.
+#
+# Resolved PENDING-first, and checked before the gpg/jq/go skips below so the
+# wiring is asserted on every machine. Once the file is moved into place this
+# follows it and becomes a standing guard.
+pending_workflow="${repo_root}/.github/workflows-pending/repair-history.yml"
+live_workflow="${repo_root}/.github/workflows/repair-history.yml"
+
+if [[ -f "${pending_workflow}" ]]; then
+	workflow="${pending_workflow}"
+	printf '  note: the repair workflow is still pending activation (git mv %s .github/workflows/repair-history.yml)\n' \
+		'.github/workflows-pending/repair-history.yml'
+elif [[ -f "${live_workflow}" ]]; then
+	workflow="${live_workflow}"
+else
+	echo 'FAIL: repair-history.yml is in neither .github/workflows/ nor .github/workflows-pending/' >&2
+	exit 1
+fi
+
+grep -Fq '.github/scripts/repair-history.sh' "${workflow}" || {
+	printf 'FAIL: %s does not run .github/scripts/repair-history.sh\n' "${workflow}" >&2
+	exit 1
+}
+[[ -x "${repair_script}" ]] || {
+	printf 'FAIL: %s is not an executable file in this tree\n' "${repair_script}" >&2
+	exit 1
+}
+
+# The two defaults that decide what an operator gets when they fill in the
+# bounds and press the button. A dispatch that plans is recoverable; one that
+# rewrites and publishes twenty commits is the thing this whole command exists
+# to clean up after. Both are asserted here because a YAML default is one
+# character away from its opposite and nothing else would notice.
+dry_run_default="$(awk '/^      dry_run:/ { found = 1 } found && /default:/ { print $2; exit }' "${workflow}")"
+push_default="$(awk '/^      push:/ { found = 1 } found && /default:/ { print $2; exit }' "${workflow}")"
+if [[ "${dry_run_default}" != "true" ]]; then
+	printf 'FAIL: %s does not default dry_run to true (got %q)\n' "${workflow}" "${dry_run_default}" >&2
+	exit 1
+fi
+if [[ "${push_default}" != "false" ]]; then
+	printf 'FAIL: %s does not default push to false (got %q)\n' "${workflow}" "${push_default}" >&2
+	exit 1
+fi
+
+printf 'repair workflow: wired, dry by default\n'
+
 # The fixture must inherit no GIT_* state at all. Worst first: GIT_DIR and
 # GIT_WORK_TREE aim the fixture's commands back at the caller's own repository,
 # so `init` re-inits it and the fixture's commits land there; GIT_INDEX_FILE,
