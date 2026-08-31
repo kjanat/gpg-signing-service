@@ -418,7 +418,9 @@ rather than one in Go and a second in Python. The order is
 
 1. merge the `repair-history` capability;
 2. publish a `gpg-sign` release containing it and `sign-commit`;
-3. point `.github/workflows/sign-commits.yml` at `sign-commits.sh`;
+3. point `.github/workflows/sign-commits.yml` at `sign-commits.sh`, drop the
+   `NOT ACTIVE YET` header from the moved file, and drop the paragraph in
+   `docs/integrations.md` that says the workflow is still pending;
 4. delete the Python path once nothing invokes it (this is that step,
    together with 3);
 5. run the production repair, with `PUSH=true`, from a checkout that has the
@@ -443,8 +445,25 @@ committer is `GitHub <noreply@github.com>` or whose author or committer name
 ends in `[bot]`. Run it on pushes to the default branch, over the commits the
 push added, so a merge that manufactures identities is a red build immediately
 rather than twenty commits later. `PROVENANCE_ALLOW` takes addresses to permit
-anyway, one per line. A `Co-authored-by:` trailer is a message trailer and is
-not affected.
+anyway, one per line.
+
+It reads the message as well as the headers. A `Co-authored-by:` trailer is a
+provenance claim too, and this branch had to be rewritten once because four
+commits carried one that no one typed: correct `Kaj Kowalski` headers over
+`Co-authored-by: Kaj Kowalski <6353477+kjanat@users.noreply.github.com>`, which
+the header-only guard passed without comment. So a trailer whose name ends in
+`[bot]`, or whose address is `noreply@github.com` or any
+`users.noreply.github.com` alias, is refused for the same reason the headers
+are — it credits an account a tool had the id for, not a correspondent. An
+ordinary human co-author at an address they write from is untouched, and
+`PROVENANCE_ALLOW` reaches the trailers too. `Signed-off-by:` is a different
+claim and is not read.
+
+The job that runs it is gated on `github.event_name == 'push' &&
+github.event.deleted == false`: deleting a branch is a push too, and one whose
+`github.sha` is the default branch's tip, so `before..after` would span commits
+the deletion never touched. `task test:commit-provenance` asserts that
+condition against whichever of the patch or `ci.yml` currently carries the job.
 
 The CI job that calls it arrives as
 `.github/workflows-pending/ci-provenance-job.patch`, for the same reason the

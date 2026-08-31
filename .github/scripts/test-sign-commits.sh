@@ -57,7 +57,8 @@ if [[ -f "${pending_workflow}" ]]; then
 	# script and stays red until the `git mv` above lands in the same tree —
 	# which is exactly the atomicity the two-file split cannot otherwise
 	# enforce, since the branch that writes one of them cannot write the other.
-	live_names="$(names_script "${live_workflow}")"
+	live_names=''
+	[[ -f "${live_workflow}" ]] && live_names="$(names_script "${live_workflow}")"
 	if [[ -n "${live_names}" && ! -x "${repo_root}/${live_names}" ]]; then
 		printf 'FAIL: .github/workflows/sign-commits.yml still runs %s, which is not in this tree.\n' \
 			"${live_names}" >&2
@@ -83,6 +84,33 @@ if [[ ! -x "${repo_root}/${named}" ]]; then
 fi
 if [[ "${named}" != .github/scripts/sign-commits.sh ]]; then
 	printf 'FAIL: %s still runs %s; the signing walk belongs to gpg-sign sign-commit\n' "${workflow}" "${named}" >&2
+	exit 1
+fi
+
+# Documentation is the other half of the same boundary. A page that says the
+# live workflow runs sign-commits.sh, while the file it links to still runs the
+# Python that script replaces, sends the reader to the wrong file and reads as
+# though the activation had already happened — which is how the two halves come
+# apart quietly rather than loudly. So the claim in the docs is tied to which
+# of the two files exists, in both directions: pending must be described as
+# pending, and once it is activated the sentence saying so has to go with it.
+integrations_doc="${repo_root}/docs/integrations.md"
+pending_link='.github/workflows-pending/sign-commits.yml'
+pending_sentence='That workflow is not live yet'
+if [[ -f "${pending_workflow}" ]]; then
+	if ! grep -Fq "${pending_link}" "${integrations_doc}"; then
+		printf 'FAIL: docs/integrations.md does not say the Sign Commits workflow is still pending;
+' >&2
+		printf '      it should name %s and link to it.
+' "${pending_link}" >&2
+		exit 1
+	fi
+elif grep -Fq "${pending_sentence}" "${integrations_doc}"; then
+	printf 'FAIL: docs/integrations.md still says %q, but %s is gone —
+' \
+		"${pending_sentence}" "${pending_link}" >&2
+	printf '      the workflow is activated. Drop that paragraph.
+' >&2
 	exit 1
 fi
 
