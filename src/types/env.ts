@@ -4,7 +4,7 @@
 
 import type { Context } from "hono";
 import type { Identity } from "#types/branded";
-import type { WebhookAuthorization, WebhookDelivery, WebhookReplay } from "#types/github";
+import type { WebhookAuthorization, WebhookDelivery, WebhookOutcome, WebhookReplay } from "#types/github";
 import type { ValidatedOIDCClaims } from "#types/oidc";
 
 /** Context variables (for c.set/c.get) */
@@ -64,6 +64,17 @@ export interface Variables {
 	 * that finds it is running for the first time on this event.
 	 */
 	webhookReplay?: WebhookReplay;
+	/**
+	 * What the handler did with the delivery, read by `webhookReplayGuard` on the
+	 * way out to settle the reservation.
+	 *
+	 * `retryable` is an assertion only the handler can make: **this run stopped
+	 * before its irreversible step**, so handing the delivery id back cannot
+	 * cause the effect to happen twice. Absent — or absent because the handler
+	 * threw — commits the id, which is the fail-safe reading: a handler that says
+	 * nothing is treated as one that acted.
+	 */
+	webhookOutcome?: WebhookOutcome;
 }
 
 /** Cloudflare Workers environment bindings */

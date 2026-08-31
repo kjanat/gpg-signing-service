@@ -29,12 +29,15 @@
  *    sign things cannot afford to answer them with one check.
  * 6. `webhookReplayGuard` — has this delivery id been acted on already? **Last,
  *    and that position is the security property**, not an ordering convenience.
- *    Claiming an id is one-way: whoever claims it first makes every later
- *    arrival of that id a no-op. Put this ahead of step 4 or step 5 and an
- *    unauthenticated stranger — or an authenticated one with no grant — could
- *    burn the id of a delivery it is not allowed to cause, and so suppress the
- *    real one. Nothing consumes an id until the delivery has proved both that
- *    it came from GitHub and that it is allowed to be about what it says.
+ *    Reserving an id excludes every other copy of it: whoever reserves first
+ *    makes every concurrent arrival a no-op. Put this ahead of step 4 or step 5
+ *    and an unauthenticated stranger — or an authenticated one with no grant —
+ *    could burn the id of a delivery it is not allowed to cause, and so suppress
+ *    the real one. Nothing reserves an id until the delivery has proved both
+ *    that it came from GitHub and that it is allowed to be about what it says.
+ *    It is also the only middleware that runs *after* the handler: it settles
+ *    the reservation on the way out, which is what makes a recoverable failure
+ *    redeliverable rather than permanently spent.
  *
  * Steps 2 and 4 are the same limit enforced twice on purpose, and neither is
  * redundant. The header is a claim by the party whose body is in question, so
@@ -65,7 +68,7 @@ import {
 } from "#utils/github-webhook";
 import { logger } from "#utils/logger";
 import { rateLimitExceeded, retryAfterSeconds } from "#utils/rate-limit";
-import { claimDelivery, isDeliveryId } from "#utils/webhook-replay";
+import { commitDelivery, isDeliveryId, releaseDelivery, reserveDelivery } from "#utils/webhook-replay";
 
 /**
  * Rate-limiter namespace for webhook deliveries.
@@ -448,14 +451,14 @@ export const githubWebhookAuthorize: WebhookMiddleware = async (c, next) => {
 };
 
 /**
- * Refuse a delivery id that has already been acted upon.
+ * Refuse a delivery id that has already been acted upon, and settle it after.
  *
  * A webhook signature covers the body and nothing else — no timestamp, no nonce
  * — so a delivery that verified once verifies forever, and the only thing
  * separating a repeat from a fresh event is `X-GitHub-Delivery`. See
  * `#utils/webhook-replay` for what this can and cannot promise.
  *
- * Three decisions worth naming:
+ * Four decisions worth naming:
  *
  * **A repeat is answered here, not by the handler.** The guard short-circuits,
  * so a duplicate never reaches a route. "Do not act twice" is then a property of
@@ -466,27 +469,27 @@ export const githubWebhookAuthorize: WebhookMiddleware = async (c, next) => {
  * delivery, and a redelivery an operator triggers on purpose is not a failure —
  * the event was already handled, which is the outcome they wanted. The body says
  * `duplicate: true` so the answer is still distinguishable from a first
- * arrival.
+ * arrival. A duplicate that arrives while the first copy is still *running* gets
+ * the same answer, and must: that is the concurrency case the ledger exists for.
  *
- * **The claim is taken before the handler runs, and never released.** So a
- * delivery is consumed the moment it is accepted, however the handler behind
- * this guard ends: one that acts and then throws leaves the id spent, the
- * response is a 500, and the operator's redelivery — the one recovery
- * affordance GitHub offers — is answered `200 {"duplicate": true}` without
- * acting. That is **at-most-once**, which is the right default for a service
- * that signs things, and it is free while the handler acts on nothing. It is
- * not free afterwards: the first handler that acts must either be idempotent
- * and recoverable from GitHub's own state, or this ledger must become
- * two-phase (`reserve` under `blockConcurrencyWhile`, `commit` after success).
- * See `docs/github-app.md` — "Claimed before the handler runs".
+ * **The reservation is taken before the handler runs, and settled after it.**
+ * The claim itself is still one-way at the moment it matters — a handler that
+ * reaches its irreversible step commits the id for the full retention window —
+ * but a handler that can prove it stopped *before* that step gets the id
+ * released, so the operator's **Redeliver** is a real second attempt rather than
+ * `200 {"duplicate": true}` for an event nothing ever did. The handler asserts
+ * that by setting `webhookOutcome.retryable`; **saying nothing commits**, which
+ * is the fail-safe reading — a handler that forgets is treated as having acted.
+ * An unexpected throw settles neither way and the lease expires, because the
+ * outcome is genuinely unknown and both answers would be a guess.
  *
  * **An unreachable ledger refuses the delivery.** Fail closed, like every other
- * dependency on this path: a claim that did not happen is not a claim, and
- * treating an unreachable ledger as "not seen before" removes the protection at
- * exactly the moment nothing can check it. That costs a dropped event, because
- * GitHub does not redeliver on its own — the same trade `webhookRateLimit`
- * documents, and answered 503 with a `Retry-After` so the one caller that
- * *does* retry, an operator with the API, is told when.
+ * dependency on this path: a reservation that did not happen is not a
+ * reservation, and treating an unreachable ledger as "not seen before" removes
+ * the protection at exactly the moment nothing can check it. That costs a
+ * dropped event, because GitHub does not redeliver on its own — the same trade
+ * `webhookRateLimit` documents, and answered 503 with a `Retry-After` so the one
+ * caller that *does* retry, an operator with the API, is told when.
  */
 export const webhookReplayGuard: WebhookMiddleware = async (c, next) => {
 	const delivery = c.get("webhookDelivery");
@@ -515,9 +518,11 @@ export const webhookReplayGuard: WebhookMiddleware = async (c, next) => {
 		);
 	}
 
-	let claim: Awaited<ReturnType<typeof claimDelivery>>;
+	const deliveryId = delivery.id;
+
+	let claim: Awaited<ReturnType<typeof reserveDelivery>>;
 	try {
-		claim = await claimDelivery(c.env, delivery.id);
+		claim = await reserveDelivery(c.env, deliveryId);
 	} catch (error) {
 		// Same three-argument form as the allowlist failure above, and as
 		// `WebhookDeliveries`: the thrown value is the error, the request id and
@@ -536,8 +541,12 @@ export const webhookReplayGuard: WebhookMiddleware = async (c, next) => {
 		logger.info("GitHub webhook delivery is a repeat", {
 			requestId: c.get("requestId"),
 			event: delivery.event,
-			delivery: delivery.id,
+			delivery: deliveryId,
 			firstSeen: new Date(claim.firstSeen).toISOString(),
+			// Which of the two repeats this is: a second copy racing the first, or a
+			// redelivery of one that already settled. Identical to the caller and
+			// very different to an operator reading a log.
+			held: claim.state,
 		});
 
 		return c.json(acknowledgement(delivery, c.get("webhookAuthorization"), { duplicate: true }), HTTP.OK);
@@ -545,5 +554,26 @@ export const webhookReplayGuard: WebhookMiddleware = async (c, next) => {
 
 	c.set("webhookReplay", { firstSeen: claim.firstSeen });
 
-	return next();
+	// A throw here settles nothing on purpose; see the comment above. The
+	// reservation's lease is what bounds the resulting uncertainty.
+	await next();
+
+	const retryable = c.get("webhookOutcome")?.retryable === true;
+
+	try {
+		await (retryable ? releaseDelivery(c.env, deliveryId) : commitDelivery(c.env, deliveryId));
+	} catch (error) {
+		// The response has already been decided, so this cannot change it. Both
+		// directions degrade the same way — the reservation stands until its lease
+		// expires — which delays a retry rather than losing or duplicating one.
+		logger.error("Delivery ledger could not settle a reservation", error, {
+			requestId: c.get("requestId"),
+			event: delivery.event,
+			retryable,
+		});
+	}
+
+	// Explicit: a middleware that returns a `Response` on some paths and falls off
+	// the end on others is one TypeScript will not check the return type of.
+	return;
 };

@@ -283,7 +283,7 @@ export async function readBodyWithin(request: Request, limit: number): Promise<A
 export function acknowledgement(
 	delivery: WebhookDelivery,
 	authorization: WebhookAuthorization | undefined,
-	options: { duplicate: boolean },
+	options: { duplicate: boolean; handled?: boolean; outcome?: string },
 ) {
 	return {
 		received: true,
@@ -305,9 +305,24 @@ export function acknowledgement(
 					 */
 					signingKey: requireSigningKey(authorization).allowed,
 				}),
-		/** True when this delivery id had already been claimed inside the retention window. */
+		/** True when this delivery id was already held — by a settled run or one still going. */
 		duplicate: options.duplicate,
-		/** Always false while this is a scaffold. See `src/routes/github-webhook.ts`. */
-		handled: false,
+		/**
+		 * Whether this delivery caused the service to do something.
+		 *
+		 * False for every event with no handler, and false for a `push` that was
+		 * refused. True for a `push` the signing handler completed, *including* one
+		 * that found nothing to sign: the run reached its conclusion, and the
+		 * conclusion was that the branch is already in the state it should be in.
+		 */
+		handled: options.handled ?? false,
+		/**
+		 * One word for what happened, echoed so a "Recent Deliveries" row is
+		 * readable without a log. Every value is a decision this service made about
+		 * a delivery the caller already authenticated for a repository the operator
+		 * granted it, so it discloses nothing the caller did not supply or is not
+		 * entitled to know.
+		 */
+		...(options.outcome === undefined ? {} : { outcome: options.outcome }),
 	};
 }

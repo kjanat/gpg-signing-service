@@ -89,7 +89,11 @@ async function deliver(
 	// the obvious way silently runs against the default grant and passes for the
 	// wrong reason.
 	allowlist: string | null = GRANT,
-	event = "push",
+	// Not `push`: that is the one event with an acting handler now, and a suite
+	// about the authorization gate would otherwise be asserting on the signing
+	// handler's answers. `issues` is repository-scoped, reaches every gate, and
+	// stops at the acknowledgement.
+	event = "issues",
 	// Honoured only when it is a UUID, per `getRequestId` — so a test that wants
 	// to find its own line in the log has to send one that is.
 	requestId?: string,

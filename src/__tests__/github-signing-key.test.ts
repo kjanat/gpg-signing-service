@@ -123,7 +123,7 @@ async function deliver(
 			headers: {
 				"Content-Type": "application/json",
 				[SIGNATURE_HEADER]: signature,
-				"X-GitHub-Event": "push",
+				"X-GitHub-Event": "issues",
 				"X-GitHub-Delivery": crypto.randomUUID(),
 				...(requestId === undefined ? {} : { "X-Request-ID": requestId }),
 			},

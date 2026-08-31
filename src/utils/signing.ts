@@ -69,6 +69,78 @@ export async function signCommitData(
 	};
 }
 
+/**
+ * Does `armoredSignature` verify over `payload` under `armoredPublicKey`?
+ *
+ * Used on both sides of the webhook signing path, and both uses are
+ * load-bearing:
+ *
+ * - **Before rewriting.** A commit that already carries a signature this key
+ *   produces is left alone. Asking whether the signature *verifies*, rather
+ *   than whether it names our key id, is what makes that check honest — a key
+ *   id in an armor header is a claim, and a commit carrying an invalid
+ *   signature that names our key would otherwise be skipped forever.
+ * - **After signing and before creating anything.** Every signature this
+ *   service produces is checked against its own public key before the commit
+ *   object is created and long before any ref moves. That is what closes the
+ *   loop: a push this service makes carries signatures that verify, so the
+ *   delivery it provokes finds nothing to sign and stops. A signature that
+ *   silently failed to verify would make the same push arrive, be rewritten,
+ *   and arrive again.
+ *
+ * Never throws. openpgp reports a failed verification by rejecting the promise
+ * on `verified`, and there is no useful distinction here between "the signature
+ * is wrong" and "the signature is not a signature" — both mean *do not treat
+ * this as signed*.
+ */
+export async function verifyDetachedSignature(
+	payload: string,
+	armoredSignature: string,
+	armoredPublicKey: string,
+): Promise<boolean> {
+	try {
+		const verificationKeys = await openpgp.readKey({ armoredKey: armoredPublicKey });
+		const signature = await openpgp.readSignature({ armoredSignature });
+		// Binary, matching `signCommitData`: a text message would verify a
+		// canonical-text signature over line endings this payload does not have.
+		const message = await openpgp.createMessage({ binary: new TextEncoder().encode(payload) });
+
+		const result = await openpgp.verify({ message, signature, verificationKeys, expectSigned: false });
+		const first = result.signatures[0];
+		if (first === undefined) {
+			return false;
+		}
+
+		return await first.verified;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * The lowercase email addresses this key carries a user ID for.
+ *
+ * The commit-signing path signs only commits whose *committer* is one of these,
+ * for the reason `.github/scripts/sign-commits.py` does: attaching this key to
+ * a commit made by somebody else asserts an authorship that is not true, and
+ * rewriting it strips whatever signature that person had. A key with no
+ * addressed user ID signs nothing, which is the fail-closed reading of an empty
+ * set rather than a special case.
+ */
+export async function keyIdentityEmails(armoredKey: string): Promise<Set<string>> {
+	const key = await openpgp.readKey({ armoredKey });
+
+	const emails = new Set<string>();
+	for (const userId of key.getUserIDs()) {
+		const match = /<([^<>]+)>\s*$/.exec(userId);
+		if (match?.[1]) {
+			emails.add(match[1].toLowerCase());
+		}
+	}
+
+	return emails;
+}
+
 export async function parseAndValidateKey(armoredKey: string, passphrase?: string): Promise<ParsedKeyInfo> {
 	const privateKey = await openpgp.readPrivateKey({ armoredKey });
 

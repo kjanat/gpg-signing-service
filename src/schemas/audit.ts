@@ -44,7 +44,32 @@ export const AuditQuerySchema = z
  * Audit action types
  */
 export const AuditActionSchema = z
-	.enum(["sign", "key_upload", "key_rotate", "token_create", "token_revoke", "subject_create", "subject_revoke"])
+	.enum([
+		"sign",
+		"key_upload",
+		"key_rotate",
+		"token_create",
+		"token_revoke",
+		"subject_create",
+		"subject_revoke",
+		/**
+		 * A GitHub App `push` delivery that reached the acting handler.
+		 *
+		 * Separate from `sign` rather than folded into it, because the two rows
+		 * answer different questions and share no columns beyond the key. A `sign`
+		 * row records a caller this service authenticated asking for a signature
+		 * over bytes it supplied; this one records the service deciding, on its own
+		 * initiative, to rewrite somebody's branch. "Which pushes did the service
+		 * act on" is the query an operator runs after a surprise, and it must not
+		 * have to be filtered out of the signing traffic.
+		 *
+		 * Written for every attempt at repository scope, including the ones that
+		 * signed nothing — a delivery that found the branch already signed is the
+		 * evidence that the loop terminated, and it is only evidence if it is
+		 * recorded.
+		 */
+		"webhook_sign",
+	])
 	.openapi("AuditAction");
 
 /**

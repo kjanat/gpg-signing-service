@@ -53,6 +53,36 @@
  * consume an id would be able to suppress the real delivery carrying it, which
  * turns replay protection into a denial-of-service primitive pointed at exactly
  * the events it was built to protect.
+ *
+ * ### Two phases, because there is now something to recover from
+ *
+ * The ledger was one-way while the handler acted on nothing: claim, and never
+ * release. That is at-most-once, and it was free — a delivery nothing acted on
+ * loses nothing by being consumed. It stopped being free the moment a handler
+ * began signing commits, because the failures that handler has are mostly
+ * *recoverable* ones — a key that was deleted, a rate limit, GitHub answering
+ * 502 — and a one-way claim turns every one of them into a permanent loss: the
+ * operator presses **Redeliver**, the one recovery affordance GitHub offers,
+ * and gets `200 {"duplicate": true}` without anything happening.
+ *
+ * So a claim is now a **reservation** with a lease, and it settles one of three
+ * ways:
+ *
+ * - {@link commitDelivery} — the handler reached, or passed, the irreversible
+ *   step. The id is spent for the full retention window and a redelivery is a
+ *   no-op, which is the original guarantee, kept exactly where it matters.
+ * - {@link releaseDelivery} — the handler proved it stopped *before* the
+ *   irreversible step. The id is forgotten immediately and a redelivery gets a
+ *   fresh attempt. Only the handler can assert this, because only the handler
+ *   knows which side of the boundary it stopped on.
+ * - Neither, and the lease expires. This is what an unexpected throw gets: the
+ *   outcome is unknown, so the delivery is neither retried at once nor lost
+ *   forever. {@link DELIVERY_LEASE_MS} is how long "unknown" lasts.
+ *
+ * A duplicate arriving while a reservation is live is refused exactly as a
+ * duplicate of a settled one is — that is the concurrency case this whole
+ * mechanism exists for, and a two-phase ledger that let a second copy in while
+ * the first was still running would have given it away to buy the retry.
  */
 
 import type { Env } from "#types";
@@ -99,36 +129,67 @@ export function isDeliveryId(value: string | null | undefined): value is string 
 	return typeof value === "string" && DELIVERY_ID_PATTERN.test(value);
 }
 
-/** The outcome of trying to claim a delivery id. */
+/**
+ * How long a reservation stands before it is treated as abandoned.
+ *
+ * The window in which an unexpected fault costs a delivery its immediate
+ * redelivery. Long enough that no in-flight run can outlive it — a signing run
+ * is a handful of GitHub round trips — and short enough that an operator who
+ * hits **Redeliver** after a 500 is not left waiting on a lease. Ten minutes.
+ *
+ * A reservation that outlives this is not "released": the record simply stops
+ * counting, exactly as an expired committed record does, so a lagging reaper
+ * can never turn a live reservation back into a free id.
+ */
+export const DELIVERY_LEASE_MS = 10 * TIME.MINUTE;
+
+/** How a delivery id that is already taken is being held. */
+export type DeliveryState =
+	/** A run reserved it and has not settled yet. Its lease has not expired. */
+	| "reserved"
+	/** A run reached the irreversible step. Spent for the retention window. */
+	| "committed";
+
+/** The outcome of trying to reserve a delivery id. */
 export interface DeliveryClaim {
-	/** True the first time an id is presented, false for every repeat inside the retention window. */
+	/** True the first time an id is presented, false for every repeat still being held. */
 	claimed: boolean;
-	/** When the id was first claimed, in epoch milliseconds. */
+	/** When the id was first reserved, in epoch milliseconds. */
 	firstSeen: number;
+	/** How the existing holder is holding it. Absent when the reservation was granted. */
+	state?: DeliveryState;
 }
 
-/**
- * Claim `deliveryId`, or discover that it is already spent.
- *
- * @param env - Deployment bindings
- * @param deliveryId - A value that has passed {@link isDeliveryId}
- * @throws When the ledger cannot be reached. Callers must fail closed: a claim
- *   that did not happen is not a claim, and treating an unreachable ledger as
- *   "not seen before" removes the protection at exactly the moment it is least
- *   able to be checked.
- */
-export async function claimDelivery(env: Env, deliveryId: string): Promise<DeliveryClaim> {
-	const ledger = env.WEBHOOK_DELIVERIES.get(env.WEBHOOK_DELIVERIES.idFromName(DELIVERY_LEDGER));
+/** The ledger object every delivery id goes through. */
+function ledger(env: Env) {
+	return env.WEBHOOK_DELIVERIES.get(env.WEBHOOK_DELIVERIES.idFromName(DELIVERY_LEDGER));
+}
 
-	const response = await ledger.fetch(
-		new Request(`http://internal/claim?id=${encodeURIComponent(deliveryId)}`, { method: "POST" }),
+/** One call to the ledger, with its status checked. */
+async function ask(env: Env, action: string, deliveryId: string): Promise<unknown> {
+	const response = await ledger(env).fetch(
+		new Request(`http://internal/${action}?id=${encodeURIComponent(deliveryId)}`, { method: "POST" }),
 	);
 
 	if (!response.ok) {
 		throw new Error(`Delivery ledger returned ${response.status}`);
 	}
 
-	const body = (await response.json()) as Partial<DeliveryClaim>;
+	return response.json();
+}
+
+/**
+ * Reserve `deliveryId`, or discover that it is already held.
+ *
+ * @param env - Deployment bindings
+ * @param deliveryId - A value that has passed {@link isDeliveryId}
+ * @throws When the ledger cannot be reached. Callers must fail closed: a
+ *   reservation that did not happen is not a reservation, and treating an
+ *   unreachable ledger as "not seen before" removes the protection at exactly
+ *   the moment it is least able to be checked.
+ */
+export async function reserveDelivery(env: Env, deliveryId: string): Promise<DeliveryClaim> {
+	const body = (await ask(env, "reserve", deliveryId)) as Partial<DeliveryClaim>;
 
 	// Parsed rather than cast through: this decides whether an event is acted on
 	// twice, and a malformed body silently read as `claimed: undefined` would be
@@ -138,5 +199,47 @@ export async function claimDelivery(env: Env, deliveryId: string): Promise<Deliv
 		throw new Error("Delivery ledger returned an unreadable claim");
 	}
 
-	return { claimed: body.claimed, firstSeen: body.firstSeen };
+	if (body.claimed) {
+		return { claimed: true, firstSeen: body.firstSeen };
+	}
+
+	// A refusal has to say *how* the id is held. "Someone is running this right
+	// now" and "this finished three days ago" are the same answer to the caller
+	// and different lines in an operator's log, and only one of them will change
+	// on its own.
+	if (body.state !== "reserved" && body.state !== "committed") {
+		throw new Error("Delivery ledger returned an unreadable claim");
+	}
+
+	return { claimed: false, firstSeen: body.firstSeen, state: body.state };
+}
+
+/**
+ * Spend `deliveryId` for the full retention window.
+ *
+ * Called once a run has reached — or passed — the point where its effect cannot
+ * be taken back. Idempotent, so a caller that cannot tell whether it already
+ * committed may call it again.
+ *
+ * @throws When the ledger cannot be reached. A failed commit leaves the
+ *   reservation to expire, which permits a later retry of an action that has
+ *   already happened; that is safe here only because the action is a no-op when
+ *   repeated — see the fixpoint argument in `#utils/push-signing`.
+ */
+export async function commitDelivery(env: Env, deliveryId: string): Promise<void> {
+	await ask(env, "commit", deliveryId);
+}
+
+/**
+ * Give `deliveryId` back, so a redelivery gets a fresh attempt.
+ *
+ * Only ever called by a handler that can prove it stopped before its
+ * irreversible step. The ledger refuses to release a record that has been
+ * committed, so a mistaken call cannot resurrect a delivery that already acted.
+ *
+ * @throws When the ledger cannot be reached. A failed release leaves the
+ *   reservation to expire, which delays the retry rather than losing it.
+ */
+export async function releaseDelivery(env: Env, deliveryId: string): Promise<void> {
+	await ask(env, "release", deliveryId);
 }

@@ -80,3 +80,22 @@ export interface WebhookReplay {
 	/** When this delivery id was first claimed, in epoch milliseconds. */
 	firstSeen: number;
 }
+
+/**
+ * What a handler did with a delivery, for the replay guard to settle on.
+ *
+ * Deliberately not "did it succeed". The ledger has one question — may this
+ * delivery id be handed back for another attempt — and the only thing that
+ * answers it is which side of the irreversible step the run stopped on. A
+ * handler that failed *after* acting is not retryable, and a handler that
+ * succeeded by doing nothing is not either: there is nothing left to retry.
+ */
+export interface WebhookOutcome {
+	/**
+	 * True only when the run provably stopped before anything irreversible.
+	 *
+	 * Set it and the delivery id is released, so an operator's **Redeliver** is a
+	 * real second attempt. Leave it and the id is spent for the retention window.
+	 */
+	retryable: boolean;
+}

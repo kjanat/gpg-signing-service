@@ -136,15 +136,18 @@ export type SigningKeyLoad =
  * So existence is established by **the fetch the signing action has to perform
  * regardless**. There is no separate check, therefore no cache, no staleness
  * and no window: the key either comes back and is signed with, or it does not
- * and the delivery is refused. That is the cleanest safe boundary, and it is
- * the same one `POST /sign` already uses.
+ * and the delivery is refused.
  *
- * ### Not called from the request path
+ * ### What this is *not*
  *
- * Nothing on `/github/webhook` calls this, because nothing on that route signs
- * yet — the same reason `getInstallationToken` has no caller there. It is the
- * function the first acting handler calls, and it exists now so that handler
- * inherits the refusals rather than inventing them.
+ * This is the same **storage fetch** `POST /sign` makes, and it is not that
+ * route's boundary. `/sign` meters the caller before it signs and writes an
+ * `audit_logs` row for the attempt either way; neither of those happens here,
+ * and neither is implied by holding the key this returns. **Rate limiting and
+ * audit are the caller's responsibility** — `#utils/push-signing` spends the
+ * signing budget before the first signature and `#routes/github-webhook` writes
+ * the row — and a second caller that reads this function as "the boundary" would
+ * be an unmetered, unrecorded path to a private key.
  *
  * The key material is returned and never logged. A refusal carries the key id,
  * which is public — `/public-key` serves the key it names — and nothing else.

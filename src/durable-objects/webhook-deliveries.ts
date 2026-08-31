@@ -14,20 +14,30 @@
 
 import { HTTP, MediaType } from "#types";
 import { logger } from "#utils/logger";
-import { DELIVERY_RETENTION_MS } from "#utils/webhook-replay";
+import { DELIVERY_LEASE_MS, DELIVERY_RETENTION_MS, type DeliveryState } from "#utils/webhook-replay";
 
-/** What is remembered about a claimed delivery id. */
+/** What is remembered about a delivery id that has been taken. */
 interface DeliveryRecord {
-	/** First claimed at, epoch milliseconds. */
+	/** First reserved at, epoch milliseconds. */
 	firstSeen: number;
-	/** Stops counting as claimed at, epoch milliseconds. */
+	/** Stops counting, epoch milliseconds. A lease while reserved, the retention window once committed. */
 	expiresAt: number;
+	/**
+	 * How the id is held.
+	 *
+	 * Defaulted on read rather than declared required, because records written
+	 * by the one-phase release predate the field and a missing value there meant
+	 * exactly `committed` — the claim was permanent and could not be released.
+	 * Reading them as `reserved` would hand a four-day-old claim a lease it never
+	 * had and let a replay through.
+	 */
+	state?: DeliveryState;
 }
 
 export class WebhookDeliveries implements DurableObject {
 	private state: DurableObjectState;
 
-	/** Prefix for claimed-id keys. Nothing else in this object uses it. */
+	/** Prefix for taken-id keys. Nothing else in this object uses it. */
 	private readonly keyPrefix = "d:";
 
 	// Reaping, shaped exactly like `RateLimiter`'s: a cursor so a pass covers the
@@ -48,7 +58,8 @@ export class WebhookDeliveries implements DurableObject {
 		const url = new URL(request.url);
 
 		try {
-			if (url.pathname === "/claim") {
+			const action = url.pathname;
+			if (action === "/reserve" || action === "/commit" || action === "/release") {
 				if (request.method !== "POST") {
 					return new Response("Method not allowed", { status: HTTP.MethodNotAllowed });
 				}
@@ -66,7 +77,10 @@ export class WebhookDeliveries implements DurableObject {
 					});
 				}
 
-				return await this.claim(id);
+				if (action === "/reserve") {
+					return await this.reserve(id);
+				}
+				return await this.settle(id, action === "/commit" ? "commit" : "release");
 			}
 
 			return new Response("Not found", { status: HTTP.NotFound });
@@ -86,19 +100,19 @@ export class WebhookDeliveries implements DurableObject {
 	}
 
 	/**
-	 * Record `id` as spent, unless it already is.
+	 * Take `id` for the length of a lease, unless it is already held.
 	 *
 	 * The read and the write are inside one `blockConcurrencyWhile`, which is the
-	 * whole point of this class. Without it, two concurrent claims for the same
-	 * id could both observe "not present" before either writes, and both would be
-	 * told they had claimed it — the exact double-action this exists to prevent,
+	 * whole point of this class. Without it, two concurrent reservations for the
+	 * same id could both observe "not present" before either writes, and both
+	 * would be told they had it — the exact double-action this exists to prevent,
 	 * arriving in the one case an attacker can arrange on purpose.
 	 *
-	 * Returns 200 either way. "Already claimed" is an answer, not a failure, and
-	 * a non-2xx here would be indistinguishable to the caller from the ledger
-	 * being broken — which it must fail closed on, and this must not.
+	 * Returns 200 either way. "Already held" is an answer, not a failure, and a
+	 * non-2xx here would be indistinguishable to the caller from the ledger being
+	 * broken — which it must fail closed on, and this must not.
 	 */
-	private async claim(id: string): Promise<Response> {
+	private async reserve(id: string): Promise<Response> {
 		const key = `${this.keyPrefix}${id}`;
 
 		// The `try` is inside the critical section and the `throw` is outside it, on
@@ -109,23 +123,27 @@ export class WebhookDeliveries implements DurableObject {
 		// the handler that turns faults into a 500. Catching here and rethrowing a
 		// step later keeps the atomicity and keeps the fault reportable.
 		const outcome = await this.state.blockConcurrencyWhile(
-			async (): Promise<{ claimed: boolean; firstSeen: number } | { failure: unknown }> => {
+			async (): Promise<{ claimed: boolean; firstSeen: number; state?: DeliveryState } | { failure: unknown }> => {
 				try {
 					const now = Date.now();
 					const existing = await this.state.storage.get<DeliveryRecord>(key);
 
-					// An expired record is not a claim. Overwritten rather than deleted
-					// and re-created, so an id that returns after its retention window
-					// starts a fresh one — which is the same thing that would have
-					// happened had the reaper got to it first, and the two must not
-					// differ.
+					// An expired record is not a hold — neither an expired retention nor
+					// an abandoned lease. Overwritten rather than deleted and re-created,
+					// so an id that returns after its window starts a fresh one, which is
+					// the same thing that would have happened had the reaper got to it
+					// first; the two must not differ.
 					if (existing && existing.expiresAt > now) {
-						return { claimed: false, firstSeen: existing.firstSeen };
+						// A record with no `state` was written by the one-phase ledger,
+						// where every claim was permanent. Read as committed, never as a
+						// lease it never had.
+						return { claimed: false, firstSeen: existing.firstSeen, state: existing.state ?? "committed" };
 					}
 
 					await this.state.storage.put<DeliveryRecord>(key, {
 						firstSeen: now,
-						expiresAt: now + DELIVERY_RETENTION_MS,
+						expiresAt: now + DELIVERY_LEASE_MS,
+						state: "reserved",
 					});
 
 					return { claimed: true, firstSeen: now };
@@ -143,7 +161,7 @@ export class WebhookDeliveries implements DurableObject {
 
 		// Outside the critical section: arming the reaper is not part of the
 		// decision, and holding the object closed for it would serialise every
-		// claim behind an alarm write that only ever matters once.
+		// reservation behind an alarm write that only ever matters once.
 		await this.scheduleSweep();
 
 		return new Response(JSON.stringify(result), {
@@ -153,9 +171,70 @@ export class WebhookDeliveries implements DurableObject {
 	}
 
 	/**
+	 * Settle a reservation: spend it for the retention window, or give it back.
+	 *
+	 * Both directions are inside the critical section for the same reason
+	 * {@link reserve} is — a settle racing a reservation for the same id must not
+	 * interleave — and both are idempotent, so a caller that cannot tell whether
+	 * it already settled may call again.
+	 *
+	 * **A release will not touch a committed record.** Releasing is the only
+	 * operation here that can hand a spent id back, so it is the only one that
+	 * could undo replay protection, and the guard is in the ledger rather than in
+	 * the caller: a handler that mistakenly reports itself recoverable after
+	 * having acted cannot resurrect the delivery it already acted on.
+	 *
+	 * A settle for an id that is not held is a no-op rather than an error. It is
+	 * what an expired lease looks like from the caller's side, and answering 404
+	 * would turn a slow run into a failed one.
+	 */
+	private async settle(id: string, action: "commit" | "release"): Promise<Response> {
+		const key = `${this.keyPrefix}${id}`;
+
+		const outcome = await this.state.blockConcurrencyWhile(
+			async (): Promise<{ settled: boolean } | { failure: unknown }> => {
+				try {
+					const now = Date.now();
+					const existing = await this.state.storage.get<DeliveryRecord>(key);
+
+					if (action === "release") {
+						if (existing === undefined || (existing.state ?? "committed") === "committed") {
+							return { settled: false };
+						}
+						await this.state.storage.delete(key);
+						return { settled: true };
+					}
+
+					await this.state.storage.put<DeliveryRecord>(key, {
+						// The original reservation time survives, so "first seen" keeps
+						// meaning when the delivery arrived rather than when it finished.
+						firstSeen: existing?.firstSeen ?? now,
+						expiresAt: now + DELIVERY_RETENTION_MS,
+						state: "committed",
+					});
+					return { settled: true };
+				} catch (failure) {
+					return { failure };
+				}
+			},
+		);
+
+		if ("failure" in outcome) {
+			throw outcome.failure;
+		}
+
+		await this.scheduleSweep();
+
+		return new Response(JSON.stringify(outcome), {
+			status: HTTP.OK,
+			headers: { "Content-Type": MediaType.ApplicationJson },
+		});
+	}
+
+	/**
 	 * Arm the reaper if it is not already armed.
 	 *
-	 * An existing alarm is left alone. Re-arming on every claim would push the
+	 * An existing alarm is left alone. Re-arming on every write would push the
 	 * sweep out indefinitely under sustained delivery — exactly when there is
 	 * most to reap.
 	 */
@@ -168,7 +247,7 @@ export class WebhookDeliveries implements DurableObject {
 	/**
 	 * Delete records whose retention has elapsed.
 	 *
-	 * Reaping changes no verdict: `claim` already treats an expired record as
+	 * Reaping changes no verdict: `reserve` already treats an expired record as
 	 * absent, so this only reclaims the storage. That is what makes it safe to
 	 * run late, in pages, and behind a cursor.
 	 *

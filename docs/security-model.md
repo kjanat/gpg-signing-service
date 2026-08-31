@@ -140,9 +140,16 @@ sign of one is not every caller failing at once.
 - A verified delivery is then authorized against an operator-written allowlist
   of `<installation, repository>` pairs. An unset or empty list grants nothing;
   a malformed one refuses every delivery rather than applying the entries that
-  parsed. The repository a future handler acts on is taken from the matched
+  parsed. The repository the signing handler acts on is taken from the matched
   allowlist entry, not from the payload, so a delivery cannot name its own
   subject even after passing the check.
+- The one acting handler, `push` auto-signing, rewrites only commits that carry
+  no signature verifying under the bound key and were committed by an identity
+  that key names. A commit carrying somebody else's signature, a merge, or a
+  commit whose bytes cannot be rebuilt from GitHub's JSON and proven against its
+  own object name stops the run before anything is created. The only
+  irreversible step is the ref update, and it happens after the branch head has
+  been re-read and found unchanged.
 - A grant may bind one signing key: `<installationId>:<owner>/<repo>=<keyId>`.
   The key rides inside the same entry as the pair it belongs to, so there is no
   second list to drift out of step with the first, and a pair may appear at most
@@ -161,8 +168,11 @@ sign of one is not every caller failing at once.
   both checks above — a request that could consume an id before proving its
   origin and its grant could suppress the real delivery carrying it. A delivery
   with no usable id is refused rather than given a placeholder, because a
-  placeholder is a shared key. The claim is taken before the handler runs and is
-  never released, which makes deliveries at-most-once rather than at-least-once.
+  placeholder is a shared key. The reservation is taken before the handler runs
+  and settled after it: a handler that proves it stopped before its irreversible
+  step gets the id released so a redelivery is a real retry, and anything else
+  — including a throw — leaves the id held. Deliveries are therefore
+  at-most-once past the irreversible step rather than at-least-once.
 - Both static admin tokens are compared in constant time. When
   `ADMIN_READONLY_TOKEN` is provisioned, both comparisons run on every request,
   so which of the two a valid bearer matched is not observable by timing. When
@@ -234,14 +244,15 @@ carrying the request id.
 
 The token bucket holds 100 requests and refills at 100 per minute.
 
-| Surface                    | Identity                           |
-| -------------------------- | ---------------------------------- |
-| `/sign` with OIDC          | `issuer:subject`                   |
-| `/sign` with service token | synthetic issuer plus token name   |
-| Revoked-trust reuse record | `oidc-revoked-reuse:<subject row>` |
-| `/admin/*`                 | Client IP                          |
-| `POST /github/webhook`     | Client IP                          |
-| Public routes              | No application rate limiter        |
+| Surface                    | Identity                                  |
+| -------------------------- | ----------------------------------------- |
+| `/sign` with OIDC          | `issuer:subject`                          |
+| `/sign` with service token | synthetic issuer plus token name          |
+| Revoked-trust reuse record | `oidc-revoked-reuse:<subject row>`        |
+| `/admin/*`                 | Client IP                                 |
+| `POST /github/webhook`     | Client IP                                 |
+| Webhook-caused signing     | `<installationId>:<owner>/<repo>=<keyId>` |
+| Public routes              | No application rate limiter               |
 
 Rate-limiter failure returns `503` rather than allowing the request.
 
@@ -251,6 +262,16 @@ unsigned request choose its own bucket. It is metered before the HMAC is
 checked, so the limit bounds unverified verification work, and it is a namespace
 of its own so that a burst of deliveries cannot exhaust an operator's ability to
 reach `/admin`.
+
+**That delivery meter is not a signing budget**, and the signing path does not
+borrow it. A `push` that will cause signatures spends one token per signature
+from a separate bucket keyed on the whole grant —
+`github-app-sign:<installationId>:<owner>/<repo>=<keyId>` — so one repository
+cannot spend another's budget, the same repository under two installations is
+two budgets, and re-pointing a repository at a different key starts a fresh one.
+The tokens are all spent _before_ the first signature, so a run either has the
+budget for the whole rewrite or makes no signature at all. It fails closed, like
+every other limiter here.
 
 The OIDC signing identity is the caller's `sub`, and GitHub varies `sub` per ref,
 so one trusted row is not bounded to one bucket: a caller who can push branches
@@ -281,9 +302,12 @@ issuer will mint.
 There is no built-in retention, export, or tamper-evident log chain. Alerting is
 available but optional; see below.
 
-Accepted webhook deliveries are logged, not audited. `audit_logs` records
-operations on keys and credentials, and the scaffold acts on no event, so a row
-per acknowledged-and-discarded delivery would be a write per event nothing acted
+A `push` delivery that reaches the signing handler writes one `webhook_sign` row
+per attempt, whether it signed anything or not. Its `subject` and `key_id` come
+from the allowlist entry rather than from the payload, so the row records what
+was _authorized_ rather than what was claimed. Deliveries with no handler are
+logged and not audited: `audit_logs` records operations, and a row per
+acknowledged-and-discarded event would be a write for something nothing acted
 on. See [GitHub App webhook](github-app.md#audit-records).
 
 ## What Sentry receives
@@ -449,20 +473,24 @@ Before relying on the service for protected production branches, account for:
   trust rule, token name and audit record;
 - no audit retention, and no alerting unless the optional `SENTRY_DSN` is
   configured (see [What Sentry receives](#what-sentry-receives));
-- a GitHub App webhook, when enabled, whose deliveries are logged but not
-  recorded in `audit_logs`, and whose rate-limit bucket is shared by every
-  caller reaching it from one address;
+- a GitHub App webhook, when enabled, whose non-`push` deliveries are logged but
+  not recorded in `audit_logs`, and whose delivery rate-limit bucket is shared
+  by every caller reaching it from one address;
+- a `push` signing run that forces the branch it rewrites. The head is re-read
+  and required to be unchanged immediately beforehand, but GitHub offers no
+  compare-and-set on a ref, so a push landing inside that window is overwritten.
+  The objects it replaced remain reachable by name until GitHub collects them;
 - webhook replay protection bounded by a retention window: a delivery captured
   and replayed after it expires from the ledger is accepted again. No
   TTL-based deduplication can prevent that — the signature carries no timestamp
   to age against — and the window is set to cover every repeat GitHub itself can
   cause. See [replay protection](github-app.md#replay-protection);
-- webhook deliveries that are **at-most-once**: the delivery id is claimed
-  before the route handler runs and is never released, so a handler that later
-  fails leaves the id consumed and an operator's redelivery is answered
-  `200 {"duplicate": true}` without acting. Harmless while the handler acts on
-  nothing; a hard prerequisite to resolve before one does. See
-  [claimed before the handler runs](github-app.md#claimed-before-the-handler-runs-at-most-once-not-at-least-once);
+- webhook deliveries that are **at-most-once past the irreversible step**: a
+  handler that proves it stopped before the ref update has its delivery id
+  released, so an operator's redelivery is a real retry, but a handler that
+  _throws_ settles neither way and its id stays held until the ten-minute lease
+  expires. See
+  [settling a delivery](github-app.md#settling-a-delivery-at-most-once-past-the-irreversible-step);
 - PGP-only behavior in the high-level CLI and Go wrapper; and
 - Git history rewriting when a detached signature is attached after commit
   creation.
