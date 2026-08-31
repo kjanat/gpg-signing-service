@@ -92,15 +92,15 @@ answers:
 
 ## What each answer means
 
-| Status | Code                    | Meaning                                                      |
-| ------ | ----------------------- | ------------------------------------------------------------ |
-| `202`  | —                       | Signature verified. Acknowledged, not acted upon.            |
-| `400`  | `INVALID_REQUEST`       | Signature verified, body was not JSON.                       |
-| `401`  | `AUTH_MISSING`          | No `X-Hub-Signature-256`. The App has no webhook secret set. |
-| `401`  | `AUTH_INVALID`          | The signature did not verify. The two secrets differ.        |
-| `404`  | `NOT_FOUND`             | `GITHUB_APP_ENABLED` is not `"true"`.                        |
-| `429`  | `RATE_LIMITED`          | Too many deliveries from this address. GitHub redelivers.    |
-| `500`  | `SERVICE_MISCONFIGURED` | Enabled, but `GITHUB_WEBHOOK_SECRET` is unset.               |
+| Status | Code                    | Meaning                                                       |
+| ------ | ----------------------- | ------------------------------------------------------------- |
+| `202`  | —                       | Signature verified. Acknowledged, not acted upon.             |
+| `400`  | `INVALID_REQUEST`       | Signature verified, body was not JSON.                        |
+| `401`  | `AUTH_MISSING`          | No `X-Hub-Signature-256`. The App has no webhook secret set.  |
+| `401`  | `AUTH_INVALID`          | The signature did not verify. The two secrets differ.         |
+| `404`  | `NOT_FOUND`             | `GITHUB_APP_ENABLED` is not `"true"`.                         |
+| `429`  | `RATE_LIMITED`          | Too many deliveries from this address. Not retried by GitHub. |
+| `500`  | `SERVICE_MISCONFIGURED` | Enabled, but `GITHUB_WEBHOOK_SECRET` is unset.                |
 
 The 404 is byte-identical to the one an unrouted path returns, on purpose: a
 distinguishable answer would let anyone enumerate which deployments have the
@@ -124,9 +124,15 @@ several — it is the only one.
   fixed-width 32-byte digests. A malformed candidate is rejected before the
   comparison, which is what guarantees the comparison always gets equal lengths.
 - **The rate limiter runs before the HMAC**, in its own bucket, and fails closed
-  — the same shape `/admin` uses. A dropped delivery is redelivered by GitHub;
-  an accepted one with no limit in front of it is unbounded verification work
-  for an anonymous caller.
+  — the same shape `/admin` uses. An accepted delivery with no limit in front of
+  it is unbounded verification work for an anonymous caller. Note what failing
+  closed costs: [GitHub does not automatically redeliver a failed
+  delivery](https://docs.github.com/en/webhooks/using-webhooks/handling-failed-webhook-deliveries),
+  so a `429` or a `503` from this path drops the event until someone redelivers
+  it from the App's "Advanced" tab or through
+  `POST /app/hook/deliveries/{id}/attempts`. The bucket is also keyed by
+  address, and GitHub delivers from a small published set of them, so every
+  installation of the App shares a handful of buckets.
 - **The feature gate runs before the limiter**, so a deployment that never opted
   in spends nothing at all on a request to this path.
 
