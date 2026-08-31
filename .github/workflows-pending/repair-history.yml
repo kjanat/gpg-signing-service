@@ -15,9 +15,16 @@ name: Repair History
 # a routine signing run.
 #
 # Everything dangerous here is off unless it is asked for. `dry_run` defaults
-# to true, `push` defaults to false, and none of the four bounds has a default
-# at all — .github/scripts/repair-history.sh refuses a blank one rather than
-# guessing, and `gpg-sign repair-history` refuses again underneath it. Tests:
+# to true, `push` defaults to false, and the three bounds that decide what gets
+# rewritten and against what — `base`, `expected_tip`, `expect_identities` —
+# are required with no default at all, so an operator types each one out.
+# (`identity` is required too, and is the one field prefilled: it is what the
+# repair writes, not a bound on what it touches.)
+# .github/scripts/repair-history.sh refuses a blank one rather than guessing,
+# and `gpg-sign repair-history` refuses again underneath it. `expected_tip` is
+# spent on the lease: the publish is one
+# `--force-with-lease=refs/heads/<branch>:<expected_tip>`, so a stale dispatch
+# is rejected by git rather than overwriting whatever arrived meanwhile. Tests:
 # .github/scripts/test-repair-history.sh (`task test:repair-history`).
 
 on:
