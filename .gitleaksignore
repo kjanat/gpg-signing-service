@@ -44,3 +44,10 @@ bce1f4a2a9c28ed9e6594704fb415fe508ee501b:src/__tests__/admin-scope.test.ts:priva
 # crypto.subtle.generateKey, PEM-armored only to be handed straight back to the
 # same process, and never written anywhere. Nothing to rotate.
 bb4060b91ed772e61ebee9a3feba488ebfd26223:src/__tests__/check-report.test.ts:private-key:792
+
+# The same per-run RSA key, minted by `generateAppKey` in
+# src/__tests__/comment-dispatch.test.ts so the endpoint suite can have a GitHub
+# App sign its own JWT. crypto.subtle.generateKey per run, PEM-armored only to
+# be handed straight back to the same process, never written anywhere. Nothing
+# to rotate.
+42b77c68516915a90718def6e6d0524fdc78f74a:src/__tests__/comment-dispatch.test.ts:private-key:589
