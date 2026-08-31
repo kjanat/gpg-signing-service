@@ -360,17 +360,35 @@ read-only collaborator, which is precisely the account that has to be excluded.
 
 Everything that is not an unambiguous grant refuses:
 
-| Answer                              | Result                                   |
-| ----------------------------------- | ---------------------------------------- |
-| `admin`, `write`                    | Dispatched                               |
-| `read`, `none`                      | `actor_not_permitted`, nothing started   |
-| `404` (not a collaborator)          | `actor_not_permitted`, nothing started   |
-| `403`, `5xx`, a timeout             | `permission_lookup_failed`, fails closed |
-| An answer about a _different_ login | `permission_lookup_failed`, fails closed |
+| Answer                                     | Result                                   |
+| ------------------------------------------ | ---------------------------------------- |
+| `admin`, `write`                           | Dispatched                               |
+| `read`, `none`                             | `actor_not_permitted`, nothing started   |
+| `404`, and the repository is still visible | `actor_not_permitted`, nothing started   |
+| `404`, and the repository is **not**       | `permission_lookup_failed`, fails closed |
+| `403`, `5xx`, a timeout                    | `permission_lookup_failed`, fails closed |
+| An answer about a _different_ login        | `permission_lookup_failed`, fails closed |
 
-The last row is worth naming: the login that comes back is compared against the
-one that was asked about. An answer about somebody else is not an answer, and
-taking it would authorize this comment with another account's access.
+Two rows are worth naming.
+
+**The two 404s.** That status is not only "this login is not a collaborator". It
+is also what an installation token gets when it cannot see the repository at all
+— removed from the installation, or dropped from its repository selection. The
+token still mints in that case, because the installation itself is fine, so this
+lookup is the first place the difference can surface and there is nowhere later
+that it would. Read as one answer they are catastrophic to conflate: an operator
+who narrows an installation by accident would find every `@claude` — the owner's
+included — answered "the author is not trusted", with the delivery burned
+non-retryably and the audit row pointing at the commenter. So a 404 is followed
+by an independent read of the repository on the same token, and only a visible
+repository turns it into the settled refusal. An invisible or unanswerable one
+fails closed, stays retryable, and is audited as `repository_not_visible`. The
+cost is one extra API call per comment by a non-collaborator, which is what the
+dispatch budget in front of the lookup bounds.
+
+**An answer about somebody else.** The login that comes back is compared against
+the one that was asked about. An answer about a different account is not an
+answer, and taking it would authorize this comment with that account's access.
 
 ### Nothing here may become a loop
 
@@ -427,24 +445,43 @@ itself is not the thing being trusted.
 There is no idempotency key on GitHub's workflow-dispatch endpoint and a second
 call starts a second run. Two agent sessions on one request is not a duplicate
 log line — it is two sessions pushing to one branch. So the delivery id is
-committed **before** the request leaves, and the ambiguous outcome resolves as
-at-most-once.
+written to the ledger **before** the request leaves, and the ambiguous outcome
+resolves as at-most-once.
+
+Written, and not merely decided. Every other handler settles its delivery id
+after it returns, and relies on its own idempotence to cover the gap — a
+redelivery of a push meets a head commit that is already signed. Comment
+dispatch has nothing to meet, so a flag on the request context would not be
+enough: an isolate evicted between the POST and the settle would leave a
+reservation that lapses in five minutes, after which a redelivery starts a
+second session. The ledger therefore has a third phase between _reserved_ and
+_committed_ — **held**, durable for the full retention window from the moment
+the request leaves, and still releasable by the one request that can learn
+nothing happened. A hold that does not land refuses the dispatch outright, and
+nothing is sent.
 
 | Outcome                                        | Delivery                                         |
 | ---------------------------------------------- | ------------------------------------------------ |
 | Budget refused, or the limiter was unreachable | Released — a real retry                          |
 | The permission lookup could not be made        | Released                                         |
+| The repository is no longer visible            | Released                                         |
 | `GITHUB_APP_DISPATCH_*` not set                | Released                                         |
+| The ledger could not be reached at the hold    | Released — nothing was sent                      |
 | The author holds no write access               | Committed — a redelivery reaches the same answer |
-| GitHub answered **4xx**                        | Released — it created nothing                    |
-| GitHub answered **2xx**                        | Committed                                        |
-| GitHub answered **5xx**, or never answered     | Committed                                        |
+| GitHub answered **4xx**                        | Held, then released — it created nothing         |
+| GitHub answered **2xx**                        | Held, then committed                             |
+| GitHub answered **5xx**, or never answered     | Held, then committed                             |
+| The process died after the hold                | Held — and a hold is already spent               |
 
 The 4xx row is the one exception and it is a narrow one: an unknown workflow, a
 ref the workflow is not on, a permission the installation never granted. GitHub
 answered, and its answer was that it did nothing — all operator-fixable, and a
 redelivery afterwards is a real retry. A 5xx or a lost connection is not
 distinguishable from a run that started, so it is not treated as one.
+
+The last row is the one the hold exists for, and it needs nothing to run
+afterwards to be true: the record is already in the ledger, for the full
+retention window, before the POST is made.
 
 ### The dispatch budget
 
@@ -458,12 +495,31 @@ counts GitHub's own delivery addresses and would never bound this.
 
 ### What is recorded
 
-One `comment_dispatch` row per delivery that reached a decision, refusals
-included — the Actions run list shows what ran and never what was turned away.
-The metadata carries the workflow, the ref, the issue number, the comment id and
-the actor: public facts, all of them visible to anyone who can read the comment.
-No token, no key material, no GitHub response body. `key_id` is the sentinel
-`none` rather than `unknown`, because dispatching involves no key at all.
+One `comment_dispatch` row per delivery that got as far as being **about a
+request**, refusals included — the Actions run list shows what ran and never what
+was turned away. Stated precisely, because "every refusal" is not what happens
+and volume is the reason:
+
+| Delivery                                                     | Row |
+| ------------------------------------------------------------ | --- |
+| Dispatched                                                   | Yes |
+| Refused at the actor check, the budget, the ledger or GitHub | Yes |
+| `actor_is_not_human` — a bot, or a comment posted via an App | Yes |
+| `unreadable_actor` — `sender` disagreeing with the author    | Yes |
+| No trigger phrase, an edit, a delete, an unreadable payload  | No  |
+
+The two named refusals earn a row because both are rare by construction and both
+are security-significant: `actor_is_not_human` only fires on a comment that _does_
+invoke the phrase, which is the App recognising its own completion comment, and
+`unreadable_actor` is a shape a real `issue_comment.created` never has. The rest
+is weather — a comment with no phrase in it is not an event, and a row per one of
+those would be a D1 write per comment on the repository.
+
+The metadata carries the workflow, the ref, the issue number, the comment id, the
+actor and a `detail` naming which shape of refusal it was: public facts, all of
+them visible to anyone who can read the comment. No token, no key material, no
+GitHub response body. `key_id` is the sentinel `none` rather than `unknown`,
+because dispatching involves no key at all.
 
 ## Setup
 

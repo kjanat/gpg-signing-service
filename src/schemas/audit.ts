@@ -65,6 +65,14 @@ export const AuditQuerySchema = z
  * question that deserves to be a `WHERE action = ?` rather than a JSON scan.
  * Rows are written for refusals too, which is the point: a comment refused for
  * want of write access is exactly the row an operator wants to be able to find.
+ *
+ * "Far enough to decide" is doing real work in that sentence. A comment with no
+ * trigger phrase in it is not a decision, it is the weather, and a row per one
+ * would be a D1 write per comment on the repository. The two refusals that are
+ * decided before the actor lookup and *do* earn a row are `actor_is_not_human`
+ * and `unreadable_actor` — both rare by construction, both security-significant,
+ * and the first of them is this App recognising its own completion comment.
+ * `docs/github-app.md` carries the table.
  */
 export const AuditActionSchema = z
 	.enum([

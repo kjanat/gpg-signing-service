@@ -486,6 +486,14 @@ export const githubWebhookAuthorize: WebhookMiddleware = async (c, next) => {
  * runs in a `finally` initialised to that direction so no exit can skip it or
  * fall out of it the other way.
  *
+ * **A handler whose action has no idempotence of its own does not rely on
+ * this.** Settling afterwards is enough for push signing, which meets a
+ * redelivery with a head commit that is already signed. Comment dispatch has no
+ * such thing to meet — a second workflow-dispatch starts a second agent session
+ * — so it takes a durable hold on the id *before* its request leaves, through
+ * `holdDelivery`, and this middleware's settle then either commits that hold or
+ * releases it. See `#utils/webhook-replay`.
+ *
  * **An unreachable ledger refuses the delivery.** Fail closed, like every other
  * dependency on this path: a reservation that did not happen is not a
  * reservation, and treating an unreachable ledger as "not seen before" removes
@@ -495,10 +503,12 @@ export const githubWebhookAuthorize: WebhookMiddleware = async (c, next) => {
  * caller that *does* retry, an operator with the API, is told when.
  *
  * A failure to *settle* is not the same thing and is not fatal. The delivery has
- * already been answered by then, and a settle that does not land leaves a
- * reservation that lapses on its own — after which a redelivery is allowed
- * through and meets the handler's own idempotence, which for push signing is a
- * head commit that is already signed.
+ * already been answered by then, and a settle that does not land leaves the
+ * ledger holding whatever the handler last wrote — for push signing a
+ * reservation that lapses on its own, after which a redelivery is allowed
+ * through and meets a head commit that is already signed, and for comment
+ * dispatch the hold taken before the request left, which stands for the full
+ * retention window whether or not this settle lands.
  */
 export const webhookReplayGuard: WebhookMiddleware = async (c, next) => {
 	const delivery = c.get("webhookDelivery");
@@ -552,10 +562,12 @@ export const webhookReplayGuard: WebhookMiddleware = async (c, next) => {
 			event: delivery.event,
 			delivery: deliveryId,
 			firstSeen: new Date(reservation.firstSeen).toISOString(),
-			// Which kind of repeat: a delivery already acted upon, or a second copy
-			// arriving while the first is still being handled. Same answer to the
-			// sender, different thing to see in a log.
+			// Which kind of repeat: a delivery already acted upon, a second copy
+			// arriving while the first is still being handled, or one whose handler
+			// sent something irreversible and never came back. Same answer to the
+			// sender, three different things to see in a log.
 			committed: reservation.committed,
+			held: reservation.held,
 		});
 
 		return c.json(acknowledgement(delivery, c.get("webhookAuthorization"), { duplicate: true }), HTTP.OK);

@@ -28,19 +28,32 @@
  * *not* the check — it reports `COLLABORATOR` for a read-only collaborator,
  * which is precisely the account this has to exclude.
  *
+ * One status is not allowed to answer two questions. A 404 from the collaborator
+ * endpoint means "not a collaborator" *and* "this installation can no longer see
+ * the repository", and only the first is a settled fact about a person. They are
+ * separated by asking a second, independent question — is the repository still
+ * visible on this token — rather than by reading the first answer harder. See
+ * {@link RepositoryClient.getActorPermission}.
+ *
  * ### Dispatching cannot be taken back
  *
  * There is no idempotency key on the workflow-dispatch endpoint, and a second
  * call starts a second run. Two agent sessions on one request is not a
- * duplicate log line — it is two sessions pushing to one branch. So the
- * delivery id is committed *before* the call rather than after it, through
+ * duplicate log line — it is two sessions pushing to one branch. So the delivery
+ * id is written to the ledger *before* the call rather than after it, through
  * {@link CommentDispatchHooks.beforeDispatch}, and the ambiguous outcome — the
  * request left, the answer did not come back — resolves as at-most-once.
  *
+ * Written, and not merely decided. A flag on the request context would still
+ * have to be turned into a ledger write by something that runs afterwards, and
+ * "afterwards" is exactly what an evicted isolate does not have; the hold is
+ * durable when the POST leaves, so a process that never runs again still leaves
+ * the id spent. A hold that does not land refuses the dispatch outright.
+ *
  * The one exception is a definite refusal. A 4xx is GitHub saying it created
  * nothing: an unknown workflow, a ref the workflow is not on, a permission the
- * installation never granted. Those are operator-fixable and the delivery is
- * handed back so a redelivery is a real retry. See
+ * installation never granted. Those are operator-fixable, so the hold is
+ * released and a redelivery is a real retry. See
  * {@link RepositoryClient.dispatchWorkflow}.
  *
  * ### Nothing here may become a loop
@@ -66,8 +79,8 @@
 import type { Env } from "#types";
 import { GitHubAppError } from "#utils/github-app";
 import { LOGIN_PATTERN } from "#utils/github-authorization";
-import type { RepositoryClient } from "#utils/github-repo";
-import { GitHubApiError } from "#utils/github-repo";
+import type { ActorPermission, RepositoryClient } from "#utils/github-repo";
+import { GitHubApiError, RepositoryNotVisibleError } from "#utils/github-repo";
 
 /**
  * The phrase a comment must contain, matched case-insensitively.
@@ -208,7 +221,9 @@ export type CommentDispatchRefusal =
 	/** The per-repository dispatch budget refused this comment. */
 	| "rate_limited"
 	/** The budget could not be consulted. Fails closed. */
-	| "budget_unavailable";
+	| "budget_unavailable"
+	/** The delivery id could not be durably held before dispatching. Fails closed. */
+	| "ledger_unavailable";
 
 /** What a dispatchable comment is, once the payload has been read defensively. */
 export interface CommentDispatchPlan {
@@ -355,6 +370,35 @@ export function planCommentDispatch(payload: unknown): CommentPlan {
 const PERMITTED = new Set(["admin", "write"]);
 
 /**
+ * What a refused lookup was refused *for*, in one word, for the audit row.
+ *
+ * `reason` already carries the decision — whether the delivery is spent and
+ * whether it may be redelivered — and this carries the diagnosis. They are
+ * separate fields because they answer to different readers: the first is the
+ * service deciding what to do, the second is an operator at three in the
+ * morning working out whether the problem is a person or the installation.
+ */
+export type ActorLookupDetail =
+	/** GitHub answered, and the role it named is not enough. */
+	| "insufficient_permission"
+	/** GitHub 404'd the lookup and the repository is still visible: an outsider. */
+	| "not_a_collaborator"
+	/** The installation can no longer see the repository. An operator's problem. */
+	| "repository_not_visible"
+	/** Anything else: a 403, a 5xx, a timeout, an unreadable answer. */
+	| "lookup_failed";
+
+/** How the actor question was answered, or why it could not be. */
+export type ActorAuthorization =
+	| { allowed: true; permission: string }
+	| {
+			allowed: false;
+			reason: CommentDispatchRefusal;
+			status: number | null;
+			detail: ActorLookupDetail;
+	  };
+
+/**
  * May this login cause a workflow run on the authorized repository?
  *
  * Asked of GitHub, about the repository the *allowlist* named — the client
@@ -367,33 +411,51 @@ const PERMITTED = new Set(["admin", "write"]);
  *
  * Fails closed on anything it cannot establish. A lookup that 500s, times out,
  * or comes back in a shape this service does not recognise is not a grant.
+ *
+ * **A repository the installation cannot see is one of those things.** It
+ * arrives as a 404 from the collaborator endpoint, which is the same status an
+ * ordinary outsider produces, and {@link RepositoryClient.getActorPermission}
+ * is what tells them apart — by asking a second, independent question rather
+ * than by reading the first answer harder. Only the outsider is settled; the
+ * invisible repository is a configuration failure that must stay retryable, or
+ * an operator who removed the App from a repository by accident would find
+ * every comment burned and audited as an untrusted author.
  */
-export async function authorizeActor(
-	client: RepositoryClient,
-	login: string,
-): Promise<
-	{ allowed: true; permission: string } | { allowed: false; reason: CommentDispatchRefusal; status: number | null }
-> {
-	let permission: string;
+export async function authorizeActor(client: RepositoryClient, login: string): Promise<ActorAuthorization> {
+	let answer: ActorPermission;
 	try {
-		permission = await client.getActorPermission(login);
+		answer = await client.getActorPermission(login);
 	} catch (error) {
 		// The status travels, the message does not. A GitHub error body from this
 		// endpoint can quote the request back, and the request carried an
 		// installation token; the status is enough to tell "the installation never
 		// granted this read" from "GitHub was having a bad minute".
+		//
+		// Both branches refuse and both stay retryable — the difference is only
+		// what the audit row says, and it is worth saying because the two send an
+		// operator to different pages of the App's settings.
 		return {
 			allowed: false,
 			reason: "permission_lookup_failed",
 			status: error instanceof GitHubApiError ? error.status : null,
+			detail: error instanceof RepositoryNotVisibleError ? "repository_not_visible" : "lookup_failed",
 		};
 	}
 
-	if (!PERMITTED.has(permission)) {
-		return { allowed: false, reason: "actor_not_permitted", status: null };
+	if (!PERMITTED.has(answer.permission)) {
+		return {
+			allowed: false,
+			reason: "actor_not_permitted",
+			status: null,
+			// Both are settled and both refuse; they differ only in what an operator
+			// reads. `not_a_collaborator` is only ever reached through a *visible*
+			// repository — the invisible case threw above and never gets this far —
+			// so it says "an outsider asked", not "we could not tell".
+			detail: answer.collaborator ? "insufficient_permission" : "not_a_collaborator",
+		};
 	}
 
-	return { allowed: true, permission };
+	return { allowed: true, permission: answer.permission };
 }
 
 /** The point of no return, and the budget, supplied by the caller. */
@@ -406,14 +468,20 @@ export interface CommentDispatchHooks {
 	 */
 	reserveBudget: () => Promise<"ok" | "limited" | "unavailable">;
 	/**
-	 * Called immediately before the dispatch request leaves.
+	 * Record durably, before the dispatch request leaves, that it left.
 	 *
-	 * This is where the caller decides the delivery is spent. Everything above it
-	 * has caused nothing observable — a permission lookup is a read — so every
-	 * refusal before this line is a real retry, and everything at or after it is
-	 * at-most-once.
+	 * This is the irreversible boundary. Everything above it has caused nothing
+	 * observable — a permission lookup is a read — so every refusal before this
+	 * line is a real retry, and everything at or after it is at-most-once.
+	 *
+	 * It returns rather than throwing, and the caller refuses when it does not
+	 * answer `"held"`, because the write has to have *landed* for the guarantee
+	 * to mean anything. A hook that only set a flag on a request context would
+	 * leave the guarantee resting on this isolate living long enough to write it
+	 * afterwards — and an isolate evicted between the dispatch and that write is
+	 * precisely the case at-most-once exists for.
 	 */
-	beforeDispatch: () => Promise<void>;
+	beforeDispatch: () => Promise<"held" | "unavailable">;
 }
 
 /**
@@ -427,13 +495,21 @@ export interface CommentDispatchHooks {
  */
 export type CommentDispatchResult =
 	| { outcome: "dispatched"; plan: CommentDispatchPlan; workflow: string; ref: string; retryable: false }
-	| { outcome: "skipped"; reason: CommentDispatchRefusal; retryable: boolean }
+	| {
+			outcome: "skipped";
+			reason: CommentDispatchRefusal;
+			retryable: boolean;
+			/** Which shape of refusal, for the audit row. Null when there is nothing to add. */
+			detail: ActorLookupDetail | null;
+	  }
 	| {
 			outcome: "failed";
 			reason: CommentDispatchRefusal | "dispatch_refused" | "dispatch_unknown";
 			retryable: boolean;
 			/** GitHub's status, when GitHub answered. Logged, never sent. */
 			status: number | null;
+			/** Which shape of refusal, for the audit row. Null when there is nothing to add. */
+			detail: ActorLookupDetail | null;
 	  };
 
 /**
@@ -465,28 +541,39 @@ export async function dispatchCommentRequest(
 			reason: budget === "limited" ? "rate_limited" : "budget_unavailable",
 			retryable: true,
 			status: null,
+			detail: null,
 		};
 	}
 
 	const actor = await authorizeActor(client, plan.actor);
 	if (!actor.allowed) {
 		if (actor.reason === "actor_not_permitted") {
-			// A settled answer about who this person is. A redelivery would reach the
-			// same one, so the id stays spent; granting them access and redelivering
-			// is not a workflow anybody wants and asking again is one comment.
-			return { outcome: "skipped", reason: actor.reason, retryable: false };
+			// A settled answer about who this person is — and settled is exactly what
+			// the visibility check above establishes, because the same 404 with the
+			// repository gone would not be. A redelivery would reach the same
+			// answer, so the id stays spent; granting them access and redelivering is
+			// not a workflow anybody wants and asking again is one comment.
+			return { outcome: "skipped", reason: actor.reason, retryable: false, detail: actor.detail };
 		}
 
 		// Could not be established. Fails closed *and* stays retryable — the two
 		// are not in tension: nothing started, so an operator who fixes the
-		// installation's permissions can redeliver into it.
-		return { outcome: "failed", reason: actor.reason, retryable: true, status: actor.status };
+		// installation's permissions, or puts the repository back on it, can
+		// redeliver into the fix.
+		return { outcome: "failed", reason: actor.reason, retryable: true, status: actor.status, detail: actor.detail };
 	}
 
 	// The last recoverable instant. After this the delivery is spent whatever
 	// happens, because a request that left and a request whose answer was lost
-	// are the same thing from here.
-	await hooks.beforeDispatch();
+	// are the same thing from here — so the record of it is durable before the
+	// request rather than after the answer.
+	if ((await hooks.beforeDispatch()) !== "held") {
+		// The hold did not land, so nothing may be sent: dispatching now would be
+		// dispatching with no durable record that it happened, which is the one
+		// state that lets a redelivery start a second session. Nothing has left,
+		// so this is a real retry.
+		return { outcome: "failed", reason: "ledger_unavailable", retryable: true, status: null, detail: null };
+	}
 
 	const dispatched = await client.dispatchWorkflow(target.workflow, target.ref, {
 		issue_number: String(plan.issueNumber),
@@ -502,9 +589,11 @@ export async function dispatchCommentRequest(
 	return {
 		outcome: "failed",
 		reason: dispatched.outcome === "refused" ? "dispatch_refused" : "dispatch_unknown",
-		// A 4xx is GitHub stating it created nothing, so the delivery goes back.
-		// Anything else leaves it spent — see the module comment.
+		// A 4xx is GitHub stating it created nothing, so the delivery goes back —
+		// which is a *release* of the hold taken above, not merely a decision not to
+		// commit it. Anything else leaves it spent — see the module comment.
 		retryable: dispatched.outcome === "refused",
 		status: dispatched.status,
+		detail: null,
 	};
 }

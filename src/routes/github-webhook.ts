@@ -35,7 +35,10 @@
  * - `webhookReplayGuard` — a delivery id reserved before this runs, and
  *   committed or released after it, so a duplicate cannot double-act and a
  *   failure that changed nothing stays redeliverable. This handler sets
- *   `webhookRetryable`; the guard is what writes the ledger.
+ *   `webhookRetryable`; the guard is what writes the ledger. The one exception
+ *   is comment dispatch, which has no idempotence of its own for a redelivery
+ *   to meet and so writes a durable *hold* on the id itself, before its request
+ *   leaves; the guard's settle then commits or releases that hold.
  *
  * ### What this handler owes the pipeline
  *
@@ -80,6 +83,7 @@ import { acknowledgement } from "#utils/github-webhook";
 import { logger } from "#utils/logger";
 import type { PushSigningResult } from "#utils/push-signing";
 import { signPushedCommits } from "#utils/push-signing";
+import { holdDelivery } from "#utils/webhook-replay";
 
 const app = createOpenAPIApp();
 
@@ -222,7 +226,7 @@ function auditPush(
 			requestId: c.get("requestId"),
 			action: "push_sign",
 			issuer: "github-app",
-			subject: authorization.repository ?? "unknown",
+			subject: authorization?.repository ?? "unknown",
 			keyId,
 			success,
 			...(success ? {} : { errorCode: "SIGN_ERROR" as const }),
@@ -637,7 +641,7 @@ async function handlePush(
  */
 function auditDispatch(
 	c: AppContext,
-	authorization: WebhookAuthorization,
+	authorization: WebhookAuthorization | undefined,
 	success: boolean,
 	errorCode: "AUTH_SUBJECT_UNTRUSTED" | "RATE_LIMITED" | "INTERNAL_ERROR" | null,
 	metadata: Record<string, unknown>,
@@ -649,7 +653,7 @@ function auditDispatch(
 			requestId: c.get("requestId"),
 			action: "comment_dispatch",
 			issuer: "github-app",
-			subject: authorization.repository ?? "unknown",
+			subject: authorization?.repository ?? "unknown",
 			keyId: "none",
 			success,
 			...(errorCode === null ? {} : { errorCode }),
@@ -678,8 +682,8 @@ async function handleIssueComment(
 ): Promise<Response> {
 	const requestId = c.get("requestId");
 
-	const acknowledged = (reason: string, status: 200 | 202 = HTTP.Accepted) =>
-		c.json({ ...acknowledgement(delivery, authorization, { duplicate: false }), skipped: reason }, status);
+	const acknowledged = (reason: string) =>
+		c.json({ ...acknowledgement(delivery, authorization, { duplicate: false }), skipped: reason }, HTTP.Accepted);
 
 	if (!commentDispatchEnabled(c.env)) {
 		// Not merely "did not dispatch": no GitHub call is made at all, which is
@@ -703,6 +707,20 @@ async function handleIssueComment(
 		} else {
 			logger.info("Comment delivery will not be dispatched", line);
 		}
+
+		// Two of these earn a row, and the volume argument is what decides which.
+		// `actor_is_not_human` only fires on a comment that *does* invoke the
+		// phrase — which is the App recognising its own completion comment, or an
+		// integration posting under somebody's name — and `unreadable_actor` is a
+		// `sender` disagreeing with `comment.user`, which a real
+		// `issue_comment.created` never produces. Both are rare by construction and
+		// both are the security-significant ones. The rest are weather: a comment
+		// with no phrase in it is not an event, and a row per one of those would be
+		// a D1 write per comment on the repository.
+		if (plan.reason === "actor_is_not_human" || plan.reason === "unreadable_actor") {
+			await auditDispatch(c, authorization, false, "AUTH_SUBJECT_UNTRUSTED", { reason: plan.reason });
+		}
+
 		return acknowledged(plan.reason);
 	}
 
@@ -734,15 +752,50 @@ async function handleIssueComment(
 
 	const identity = dispatchBudgetIdentity(grant);
 
+	const deliveryId = delivery.id;
+
 	let result: CommentDispatchResult;
 	try {
-		result = await dispatchCommentRequest(client, target, plan.plan, delivery.id ?? "unknown", {
+		result = await dispatchCommentRequest(client, target, plan.plan, deliveryId ?? "unknown", {
 			reserveBudget: () => spendBudget(c, identity, DISPATCH_LIMIT, 1),
-			// The irreversible boundary. There is no idempotency key on the dispatch
-			// endpoint, so deciding here — before the request leaves — is what makes
-			// a lost answer a non-repeat rather than a second agent session.
+			// The irreversible boundary, and it is a *durable write* rather than a
+			// decision to write later. There is no idempotency key on the dispatch
+			// endpoint, so an isolate that died between the POST and the replay
+			// guard's `finally` would leave a reservation that lapses in five
+			// minutes and a redelivery that starts a second agent session. Holding
+			// the id here closes that window: the ledger has the delivery for the
+			// full retention window from the moment the request leaves.
+			//
+			// The context flag is set as well, and it is set *after* the write. It
+			// is what the guard reads to decide commit-or-release, and a flag set
+			// before a write that did not happen would say the delivery was spent
+			// when nothing had recorded it.
 			beforeDispatch: async () => {
+				if (deliveryId === null) {
+					// Unreachable behind `webhookReplayGuard`, which refuses a delivery
+					// with no usable id before any handler runs. Present so that a
+					// change to the mounting cannot dispatch onto a ledger key that
+					// every id-less delivery would share.
+					logger.error("Comment dispatch reached the irreversible boundary with no delivery id", { requestId });
+					return "unavailable";
+				}
+
+				try {
+					await holdDelivery(c.env, deliveryId);
+				} catch (error) {
+					// Fail closed, and nothing has left: the dispatch is refused and the
+					// delivery stays retryable, which is the same posture the guard
+					// itself takes when the ledger cannot be reached.
+					logger.error("Delivery ledger could not hold a delivery before dispatching", error, {
+						requestId,
+						delivery: deliveryId,
+						repository: grant.repository,
+					});
+					return "unavailable";
+				}
+
 				c.set("webhookRetryable", false);
+				return "held";
 			},
 		});
 	} catch (error) {
@@ -798,10 +851,16 @@ async function handleIssueComment(
 			delivery: delivery.id,
 			repository: grant.repository,
 			reason: result.reason,
+			detail: result.detail,
 			actor: plan.plan.actor,
 		});
 		await auditDispatch(c, grant, false, "AUTH_SUBJECT_UNTRUSTED", {
 			reason: result.reason,
+			// Which shape of refusal. `not_a_collaborator` is an outsider on a
+			// repository the App can still see; `insufficient_permission` is somebody
+			// with read or triage. Neither is `repository_not_visible`, which never
+			// reaches this branch because it is not a settled answer.
+			detail: result.detail,
 			actor: plan.plan.actor,
 			issue: plan.plan.issueNumber,
 			comment: plan.plan.commentId,
@@ -821,12 +880,17 @@ async function handleIssueComment(
 		delivery: delivery.id,
 		repository: grant.repository,
 		reason: result.reason,
+		detail: result.detail,
 		status: result.status,
 		retryable: result.retryable,
 		actor: plan.plan.actor,
 	});
 	await auditDispatch(c, grant, false, result.reason === "rate_limited" ? "RATE_LIMITED" : "INTERNAL_ERROR", {
 		reason: result.reason,
+		// `repository_not_visible` lands here, and it is the row that says the
+		// problem is the installation rather than the commenter — the distinction
+		// a bare 404 on the collaborator endpoint cannot express.
+		detail: result.detail,
 		status: result.status,
 		retryable: result.retryable,
 		actor: plan.plan.actor,

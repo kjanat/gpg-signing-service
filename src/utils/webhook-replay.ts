@@ -54,7 +54,7 @@
  * turns replay protection into a denial-of-service primitive pointed at exactly
  * the events it was built to protect.
  *
- * ### Two phases, because the handler now acts
+ * ### Three phases, because the handler now acts
  *
  * A one-way claim taken before the handler runs is *at-most-once*: an event is
  * acted on no more than once and possibly not at all. That was the right
@@ -76,29 +76,42 @@
  * creating a commit object leaves something unreachable that GitHub collects,
  * and *moving the branch* is the first step a person could observe.
  *
- * ### What happens before the ref update is the *decision*, not the write
+ * ### Where the durable write sits, precisely
  *
- * Stated precisely, because the two are easy to conflate and only one of them
- * is true. `#utils/push-signing` calls `beforePublish` immediately before it
- * issues the update, and `#routes/github-webhook` uses that call to set
- * `webhookRetryable` to false — a flag on the request context. The Durable
- * Object write happens later, in `webhookReplayGuard`'s `finally`, after the
- * handler has returned and the response has been built.
+ * Stated exactly, because "the id is committed before the request leaves" is
+ * the kind of sentence that stays in a comment after it stops being true.
  *
- * At-most-once does not depend on that ordering, and this is why: the
- * reservation is held for the *whole* request, so no second copy of the
- * delivery can be handled while the first is still running, whenever the commit
- * lands within it. What the ordering does buy is that the decision is taken
- * while the code still knows what it is about to do, rather than reconstructed
- * afterwards from an outcome.
+ * **Push signing writes afterwards.** `#utils/push-signing` calls
+ * `beforePublish` immediately before the ref update and `#routes/github-webhook`
+ * uses that call to set `webhookRetryable` to false — a flag on the request
+ * context. The Durable Object write happens later, in `webhookReplayGuard`'s
+ * `finally`. Against a *concurrent* second copy that changes nothing: the
+ * reservation is held for the whole request, so no second copy is handled while
+ * the first is still running, whenever the write lands within it. Two gaps
+ * follow from the write being last and both are closed rather than argued away.
+ * A handler that dies between the ref update and the `finally` writes nothing —
+ * so the ledger's commit path creates the record it does not find (see
+ * `WebhookDeliveries.settle`), and the redelivery that gets past even that
+ * finds a signed head and signs nothing. A ledger that cannot be reached at all
+ * is logged and leaves a reservation that lapses; that one is genuinely open,
+ * and it is why the object-graph check exists as well.
  *
- * Two gaps follow from the write being last, and both are closed rather than
- * argued away. A handler that dies between the ref update and the `finally`
- * writes nothing — so the ledger's commit path creates the record it does not
- * find (see `WebhookDeliveries.settle`), and the redelivery that gets past even
- * that finds a signed head and signs nothing. A ledger that cannot be reached
- * at all is logged and leaves a reservation that lapses; that one is genuinely
- * open, and it is why the object-graph check exists as well.
+ * **Comment dispatch writes beforehand, because it has to.** It is the first
+ * handler with no downstream idempotence to fall back on: the workflow-dispatch
+ * endpoint has no idempotency key, a repeat starts a second agent session, and
+ * there is no equivalent of "the head is already signed" to notice on the way
+ * past. So the flag is not enough, and {@link holdDelivery} makes the durable
+ * write *before* the POST. The failure it closes is narrow and real: an isolate
+ * evicted between the dispatch and the `finally` used to leave a reservation
+ * that lapses within {@link DELIVERY_RESERVATION_MS}, after which a redelivery
+ * is let straight through and starts a second session.
+ *
+ * A hold is releasable and a commit is not, which is the whole reason it is a
+ * separate phase rather than an early commit. A definite 4xx from GitHub is a
+ * statement that no run was created, and the handler that made the request is
+ * the only party that ever learns it — so that one answer hands the id back and
+ * an operator's fix plus a redelivery is a real retry. Everything else — a 2xx,
+ * a 5xx, a lost answer, a process that never comes back — leaves the id spent.
  */
 
 import type { Env } from "#types";
@@ -179,6 +192,15 @@ export interface DeliveryReservation {
 	 * the same answer to the caller and different lines in a log.
 	 */
 	committed: boolean;
+	/**
+	 * Whether the holder had an irreversible request in flight.
+	 *
+	 * Also only meaningful when `reserved` is false, and it is the third answer
+	 * the pair above cannot express: not committed, but not a live second copy
+	 * either — a delivery whose handler sent something and never came back. Same
+	 * answer to the caller, and the line an operator needs to see.
+	 */
+	held: boolean;
 }
 
 /** One ledger call, parsed rather than cast. */
@@ -217,7 +239,11 @@ export async function reserveDelivery(env: Env, deliveryId: string): Promise<Del
 		throw new Error("Delivery ledger returned an unreadable reservation");
 	}
 
-	return { reserved: body.reserved, firstSeen: body.firstSeen, committed: body.committed };
+	// `held` is read leniently where the other three are strict, and only that
+	// one. It is an observability field — no decision turns on it — and it is
+	// newer than the records already in the ledger, so demanding it would turn
+	// every delivery whose id predates the phase into a fail-closed 503.
+	return { reserved: body.reserved, firstSeen: body.firstSeen, committed: body.committed, held: body.held === true };
 }
 
 /**
@@ -245,12 +271,42 @@ export async function commitDelivery(env: Env, deliveryId: string): Promise<stri
 }
 
 /**
+ * Keep `deliveryId` for the full retention window, before acting.
+ *
+ * The same durability as {@link commitDelivery} and one difference: the record
+ * stays releasable. Called immediately before a request that cannot be taken
+ * back and has no idempotency key — dispatching a workflow — so that the
+ * at-most-once guarantee holds even if this isolate never runs again. Under a
+ * commit written *after* the request, an isolate evicted in between would leave
+ * a reservation that lapses within {@link DELIVERY_RESERVATION_MS}, after which
+ * a redelivery is let straight through; under a hold written before it, the id
+ * is spent from the moment the request left.
+ *
+ * Still releasable because one answer is worth acting on: a definite 4xx, which
+ * is GitHub stating it created nothing. Only the request that holds the
+ * reservation can present it, because every other arrival of the id is
+ * short-circuited by `webhookReplayGuard` before a handler runs.
+ *
+ * @returns The reason the ledger reported, or null if it reported none.
+ * @throws When the ledger cannot be reached. The caller must not go on to act:
+ *   a hold that did not land is the exact state this call exists to avoid.
+ */
+export async function holdDelivery(env: Env, deliveryId: string): Promise<string | null> {
+	const body = await ledgerCall(env, "hold", deliveryId);
+
+	return typeof body.reason === "string" ? body.reason : null;
+}
+
+/**
  * Give `deliveryId` back, so a redelivery is a genuine retry.
  *
  * Called when a delivery caused nothing: a refusal, a configuration error, an
  * outage in a dependency, a failure while assembling work that was never
- * published. The ledger refuses to release a record that has been committed, so
- * a mistaken call here cannot reopen an action that already happened.
+ * published, or a request that left and came back a definite 4xx. The ledger
+ * refuses to release a record that has been *committed*, so a mistaken call
+ * here cannot reopen an action that already happened; a record that is merely
+ * {@link holdDelivery held} is releasable, which is what makes an operator's
+ * fix plus a redelivery work after GitHub has said it created nothing.
  */
 export async function releaseDelivery(env: Env, deliveryId: string): Promise<void> {
 	await ledgerCall(env, "release", deliveryId);

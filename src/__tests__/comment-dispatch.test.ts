@@ -27,9 +27,10 @@
  *   the dispatched session's own completion comment produces.
  */
 
-import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
+import { createExecutionContext, runInDurableObject, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { WebhookDeliveries } from "#durable-objects/webhook-deliveries";
 import app from "#gpg-signing-service";
 import { dispatchBudgetIdentity } from "#routes/github-webhook";
 import type { WebhookAuthorization } from "#types";
@@ -44,6 +45,7 @@ import {
 import { GITHUB_API_ORIGIN, GitHubAppError } from "#utils/github-app";
 import { RepositoryClient } from "#utils/github-repo";
 import { SIGNATURE_PREFIX } from "#utils/github-webhook";
+import { DELIVERY_RESERVATION_MS, DELIVERY_RETENTION_MS } from "#utils/webhook-replay";
 
 const SECRET = "test-webhook-secret";
 const INSTALLATION = 12_345_678;
@@ -338,17 +340,71 @@ describe("authorizeActor", () => {
 			allowed: false,
 			reason: "actor_not_permitted",
 			status: null,
+			// Every one of these is a *body* GitHub sent about this person, so the
+			// detail is `insufficient_permission` even for the literal `none` — the
+			// outsider's `not_a_collaborator` is the 404 path and is tested below.
+			// The one that matters is the value that is not here: an unreadable
+			// answer can never be reported as either.
+			detail: "insufficient_permission",
 		});
 	});
 
-	it("refuses a login GitHub has never heard of", async () => {
-		// 404 is the ordinary answer for everybody who has ever commented on a
-		// public repository, so it is `none` rather than an error.
-		const client = clientOver(() => new Response("{}", { status: 404 }));
+	it("refuses a real outsider on a repository the App can still see", async () => {
+		// The ordinary case, and the one the 404 disambiguation must not break: a
+		// 404 from the collaborator endpoint is what everybody who has ever
+		// commented on a public repository produces. It is settled — the delivery is
+		// spent, and the audit row says so — but only because the second question
+		// came back "yes, the repository is right there".
+		const paths: string[] = [];
+		const client = clientOver((request) => {
+			const path = new URL(request.url).pathname;
+			paths.push(path);
+			return path.endsWith("/permission")
+				? new Response("{}", { status: 404 })
+				: Response.json({ full_name: REPOSITORY });
+		});
 
-		await expect(authorizeActor(client, "a-stranger")).resolves.toMatchObject({
+		await expect(authorizeActor(client, "a-stranger")).resolves.toEqual({
 			allowed: false,
 			reason: "actor_not_permitted",
+			status: null,
+			detail: "not_a_collaborator",
+		});
+		expect(paths).toEqual([`/repos/${REPOSITORY}/collaborators/a-stranger/permission`, `/repos/${REPOSITORY}`]);
+	});
+
+	it("fails closed when the repository has been removed from the installation", async () => {
+		// The blocker this test exists for. `getInstallationToken` still succeeds —
+		// the installation is fine, it just no longer covers this repository — so
+		// the 404 surfaces on the collaborator endpoint and nowhere earlier, wearing
+		// exactly the outsider's clothes. Read as an outsider it would answer *every*
+		// comment, the owner's included, with "the author is not trusted", burn the
+		// delivery id non-retryably, and point the audit row at the wrong party.
+		const client = clientOver(() => new Response("{}", { status: 404 }));
+
+		await expect(authorizeActor(client, OWNER)).resolves.toEqual({
+			allowed: false,
+			reason: "permission_lookup_failed",
+			status: 404,
+			detail: "repository_not_visible",
+		});
+	});
+
+	it("fails closed when the visibility question itself cannot be answered", async () => {
+		// Neither "not a collaborator" nor "the repository is gone" — an unanswerable
+		// second question is still an unanswerable question, and the direction is
+		// the same one every other failure here takes.
+		const client = clientOver((request) =>
+			new URL(request.url).pathname.endsWith("/permission")
+				? new Response("{}", { status: 404 })
+				: new Response("{}", { status: 500 }),
+		);
+
+		await expect(authorizeActor(client, OWNER)).resolves.toEqual({
+			allowed: false,
+			reason: "permission_lookup_failed",
+			status: 500,
+			detail: "lookup_failed",
 		});
 	});
 
@@ -359,6 +415,7 @@ describe("authorizeActor", () => {
 			allowed: false,
 			reason: "permission_lookup_failed",
 			status: 403,
+			detail: "lookup_failed",
 		});
 	});
 
@@ -389,7 +446,10 @@ describe("authorizeActor", () => {
 		// "no permission, carry on" would be carrying on past the gate.
 		const client = clientOver(() => Response.json(answer));
 
-		await expect(authorizeActor(client, OWNER)).resolves.toMatchObject({ reason: "permission_lookup_failed" });
+		await expect(authorizeActor(client, OWNER)).resolves.toMatchObject({
+			reason: "permission_lookup_failed",
+			detail: "lookup_failed",
+		});
 	});
 
 	it("asks about the authorized repository and nothing else", async () => {
@@ -403,7 +463,23 @@ describe("authorizeActor", () => {
 
 		// The client takes no repository argument at all; this asserts the path it
 		// built from the operator's string, and that it stayed on the pinned host.
+		// One call, not two: the visibility question is asked only when the first
+		// answer was the ambiguous one, so an authorized comment costs one lookup.
 		expect(paths).toEqual([`/repos/${REPOSITORY}/collaborators/${OWNER}/permission`]);
+	});
+
+	it("asks the visibility question about the authorized repository", async () => {
+		// Not the payload's repository, and not one taken from the login: the client
+		// has no parameter through which either could be said.
+		const paths: string[] = [];
+		const client = clientOver((request) => {
+			paths.push(new URL(request.url).pathname);
+			return new Response("{}", { status: 404 });
+		});
+
+		await authorizeActor(client, "kjanat");
+
+		expect(paths).toEqual([`/repos/${REPOSITORY}/collaborators/kjanat/permission`, `/repos/${REPOSITORY}`]);
 	});
 });
 
@@ -412,7 +488,7 @@ describe("authorizeActor", () => {
 // ---------------------------------------------------------------------------
 
 /** Hooks that record the order the two boundaries were crossed in. */
-function hooks(budget: "ok" | "limited" | "unavailable" = "ok") {
+function hooks(budget: "ok" | "limited" | "unavailable" = "ok", hold: "held" | "unavailable" = "held") {
 	const order: string[] = [];
 
 	return {
@@ -423,7 +499,8 @@ function hooks(budget: "ok" | "limited" | "unavailable" = "ok") {
 				return budget;
 			},
 			beforeDispatch: async () => {
-				order.push("commit");
+				order.push("hold");
+				return hold;
 			},
 		},
 	};
@@ -461,8 +538,8 @@ describe("dispatchCommentRequest", () => {
 		// No comment body anywhere in the inputs. A body arriving as a workflow
 		// input is a body one `${{ }}` away from a command line.
 		expect(JSON.stringify(sent)).not.toContain("please do the thing");
-		// Budget first, then the lookup, then the commit, then the request.
-		expect(order).toEqual(["budget", "commit"]);
+		// Budget first, then the lookup, then the durable hold, then the request.
+		expect(order).toEqual(["budget", "hold"]);
 	});
 
 	it("spends the budget before the permission lookup", async () => {
@@ -495,14 +572,66 @@ describe("dispatchCommentRequest", () => {
 		).resolves.toMatchObject({ reason: "budget_unavailable", retryable: true });
 	});
 
-	it("does not reach the commit boundary when the actor is refused", async () => {
+	it("does not reach the irreversible boundary when the actor is refused", async () => {
 		const { hooks: h, order } = hooks();
 		const client = clientOver(() => Response.json({ permission: "read", user: { login: OWNER } }));
 
 		const result = await dispatchCommentRequest(client, { workflow: WORKFLOW, ref: REF }, plan, "d", h);
 
-		expect(result).toEqual({ outcome: "skipped", reason: "actor_not_permitted", retryable: false });
+		expect(result).toEqual({
+			outcome: "skipped",
+			reason: "actor_not_permitted",
+			retryable: false,
+			detail: "insufficient_permission",
+		});
 		expect(order).toEqual(["budget"]);
+	});
+
+	it("does not reach the irreversible boundary when the repository is no longer visible", async () => {
+		// The 404 that is not about the commenter. It must not spend the delivery,
+		// because the fix is an operator putting the repository back on the
+		// installation and redelivering into it.
+		const { hooks: h, order } = hooks();
+		const client = clientOver(() => new Response("{}", { status: 404 }));
+
+		const result = await dispatchCommentRequest(client, { workflow: WORKFLOW, ref: REF }, plan, "d", h);
+
+		expect(result).toEqual({
+			outcome: "failed",
+			reason: "permission_lookup_failed",
+			retryable: true,
+			status: 404,
+			detail: "repository_not_visible",
+		});
+		expect(order).toEqual(["budget"]);
+	});
+
+	it("dispatches nothing when the delivery could not be held", async () => {
+		// The hold has to have *landed*. Dispatching with no durable record that it
+		// happened is the one state in which a redelivery starts a second session,
+		// so an unreachable ledger refuses the dispatch rather than proceeding on a
+		// flag — and refuses it retryably, because nothing left.
+		let reached = 0;
+		const { hooks: h, order } = hooks("ok", "unavailable");
+		const client = clientOver((request) => {
+			if (new URL(request.url).pathname.endsWith("/permission")) {
+				return Response.json({ permission: "admin", user: { login: OWNER } });
+			}
+			reached += 1;
+			return new Response(null, { status: 204 });
+		});
+
+		const result = await dispatchCommentRequest(client, { workflow: WORKFLOW, ref: REF }, plan, "d", h);
+
+		expect(result).toEqual({
+			outcome: "failed",
+			reason: "ledger_unavailable",
+			retryable: true,
+			status: null,
+			detail: null,
+		});
+		expect(reached).toBe(0);
+		expect(order).toEqual(["budget", "hold"]);
 	});
 
 	it("hands the delivery back when GitHub definitely created nothing", async () => {
@@ -550,9 +679,9 @@ describe("dispatchCommentRequest", () => {
 		const result = await dispatchCommentRequest(client, { workflow: WORKFLOW, ref: REF }, plan, "d", h);
 
 		expect(result).toMatchObject({ outcome: "failed", reason: "dispatch_unknown", retryable: false });
-		// The commit was taken before the request left, which is what makes that
+		// The hold was taken before the request left, which is what makes that
 		// answer available at all.
-		expect(order).toEqual(["budget", "commit"]);
+		expect(order).toEqual(["budget", "hold"]);
 	});
 
 	it.each([200, 204])("treats %s as acceptance", async (status) => {
@@ -627,7 +756,16 @@ async function hmac(body: string): Promise<string> {
  * build a client for the other repository and reach a 500 here, rather than
  * quietly succeeding against a stub that answered every path.
  */
-function stubGitHub(options: { permission?: string; dispatch?: () => Response } = {}) {
+function stubGitHub(
+	options: {
+		permission?: string;
+		/** The status the collaborator lookup answers with. 200 by default. */
+		permissionStatus?: number;
+		/** Whether the repository read answers 200. True by default. */
+		visible?: boolean;
+		dispatch?: () => Response;
+	} = {},
+) {
 	const calls: { method: string; path: string; body?: unknown }[] = [];
 
 	vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -645,14 +783,24 @@ function stubGitHub(options: { permission?: string; dispatch?: () => Response } 
 			});
 		}
 
-		if (!url.pathname.startsWith(`/repos/${REPOSITORY}/`)) {
+		if (!url.pathname.startsWith(`/repos/${REPOSITORY}/`) && url.pathname !== `/repos/${REPOSITORY}`) {
 			throw new Error(`request outside the authorized repository: ${url.pathname}`);
 		}
 
 		const body = request.method === "POST" ? await request.clone().json() : undefined;
 		calls.push({ method: request.method, path: url.pathname, body });
 
+		if (url.pathname === `/repos/${REPOSITORY}`) {
+			// The visibility question, asked only after an ambiguous 404. `visible`
+			// false is the App having been removed from the repository: the token
+			// still mints, and this is where that shows up.
+			return options.visible === false ? new Response("{}", { status: 404 }) : Response.json({ full_name: REPOSITORY });
+		}
+
 		if (url.pathname.endsWith("/permission")) {
+			if (options.permissionStatus !== undefined && options.permissionStatus !== 200) {
+				return new Response("{}", { status: options.permissionStatus });
+			}
 			// The login is echoed back from the path, as GitHub does. A stub that
 			// always answered about the owner would make the "answered about somebody
 			// else" refusal fire on every non-owner test for the wrong reason.
@@ -1070,6 +1218,271 @@ describe("through the endpoint", () => {
 
 		expect(text).not.toContain("ghs_installation_token");
 		expect(text).not.toContain("PRIVATE KEY");
+	});
+
+	// -------------------------------------------------------------------------
+	// The two trust boundaries, end to end
+	// -------------------------------------------------------------------------
+
+	/** The delivery ledger's record for `id`, read straight out of storage. */
+	async function ledgerRecord(id: string) {
+		const stub = env.WEBHOOK_DELIVERIES.get(env.WEBHOOK_DELIVERIES.idFromName("deliveries"));
+
+		return await runInDurableObject(stub, async (_instance: WebhookDeliveries, state) =>
+			state.storage.get<{ firstSeen: number; expiresAt: number; committed: boolean; held?: boolean }>(`d:${id}`),
+		);
+	}
+
+	/** Put a record back exactly as it was, which is what "the settle never ran" leaves. */
+	async function restoreLedgerRecord(id: string, record: unknown) {
+		const stub = env.WEBHOOK_DELIVERIES.get(env.WEBHOOK_DELIVERIES.idFromName("deliveries"));
+
+		await runInDurableObject(stub, async (_instance: WebhookDeliveries, state) => {
+			await state.storage.put(`d:${id}`, record);
+		});
+	}
+
+	it("settles an outside commenter's delivery as spent, on a repository it can still see", async () => {
+		// The ordinary 404, and the half of the ambiguity that *is* settled. Two
+		// calls, in order: the lookup, then the question that makes its answer
+		// readable. A redelivery reaches the same answer, so the id stays spent.
+		const github = stubGitHub({ permissionStatus: 404, visible: true });
+		const id = crypto.randomUUID();
+		const payload = commentPayload({ author: { login: "a-stranger", type: "User" } });
+
+		const { response, body } = await deliverComment({ payload, deliveryId: id });
+
+		expect(response.status).toBe(202);
+		expect(body.skipped).toBe("actor_not_permitted");
+		expect(github.dispatches()).toHaveLength(0);
+		expect(github.calls().map((call) => call.path)).toEqual([
+			`/repos/${REPOSITORY}/collaborators/a-stranger/permission`,
+			`/repos/${REPOSITORY}`,
+		]);
+
+		const second = await deliverComment({ payload, deliveryId: id });
+		expect(second.body.duplicate).toBe(true);
+		expect(github.dispatches()).toHaveLength(0);
+
+		const row = await env.AUDIT_DB.prepare(
+			"SELECT error_code, metadata FROM audit_logs WHERE action = 'comment_dispatch' ORDER BY rowid DESC LIMIT 1",
+		).first<{ error_code: string; metadata: string }>();
+		expect(row?.error_code).toBe("AUTH_SUBJECT_UNTRUSTED");
+		expect(JSON.parse(row?.metadata ?? "{}")).toMatchObject({
+			reason: "actor_not_permitted",
+			detail: "not_a_collaborator",
+		});
+	});
+
+	it("does not burn the delivery when the repository has been removed from the installation", async () => {
+		// **The blocker.** The same 404, wearing the same clothes, meaning something
+		// else entirely: the App can no longer see this repository, so *every*
+		// comment — the owner's included — would otherwise be answered "the author
+		// is not trusted", audited against the commenter, and burned non-retryably.
+		// It has to fail closed and stay redeliverable, because putting the
+		// repository back on the installation and redelivering is the recovery.
+		const github = stubGitHub({ permissionStatus: 404, visible: false });
+		const id = crypto.randomUUID();
+
+		const { response, body } = await deliverComment({ payload: commentPayload(), deliveryId: id });
+
+		expect(response.status).toBe(500);
+		expect(body.code).toBe("INTERNAL_ERROR");
+		expect(github.dispatches()).toHaveLength(0);
+
+		// The audit row names the installation's problem rather than the author's.
+		const row = await env.AUDIT_DB.prepare(
+			"SELECT error_code, metadata FROM audit_logs WHERE action = 'comment_dispatch' ORDER BY rowid DESC LIMIT 1",
+		).first<{ error_code: string; metadata: string }>();
+		expect(JSON.parse(row?.metadata ?? "{}")).toMatchObject({
+			reason: "permission_lookup_failed",
+			detail: "repository_not_visible",
+			status: 404,
+			retryable: true,
+		});
+
+		// And the operator's fix plus a redelivery is a real retry.
+		vi.restoreAllMocks();
+		const repaired = stubGitHub();
+		const second = await deliverComment({ payload: commentPayload(), deliveryId: id });
+
+		expect(second.body.duplicate).toBe(false);
+		expect(second.body.dispatched).toBe(true);
+		expect(repaired.dispatches()).toHaveLength(1);
+	});
+
+	it("has already recorded the delivery durably by the time the dispatch leaves", async () => {
+		// The other blocker, asserted where it lives: *during* the outbound POST,
+		// not after the response. A boundary that only set a flag on the request
+		// context would show a five-minute reservation here — and an isolate evicted
+		// before the guard's `finally` would let a redelivery through as soon as it
+		// lapsed.
+		let atDispatch: Awaited<ReturnType<typeof ledgerRecord>>;
+		const id = crypto.randomUUID();
+		const github = stubGitHub({
+			dispatch: () => new Response(null, { status: 204 }),
+		});
+		const inspect = vi.spyOn(globalThis, "fetch");
+		const underlying = inspect.getMockImplementation();
+		inspect.mockImplementation(async (input, init) => {
+			const url = new URL(new Request(input as RequestInfo, init as RequestInit).url);
+			if (url.pathname.includes("/actions/workflows/")) {
+				atDispatch = await ledgerRecord(id);
+			}
+			return (await underlying?.(input, init)) as Response;
+		});
+
+		const { body } = await deliverComment({ payload: commentPayload(), deliveryId: id });
+
+		expect(body.dispatched).toBe(true);
+		expect(github.dispatches()).toHaveLength(1);
+		// Durable, and for the retention window rather than the reservation window.
+		expect(atDispatch).toBeDefined();
+		expect(atDispatch?.held).toBe(true);
+		expect(atDispatch?.expiresAt).toBeGreaterThan(Date.now() + DELIVERY_RESERVATION_MS);
+		expect(atDispatch?.expiresAt).toBeGreaterThan(Date.now() + DELIVERY_RETENTION_MS - 60_000);
+	});
+
+	it("cannot be made to dispatch twice by a settlement that never landed", async () => {
+		// Process death after the irreversible boundary, simulated exactly: the
+		// ledger is rolled back to the state the hold left it in — which is what an
+		// isolate evicted between the POST and the guard's `finally` would leave —
+		// and the delivery is presented again.
+		let held: unknown;
+		const id = crypto.randomUUID();
+		const github = stubGitHub();
+		const inspect = vi.spyOn(globalThis, "fetch");
+		const underlying = inspect.getMockImplementation();
+		inspect.mockImplementation(async (input, init) => {
+			const url = new URL(new Request(input as RequestInfo, init as RequestInit).url);
+			if (url.pathname.includes("/actions/workflows/")) {
+				held = await ledgerRecord(id);
+			}
+			return (await underlying?.(input, init)) as Response;
+		});
+
+		await deliverComment({ payload: commentPayload(), deliveryId: id });
+		expect(github.dispatches()).toHaveLength(1);
+
+		await restoreLedgerRecord(id, held);
+
+		vi.restoreAllMocks();
+		const redelivered = stubGitHub();
+		const second = await deliverComment({ payload: commentPayload(), deliveryId: id });
+
+		// Spent. Not because the handler noticed anything — there is nothing for it
+		// to notice, which is the whole reason the hold is written first.
+		expect(second.response.status).toBe(200);
+		expect(second.body.duplicate).toBe(true);
+		expect(redelivered.calls()).toHaveLength(0);
+	});
+
+	it("hands the delivery back when GitHub answered a definite 4xx after the hold", async () => {
+		// The one answer that reopens a held id: GitHub stating it created nothing.
+		// Asserted against the ledger as well as against the retry, because "the
+		// record is gone" and "a redelivery dispatched" are two different claims and
+		// only both together mean the release happened rather than the record having
+		// never been written.
+		const github = stubGitHub({ dispatch: () => new Response("{}", { status: 422 }) });
+		const id = crypto.randomUUID();
+
+		const first = await deliverComment({ payload: commentPayload(), deliveryId: id });
+		expect(first.response.status).toBe(500);
+		expect(github.dispatches()).toHaveLength(1);
+		expect(await ledgerRecord(id)).toBeUndefined();
+
+		vi.restoreAllMocks();
+		const repaired = stubGitHub();
+		const second = await deliverComment({ payload: commentPayload(), deliveryId: id });
+
+		expect(second.body.duplicate).toBe(false);
+		expect(second.body.dispatched).toBe(true);
+		expect(repaired.dispatches()).toHaveLength(1);
+	});
+
+	it("leaves a 5xx spent, with the record it wrote before the request", async () => {
+		// The ambiguous direction. GitHub may have created the run, so the id stays
+		// spent — and it is spent by a *committed* record, which release cannot
+		// touch even if something later tried.
+		const github = stubGitHub({ dispatch: () => new Response("{}", { status: 503 }) });
+		const id = crypto.randomUUID();
+
+		const first = await deliverComment({ payload: commentPayload(), deliveryId: id });
+		expect(first.response.status).toBe(500);
+		expect(github.dispatches()).toHaveLength(1);
+
+		expect(await ledgerRecord(id)).toMatchObject({ committed: true });
+
+		vi.restoreAllMocks();
+		const redelivered = stubGitHub();
+		const second = await deliverComment({ payload: commentPayload(), deliveryId: id });
+
+		expect(second.body.duplicate).toBe(true);
+		expect(redelivered.dispatches()).toHaveLength(0);
+	});
+
+	it("dispatches nothing when the delivery could not be held", async () => {
+		// An unreachable ledger at the boundary refuses the dispatch outright. The
+		// reservation is still in place, so the response is a retryable failure and
+		// no run was started on a delivery nothing had recorded.
+		const github = stubGitHub();
+		const { response } = await deliverComment({
+			payload: commentPayload(),
+			overrides: {
+				WEBHOOK_DELIVERIES: {
+					idFromName: () => ({}),
+					get: () => ({
+						fetch: (request: Request) =>
+							new URL(request.url).pathname === "/hold"
+								? Promise.reject(new Error("ledger down"))
+								: Promise.resolve(Response.json({ reserved: true, firstSeen: Date.now(), committed: false })),
+					}),
+				},
+			},
+		});
+
+		expect(response.status).toBe(500);
+		expect(github.dispatches()).toHaveLength(0);
+	});
+
+	it("audits the refusal that stops the loop", async () => {
+		// `actor_is_not_human` is rare by construction — it only fires on a comment
+		// that *does* invoke the phrase — and it is the App recognising its own
+		// completion comment. The Actions run list shows what ran and never what was
+		// declined, so this row is the only place that refusal exists.
+		stubGitHub();
+		const bot = { login: "claude", type: "Bot" };
+
+		await deliverComment({
+			payload: commentPayload({ author: bot, sender: bot, body: "@claude done", viaApp: { id: 1, slug: "claude" } }),
+		});
+
+		const row = await env.AUDIT_DB.prepare(
+			"SELECT subject, success, error_code, metadata FROM audit_logs WHERE action = 'comment_dispatch' ORDER BY rowid DESC LIMIT 1",
+		).first<{ subject: string; success: number; error_code: string; metadata: string }>();
+
+		expect(row?.subject).toBe(REPOSITORY);
+		expect(row?.success).toBe(0);
+		expect(row?.error_code).toBe("AUTH_SUBJECT_UNTRUSTED");
+		expect(JSON.parse(row?.metadata ?? "{}")).toEqual({ reason: "actor_is_not_human" });
+	});
+
+	it("writes no row for the weather", async () => {
+		// A comment with no trigger phrase in it is not an event. A row per one of
+		// those would be a D1 write per comment on the repository, which is the
+		// volume argument that does not apply to the two refusals above.
+		stubGitHub();
+		const before = await env.AUDIT_DB.prepare(
+			"SELECT COUNT(*) AS n FROM audit_logs WHERE action = 'comment_dispatch'",
+		).first<{ n: number }>();
+
+		await deliverComment({ payload: commentPayload({ body: "looks good to me" }) });
+
+		const after = await env.AUDIT_DB.prepare(
+			"SELECT COUNT(*) AS n FROM audit_logs WHERE action = 'comment_dispatch'",
+		).first<{ n: number }>();
+
+		expect(after?.n).toBe(before?.n);
 	});
 
 	it("writes one comment_dispatch row per decision", async () => {

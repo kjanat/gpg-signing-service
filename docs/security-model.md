@@ -539,10 +539,20 @@ Before relying on the service for protected production branches, account for:
   costs a session that starts sessions;
 - **dispatch is at-most-once past the request**: there is no idempotency key on
   GitHub's workflow-dispatch endpoint and a second call starts a second agent
-  session, so the delivery id is committed before the request leaves. A 5xx or a
-  lost connection is not retried. GitHub answering 4xx _is_ — it created
-  nothing, and said so. See
+  session, so the delivery id is written to the ledger before the request leaves
+  — a durable _hold_, not a flag settled afterwards, because this is the one
+  handler with no idempotence of its own for a redelivery to meet. A 5xx, a lost
+  connection, or an isolate that dies mid-flight is not retried. GitHub
+  answering 4xx _is_ — it created nothing, and said so, and the hold is
+  released. A hold that cannot be written refuses the dispatch. See
   [replay: at-most-once, on purpose](github-app.md#replay-at-most-once-on-purpose);
+- **the author's permission is established, never inferred from one status**: a
+  `404` from the collaborator endpoint means both "not a collaborator" and "this
+  installation can no longer see the repository", so it is resolved by an
+  independent repository read on the same token. Only a visible repository makes
+  it a settled refusal; an invisible or unanswerable one fails closed, stays
+  redeliverable, and is audited as `repository_not_visible`. See
+  [dispatching Claude from a comment](github-app.md#dispatching-claude-from-a-comment);
 - webhook replay protection bounded by a retention window: a delivery captured
   and replayed after it expires from the ledger is accepted again. No
   TTL-based deduplication can prevent that — the signature carries no timestamp
