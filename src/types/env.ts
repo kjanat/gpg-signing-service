@@ -4,7 +4,7 @@
 
 import type { Context } from "hono";
 import type { Identity } from "#types/branded";
-import type { WebhookDelivery } from "#types/github";
+import type { WebhookAuthorization, WebhookDelivery, WebhookReplay } from "#types/github";
 import type { ValidatedOIDCClaims } from "#types/oidc";
 
 /** Context variables (for c.set/c.get) */
@@ -46,6 +46,24 @@ export interface Variables {
 	 * signature covered are the only bytes anything downstream ever sees.
 	 */
 	webhookPayload?: unknown;
+	/**
+	 * What the verified delivery is authorized to be about.
+	 *
+	 * Written only by `githubWebhookAuthorize`, which refuses the request rather
+	 * than setting anything when the delivery names a subject this deployment has
+	 * not granted. A handler that finds it may assume both that the HMAC passed
+	 * and that the scope below was granted by an operator — and must take the
+	 * repository from *here*, never from `webhookPayload`.
+	 */
+	webhookAuthorization?: WebhookAuthorization;
+	/**
+	 * Proof that this delivery id had not been seen before.
+	 *
+	 * Written only by `webhookReplayGuard`, and only when the claim succeeded — a
+	 * repeat is answered by the guard and never reaches a handler. So a handler
+	 * that finds it is running for the first time on this event.
+	 */
+	webhookReplay?: WebhookReplay;
 }
 
 /** Cloudflare Workers environment bindings */
@@ -54,6 +72,16 @@ export interface Env {
 	KEY_STORAGE: DurableObjectNamespace;
 	/** Durable Object namespace for rate limiting */
 	RATE_LIMITER: DurableObjectNamespace;
+	/**
+	 * Durable Object namespace for the webhook delivery ledger.
+	 *
+	 * Not optional even though the feature it serves is: a binding that might be
+	 * absent is one whose absence has to be handled, and the handling for "the
+	 * ledger is missing" would be either "act twice" or "refuse everything". It
+	 * is declared in every environment and costs nothing until a delivery is
+	 * claimed.
+	 */
+	WEBHOOK_DELIVERIES: DurableObjectNamespace;
 
 	/** D1 Database */
 	AUDIT_DB: D1Database;
@@ -147,6 +175,22 @@ export interface Env {
 	 * own.
 	 */
 	GITHUB_APP_ID?: string;
+	/**
+	 * Optional: which `<installation, repository>` pairs a delivery may be about.
+	 *
+	 * Comma-separated `<installationId>:<owner>/<repo>` entries, e.g.
+	 * `12345678:kjanat/gpg-signing-service`. Unset authorizes no installation and
+	 * no repository — the App-level `ping`, which names neither, still answers so
+	 * an operator can check the endpoint before writing this.
+	 *
+	 * A plain var rather than a secret: it is a policy an operator should be able
+	 * to read back from `wrangler.toml` and diff, and it grants nothing on its
+	 * own — reaching the check at all requires the webhook secret.
+	 *
+	 * Pairs rather than two independent lists, because two lists authorize every
+	 * combination of their members. See `src/utils/github-authorization.ts`.
+	 */
+	GITHUB_APP_ALLOWED_REPOSITORIES?: string;
 
 	/** Error tracking */
 	/**
