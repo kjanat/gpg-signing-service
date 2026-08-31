@@ -44,16 +44,44 @@ import {
 
 const SECRET = "test-webhook-secret";
 
-/** A deployment with the integration switched on and completely configured. */
-const ENABLED = { GITHUB_APP_ENABLED: "true", GITHUB_WEBHOOK_SECRET: SECRET };
+/**
+ * A deployment with the integration switched on, completely configured, and
+ * granting the installations the deliveries below claim.
+ *
+ * The allowlist is part of "configured" now: authorization is a separate gate
+ * from the HMAC, so a suite about the HMAC has to get past authorization to
+ * reach the answers it is asserting about. Which pairs are granted is the
+ * subject of `github-authorization.test.ts`; here the list exists only so these
+ * tests are exercising the boundary they mean to.
+ */
+const ENABLED = {
+	GITHUB_APP_ENABLED: "true",
+	GITHUB_WEBHOOK_SECRET: SECRET,
+	GITHUB_APP_ALLOWED_REPOSITORIES: "42:kjanat/service, 7:kjanat/service, 987654:kjanat/service",
+};
+
+/**
+ * A delivery id no other request in this suite uses.
+ *
+ * Every signed delivery needs its own, because a repeated id is now answered as
+ * a duplicate — which is the correct behaviour and would otherwise make these
+ * tests depend on their own execution order. `crypto.randomUUID` rather than a
+ * counter so that a test which runs twice, in any file, still gets a fresh one.
+ */
+function freshDeliveryId(): string {
+	return crypto.randomUUID();
+}
 
 interface Envelope {
 	error?: string;
 	code?: string;
+	hint?: string;
 	received?: boolean;
 	event?: string;
-	delivery?: string;
+	delivery?: string | null;
 	installation?: boolean;
+	scope?: string;
+	duplicate?: boolean;
 	handled?: boolean;
 }
 
@@ -73,15 +101,26 @@ async function sign(body: string, secret: string = SECRET): Promise<string> {
 
 async function deliver(
 	body: string,
-	headers: Record<string, string> = {},
+	headers: Record<string, string | null> = {},
 	overrides: Record<string, unknown> = {},
 ): Promise<{ response: Response; body: Envelope }> {
+	// A fresh delivery id unless the caller names one, and *no* id when the
+	// caller passes null. The default exists because a delivery without a usable
+	// id is now refused, so every test that is about something else would
+	// otherwise be about that; the null escape hatch exists because "refused" is
+	// itself worth asserting, and a helper that made it unreachable would hide
+	// the one case it matters in.
+	const withDelivery: Record<string, string | null> = { "X-GitHub-Delivery": freshDeliveryId(), ...headers };
+	const sent = Object.fromEntries(
+		Object.entries(withDelivery).filter((entry): entry is [string, string] => entry[1] !== null),
+	);
+
 	const ctx = createExecutionContext();
 	const response = await app.fetch(
 		new Request("https://sign.test/github/webhook", {
 			method: "POST",
 			body,
-			headers: { "Content-Type": "application/json", ...headers },
+			headers: { "Content-Type": "application/json", ...sent },
 		}),
 		{ ...env, ...overrides },
 		ctx,
@@ -94,7 +133,7 @@ async function deliver(
 /** A delivery that is correctly signed for whatever `overrides` configure. */
 async function deliverSigned(
 	body: string,
-	headers: Record<string, string> = {},
+	headers: Record<string, string | null> = {},
 	overrides: Record<string, unknown> = ENABLED,
 ): Promise<{ response: Response; body: Envelope }> {
 	const secret = typeof overrides.GITHUB_WEBHOOK_SECRET === "string" ? overrides.GITHUB_WEBHOOK_SECRET : SECRET;
@@ -104,7 +143,6 @@ async function deliverSigned(
 		{
 			[SIGNATURE_HEADER]: await sign(body, secret),
 			"X-GitHub-Event": "ping",
-			"X-GitHub-Delivery": "11111111-2222-3333-4444-555555555555",
 			...headers,
 		},
 		overrides,
@@ -240,14 +278,17 @@ describe("the webhook route when the feature is on but not configured", () => {
 describe("signature verification", () => {
 	it("accepts a delivery GitHub signed", async () => {
 		const payload = JSON.stringify({ zen: "Non-blocking is better than blocking." });
-		const { response, body } = await deliverSigned(payload);
+		const delivery = freshDeliveryId();
+		const { response, body } = await deliverSigned(payload, { "X-GitHub-Delivery": delivery });
 
 		expect(response.status).toBe(202);
 		expect(body).toMatchObject({
 			received: true,
 			event: "ping",
-			delivery: "11111111-2222-3333-4444-555555555555",
+			delivery,
 			installation: false,
+			scope: "none",
+			duplicate: false,
 			handled: false,
 		});
 	});
@@ -384,15 +425,16 @@ describe("what the acknowledgement says", () => {
 		["an integer id", { installation: { id: 42 } }, true],
 		["no installation object", { zen: "x" }, false],
 		["a null installation", { installation: null }, false],
-		["a string id", { installation: { id: "42" } }, false],
-		["a negative id", { installation: { id: -1 } }, false],
-		["a fractional id", { installation: { id: 1.5 } }, false],
-		["an id beyond the safe integer range", { installation: { id: 2 ** 53 } }, false],
-		["no id at all", { installation: {} }, false],
 	])("reports installation=%s for %s", async (_name, payload, expected) => {
 		// The id is about to be interpolated into a GitHub API path by the code
 		// this scaffold exists to prepare for, so "is there a usable one" has to be
 		// answered the same way here as it is there.
+		//
+		// Only the accepted shapes are here. An `installation` object whose id
+		// cannot be read is no longer answered at all — it is refused by
+		// `githubWebhookAuthorize`, which is where those rows now live, because
+		// "unreadable" and "absent" being the same answer is exactly the confusion
+		// that refusal exists to prevent.
 		const { body } = await deliverSigned(JSON.stringify(payload), { "X-GitHub-Event": "installation" });
 
 		expect(body.installation).toBe(expected);
@@ -414,24 +456,26 @@ describe("what the acknowledgement says", () => {
 		expect(JSON.stringify(body)).not.toContain("987654");
 	});
 
-	it("falls back to a placeholder when GitHub names neither event nor delivery", async () => {
-		// Both headers are GitHub's to send and this service does not control
-		// them, so their absence must not be a 500.
-		const payload = JSON.stringify({ zen: "x" });
-		const ctx = createExecutionContext();
-		const response = await app.fetch(
-			new Request("https://sign.test/github/webhook", {
-				method: "POST",
-				body: payload,
-				headers: { [SIGNATURE_HEADER]: await sign(payload) },
-			}),
-			{ ...env, ...ENABLED },
-			ctx,
-		);
-		await waitOnExecutionContext(ctx);
+	it("falls back to a placeholder when GitHub does not name the event", async () => {
+		// `X-GitHub-Event` is GitHub's to send and this service does not control
+		// it, so its absence must not be a 500. Nothing branches on the event yet,
+		// so there is nothing a placeholder can be wrong about.
+		const { response, body } = await deliverSigned(JSON.stringify({ zen: "x" }), { "X-GitHub-Event": null });
 
 		expect(response.status).toBe(202);
-		expect(await response.json()).toMatchObject({ event: "unknown", delivery: "unknown" });
+		expect(body).toMatchObject({ event: "unknown" });
+	});
+
+	it("does not fall back to a placeholder for a missing delivery id", async () => {
+		// The event id is the opposite case, and the difference is the point. A
+		// placeholder here would be a *shared* dedupe key: two id-less deliveries
+		// would collide with each other, so the first to be claimed would silently
+		// suppress every later one. Refusing is the only answer that does not
+		// invent a name for something GitHub did not name.
+		const { response, body } = await deliverSigned(JSON.stringify({ zen: "x" }), { "X-GitHub-Delivery": null });
+
+		expect(response.status).toBe(400);
+		expect(body.code).toBe("INVALID_REQUEST");
 	});
 });
 
@@ -655,6 +699,7 @@ describe("the payload ceiling", () => {
 				headers: {
 					[SIGNATURE_HEADER]: await sign(payload),
 					"X-GitHub-Event": "push",
+					"X-GitHub-Delivery": freshDeliveryId(),
 					"Content-Length": String(MAX_WEBHOOK_BODY_BYTES),
 				},
 			}),
