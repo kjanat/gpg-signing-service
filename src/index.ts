@@ -5,10 +5,18 @@ import { logger } from "hono/logger";
 import * as openpgp from "openpgp";
 import { KeyStorage as KeyStorageClass } from "#durable-objects/key-storage";
 import { RateLimiter as RateLimiterClass } from "#durable-objects/rate-limiter";
+import { WebhookDeliveries as WebhookDeliveriesClass } from "#durable-objects/webhook-deliveries";
 import { createOpenAPIApp, openApiConfig, registerSecuritySchemes } from "#lib/openapi";
 import { callerAuth } from "#middleware/caller-auth";
 import { errorDocs } from "#middleware/error-docs";
-import { githubWebhookAuth, githubWebhookGate, webhookBodyLimit, webhookRateLimit } from "#middleware/github-webhook";
+import {
+	githubWebhookAuth,
+	githubWebhookAuthorize,
+	githubWebhookGate,
+	webhookBodyLimit,
+	webhookRateLimit,
+	webhookReplayGuard,
+} from "#middleware/github-webhook";
 import { adminAuth } from "#middleware/oidc";
 import { requestIdMiddleware } from "#middleware/request-id";
 import { adminRateLimit, productionCors, securityHeaders } from "#middleware/security";
@@ -50,6 +58,7 @@ import { sentryOptions } from "#utils/sentry";
 // use.
 export const KeyStorage = instrumentDurableObject(KeyStorageClass);
 export const RateLimiter = instrumentDurableObject(RateLimiterClass);
+export const WebhookDeliveries = instrumentDurableObject(WebhookDeliveriesClass);
 
 // The instance types, re-exported alongside the wrapped constructors.
 // `wrangler types` writes `DurableObjectNamespace<import("./src/index").KeyStorage>`
@@ -60,6 +69,7 @@ export const RateLimiter = instrumentDurableObject(RateLimiterClass);
 // `DurableObject` interface.
 export type KeyStorage = KeyStorageClass;
 export type RateLimiter = RateLimiterClass;
+export type WebhookDeliveries = WebhookDeliveriesClass;
 
 const app = createOpenAPIApp();
 
@@ -244,14 +254,23 @@ app.route(
 
 // GitHub App webhook, opt-in.
 //
-// Four middlewares rather than one, and in this order: the feature gate first
-// so a deployment that has not set GITHUB_APP_ENABLED spends nothing at all on
-// a request to a route it does not serve; then the declared-size ceiling, which
+// Six middlewares rather than one, and in this order: the feature gate first so
+// a deployment that has not set GITHUB_APP_ENABLED spends nothing at all on a
+// request to a route it does not serve; then the declared-size ceiling, which
 // is one header read and so cheaper than the round trip that follows it; then
 // the limiter; then the HMAC — the same "meter before you verify" shape /admin
 // uses, for the same reason. The ceiling is enforced a second time inside the
 // HMAC middleware, on the octets that actually arrive, because the header the
 // second gate reads is written by the sender under suspicion.
+//
+// The last two are what stand between "this delivery is genuine" and "this
+// delivery may cause something", and their order is load-bearing. A valid HMAC
+// proves the sender holds the App's one webhook secret and says nothing about
+// which of that App's installations the delivery is for, so `githubWebhookAuthorize`
+// checks the subject against an operator-written allowlist. `webhookReplayGuard`
+// is deliberately *behind* it: claiming a delivery id is one-way, so a request
+// that could claim one before proving both its origin and its grant could
+// suppress the real delivery carrying that id.
 //
 // Nothing under here is in the OpenAPI document; see the comment at the top of
 // `#routes/github-webhook` for why.
@@ -262,6 +281,8 @@ app.route(
 		.use("*", webhookBodyLimit)
 		.use("*", webhookRateLimit)
 		.use("*", githubWebhookAuth)
+		.use("*", githubWebhookAuthorize)
+		.use("*", webhookReplayGuard)
 		.route("/", githubWebhookRoutes),
 );
 

@@ -31,6 +31,8 @@
  * account of how many it is about to send.
  */
 
+import type { WebhookAuthorization, WebhookDelivery } from "#types";
+
 /** The header GitHub puts the HMAC in. */
 export const SIGNATURE_HEADER = "X-Hub-Signature-256";
 
@@ -254,4 +256,44 @@ export async function readBodyWithin(request: Request, limit: number): Promise<A
 	}
 
 	return body.buffer;
+}
+
+/**
+ * The body every accepted delivery is answered with.
+ *
+ * One function, called from both the replay guard and the route, because a
+ * duplicate and a first arrival must be told apart by exactly one field. Two
+ * hand-written object literals would drift, and the way they drift is that the
+ * two answers become distinguishable by something other than `duplicate` —
+ * which is the field an operator reading "Recent Deliveries" is looking at.
+ *
+ * Everything here is either a value GitHub just sent or a decision made about
+ * it, and reaching this point at all required a valid HMAC, so nothing is
+ * disclosed. `installationId` is reported as a boolean rather than as the id:
+ * whether an event carries an installation is what an operator is checking, and
+ * the id itself adds nothing they did not send.
+ *
+ * @param delivery - The verified delivery
+ * @param authorization - What it was authorized to be about, when that has been
+ *   decided; `scope` is omitted otherwise rather than guessed at
+ * @param options - `duplicate` marks a delivery id already claimed
+ */
+export function acknowledgement(
+	delivery: WebhookDelivery,
+	authorization: WebhookAuthorization | undefined,
+	options: { duplicate: boolean },
+) {
+	return {
+		received: true,
+		event: delivery.event,
+		delivery: delivery.id,
+		/** Whether a token could be minted for this event, not whether one was. */
+		installation: delivery.installationId !== null,
+		/** How much authority the allowlist granted this delivery. */
+		...(authorization === undefined ? {} : { scope: authorization.scope }),
+		/** True when this delivery id had already been claimed inside the retention window. */
+		duplicate: options.duplicate,
+		/** Always false while this is a scaffold. See `src/routes/github-webhook.ts`. */
+		handled: false,
+	};
 }

@@ -4,11 +4,14 @@
  * **This is a scaffold and it acts on nothing.** Every verified delivery is
  * acknowledged and dropped. Auto-signing pushed commits, publishing a check
  * run, and dispatching `@claude` are all named in issue #26 and none of them
- * are here: they need an authorization model deciding *which* installation may
- * cause *which* key to sign, and inventing that inside a webhook handler is how
- * a signing service acquires a second, weaker front door. What is here is the
- * part that has to be right before any of that can be written — the trust
- * boundary, and the credential exchange behind it.
+ * are here: they need to decide *which* key an installation may cause to sign,
+ * and inventing that inside a webhook handler is how a signing service acquires
+ * a second, weaker front door. What is here is the part that has to be right
+ * before any of that can be written — the trust boundary, the credential
+ * exchange behind it, and the two checks that stand between "this delivery is
+ * genuine" and "this delivery may cause something": an operator-written
+ * allowlist of `<installation, repository>` pairs, and a delivery-id ledger
+ * that makes a replayed delivery a no-op.
  *
  * ### Why this is not in the OpenAPI document
  *
@@ -23,29 +26,32 @@
 
 import { createOpenAPIApp } from "#lib/openapi";
 import { HTTP } from "#types";
+import { acknowledgement } from "#utils/github-webhook";
 import { logger } from "#utils/logger";
 
 const app = createOpenAPIApp();
 
 /**
- * Acknowledge a verified delivery.
+ * Acknowledge a verified, authorized, first-time delivery.
+ *
+ * Everything interesting has already happened by the time this runs. The HMAC
+ * verified, an operator's allowlist granted the scope, and the delivery id was
+ * claimed — so a repeat never arrives here at all, it is answered by
+ * `webhookReplayGuard`. What is left is to say so.
  *
  * Answers 202 rather than 200, and the distinction is real rather than
  * decorative: 202 is "received, not yet acted upon", which is exactly true of
- * every event that reaches here. When a handler does start doing work, the
- * events it handles can move to 200 and the ones it still only records stay
- * here, so the status keeps meaning something.
+ * every event that reaches here. A duplicate gets 200 from the guard, because
+ * for that one there is nothing outstanding. When a handler does start doing
+ * work, the events it handles can move to 200 and the ones it still only
+ * records stay here, so the status keeps meaning something.
  *
  * The body names the delivery back to the sender. That is not a disclosure —
- * `event` and `delivery` are values GitHub itself just sent, and reaching this
- * line at all required a valid HMAC — and it is what makes the "Recent
- * Deliveries" tab on the App's settings page useful: a redelivery shows the
- * same id, so an operator can tell a retry from a fresh event without a log.
- *
- * `installationId` is echoed as a boolean rather than as the id. Whether an
- * event carries an installation is what an operator is checking; the id itself
- * adds nothing they did not send and would put an account identifier into a
- * response body for no reader.
+ * every field is a value GitHub itself just sent or a decision made about it,
+ * and reaching this line required a valid HMAC — and it is what makes the
+ * "Recent Deliveries" tab useful: a redelivery shows the same id and comes back
+ * `duplicate: true`, so an operator can tell a retry from a fresh event without
+ * a log.
  */
 app.post("/webhook", (c) => {
 	// Set by `githubWebhookAuth`, which is mounted in front of this route in
@@ -64,25 +70,21 @@ app.post("/webhook", (c) => {
 	// keys and credentials, and a row per acknowledged-and-discarded event would
 	// be a D1 write per delivery for an event nothing acted on. When a handler
 	// starts acting, the *action* is what earns an audit record.
+	//
+	// The authorized repository is logged rather than the payload's, for the same
+	// reason a handler must act on the authorized one: it is the operator's
+	// string, so a log line cannot be made to say a repository nobody granted.
+	const authorization = c.get("webhookAuthorization");
 	logger.info("GitHub webhook delivery accepted", {
 		requestId: c.get("requestId"),
 		event: delivery.event,
 		delivery: delivery.id,
 		installationId: delivery.installationId,
+		scope: authorization?.scope,
+		repository: authorization?.repository,
 	});
 
-	return c.json(
-		{
-			received: true,
-			event: delivery.event,
-			delivery: delivery.id,
-			/** Whether a token could be minted for this event, not whether one was. */
-			installation: delivery.installationId !== null,
-			/** Always false while this is a scaffold. See the module comment. */
-			handled: false,
-		},
-		HTTP.Accepted,
-	);
+	return c.json(acknowledgement(delivery, authorization, { duplicate: false }), HTTP.Accepted);
 });
 
 export default app;
