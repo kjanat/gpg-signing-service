@@ -99,6 +99,9 @@ done
 
 # And the expected tip has to reach the lease, not just the dispatch form. The
 # script is what spends it; this asserts the two stay wired together.
+#
+# shellcheck disable=SC2016  # the needle is repair-history.sh's source text,
+# so `${branch}` and `${expected_tip}` are meant to stay unexpanded.
 grep -Fq -- '--force-with-lease="refs/heads/${branch}:${expected_tip}"' "${repair_script}" || {
 	printf 'FAIL: %s no longer leases the push against the expected tip\n' "${repair_script}" >&2
 	exit 1

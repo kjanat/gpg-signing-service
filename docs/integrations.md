@@ -180,12 +180,20 @@ signature stripped and nothing put back; the run marks it `stripped` and warns.
 See [the CLI reference](cli.md#apply-signatures-to-commits) for the full flag
 set and output.
 
-The repository's
-[`sign-commits.yml`](../.github/workflows/sign-commits.yml) runs this same
-command through [`.github/scripts/sign-commits.sh`](../.github/scripts/sign-commits.sh)
-— which is flag assembly and nothing else — and adds the final force push. It
-is an internal example, not a drop-in reusable workflow: it uses
-repository-local setup actions, and it handles PGP signatures only.
+The repository drives the same command from a **Sign Commits** workflow, through
+[`.github/scripts/sign-commits.sh`](../.github/scripts/sign-commits.sh) — which
+is flag assembly and nothing else — plus the final force push. It is an internal
+example, not a drop-in reusable workflow: it uses repository-local setup
+actions, and it handles PGP signatures only.
+
+That workflow is not live yet. The replacement is staged at
+[`.github/workflows-pending/sign-commits.yml`](../.github/workflows-pending/sign-commits.yml),
+because a GitHub App token cannot write under `.github/workflows/`; the file
+currently at [`.github/workflows/sign-commits.yml`](../.github/workflows/sign-commits.yml)
+still names the Python path this change replaces. Both halves have to land in
+the same merge, and `task test:sign-commits` fails until they do. See
+[Landing order](cli.md#landing-order) for the sequence and the release it
+depends on.
 
 ## X.509
 
