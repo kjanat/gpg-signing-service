@@ -193,7 +193,14 @@ export function isDeniedKey(key: string): boolean {
 export function collectEnvSecrets(env: Partial<Env>): string[] {
 	const collected = new Set<string>();
 
-	for (const value of [env.KEY_PASSPHRASE, env.ADMIN_TOKEN, env.ADMIN_READONLY_TOKEN, env.SENTRY_DSN]) {
+	for (const value of [
+		env.KEY_PASSPHRASE,
+		env.ADMIN_TOKEN,
+		env.ADMIN_READONLY_TOKEN,
+		env.SENTRY_DSN,
+		env.GITHUB_APP_PRIVATE_KEY,
+		env.GITHUB_WEBHOOK_SECRET,
+	]) {
 		if (typeof value !== "string" || value.trim().length === 0) continue;
 		collected.add(value);
 		collected.add(value.trim());
