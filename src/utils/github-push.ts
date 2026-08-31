@@ -70,7 +70,17 @@ export type PushRefusal =
 	/** The branch named by the delivery does not exist any more. */
 	| "branch_missing"
 	/** More unsigned commits at the tip than one delivery may rewrite. */
-	| "too_many_unsigned";
+	| "too_many_unsigned"
+	/**
+	 * A commit in the run could not be reproduced byte-for-byte from what the
+	 * API reports, so its rewrite would silently alter it.
+	 *
+	 * In practice: a timezone offset outside the candidates `recoverCommitOffsets`
+	 * tries, or a header this service does not model. Refusing is the point —
+	 * rewriting a commit we cannot reconstruct means publishing a signature over
+	 * something other than what the author wrote.
+	 */
+	| "unreproducible_commit";
 
 /** A push this service will act on, and the branch it will act on. */
 export type PushPlan = { act: true; branch: string } | { act: false; reason: PushRefusal };
@@ -156,6 +166,11 @@ export type SignableRun = { act: true; commits: RepositoryCommit[] } | { act: fa
  * other parents are not at the tip, are not being rewritten, and keep whatever
  * signatures they have.
  *
+ * Refuses the whole run if any commit in it could not be reproduced from what
+ * the API reports — see `unreproducible_commit`. That check belongs to the walk
+ * because the walk is what decides the set: a run is rewritten as a chain, so a
+ * commit that cannot be reproduced disqualifies everything above it too.
+ *
  * The returned order is oldest first, which is the order they must be created
  * in — each rewritten commit's parent is the previous one's new id.
  *
@@ -175,6 +190,14 @@ export async function signableRun(
 
 		if (commit.signed) {
 			break;
+		}
+
+		// Refused here rather than at signing time, so the whole run is abandoned
+		// before any of it is signed: a run is rewritten as a chain, and signing
+		// the first half of one whose second half cannot be reproduced would leave
+		// a branch nobody asked for.
+		if (commit.offsets === null) {
+			return { act: false, reason: "unreproducible_commit" };
 		}
 
 		collected.push(commit);

@@ -912,10 +912,142 @@ describe("two phases: a delivery that caused nothing stays redeliverable", () =>
 		expect(response.status).toBe(200);
 	});
 
-	it("settles nothing for an id it never held", async () => {
+	it("reads a ledger that answers without a reason as no reason, not as a crash", async () => {
+		// The answer is a diagnosis, not a decision — nothing branches on it except
+		// a log line — so a ledger that stopped sending one must not take the
+		// commit path down with it.
+		const silent = {
+			WEBHOOK_DELIVERIES: {
+				idFromName: () => ({}),
+				get: () => ({ fetch: () => Promise.resolve(Response.json({ settled: true })) }),
+			},
+		} as unknown as Env;
+
+		await expect(commitDelivery({ ...env, ...silent } as unknown as Env, crypto.randomUUID())).resolves.toBeNull();
+	});
+
+	it("releases an id it never held without raising", async () => {
 		// A reservation that lapsed mid-handler is gone by the time its handler
-		// settles. That is a race to report calmly rather than a failure to raise.
-		await expect(commitDelivery(env, crypto.randomUUID())).resolves.toBeUndefined();
+		// settles. On the *release* path that is nothing at all: the delivery
+		// caused nothing, and gone is where release was taking the record anyway.
 		await expect(releaseDelivery(env, crypto.randomUUID())).resolves.toBeUndefined();
+	});
+
+	it("commits an id it never held by creating the record, not by shrugging", async () => {
+		// The other direction, and it is not symmetric. A commit is only ever
+		// called once something irreversible has happened — a branch has moved —
+		// so answering "absent, nothing written" would leave that fact recorded
+		// nowhere at all, and the operator's redelivery would be handled as a
+		// first arrival and force-update the branch a second time.
+		//
+		// Reachable without any exotic failure: the reservation lapses after five
+		// minutes, and a handler that outlives its own reservation arrives here
+		// with nothing to update.
+		const id = crypto.randomUUID();
+		const stub = env.WEBHOOK_DELIVERIES.get(env.WEBHOOK_DELIVERIES.idFromName("deliveries"));
+
+		await expect(commitDelivery(env, id)).resolves.toBe("committed_without_reservation");
+
+		const stored = await runInDurableObject(stub, async (_instance: WebhookDeliveries, state) =>
+			state.storage.get<{ committed: boolean; expiresAt: number }>(`d:${id}`),
+		);
+
+		// Committed, and for the full retention window rather than a reservation's
+		// five minutes — a record that lapsed back into "never seen" after five
+		// minutes would be no protection at all against the redelivery it exists
+		// to refuse.
+		expect(stored?.committed).toBe(true);
+		expect((stored as { expiresAt: number }).expiresAt).toBeGreaterThan(Date.now() + DELIVERY_RESERVATION_MS);
+		expect((stored as { expiresAt: number }).expiresAt).toBeLessThanOrEqual(Date.now() + DELIVERY_RETENTION_MS);
+
+		// And it is a real refusal, not just a row: the next arrival of this id is
+		// a duplicate.
+		expect((await reserveDelivery(env, id)).reserved).toBe(false);
+		expect((await reserveDelivery(env, id)).committed).toBe(true);
+	});
+
+	it("still deduplicates a redelivery after the reservation vanished mid-handler", async () => {
+		// The same property from outside, end to end, because the one above could
+		// pass on a ledger that wrote a record nobody consults. A handler that
+		// publishes and *then* finds its reservation gone must still leave a
+		// delivery that a redelivery cannot get past.
+		//
+		// The reservation is deleted from underneath the running handler, which is
+		// what a lapse looks like from the handler's point of view — the record is
+		// simply not there when the `finally` gets to it.
+		const id = crypto.randomUUID();
+		const stub = env.WEBHOOK_DELIVERIES.get(env.WEBHOOK_DELIVERIES.idFromName("deliveries"));
+		let reached = 0;
+
+		const published = await through(id, async (c) => {
+			reached += 1;
+			await runInDurableObject(stub, async (_instance: WebhookDeliveries, state) => state.storage.delete(`d:${id}`));
+			return c.json({ ok: true }, 200);
+		});
+		expect(published.status).toBe(200);
+
+		const redelivered = await through(id, (c) => {
+			reached += 1;
+			return c.json({ ok: true }, 200);
+		});
+
+		// One trip through the handler, not two. Without the commit path creating
+		// the record it did not find, the ledger would hold nothing here and this
+		// would be a second force update.
+		expect(reached).toBe(1);
+		expect(redelivered.status).toBe(200);
+		expect(((await redelivered.json()) as Envelope).duplicate).toBe(true);
+	});
+
+	it("says so in the log when a delivery outran its own reservation", async () => {
+		// The ledger fails closed silently otherwise, and a ledger that quietly
+		// starts doing the unusual thing is one you find out about when something
+		// else also breaks. The line names the reservation window because that is
+		// the number an operator would be reaching for.
+		const id = crypto.randomUUID();
+		const stub = env.WEBHOOK_DELIVERIES.get(env.WEBHOOK_DELIVERIES.idFromName("deliveries"));
+
+		const entries = await captureLogEntries(async () => {
+			await through(id, async (c) => {
+				await runInDurableObject(stub, async (_instance: WebhookDeliveries, state) => state.storage.delete(`d:${id}`));
+				return c.json({ ok: true }, 200);
+			});
+		});
+
+		const line = logLine(entries, "Delivery committed after its reservation had lapsed");
+		expect(line.level).toBe("warn");
+		expect(line.delivery).toBe(id);
+		expect(line.reservationMs).toBe(DELIVERY_RESERVATION_MS);
+	});
+
+	it("does not create a record when a delivery that caused nothing loses its reservation", async () => {
+		// The mirror image, so "commit writes what it does not find" cannot quietly
+		// become "settle writes what it does not find". A handler that published
+		// nothing and lost its reservation must leave the id retryable — that is
+		// the whole reason the phases exist.
+		const id = crypto.randomUUID();
+		const stub = env.WEBHOOK_DELIVERIES.get(env.WEBHOOK_DELIVERIES.idFromName("deliveries"));
+		let reached = 0;
+
+		const refused = await through(id, async (c) => {
+			reached += 1;
+			c.set("webhookRetryable", true);
+			await runInDurableObject(stub, async (_instance: WebhookDeliveries, state) => state.storage.delete(`d:${id}`));
+			return c.json({ refused: true }, 503);
+		});
+		expect(refused.status).toBe(503);
+
+		const stored = await runInDurableObject(stub, async (_instance: WebhookDeliveries, state) =>
+			state.storage.get<{ committed: boolean }>(`d:${id}`),
+		);
+		expect(stored).toBeUndefined();
+
+		const redelivered = await through(id, (c) => {
+			reached += 1;
+			return c.json({ ok: true }, 200);
+		});
+
+		expect(reached).toBe(2);
+		expect(((await redelivered.json()) as Envelope).duplicate).toBeUndefined();
 	});
 });

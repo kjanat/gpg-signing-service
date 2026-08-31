@@ -26,9 +26,12 @@
  *   under `blockConcurrencyWhile`, which is what keeps simultaneous copies to
  *   one winner. A reservation is short-lived: it expires on its own, so a
  *   handler whose isolate died does not hold an id hostage.
- * - **Committed** by {@link WebhookDeliveries.commit} once the delivery has
+ * - **Committed** by {@link WebhookDeliveries.settle} once the delivery has
  *   caused something irreversible. A committed record lasts the full retention
- *   window and is what makes a replay a no-op.
+ *   window and is what makes a replay a no-op. It is written whether or not the
+ *   reservation survived: a commit that finds nothing to update creates the
+ *   record instead, because the alternative is an irreversible action nothing
+ *   remembers.
  *
  * And one way back: {@link WebhookDeliveries.release} drops a reservation that
  * caused nothing, so a redelivery is a genuine retry. Release refuses to touch
@@ -217,25 +220,55 @@ export class WebhookDeliveries implements DurableObject {
 	 * is no code path from committed back to absent except the retention window
 	 * elapsing.
 	 *
-	 * Missing records are not an error. A reservation that expired mid-handler is
-	 * gone by the time its handler settles, and that is a race to report calmly
-	 * rather than a failure to raise: the answer says what was found so a caller
-	 * can log it.
+	 * ### An absent record means opposite things on the two paths
+	 *
+	 * A reservation lapses on its own after {@link DELIVERY_RESERVATION_MS}, so a
+	 * handler can outlive its own reservation and arrive here with nothing to
+	 * settle. What that means depends entirely on which way it was going.
+	 *
+	 * On **release** it means nothing: the delivery caused nothing, the record is
+	 * already gone, and gone is where release was taking it. Reported and dropped.
+	 *
+	 * On **commit** it is the one state this ledger exists to prevent. The caller
+	 * only commits once something irreversible has happened — a branch has moved —
+	 * and answering "absent, nothing written" would leave that fact recorded
+	 * nowhere, so the operator's redelivery would be handled as a first arrival
+	 * and force-update the branch a second time. So commit **writes the record it
+	 * did not find**, for the full retention window, and reports that it had to.
+	 * `firstSeen` is the write itself: the original reservation's timestamp went
+	 * with the record that lapsed, and inventing an earlier one would misdate the
+	 * only evidence of what happened.
+	 *
+	 * This is the module's "absent means committed" principle applied to the
+	 * ledger's own storage rather than only to the handler's flag. Nothing else
+	 * covers it: the object-graph defence in `#utils/github-push` would also stop
+	 * the second rewrite, and a ledger that quietly stopped recording would then
+	 * only be discovered by whatever broke next.
 	 */
 	private async settle(id: string, commit: boolean): Promise<Response> {
 		const key = `${this.keyPrefix}${id}`;
 
 		const result = await this.exclusively(async () => {
 			const existing = await this.state.storage.get<DeliveryRecord>(key);
+			const now = Date.now();
 
 			if (!existing) {
-				return { settled: false, reason: "absent" as const };
+				if (!commit) {
+					return { settled: false, reason: "absent" as const };
+				}
+
+				await this.state.storage.put<DeliveryRecord>(key, {
+					firstSeen: now,
+					expiresAt: now + DELIVERY_RETENTION_MS,
+					committed: true,
+				});
+				return { settled: true, reason: "committed_without_reservation" as const };
 			}
 
 			if (commit) {
 				await this.state.storage.put<DeliveryRecord>(key, {
 					firstSeen: existing.firstSeen,
-					expiresAt: Date.now() + DELIVERY_RETENTION_MS,
+					expiresAt: now + DELIVERY_RETENTION_MS,
 					committed: true,
 				});
 				return { settled: true, reason: "committed" as const };
@@ -248,6 +281,14 @@ export class WebhookDeliveries implements DurableObject {
 			await this.state.storage.delete(key);
 			return { settled: true, reason: "released" as const };
 		});
+
+		// A commit can now create a record where `reserve` created none, and the
+		// reaper is only ever armed by `reserve`. Without this, a record written
+		// after the sweep emptied the ledger — which stops re-arming itself when it
+		// finds nothing — would sit there until the next unrelated reservation.
+		if (commit) {
+			await this.scheduleSweep();
+		}
 
 		return new Response(JSON.stringify(result), {
 			status: HTTP.OK,

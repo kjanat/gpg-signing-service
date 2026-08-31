@@ -19,7 +19,8 @@
  *   suffix receives its events and signs nothing.
  * - `webhookReplayGuard` — a delivery id reserved before this runs, and
  *   committed or released after it, so a duplicate cannot double-act and a
- *   failure that changed nothing stays redeliverable.
+ *   failure that changed nothing stays redeliverable. This handler sets
+ *   `webhookRetryable`; the guard is what writes the ledger.
  *
  * ### What this handler owes the pipeline
  *
@@ -251,10 +252,14 @@ async function handlePush(
 	try {
 		result = await signPushedCommits(client, plan.branch, loaded.key, c.env.KEY_PASSPHRASE, {
 			reserveBudget: (commits) => spendSigningBudget(c, identity, commits),
-			// The irreversible boundary. Committing the delivery id *before* the
-			// branch moves is what makes an ambiguous outcome — request sent, answer
-			// lost — a non-repeat: a redelivery after it finds the id spent instead
-			// of force-updating the branch a second time.
+			// The irreversible boundary. Deciding *before* the branch moves that this
+			// delivery is no longer retryable is what makes an ambiguous outcome —
+			// request sent, answer lost — a non-repeat: a redelivery finds the id
+			// spent instead of force-updating the branch a second time.
+			//
+			// The decision is all that happens here. `webhookReplayGuard` performs
+			// the ledger write from its `finally`, after this handler has returned,
+			// and the reservation it took covers the whole request in the meantime.
 			beforePublish: async () => {
 				c.set("webhookRetryable", false);
 			},

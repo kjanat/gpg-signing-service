@@ -32,14 +32,34 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "#gpg-signing-service";
 import { signingBudgetIdentity } from "#routes/github-webhook";
 import type { Env } from "#types";
-import { commitObjectId, commitPayload, gitTimestamp, signedCommitObject } from "#utils/git-commit";
+import type { CommitOffsets } from "#utils/git-commit";
+import {
+	commitObjectId,
+	commitPayload,
+	GIT_OFFSET_CANDIDATES,
+	gitTimestamp,
+	isoWithOffset,
+	recoverCommitOffsets,
+	signedCommitObject,
+} from "#utils/git-commit";
 import { GITHUB_API_ORIGIN } from "#utils/github-app";
 import { branchFromRef, MAX_SIGNABLE_COMMITS, planPush, signableRun } from "#utils/github-push";
 import type { RepositoryCommit } from "#utils/github-repo";
-import { RepositoryClient } from "#utils/github-repo";
+import { patchAuthorOffset, RepositoryClient } from "#utils/github-repo";
 import { SIGNATURE_PREFIX } from "#utils/github-webhook";
 import { signPushedCommits } from "#utils/push-signing";
-import { FIXTURE_OBJECT, FIXTURE_SHA } from "./helpers/git-commit-fixture";
+import {
+	FIXTURE_OBJECT,
+	FIXTURE_SHA,
+	NON_UTC_API,
+	NON_UTC_OBJECT,
+	NON_UTC_PATCH,
+	NON_UTC_SHA,
+	SKEWED_API,
+	SKEWED_OBJECT,
+	SKEWED_PATCH,
+	SKEWED_SHA,
+} from "./helpers/git-commit-fixture";
 
 const SECRET = "test-webhook-secret";
 const INSTALLATION = 4242;
@@ -164,6 +184,176 @@ describe("reproducing a commit object", () => {
 	});
 });
 
+/**
+ * The timezone offset, which is the one field GitHub's JSON does not carry.
+ *
+ * These are the tests that would have failed before the offset was recovered,
+ * and they are written against real commits for the reason the whole fixture
+ * file exists: the claim under test is "GitHub's JSON is not enough to rebuild
+ * this object", and a fixture invented alongside the code would have been
+ * invented from the same belief the code holds.
+ */
+describe("recovering the timezone offset GitHub does not report", () => {
+	/** `NON_UTC_API`, shaped the way `commitPayload` takes it. */
+	const fromApi = (api: typeof NON_UTC_API | typeof SKEWED_API) => ({
+		tree: api.tree.sha,
+		parents: api.parents.map((parent) => parent.sha),
+		author: { ...api.author },
+		committer: { ...api.committer },
+		message: api.message,
+	});
+
+	it("the fixtures are the commits Git says they are", async () => {
+		// Before anything is asserted *about* them: these bytes hash to these ids,
+		// so a failure below is about the code rather than about a stale fixture.
+		await expect(commitObjectId(NON_UTC_OBJECT)).resolves.toBe(NON_UTC_SHA);
+		await expect(commitObjectId(SKEWED_OBJECT)).resolves.toBe(SKEWED_SHA);
+	});
+
+	it("does not reproduce a +0200 commit from GitHub's JSON alone", async () => {
+		// The regression, stated as the bug rather than as its fix. Every date this
+		// API reports is `Z`; echoing it back writes `+0000` into the object, and
+		// the object that comes out is a different commit from the one that went
+		// in — moved two hours, with a different id, and `git log` on the rewritten
+		// branch showing a time the author never committed at.
+		const normalised = commitPayload(fromApi(NON_UTC_API));
+
+		expect(normalised).toContain("1788116700 +0000");
+		await expect(commitObjectId(normalised)).resolves.not.toBe(NON_UTC_SHA);
+	});
+
+	it("recovers +0200 by reproducing the commit's own object id", async () => {
+		const offsets = await recoverCommitOffsets(fromApi(NON_UTC_API), NON_UTC_SHA);
+
+		expect(offsets).toEqual({ author: "+0200", committer: "+0200" });
+
+		// And the proof is byte-for-byte, not just id-for-id: with the recovered
+		// offsets the payload *is* what `git cat-file` prints.
+		expect(
+			commitPayload({
+				...fromApi(NON_UTC_API),
+				author: { ...NON_UTC_API.author, offset: (offsets as CommitOffsets).author },
+				committer: { ...NON_UTC_API.committer, offset: (offsets as CommitOffsets).committer },
+			}),
+		).toBe(NON_UTC_OBJECT);
+	});
+
+	it("cannot recover a commit whose two offsets differ without help", async () => {
+		// The cheap search tries the offsets *together*, because a commit whose
+		// author and committer disagree is the exception. This is that exception,
+		// and it has to answer null rather than settle for a near miss — a pair
+		// that reproduces nothing is not a pair to sign with.
+		await expect(recoverCommitOffsets(fromApi(SKEWED_API), SKEWED_SHA)).resolves.toBeNull();
+	});
+
+	it("recovers both halves once the patch pins the author's", async () => {
+		const authorOffset = patchAuthorOffset(SKEWED_PATCH, SKEWED_SHA);
+		expect(authorOffset).toBe("+0545");
+
+		const offsets = await recoverCommitOffsets(fromApi(SKEWED_API), SKEWED_SHA, authorOffset as string);
+
+		expect(offsets).toEqual({ author: "+0545", committer: "-0330" });
+
+		// This fixture's message also ends in a newline, which is the other thing
+		// the API strips and the other ambiguity the id resolves. Reproducing the
+		// object exactly is the assertion that both were resolved the right way.
+		expect(
+			commitPayload({
+				...fromApi(SKEWED_API),
+				author: { ...SKEWED_API.author, offset: (offsets as CommitOffsets).author },
+				committer: { ...SKEWED_API.committer, offset: (offsets as CommitOffsets).committer },
+				message: `${SKEWED_API.message}\n`,
+			}),
+		).toBe(SKEWED_OBJECT);
+	});
+
+	it("refuses an author offset that is not ±HHMM rather than searching around it", async () => {
+		await expect(recoverCommitOffsets(fromApi(SKEWED_API), SKEWED_SHA, "+05:45")).resolves.toBeNull();
+		await expect(recoverCommitOffsets(fromApi(SKEWED_API), SKEWED_SHA, "nonsense")).resolves.toBeNull();
+	});
+
+	it("answers null for a commit it cannot reproduce at all", async () => {
+		// A header this module does not model, an offset outside the candidates, a
+		// sha that belongs to something else. All the same answer, and the answer
+		// is "do not rewrite this" — never "assume UTC".
+		await expect(recoverCommitOffsets(fromApi(NON_UTC_API), "0".repeat(40))).resolves.toBeNull();
+	});
+
+	it.each([
+		["the offset out of a real GitHub patch", NON_UTC_PATCH, NON_UTC_SHA, "+0200"],
+		["a subject folded across two lines", SKEWED_PATCH, SKEWED_SHA, "+0545"],
+	])("reads %s", (_case, patch, sha, expected) => {
+		expect(patchAuthorOffset(patch, sha)).toBe(expected);
+	});
+
+	it("refuses a patch whose first line names a different commit", () => {
+		// The case that makes this safe on a merge: asking for a merge commit's
+		// patch returns the patches of the commits it merged. Believing that
+		// `Date:` would stamp one of *their* timezones onto the merge.
+		expect(patchAuthorOffset(NON_UTC_PATCH, SKEWED_SHA)).toBeNull();
+		expect(patchAuthorOffset("", NON_UTC_SHA)).toBeNull();
+	});
+
+	it("answers null for a header block with no `Date:` at all", () => {
+		// A rendering that names the right commit and never says when. Falling
+		// through the whole block is the same answer as finding the wrong one:
+		// nothing to pin the author's offset with.
+		expect(patchAuthorOffset(`From ${NON_UTC_SHA} Mon Sep 17 00:00:00 2001\nFrom: A <a@b>\n`, NON_UTC_SHA)).toBeNull();
+		// And the same when the block simply ends: no blank line to stop at either.
+		expect(patchAuthorOffset(`From ${NON_UTC_SHA} Mon Sep 17 00:00:00 2001\nFrom: A <a@b>`, NON_UTC_SHA)).toBeNull();
+	});
+
+	it("refuses an offset it can parse over a date it cannot", () => {
+		expect(() => isoWithOffset("not a date", "+0200")).toThrow(/not a date/);
+	});
+
+	it("does not read a `Date:` out of the diff body", () => {
+		// The mail header block ends at the first blank line. A patch that touches
+		// a changelog can contain a line starting `Date:` further down, and it is
+		// not the commit's.
+		const patch = `From ${NON_UTC_SHA} Mon Sep 17 00:00:00 2001\nFrom: A <a@b>\nSubject: x\n\n+Date: Sun, 30 Aug 2026 21:05:00 +0900\n`;
+
+		expect(patchAuthorOffset(patch, NON_UTC_SHA)).toBeNull();
+	});
+
+	it("writes a recovered offset back into the ISO create-a-commit takes", () => {
+		// The direction that puts the offset on the wire. GitHub stores what it is
+		// given — checked against the live API with an author at `+0545` and a
+		// committer at `-0330`, both preserved — so this string is what decides
+		// what the rewritten object says.
+		expect(isoWithOffset("2026-08-30T19:05:00Z", "+0200")).toBe("2026-08-30T21:05:00+02:00");
+		expect(isoWithOffset("2026-08-30T19:05:00Z", "+0545")).toBe("2026-08-31T00:50:00+05:45");
+		expect(isoWithOffset("2026-08-30T19:05:00Z", "-0330")).toBe("2026-08-30T15:35:00-03:30");
+		// Same instant either way: only the rendering moved.
+		expect(Date.parse(isoWithOffset("2026-08-30T19:05:00Z", "-0330"))).toBe(Date.parse("2026-08-30T19:05:00Z"));
+	});
+
+	it.each(["+02:00", "0200", "+2", "", "Z"])("refuses %o as an offset", (offset) => {
+		expect(() => isoWithOffset("2026-08-30T19:05:00Z", offset)).toThrow(/±HHMM/);
+		expect(() => gitTimestamp("2026-08-30T19:05:00Z", offset)).toThrow(/±HHMM/);
+	});
+
+	it("writes the offset it is handed rather than the one in the string", () => {
+		expect(gitTimestamp("2026-08-30T19:05:00Z", "+0200")).toBe("1788116700 +0200");
+		expect(gitTimestamp("2026-08-30T21:05:00+02:00")).toBe("1788116700 +0200");
+		expect(gitTimestamp("2026-08-30T19:05:00Z")).toBe("1788116700 +0000");
+	});
+
+	it("searches the offsets the world actually uses, nearest UTC first", () => {
+		// Quarter-hour steps across UTC−12:00 to UTC+14:00, which is the range and
+		// granularity IANA's zones use. Ordered so the common answers come first:
+		// `+0000` is what CI produces, `±0100`/`±0200` what most laptops do.
+		expect(GIT_OFFSET_CANDIDATES[0]).toBe("+0000");
+		expect(GIT_OFFSET_CANDIDATES).toContain("+0545");
+		expect(GIT_OFFSET_CANDIDATES).toContain("-0330");
+		expect(GIT_OFFSET_CANDIDATES).toContain("+1245");
+		expect(GIT_OFFSET_CANDIDATES).toContain("-1200");
+		expect(GIT_OFFSET_CANDIDATES).toContain("+1400");
+		expect(new Set(GIT_OFFSET_CANDIDATES).size).toBe(GIT_OFFSET_CANDIDATES.length);
+		expect(GIT_OFFSET_CANDIDATES.every((offset) => /^[+-]\d{4}$/.test(offset))).toBe(true);
+	});
+});
+
 describe("deciding what a push may cause", () => {
 	it("acts on a branch push", () => {
 		expect(planPush({ ref: "refs/heads/main", deleted: false })).toEqual({ act: true, branch: "main" });
@@ -241,15 +431,30 @@ describe("deciding what a push may cause", () => {
 	});
 });
 
-/** A commit as the API would report it, with only the fields under test set. */
-function commit(sha: string, parents: string[], signed = false): RepositoryCommit {
+/**
+ * A commit as the client would report it, with only the fields under test set.
+ *
+ * `offsets` is populated by default because that is what a commit that came out
+ * of `RepositoryClient.getCommit` looks like: the offsets were recovered and
+ * proven against the sha. Pass null for the commit the recovery could not
+ * reproduce, which is the one the walk has to refuse.
+ */
+function commit(sha: string, parents: string[], signed = false, offset: string | null = "+0200"): RepositoryCommit {
+	const identity = {
+		name: "Kaj Kowalski",
+		email: "info@kajkowalski.nl",
+		date: "2026-08-31T07:00:00Z",
+		...(offset === null ? {} : { offset }),
+	};
+
 	return {
 		sha,
 		message: `commit ${sha}`,
 		tree: `tree-${sha}`,
 		parents,
-		author: { name: "Kaj Kowalski", email: "info@kajkowalski.nl", date: "2026-08-31T07:00:00Z" },
-		committer: { name: "Kaj Kowalski", email: "info@kajkowalski.nl", date: "2026-08-31T07:00:00Z" },
+		author: { ...identity },
+		committer: { ...identity },
+		offsets: offset === null ? null : { author: offset, committer: offset },
 		signed,
 	};
 }
@@ -313,6 +518,36 @@ describe("choosing which commits to rewrite", () => {
 		const run = await signableRun("a", chain([commit("a", [])]));
 
 		expect(run.act && run.commits.map((c) => c.sha)).toEqual(["a"]);
+	});
+
+	it("refuses the whole run when one commit could not be reproduced", async () => {
+		// A commit whose exact bytes could not be rebuilt from what the API reports
+		// is one this service must not rewrite: signing it would publish a
+		// signature over something other than what the author wrote. And the
+		// refusal is the *run*, not the commit — a run is rewritten as a chain, so
+		// everything above the unreproducible one is disqualified with it.
+		const run = await signableRun(
+			"c",
+			chain([commit("c", ["b"]), commit("b", ["a"], false, null), commit("a", [], true)]),
+		);
+
+		expect(run).toEqual({ act: false, reason: "unreproducible_commit" });
+	});
+
+	it("refuses before it has read past the commit it cannot reproduce", async () => {
+		// Nothing beneath it is fetched, and nothing above it is signed. Asserted
+		// against the walk's own reads rather than inferred from the answer.
+		const read: string[] = [];
+		const commits = [commit("c", ["b"]), commit("b", ["a"], false, null), commit("a", [], true)];
+		const walk = chain(commits);
+
+		const run = await signableRun("c", (sha) => {
+			read.push(sha);
+			return walk(sha);
+		});
+
+		expect(run).toEqual({ act: false, reason: "unreproducible_commit" });
+		expect(read).toEqual(["c", "b"]);
 	});
 
 	it("refuses a run longer than one delivery may rewrite", async () => {
@@ -1087,30 +1322,63 @@ describe("through the endpoint", () => {
 	 * `api.github.com` throws, so pinning is enforced by the stub itself rather
 	 * than by an assertion somebody could forget to write.
 	 */
-	function stubGitHub(options: { headSigned?: boolean; failTokens?: boolean; failUpdate?: boolean } = {}) {
+	/**
+	 * The unsigned commit the endpoint tests push, as a repository really holds it.
+	 *
+	 * Its sha is Git's — computed over the object bytes rather than made up — and
+	 * those bytes are written in `+0200`, while the JSON below reports `Z` the way
+	 * `GET /git/commits/{sha}` does. So a handler that echoed the JSON's date back
+	 * would fail to reproduce this sha and refuse, and one that recovers the offset
+	 * gets there. Nothing in these tests can pass by agreeing with itself about
+	 * what a commit id is.
+	 */
+	const HEAD_TREE = "c93ec7f22ad2cabca76415f3389524a7d43c6435";
+	const HEAD_MESSAGE = "second";
+	const BASE_SHA = "cd01952d981ed9169dca0167e2a13b611db7de92";
+	const HEAD_INSTANT = "2026-08-31T07:00:00Z";
+	const HEAD_OFFSET = "+0200";
+	const HEAD_LOCAL = "2026-08-31T09:00:00+02:00";
+
+	async function headSha(): Promise<string> {
+		const identity = { name: "Kaj Kowalski", email: "info@kajkowalski.nl", date: HEAD_INSTANT, offset: HEAD_OFFSET };
+		return await commitObjectId(
+			commitPayload({
+				tree: HEAD_TREE,
+				parents: [BASE_SHA],
+				author: identity,
+				committer: identity,
+				message: HEAD_MESSAGE,
+			}),
+		);
+	}
+
+	function stubGitHub(
+		options: {
+			headSigned?: boolean;
+			failTokens?: boolean;
+			failUpdate?: boolean;
+			/** Serve the head under a sha its bytes do not hash to. */
+			headUnreproducible?: boolean;
+		} = {},
+	) {
 		let calls: { method: string; path: string; body?: unknown }[] = [];
+		const utc = { name: "Kaj Kowalski", email: "info@kajkowalski.nl", date: HEAD_INSTANT };
+
+		// A sha the head's bytes do not hash to. Nothing reproduces it, the patch
+		// fallback finds no `From <sha>` line either, and the commit is one this
+		// service must refuse rather than rewrite into something the author did
+		// not write.
+		const advertisedHead = async () => (options.headUnreproducible ? `${"a".repeat(39)}0` : await headSha());
 		const commits = new Map<string, Record<string, unknown>>([
 			[
-				"head",
+				BASE_SHA,
 				{
-					sha: "head",
-					message: "second",
-					tree: { sha: "tree-2" },
-					parents: [{ sha: "base" }],
-					author: { name: "Kaj Kowalski", email: "info@kajkowalski.nl", date: "2026-08-31T09:00:00+02:00" },
-					committer: { name: "Kaj Kowalski", email: "info@kajkowalski.nl", date: "2026-08-31T09:00:00+02:00" },
-					verification: { signature: options.headSigned ? "-----BEGIN PGP SIGNATURE-----" : null },
-				},
-			],
-			[
-				"base",
-				{
-					sha: "base",
+					sha: BASE_SHA,
 					message: "first",
 					tree: { sha: "tree-1" },
 					parents: [],
-					author: { name: "Kaj Kowalski", email: "info@kajkowalski.nl", date: "2026-08-31T09:00:00+02:00" },
-					committer: { name: "Kaj Kowalski", email: "info@kajkowalski.nl", date: "2026-08-31T09:00:00+02:00" },
+					author: utc,
+					committer: utc,
 					verification: { signature: "-----BEGIN PGP SIGNATURE-----" },
 				},
 			],
@@ -1142,7 +1410,7 @@ describe("through the endpoint", () => {
 			}
 
 			if (url.pathname.includes("/git/ref/heads/")) {
-				return Response.json({ ref: "refs/heads/main", object: { sha: "head" } });
+				return Response.json({ ref: "refs/heads/main", object: { sha: await advertisedHead() } });
 			}
 
 			if (url.pathname.includes("/git/refs/heads/")) {
@@ -1183,6 +1451,22 @@ describe("through the endpoint", () => {
 			}
 
 			const sha = url.pathname.split("/").pop() as string;
+
+			// The head, rendered the way the Git Data API renders one: `Z` on both
+			// dates, offset gone. Built here rather than in the map above because its
+			// sha is derived from the object bytes and the map is keyed by it.
+			if (sha === (await advertisedHead())) {
+				return Response.json({
+					sha,
+					message: HEAD_MESSAGE,
+					tree: { sha: HEAD_TREE },
+					parents: [{ sha: BASE_SHA }],
+					author: utc,
+					committer: utc,
+					verification: { signature: options.headSigned ? "-----BEGIN PGP SIGNATURE-----" : null },
+				});
+			}
+
 			const commit = commits.get(sha);
 			return commit ? Response.json(commit) : new Response("{}", { status: 404 });
 		});
@@ -1223,7 +1507,19 @@ describe("through the endpoint", () => {
 		expect(moved[0]?.body).toMatchObject({ force: true });
 		// The created commit keeps the original parent, tree and identities: this
 		// signs history, it does not rewrite it into something else.
-		expect(created[0]?.body).toMatchObject({ parents: ["base"], tree: "tree-2", message: "second" });
+		expect(created[0]?.body).toMatchObject({ parents: [BASE_SHA], tree: HEAD_TREE, message: HEAD_MESSAGE });
+
+		// And it keeps the *timezone*. The API reported both dates as `2026-08-31T07:00:00Z`;
+		// what goes back out is the local time the commit was actually written at.
+		// This is the assertion that fails the moment the handler starts echoing
+		// GitHub's normalised date instead of the offset it recovered — and it is
+		// not checkable by the object-id round trip, because that compares our
+		// assembly to GitHub's and both would start from the same wrong string.
+		expect(created[0]?.body).toMatchObject({
+			author: { name: "Kaj Kowalski", email: "info@kajkowalski.nl", date: HEAD_LOCAL },
+			committer: { name: "Kaj Kowalski", email: "info@kajkowalski.nl", date: HEAD_LOCAL },
+		});
+		expect(JSON.stringify(created[0]?.body)).not.toContain(HEAD_INSTANT);
 
 		// And the audit trail says so, under the *authorized* repository.
 		const row = await env.AUDIT_DB.prepare(
@@ -1234,7 +1530,7 @@ describe("through the endpoint", () => {
 
 		expect(row).toMatchObject({ issuer: "github-app", subject: REPOSITORY, key_id: KEY, success: 1 });
 		const metadata = JSON.parse(row?.metadata as string) as Record<string, unknown>;
-		expect(metadata).toMatchObject({ branch: "main", commits: 1, previousHead: "head" });
+		expect(metadata).toMatchObject({ branch: "main", commits: 1, previousHead: await headSha() });
 		// No secret rides along: not the signature, not the token, not the key.
 		expect(row?.metadata).not.toContain("PGP");
 		expect(row?.metadata).not.toContain("ghs_");
@@ -1272,6 +1568,30 @@ describe("through the endpoint", () => {
 
 		expect(response.status).toBe(202);
 		expect(body.skipped).toBe("nothing_to_sign");
+		expect(github.calls().some((call) => call.method === "POST" && call.path.endsWith("/git/commits"))).toBe(false);
+		expect(github.calls().some((call) => call.method === "PATCH")).toBe(false);
+	});
+
+	it("signs nothing when the head's exact bytes cannot be rebuilt", async () => {
+		// The refusal that keeps the timezone recovery honest, from outside. If the
+		// object as GitHub reports it cannot be reproduced under any candidate
+		// offset — a header this service does not model, an offset it does not
+		// try — then the rewrite would publish a signature over something other
+		// than what the author wrote. So it publishes nothing.
+		//
+		// Worth noticing what would happen without this: the handler would sign
+		// *some* commit, GitHub would create it, the object-id round trip would
+		// pass because both sides assembled it from the same wrong fields, and the
+		// branch would move.
+		const github = stubGitHub({ headUnreproducible: true });
+
+		const { response, body } = await deliverPush({
+			payload: pushPayload(INSTALLATION, REPOSITORY),
+			allowlist: `${INSTALLATION}:${REPOSITORY}=${KEY}`,
+		});
+
+		expect(response.status).toBe(202);
+		expect(body.skipped).toBe("unreproducible_commit");
 		expect(github.calls().some((call) => call.method === "POST" && call.path.endsWith("/git/commits"))).toBe(false);
 		expect(github.calls().some((call) => call.method === "PATCH")).toBe(false);
 	});
@@ -1658,6 +1978,144 @@ describe("the repository-scoped client", () => {
 		);
 
 		await expect(repo.getCommit("abc")).resolves.toMatchObject({ signed: false });
+	});
+
+	/** Serves one commit as the API serves it, and its patch when asked. */
+	function commitEndpoints(json: unknown, sha: string, patch: string | null) {
+		return (request: Request) => {
+			const url = new URL(request.url);
+			if (url.pathname.endsWith(`/git/commits/${sha}`)) {
+				return Response.json(json);
+			}
+			if (url.pathname.endsWith(`/commits/${sha}`)) {
+				return patch === null ? new Response("", { status: 404 }) : new Response(patch, { status: 200 });
+			}
+			return new Response("{}", { status: 404 });
+		};
+	}
+
+	it("recovers a real commit's +0200 without a second request", async () => {
+		// The common case, and it costs exactly the request it always cost. The
+		// offsets are worked out from the sha the response already carried rather
+		// than fetched, so the patch representation is not touched — asserted, so
+		// that a regression to "always fetch the patch" is a failing test and not
+		// a quietly doubled API bill.
+		const { client: repo, seen } = client(commitEndpoints(NON_UTC_API, NON_UTC_SHA, NON_UTC_PATCH));
+
+		const commit = await repo.getCommit(NON_UTC_SHA);
+
+		expect(commit.offsets).toEqual({ author: "+0200", committer: "+0200" });
+		expect(commit.author.offset).toBe("+0200");
+		expect(commit.committer.offset).toBe("+0200");
+		expect(seen.filter((path) => path.endsWith(`/commits/${NON_UTC_SHA}`))).toHaveLength(1);
+		expect(seen.some((path) => path.endsWith(`/git/commits/${NON_UTC_SHA}`))).toBe(true);
+	});
+
+	it("asks the patch representation only when the two offsets disagree", async () => {
+		// The fallback, and the one media type GitHub still shows an offset in.
+		const { client: repo, seen } = client(commitEndpoints(SKEWED_API, SKEWED_SHA, SKEWED_PATCH));
+
+		const commit = await repo.getCommit(SKEWED_SHA);
+
+		expect(commit.offsets).toEqual({ author: "+0545", committer: "-0330" });
+		expect(seen.filter((path) => path === `/repos/${REPOSITORY}/commits/${SKEWED_SHA}`)).toHaveLength(1);
+	});
+
+	it("sends the patch request with the media type that carries the offset", async () => {
+		// A `Accept: application/vnd.github+json` here would answer with the same
+		// normalised JSON that failed a moment ago, so the header is the request.
+		let accept: string | null = null;
+		const { client: repo } = client((request) => {
+			const url = new URL(request.url);
+			if (url.pathname.endsWith(`/git/commits/${SKEWED_SHA}`)) {
+				return Response.json(SKEWED_API);
+			}
+			accept = request.headers.get("Accept");
+			return new Response(SKEWED_PATCH, { status: 200 });
+		});
+
+		await repo.getCommit(SKEWED_SHA);
+
+		expect(accept).toBe("application/vnd.github.patch");
+	});
+
+	it("answers null offsets rather than failing the read when the patch is unreachable", async () => {
+		// The fallback is a fallback. Its absence costs a refusal to rewrite one
+		// commit, which is already the outcome without it — turning a network
+		// failure here into an exception would instead turn that refusal into a
+		// delivery-wide read failure that gets retried forever.
+		let reads = 0;
+		const { client: repo } = client((request) => {
+			if (new URL(request.url).pathname.endsWith(`/git/commits/${SKEWED_SHA}`)) {
+				reads += 1;
+				return Response.json(SKEWED_API);
+			}
+			throw new Error("connection reset");
+		});
+
+		const commit = await repo.getCommit(SKEWED_SHA);
+
+		expect(reads).toBe(1);
+		expect(commit.offsets).toBeNull();
+	});
+
+	it("answers null offsets rather than throwing when nothing reproduces the commit", async () => {
+		// A refusal to rewrite one commit, which `signableRun` turns into
+		// `unreproducible_commit`. Not an exception: a read that failed would be
+		// released as a retryable outage, and this is a deterministic property of
+		// the commit that every redelivery would reach again.
+		const { client: repo } = client(commitEndpoints(SKEWED_API, SKEWED_SHA, null));
+
+		const commit = await repo.getCommit(SKEWED_SHA);
+
+		expect(commit.offsets).toBeNull();
+		expect(commit.author.offset).toBeUndefined();
+	});
+
+	it("does not go looking for the offsets of a commit it will never rewrite", async () => {
+		// A signed commit's object holds a `gpgsig`, so no reconstruction can match
+		// its sha — the search is guaranteed to fail and the patch fetch behind it
+		// is guaranteed to be wasted. The walk stops at it either way.
+		const { client: repo, seen } = client(
+			commitEndpoints(
+				{ ...NON_UTC_API, verification: { signature: "-----BEGIN PGP SIGNATURE-----" } },
+				NON_UTC_SHA,
+				NON_UTC_PATCH,
+			),
+		);
+
+		const commit = await repo.getCommit(NON_UTC_SHA);
+
+		expect(commit.signed).toBe(true);
+		expect(commit.offsets).toBeNull();
+		expect(seen.filter((path) => path === `/repos/${REPOSITORY}/commits/${NON_UTC_SHA}`)).toHaveLength(0);
+	});
+
+	it("puts the recovered offset back on the wire when it creates a commit", async () => {
+		// The other half of the round trip. GitHub stores the offset it is given —
+		// checked against the live API with an author at `+0545` and a committer at
+		// `-0330`, both preserved in the created object — so what is written here
+		// is what the rewritten commit will say. Echoing the `Z` the API reported
+		// would relocate the commit to UTC, and no later check would notice.
+		let sent: { author: { date: string }; committer: { date: string } } | null = null;
+		const { client: repo } = client(async (request) => {
+			sent = (await request.json()) as { author: { date: string }; committer: { date: string } };
+			return Response.json({ ...SKEWED_API, verification: { signature: null } });
+		});
+
+		await repo.createCommit({
+			message: SKEWED_API.message,
+			tree: SKEWED_API.tree.sha,
+			parents: [],
+			author: { ...SKEWED_API.author, offset: "+0545" },
+			committer: { ...SKEWED_API.committer, offset: "-0330" },
+			signature: "-----BEGIN PGP SIGNATURE-----",
+		});
+
+		expect(sent).toMatchObject({
+			author: { date: "2026-08-31T00:50:00+05:45" },
+			committer: { date: "2026-08-30T15:35:00-03:30" },
+		});
 	});
 
 	it("reports a refused branch update", async () => {

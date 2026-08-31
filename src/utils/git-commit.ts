@@ -26,22 +26,53 @@
  * handler makes that comparison *before* it moves a ref, so a mismatch costs a
  * dangling object nobody can reach rather than a branch of broken signatures.
  *
- * ### Dates are echoed, never recomputed
+ * ### Dates: the offset is recovered, because it is not in the JSON
  *
  * `<epoch> <±HHMM>` is what a commit object stores, and the offset is part of
  * the object — two commits with the same instant and different offsets are
- * different commits. GitHub's API hands dates back as ISO 8601, so the offset
- * survives the round trip only if it is read out of that string and put back
- * unchanged. {@link gitTimestamp} does exactly that and computes nothing: no
- * local timezone, no `Date` formatting, no normalisation to UTC.
+ * different commits, with different ids.
+ *
+ * GitHub's Git Data API does not give it to you. `GET /git/commits/{sha}`
+ * renders both dates in UTC (`…T05:01:37Z`) for a commit whose object says
+ * `1788152497 +0200`, and so does `GET /commits/{sha}`, and so does GraphQL's
+ * `GitTimestamp` despite its schema documentation. Echoing that string back
+ * therefore *relocates every commit to UTC*, and the round-trip id check cannot
+ * notice: both our assembly and GitHub's start from the same already-normalised
+ * value and agree on the same wrong answer.
+ *
+ * So the offset is **recovered and proven** rather than read.
+ * {@link recoverCommitOffsets} reconstructs the original object under candidate
+ * offsets and keeps the one whose {@link commitObjectId} equals the sha the
+ * commit already has. That sha was computed by Git over the real bytes, so a
+ * match is proof — of the offsets, and of every other byte of the
+ * reconstruction with them. A commit that no candidate reproduces is one this
+ * service declines to rewrite rather than one it rewrites approximately.
+ *
+ * With the offsets known, {@link isoWithOffset} renders them back into the ISO
+ * 8601 that create-a-commit takes, and GitHub stores what it is given — verified
+ * against the live API with an author at `+0545` and a committer at `-0330`,
+ * both preserved. Which is what finally puts the round-trip id check on both
+ * sides of a real disagreement: our payload now carries the original offset, so
+ * if GitHub ever did normalise, the ids would differ and nothing would be
+ * published.
  */
 
 /** An author or committer line's three parts, as the object stores them. */
 export interface CommitIdentity {
 	name: string;
 	email: string;
-	/** ISO 8601 with an offset, as GitHub's API returns it. */
+	/** ISO 8601 with an offset, as GitHub's API returns it — always `Z` in practice. */
 	date: string;
+	/**
+	 * `±HHMM`, the offset the stored object actually carries.
+	 *
+	 * Supplied by {@link recoverCommitOffsets}, which proves it against the
+	 * commit's own sha. When it is absent the offset in {@link date} is used —
+	 * which, for anything that came out of GitHub's JSON, means `+0000`. So an
+	 * absent offset is not "unknown, assume UTC"; it is "this identity was not
+	 * read from that API", and every path in this service that *was* fills it in.
+	 */
+	offset?: string;
 }
 
 /** Everything a commit object holds, minus the signature. */
@@ -56,6 +87,9 @@ export interface CommitObject {
 /** ISO 8601, captured as an instant plus the offset the string carried. */
 const ISO_WITH_OFFSET = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?)(Z|[+-]\d{2}:\d{2})$/;
 
+/** `±HHMM`, the only offset spelling a commit object uses. */
+const GIT_OFFSET = /^[+-]\d{4}$/;
+
 /**
  * `<epoch seconds> <±HHMM>`, the way a commit object writes a date.
  *
@@ -65,12 +99,17 @@ const ISO_WITH_OFFSET = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?)(Z|[+-]
  * conversion that "helpfully" normalised to UTC would produce a payload that
  * hashes to something GitHub never built.
  *
+ * `offset` overrides the one in the string, and is how a recovered offset gets
+ * back into the object: the instant is the same either way, and the offset is
+ * the part GitHub's JSON threw away.
+ *
  * @param iso - ISO 8601 with a `Z` or `±HH:MM` offset
- * @throws When the string carries no offset, or is not a date. A commit whose
- *   date cannot be reproduced exactly is one this service declines to sign,
- *   rather than one it signs approximately.
+ * @param offset - `±HHMM` to write instead of the string's own
+ * @throws When the string carries no offset, or is not a date, or `offset` is
+ *   not `±HHMM`. A commit whose date cannot be reproduced exactly is one this
+ *   service declines to sign, rather than one it signs approximately.
  */
-export function gitTimestamp(iso: string): string {
+export function gitTimestamp(iso: string, offset?: string): string {
 	const match = ISO_WITH_OFFSET.exec(iso);
 	if (!match) {
 		throw new Error("Commit date is not ISO 8601 with an offset");
@@ -81,14 +120,49 @@ export function gitTimestamp(iso: string): string {
 		throw new Error("Commit date is not a date");
 	}
 
-	const offset = match[2] === "Z" ? "+0000" : (match[2] as string).replace(":", "");
+	if (offset !== undefined && !GIT_OFFSET.test(offset)) {
+		throw new Error("Commit date offset is not ±HHMM");
+	}
 
-	return `${seconds} ${offset}`;
+	const written = offset ?? (match[2] === "Z" ? "+0000" : (match[2] as string).replace(":", ""));
+
+	return `${seconds} ${written}`;
+}
+
+/**
+ * The same instant, written with `offset` instead of whatever `iso` carried.
+ *
+ * This is the direction that puts a recovered offset back on the wire:
+ * create-a-commit takes ISO 8601, and GitHub stores the offset it is handed
+ * rather than normalising it — so an author date rendered `+05:45` here comes
+ * out of the object as `+0545`.
+ *
+ * @param iso - ISO 8601 with a `Z` or `±HH:MM` offset
+ * @param offset - `±HHMM`
+ */
+export function isoWithOffset(iso: string, offset: string): string {
+	if (!GIT_OFFSET.test(offset)) {
+		throw new Error("Commit date offset is not ±HHMM");
+	}
+
+	const instant = Date.parse(iso);
+	if (!Number.isFinite(instant)) {
+		throw new Error("Commit date is not a date");
+	}
+
+	const minutes = (offset.startsWith("-") ? -1 : 1) * (Number(offset.slice(1, 3)) * 60 + Number(offset.slice(3, 5)));
+
+	// `toISOString` only renders UTC, so the wall clock is shifted onto the
+	// instant first and the offset is appended as a literal. Truncated at seconds
+	// because a commit object stores whole seconds and nothing finer.
+	const shifted = new Date(instant + minutes * 60_000);
+
+	return `${shifted.toISOString().slice(0, 19)}${offset.slice(0, 3)}:${offset.slice(3, 5)}`;
 }
 
 /** One `author`/`committer` header line, without its trailing newline. */
 function identityLine(field: string, identity: CommitIdentity): string {
-	return `${field} ${identity.name} <${identity.email}> ${gitTimestamp(identity.date)}`;
+	return `${field} ${identity.name} <${identity.email}> ${gitTimestamp(identity.date, identity.offset)}`;
 }
 
 /**
@@ -164,4 +238,105 @@ export async function commitObjectId(content: string): Promise<string> {
 	return Array.from(new Uint8Array(digest))
 		.map((byte) => byte.toString(16).padStart(2, "0"))
 		.join("");
+}
+
+/**
+ * Every `±HHMM` a real commit is likely to carry, nearest UTC first.
+ *
+ * UTC−12:00 through UTC+14:00 in quarter-hour steps — the range and granularity
+ * IANA's zones actually use, which covers `+0545` (Kathmandu), `+0845` (Eucla)
+ * and `+1245` (Chatham) as well as every whole and half hour. Ordered by
+ * distance from UTC because that is the order that finds an answer soonest:
+ * `+0000` is what CI produces and `±0100`/`±0200` is what most laptops do.
+ *
+ * A commit whose offset is outside this set — a historical `+0020`, a
+ * hand-written oddity — is not reproduced, and therefore not rewritten. See
+ * {@link recoverCommitOffsets}.
+ */
+export const GIT_OFFSET_CANDIDATES: readonly string[] = (() => {
+	const minutes: number[] = [];
+	for (let value = -12 * 60; value <= 14 * 60; value += 15) {
+		minutes.push(value);
+	}
+
+	return minutes
+		.sort((a, b) => Math.abs(a) - Math.abs(b) || a - b)
+		.map((value) => {
+			const sign = value < 0 ? "-" : "+";
+			const absolute = Math.abs(value);
+			return `${sign}${String(Math.floor(absolute / 60)).padStart(2, "0")}${String(absolute % 60).padStart(2, "0")}`;
+		});
+})();
+
+/** The offsets an existing commit object turned out to carry. */
+export interface CommitOffsets {
+	author: string;
+	committer: string;
+}
+
+/**
+ * Work out what offsets `sha` was really written with, by reproducing it.
+ *
+ * The reconstruction is checked against the commit's own object id rather than
+ * believed. That id was computed by Git over the bytes the repository holds, so
+ * a candidate that reproduces it has reproduced *the whole object* — the two
+ * offsets and everything alongside them — and one that does not has been
+ * refuted. It is the only check available that GitHub's JSON cannot quietly
+ * agree with, because the sha predates the JSON.
+ *
+ * Two ambiguities are resolved at once, because both change the bytes and
+ * neither is answerable from the API alone:
+ *
+ * - **The offsets**, which `GET /git/commits/{sha}` renders away entirely.
+ * - **A trailing newline on the message**, which that endpoint strips: some
+ *   objects have one and some do not, and the JSON looks identical either way.
+ *   Only the offsets are returned — the message is the caller's to keep as it
+ *   was — but the variant has to be tried or the id never matches.
+ *
+ * Author and committer offsets are searched together first, since a commit
+ * whose two offsets differ is the exception (a rebase across a timezone, an
+ * explicit `--date`). `authorOffset` pins one side so the other can be searched
+ * alone; the caller supplies it from a source that kept it, which for GitHub
+ * means the patch representation.
+ *
+ * @param commit - The commit as GitHub's JSON described it, offsets absent
+ * @param sha - The object id that reconstruction has to reproduce
+ * @param authorOffset - `±HHMM`, when it is already known
+ * @returns The proven offsets, or null when nothing reproduced `sha` — a commit
+ *   carrying a header this module does not model, or an offset outside
+ *   {@link GIT_OFFSET_CANDIDATES}. Null means "do not rewrite this", never
+ *   "assume UTC".
+ */
+export async function recoverCommitOffsets(
+	commit: CommitObject,
+	sha: string,
+	authorOffset?: string,
+): Promise<CommitOffsets | null> {
+	if (authorOffset !== undefined && !GIT_OFFSET.test(authorOffset)) {
+		return null;
+	}
+
+	// As returned, then with the newline the API strips. Order matters only for
+	// speed; both are tried before a candidate is discarded.
+	const messages = [commit.message, `${commit.message}\n`];
+
+	for (const candidate of GIT_OFFSET_CANDIDATES) {
+		const offsets: CommitOffsets = { author: authorOffset ?? candidate, committer: candidate };
+
+		for (const message of messages) {
+			const payload = commitPayload({
+				tree: commit.tree,
+				parents: commit.parents,
+				author: { ...commit.author, offset: offsets.author },
+				committer: { ...commit.committer, offset: offsets.committer },
+				message,
+			});
+
+			if ((await commitObjectId(payload)) === sha) {
+				return offsets;
+			}
+		}
+	}
+
+	return null;
 }
