@@ -100,13 +100,19 @@ GITHUB_APP_ENABLED = "false"
 # acts on a delivery; the scaffold acknowledges and stops.
 
 # GITHUB_APP_ALLOWED_REPOSITORIES: which <installation, repository> pairs a
-# delivery may be about, comma-separated as `<installationId>:<owner>/<repo>`.
-# Unset — which is the default, and why there is no value here — authorizes no
-# installation and no repository; only the App-level ping, which names neither,
-# still answers. Pairs rather than two independent lists because two lists
-# authorize every combination of their members, which is how a repository ends
-# up reachable under an installation nobody paired it with. A malformed entry
-# refuses every delivery rather than applying the ones that parsed.
+# delivery may be about, and which key each of them may cause to sign with,
+# comma-separated as `<installationId>:<owner>/<repo>[=<keyId>]`. Unset — which
+# is the default, and why there is no value here — authorizes no installation
+# and no repository; only the App-level ping, which names neither, still
+# answers. Pairs rather than two independent lists because two lists authorize
+# every combination of their members, which is how a repository ends up
+# reachable under an installation nobody paired it with; the key rides inside
+# the same entry for the same reason. The `=<keyId>` suffix is optional and
+# there is no default: a pair without one has its deliveries received and may
+# cause nothing to sign, because KEY_ID is the default for POST /sign, where
+# the caller's own key grant has already been checked. A malformed entry, an
+# unusable key id, or a pair named twice refuses every delivery rather than
+# applying the ones that parsed.
 
 # KEY_EXPIRY_WARN_DAYS: days ahead of expiry a key starts being reported.
 # Unset means 60. Plain decimal digits naming a positive whole number; anything

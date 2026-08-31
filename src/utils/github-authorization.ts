@@ -35,6 +35,23 @@
  * is worse than having no check. Handing back the operator's own spelling makes
  * the safe path the short one.
  *
+ * ### Why the key is part of the same entry
+ *
+ * An entry may bind a signing key: `<installationId>:<owner>/<repo>=<keyId>`.
+ * The key rides *inside* the grant rather than in a second variable, because
+ * two variables are two lists again — one naming pairs, one naming keys — and
+ * two lists have to be kept in step by hand. Anything that can drift can drift
+ * open: a key entry for a pair nobody authorized, or a pair whose key entry was
+ * edited and whose authorization was not. With one entry there is nothing to
+ * reconcile, because there is only ever one string to read, and a pair without
+ * a key is unambiguously a pair that may not cause a signature.
+ *
+ * {@link WebhookAuthorization.keyId} is copied from the matched entry for the
+ * same reason `repository` is. No field of the payload is consulted, so no
+ * event — however well signed — can name the key it would like used, and there
+ * is no default to fall back to when an entry binds none. See
+ * `#utils/github-signing-key` for the single door a handler takes to reach it.
+ *
  * ### Fail closed, in every direction
  *
  * An unset list authorizes no installation and no repository. A list with one
@@ -45,7 +62,8 @@
  * behaviour is the permissive one.
  */
 
-import type { WebhookAuthorization } from "#types";
+import type { KeyId, WebhookAuthorization } from "#types";
+import { createKeyId, isKeyIdShaped } from "#types";
 import { GitHubAppError } from "#utils/github-app";
 
 /** The variable an operator writes the allowlist into. */
@@ -68,6 +86,18 @@ interface AllowlistEntry {
 	repository: string;
 	/** `owner/repo` as the operator wrote it, for the decision to hand back. */
 	spelling: string;
+	/**
+	 * The key this grant may cause to sign, canonicalised to upper case; null
+	 * when the operator bound none.
+	 *
+	 * Null is a real and useful state, not a gap to be filled in later: a
+	 * repository can be allowlisted so its events are *received* without being
+	 * allowed to make this service sign anything. Every consumer of a key
+	 * refuses on null — see `#utils/github-signing-key` — so the absence of a
+	 * binding is the absence of signing authority rather than a fall back to
+	 * some other key.
+	 */
+	keyId: KeyId | null;
 }
 
 /**
@@ -129,10 +159,19 @@ export function parseRepositoryAllowlist(raw: string | undefined): AllowlistEntr
 			continue;
 		}
 
-		const match = ENTRY_PATTERN.exec(entry);
+		// Split on the *first* `=`, before the pair is matched, so a bad key and a
+		// bad pair are two different messages rather than one "this is not the
+		// grammar". Neither `owner` nor `repo` may contain `=`, so the first one
+		// is the separator wherever it appears — a second `=` lands inside the key
+		// text and is refused there, named as a key problem, which is what it is.
+		const separator = entry.indexOf("=");
+		const pairText = separator === -1 ? entry : entry.slice(0, separator);
+		const keyText = separator === -1 ? null : entry.slice(separator + 1);
+
+		const match = ENTRY_PATTERN.exec(pairText);
 		if (match === null) {
 			throw new GitHubAppError(
-				`${ALLOWLIST_VAR} entry ${JSON.stringify(entry)} is not <installationId>:<owner>/<repo>`,
+				`${ALLOWLIST_VAR} entry ${JSON.stringify(entry)} is not <installationId>:<owner>/<repo>[=<keyId>]`,
 				{ misconfigured: true },
 			);
 		}
@@ -149,7 +188,46 @@ export function parseRepositoryAllowlist(raw: string | undefined): AllowlistEntr
 			});
 		}
 
-		entries.push({ installationId, repository: spelling.toLowerCase(), spelling });
+		// A key that is present and unusable refuses the list. The permissive
+		// reading — drop the suffix and keep the pair — turns a typo into a
+		// repository that is still authorized to *receive* deliveries but has
+		// quietly lost the binding an operator wrote, which is a change of policy
+		// made by a typo. `=` with nothing after it is refused for the same
+		// reason: it is a binding someone started writing.
+		let keyId: KeyId | null = null;
+		if (keyText !== null) {
+			if (!isKeyIdShaped(keyText)) {
+				throw new GitHubAppError(
+					`${ALLOWLIST_VAR} entry ${JSON.stringify(entry)} does not bind a 16-character hexadecimal key id`,
+					{ misconfigured: true },
+				);
+			}
+			// Upper-cased by `createKeyId`, which is the form `KeyIdSchema` stores
+			// under — so an operator who typed the id in lower case gets the key
+			// they meant rather than a lookup that misses.
+			keyId = createKeyId(keyText);
+		}
+
+		const repository = spelling.toLowerCase();
+
+		// One pair, one grant. A repeated pair is refused whether or not the two
+		// entries agree, and refusing the agreeing case as well is the point:
+		// resolution takes the first match, so a second entry for a pair is either
+		// dead configuration or a silently-ignored second opinion about which key
+		// a repository may use, and neither is a thing an operator should be able
+		// to leave in place. Compared case-insensitively, so the conflict cannot
+		// be hidden by spelling the repository differently the second time.
+		const duplicate = entries.find(
+			(existing) => existing.installationId === installationId && existing.repository === repository,
+		);
+		if (duplicate !== undefined) {
+			throw new GitHubAppError(
+				`${ALLOWLIST_VAR} names ${installationId}:${repository} more than once; each <installation, repository> pair may appear at most once`,
+				{ misconfigured: true },
+			);
+		}
+
+		entries.push({ installationId, repository, spelling, keyId });
 	}
 
 	return entries;
@@ -280,6 +358,11 @@ export function authorizeDelivery(allowlist: readonly AllowlistEntry[], payload:
 				// module comment: the payload does not get to name its own subject,
 				// not even in a form this code just compared and found equal.
 				repository: grant.spelling,
+				// And from the same entry, for the same reason. `grant` is the one
+				// the pair matched, so the key cannot be widened by a payload that
+				// names a different repository — that payload matches a different
+				// entry, or none.
+				keyId: grant.keyId,
 			},
 		};
 	}
@@ -293,7 +376,16 @@ export function authorizeDelivery(allowlist: readonly AllowlistEntry[], payload:
 
 		return {
 			allowed: true,
-			authorization: { scope: "installation", installationId: subject.installationId, repository: null },
+			// No repository, so no pair, so no key: an installation-scoped delivery
+			// has nothing to sign *for*. Keys are bound to pairs, and a key
+			// reachable without a repository would be one an operator granted to a
+			// repository being used outside it.
+			authorization: {
+				scope: "installation",
+				installationId: subject.installationId,
+				repository: null,
+				keyId: null,
+			},
 		};
 	}
 
@@ -303,5 +395,5 @@ export function authorizeDelivery(allowlist: readonly AllowlistEntry[], payload:
 	// answer. It authorizes nothing — there is no installation to mint a token
 	// for and no repository to touch — so accepting it grants the sender exactly
 	// what it named, which is nothing.
-	return { allowed: true, authorization: { scope: "none", installationId: null, repository: null } };
+	return { allowed: true, authorization: { scope: "none", installationId: null, repository: null, keyId: null } };
 }

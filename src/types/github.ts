@@ -57,6 +57,22 @@ export interface WebhookAuthorization {
 	 * scope. **The operator's spelling, never the payload's.**
 	 */
 	repository: string | null;
+	/**
+	 * The key this delivery may cause to sign, or null.
+	 *
+	 * Copied from the matched allowlist entry — `<installation>:<owner>/<repo>=
+	 * <keyId>` — and canonicalised to upper case. Null below `repository` scope,
+	 * and null at `repository` scope when the operator bound no key to that pair.
+	 *
+	 * Null means *no signing authority*, never "use the usual key". There is no
+	 * default and no fall back to `KEY_ID`: a delivery that may cause a signature
+	 * is one whose grant says which key, in the same string that says which
+	 * repository. Do not read this field directly — `requireSigningKey` in
+	 * `#utils/github-signing-key` is the door, and it is the thing that turns
+	 * null into a refusal rather than into a decision a handler has to remember
+	 * to make.
+	 */
+	keyId: string | null;
 }
 
 /** What the replay guard decided about a delivery id it had not seen before. */
