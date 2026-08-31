@@ -32,8 +32,8 @@ import { z } from "@hono/zod-openapi";
 import type { Env, WebhookAuthorization } from "#types";
 import { TIME } from "#types";
 import { fetchWithTimeout } from "#utils/fetch";
-import type { CommitIdentity, CommitOffsets } from "#utils/git-commit";
-import { isoWithOffset, recoverCommitOffsets } from "#utils/git-commit";
+import type { CommitIdentity, CommitOffsets, CommitReconstruction } from "#utils/git-commit";
+import { isoWithOffset, recoverCommitObject } from "#utils/git-commit";
 import { getInstallationToken, githubApiUrl } from "#utils/github-app";
 
 /** How long any single GitHub call may take. */
@@ -89,6 +89,26 @@ const RefSchema = z.object({
 /** A commit, as this service needs to see one. */
 export interface RepositoryCommit {
 	sha: string;
+	/**
+	 * The message the stored object holds, not the one the JSON reported.
+	 *
+	 * `GET /git/commits/{sha}` strips a trailing newline from the message, and
+	 * `git commit` writes one on every message it makes — so for most commits in
+	 * most repositories those two strings differ by a byte, and the JSON gives no
+	 * way to tell which case you are in. {@link recoverCommitObject} tells, by
+	 * reproducing the sha, and this is the representation that reproduced it.
+	 *
+	 * There is deliberately no second field holding the API's version. This is
+	 * *the* message: the bytes to sign, and the bytes to hand back to
+	 * create-a-commit. A caller that reached for the other one would sign a
+	 * message the author did not write, and the round-trip id check could not
+	 * catch it — both sides of that comparison would have started from the same
+	 * stripped string.
+	 *
+	 * When `offsets` is null nothing was proven and this is the API's message
+	 * unchanged, which is safe because a commit with null offsets is never
+	 * rewritten.
+	 */
 	message: string;
 	tree: string;
 	parents: string[];
@@ -181,7 +201,7 @@ export function patchAuthorOffset(patch: string, sha: string): string | null {
  * An identity as create-a-commit takes it: ISO 8601 carrying the real offset.
  *
  * An identity with no recovered offset is sent exactly as it arrived, which is
- * the shape a caller that never went through {@link recoverCommitOffsets} has —
+ * the shape a caller that never went through {@link recoverCommitObject} has —
  * and the shape nothing in this service signs.
  */
 function wireIdentity(identity: CommitIdentity): { name: string; email: string; date: string } {
@@ -324,13 +344,19 @@ export class RepositoryClient {
 	/**
 	 * One commit object, with the timezone offsets this API does not report.
 	 *
-	 * The JSON is the source for everything except the two offsets, which it
-	 * renders to `Z` unconditionally. Those are recovered by reproducing the
-	 * object id — see {@link recoverCommitOffsets} — and the patch representation
-	 * is consulted only when that fails, which happens when a commit's author and
-	 * committer offsets differ. So the common commit costs exactly the request it
-	 * always cost, and the unusual one costs a second read rather than a wrong
-	 * answer.
+	 * The JSON is the source for everything except the two offsets and the exact
+	 * message bytes, both of which it renders away — the offsets to `Z`
+	 * unconditionally, the message by stripping a trailing newline. Both are
+	 * recovered together by reproducing the object id — see
+	 * {@link recoverCommitObject} — and the patch representation is consulted only
+	 * when that fails, which happens when a commit's author and committer offsets
+	 * differ. So the common commit costs exactly the request it always cost, and
+	 * the unusual one costs a second read rather than a wrong answer.
+	 *
+	 * What comes back is the reconstruction's message, never the response's. The
+	 * two are the same string for a commit whose message had no trailing newline
+	 * and differ by that byte for every commit `git commit` made, and the whole
+	 * reason to reproduce the sha is that only the reproduction knows which.
 	 *
 	 * Signed commits are not reproduced at all: their object carries a `gpgsig`,
 	 * so no reconstruction of ours can match their sha, and they are never
@@ -351,21 +377,26 @@ export class RepositoryClient {
 			message: commit.message,
 		};
 
-		let offsets: CommitOffsets | null = null;
+		let reconstruction: CommitReconstruction | null = null;
 		if (!signed) {
-			offsets = await recoverCommitOffsets(object, commit.sha);
+			reconstruction = await recoverCommitObject(object, commit.sha);
 
-			if (offsets === null) {
+			if (reconstruction === null) {
 				const authorOffset = await this.authorOffsetFromPatch(commit.sha);
 				if (authorOffset !== null) {
-					offsets = await recoverCommitOffsets(object, commit.sha, authorOffset);
+					reconstruction = await recoverCommitObject(object, commit.sha, authorOffset);
 				}
 			}
 		}
 
+		const offsets: CommitOffsets | null = reconstruction === null ? null : reconstruction.offsets;
+
 		return {
 			sha: commit.sha,
-			message: commit.message,
+			// The proven bytes when there are any. Falling back to the response's
+			// message costs nothing, because `signableRun` refuses every commit whose
+			// offsets are null before one of them is signed.
+			message: reconstruction === null ? commit.message : reconstruction.message,
 			tree: object.tree,
 			parents: object.parents,
 			author: offsets === null ? commit.author : { ...commit.author, offset: offsets.author },
@@ -410,6 +441,13 @@ export class RepositoryClient {
 	 * commit is unreachable and GitHub garbage-collects it. That is what makes
 	 * this the last *recoverable* step and {@link updateBranch} the irreversible
 	 * one.
+	 *
+	 * `message` goes out exactly as the caller holds it, trailing newline
+	 * included. GitHub stores what it is given here too: a message ending `\n`
+	 * produces an object ending `\n`, verified against the live API by creating a
+	 * commit both ways and hashing the result. It is the *read* path that strips
+	 * that byte, which is why the caller carries the reproduced message rather
+	 * than the reported one.
 	 *
 	 * The dates go out with their recovered offsets rather than as the `Z` this
 	 * API handed back, and rendering them is done *here* rather than by the

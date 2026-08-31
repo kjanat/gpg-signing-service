@@ -169,6 +169,11 @@ export async function signPushedCommits(
 		// copying them through unchanged is what keeps the merge a merge.
 		const parents = rewritten === null ? commit.parents : [rewritten, ...commit.parents.slice(1)];
 
+		// `commit.message` is the representation that reproduced the original
+		// commit's own object id — trailing newline included, where the object had
+		// one — rather than the message `GET /git/commits/{sha}` reported, which
+		// strips it. The same string is handed to `createCommit` below, so the
+		// bytes signed and the bytes created cannot disagree about it.
 		const payload = commitPayload({
 			tree: commit.tree,
 			parents,

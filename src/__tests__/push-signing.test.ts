@@ -32,14 +32,14 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "#gpg-signing-service";
 import { signingBudgetIdentity } from "#routes/github-webhook";
 import type { Env } from "#types";
-import type { CommitOffsets } from "#utils/git-commit";
+import type { CommitReconstruction } from "#utils/git-commit";
 import {
 	commitObjectId,
 	commitPayload,
 	GIT_OFFSET_CANDIDATES,
 	gitTimestamp,
 	isoWithOffset,
-	recoverCommitOffsets,
+	recoverCommitObject,
 	signedCommitObject,
 } from "#utils/git-commit";
 import { GITHUB_API_ORIGIN } from "#utils/github-app";
@@ -223,17 +223,23 @@ describe("recovering the timezone offset GitHub does not report", () => {
 	});
 
 	it("recovers +0200 by reproducing the commit's own object id", async () => {
-		const offsets = await recoverCommitOffsets(fromApi(NON_UTC_API), NON_UTC_SHA);
+		const proven = (await recoverCommitObject(fromApi(NON_UTC_API), NON_UTC_SHA)) as CommitReconstruction;
 
-		expect(offsets).toEqual({ author: "+0200", committer: "+0200" });
+		expect(proven.offsets).toEqual({ author: "+0200", committer: "+0200" });
+
+		// This commit's message has no trailing newline, so the representation that
+		// reproduced it is the API's string unchanged — and it is still *returned*
+		// rather than assumed, because the caller cannot tell the two cases apart.
+		expect(proven.message).toBe(NON_UTC_API.message);
 
 		// And the proof is byte-for-byte, not just id-for-id: with the recovered
-		// offsets the payload *is* what `git cat-file` prints.
+		// offsets and message the payload *is* what `git cat-file` prints.
 		expect(
 			commitPayload({
 				...fromApi(NON_UTC_API),
-				author: { ...NON_UTC_API.author, offset: (offsets as CommitOffsets).author },
-				committer: { ...NON_UTC_API.committer, offset: (offsets as CommitOffsets).committer },
+				author: { ...NON_UTC_API.author, offset: proven.offsets.author },
+				committer: { ...NON_UTC_API.committer, offset: proven.offsets.committer },
+				message: proven.message,
 			}),
 		).toBe(NON_UTC_OBJECT);
 	});
@@ -243,40 +249,68 @@ describe("recovering the timezone offset GitHub does not report", () => {
 		// author and committer disagree is the exception. This is that exception,
 		// and it has to answer null rather than settle for a near miss — a pair
 		// that reproduces nothing is not a pair to sign with.
-		await expect(recoverCommitOffsets(fromApi(SKEWED_API), SKEWED_SHA)).resolves.toBeNull();
+		await expect(recoverCommitObject(fromApi(SKEWED_API), SKEWED_SHA)).resolves.toBeNull();
 	});
 
 	it("recovers both halves once the patch pins the author's", async () => {
 		const authorOffset = patchAuthorOffset(SKEWED_PATCH, SKEWED_SHA);
 		expect(authorOffset).toBe("+0545");
 
-		const offsets = await recoverCommitOffsets(fromApi(SKEWED_API), SKEWED_SHA, authorOffset as string);
+		const proven = (await recoverCommitObject(
+			fromApi(SKEWED_API),
+			SKEWED_SHA,
+			authorOffset as string,
+		)) as CommitReconstruction;
 
-		expect(offsets).toEqual({ author: "+0545", committer: "-0330" });
+		expect(proven.offsets).toEqual({ author: "+0545", committer: "-0330" });
 
 		// This fixture's message also ends in a newline, which is the other thing
-		// the API strips and the other ambiguity the id resolves. Reproducing the
-		// object exactly is the assertion that both were resolved the right way.
+		// the API strips and the other ambiguity the id resolves. The variant that
+		// matched is handed back rather than merely tried — the caller has no other
+		// way to learn which of the two the object holds.
+		expect(proven.message).toBe(`${SKEWED_API.message}\n`);
+		expect(proven.message).not.toBe(SKEWED_API.message);
+
+		// Reproducing the object exactly, from nothing but what the reconstruction
+		// returned, is the assertion that both ambiguities were resolved the right
+		// way — and that neither half of the proof was dropped on the way out.
 		expect(
 			commitPayload({
 				...fromApi(SKEWED_API),
-				author: { ...SKEWED_API.author, offset: (offsets as CommitOffsets).author },
-				committer: { ...SKEWED_API.committer, offset: (offsets as CommitOffsets).committer },
-				message: `${SKEWED_API.message}\n`,
+				author: { ...SKEWED_API.author, offset: proven.offsets.author },
+				committer: { ...SKEWED_API.committer, offset: proven.offsets.committer },
+				message: proven.message,
 			}),
 		).toBe(SKEWED_OBJECT);
 	});
 
+	it("does not reproduce the newline-bearing commit from the message the API reported", async () => {
+		// The bug this pairing exists to fail on, stated as the bug. `git commit`
+		// ends every message it writes with a newline and `GET /git/commits/{sha}`
+		// strips it, so a rewrite built from the reported message is a rewrite that
+		// silently shortens the message by a byte — and the object-id round trip
+		// cannot see it, because our assembly and GitHub's would both have started
+		// from the stripped string.
+		const stripped = commitPayload({
+			...fromApi(SKEWED_API),
+			author: { ...SKEWED_API.author, offset: "+0545" },
+			committer: { ...SKEWED_API.committer, offset: "-0330" },
+		});
+
+		expect(stripped).not.toBe(SKEWED_OBJECT);
+		await expect(commitObjectId(stripped)).resolves.not.toBe(SKEWED_SHA);
+	});
+
 	it("refuses an author offset that is not ±HHMM rather than searching around it", async () => {
-		await expect(recoverCommitOffsets(fromApi(SKEWED_API), SKEWED_SHA, "+05:45")).resolves.toBeNull();
-		await expect(recoverCommitOffsets(fromApi(SKEWED_API), SKEWED_SHA, "nonsense")).resolves.toBeNull();
+		await expect(recoverCommitObject(fromApi(SKEWED_API), SKEWED_SHA, "+05:45")).resolves.toBeNull();
+		await expect(recoverCommitObject(fromApi(SKEWED_API), SKEWED_SHA, "nonsense")).resolves.toBeNull();
 	});
 
 	it("answers null for a commit it cannot reproduce at all", async () => {
 		// A header this module does not model, an offset outside the candidates, a
 		// sha that belongs to something else. All the same answer, and the answer
 		// is "do not rewrite this" — never "assume UTC".
-		await expect(recoverCommitOffsets(fromApi(NON_UTC_API), "0".repeat(40))).resolves.toBeNull();
+		await expect(recoverCommitObject(fromApi(NON_UTC_API), "0".repeat(40))).resolves.toBeNull();
 	});
 
 	it.each([
@@ -1333,7 +1367,20 @@ describe("through the endpoint", () => {
 	 * what a commit id is.
 	 */
 	const HEAD_TREE = "c93ec7f22ad2cabca76415f3389524a7d43c6435";
+	/** The message as `GET /git/commits/{sha}` reports it: trailing newline stripped. */
 	const HEAD_MESSAGE = "second";
+	/**
+	 * The message the object actually holds, which is the reported one plus the
+	 * newline `git commit` writes on every message it makes.
+	 *
+	 * The head's sha is computed over *these* bytes while the stub's JSON serves
+	 * {@link HEAD_MESSAGE}, exactly as GitHub does — so a handler that signed and
+	 * re-created the reported message would be rewriting this commit's message a
+	 * byte shorter, and the object-id round trip would not notice, both sides
+	 * having started from the same stripped string. The assertions below are what
+	 * notice.
+	 */
+	const HEAD_OBJECT_MESSAGE = `${HEAD_MESSAGE}\n`;
 	const BASE_SHA = "cd01952d981ed9169dca0167e2a13b611db7de92";
 	const HEAD_INSTANT = "2026-08-31T07:00:00Z";
 	const HEAD_OFFSET = "+0200";
@@ -1347,7 +1394,7 @@ describe("through the endpoint", () => {
 				parents: [BASE_SHA],
 				author: identity,
 				committer: identity,
-				message: HEAD_MESSAGE,
+				message: HEAD_OBJECT_MESSAGE,
 			}),
 		);
 	}
@@ -1440,9 +1487,13 @@ describe("through the endpoint", () => {
 						input.signature,
 					),
 				);
+				// The response strips the trailing newline again, because that is what
+				// the real endpoint does — the object it just stored keeps it, and the
+				// JSON rendering of that object does not. Nothing downstream may read
+				// the message back out of here and believe it.
 				return Response.json({
 					sha,
-					message: input.message,
+					message: input.message.replace(/\n$/, ""),
 					tree: { sha: input.tree },
 					parents: input.parents.map((parent) => ({ sha: parent })),
 					author: input.author,
@@ -1453,8 +1504,9 @@ describe("through the endpoint", () => {
 			const sha = url.pathname.split("/").pop() as string;
 
 			// The head, rendered the way the Git Data API renders one: `Z` on both
-			// dates, offset gone. Built here rather than in the map above because its
-			// sha is derived from the object bytes and the map is keyed by it.
+			// dates, offset gone, and the message's trailing newline stripped. Built
+			// here rather than in the map above because its sha is derived from the
+			// object bytes and the map is keyed by it.
 			if (sha === (await advertisedHead())) {
 				return Response.json({
 					sha,
@@ -1507,7 +1559,16 @@ describe("through the endpoint", () => {
 		expect(moved[0]?.body).toMatchObject({ force: true });
 		// The created commit keeps the original parent, tree and identities: this
 		// signs history, it does not rewrite it into something else.
-		expect(created[0]?.body).toMatchObject({ parents: [BASE_SHA], tree: HEAD_TREE, message: HEAD_MESSAGE });
+		expect(created[0]?.body).toMatchObject({ parents: [BASE_SHA], tree: HEAD_TREE });
+
+		// And it keeps the *message*, to the byte. GitHub reported "second"; the
+		// object says "second\n", and only reproducing the sha could tell which.
+		// GitHub's create-a-commit stores the trailing newline it is handed —
+		// verified against the live API — so sending the reported message instead
+		// would publish a commit whose message the author did not write.
+		const createdMessage = (created[0]?.body as { message?: string } | undefined)?.message;
+		expect(createdMessage).toBe(HEAD_OBJECT_MESSAGE);
+		expect(createdMessage).not.toBe(HEAD_MESSAGE);
 
 		// And it keeps the *timezone*. The API reported both dates as `2026-08-31T07:00:00Z`;
 		// what goes back out is the local time the commit was actually written at.
@@ -2019,6 +2080,44 @@ describe("the repository-scoped client", () => {
 
 		expect(commit.offsets).toEqual({ author: "+0545", committer: "-0330" });
 		expect(seen.filter((path) => path === `/repos/${REPOSITORY}/commits/${SKEWED_SHA}`)).toHaveLength(1);
+	});
+
+	it("returns the message the object holds, not the one the JSON reported", async () => {
+		// The whole reconstruction is worth nothing to a caller that gets half of
+		// it. `GET /git/commits/{sha}` strips the trailing newline `git commit`
+		// writes on every message, so the reported string and the stored bytes
+		// differ for most commits in most repositories — and the id that proved the
+		// offsets is the id over an object containing *this* message. Handing back
+		// the other one would be relying on a proof of something we then did not do.
+		const { client: repo } = client(commitEndpoints(SKEWED_API, SKEWED_SHA, SKEWED_PATCH));
+
+		const commit = await repo.getCommit(SKEWED_SHA);
+
+		expect(commit.message).toBe(`${SKEWED_API.message}\n`);
+		expect(commit.message).not.toBe(SKEWED_API.message);
+	});
+
+	it("hands back a commit the unsigned payload can be rebuilt from, byte for byte", async () => {
+		// The end of the read path, checked against Git rather than against
+		// ourselves: everything `signPushedCommits` signs comes out of this object,
+		// so if `commitPayload` over it is the original `git cat-file commit` output
+		// then the bytes about to be signed are the bytes the author wrote — offsets
+		// and trailing newline together. The fixture is a real commit whose message
+		// ends in a newline and whose two offsets differ, so both of the things this
+		// API renders away are being reproduced at once.
+		const { client: repo } = client(commitEndpoints(SKEWED_API, SKEWED_SHA, SKEWED_PATCH));
+
+		const commit = await repo.getCommit(SKEWED_SHA);
+		const payload = commitPayload({
+			tree: commit.tree,
+			parents: commit.parents,
+			author: commit.author,
+			committer: commit.committer,
+			message: commit.message,
+		});
+
+		expect(payload).toBe(SKEWED_OBJECT);
+		await expect(commitObjectId(payload)).resolves.toBe(SKEWED_SHA);
 	});
 
 	it("sends the patch request with the media type that carries the offset", async () => {

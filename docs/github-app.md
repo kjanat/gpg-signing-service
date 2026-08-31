@@ -123,9 +123,18 @@ local time than the author committed at.
 So the offset is worked out and then **proven**: the original object is
 reconstructed under candidate offsets and the one whose SHA-1 equals the sha the
 commit already has is kept. That sha was computed by Git over the real bytes, so
-a match is proof rather than a guess, and it settles a second ambiguity for
-free — the API also strips a trailing newline from the message, and only one of
+a match is proof rather than a guess, and it settles a second ambiguity with
+it — the API also strips a trailing newline from the message, and only one of
 the two variants can reproduce the id.
+
+Both halves of that proof are carried forward, because they were proven
+together: the reconstruction returns the offsets **and** the message
+representation that matched, and it is that message which gets signed and handed
+back to create-a-commit. Keeping only the offsets would rewrite every
+`git commit`-made commit — they all end in a newline — into one whose message is
+a byte shorter, and the object-id check could not see it either, both sides
+having started from the same stripped string. GitHub stores the trailing newline
+it is given; it is only the read path that strips it.
 
 Author and committer offsets are searched together first, since a commit whose
 two differ is the exception. When that fails, the **patch representation**
