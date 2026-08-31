@@ -4,6 +4,7 @@
  * Types are organized into logical sub-modules:
  * - branded: Security-critical branded string types
  * - env: Environment bindings and context
+ * - github: GitHub App integration shapes
  * - headers: HTTP header names
  * - http: HTTP status code constants
  * - jwks: JSON Web Key Set types
@@ -18,6 +19,8 @@
 export * from "#types/branded";
 // Environment & context
 export * from "#types/env";
+// GitHub App integration
+export * from "#types/github";
 // HTTP headers
 export { HEADERS } from "#types/headers";
 // HTTP status codes

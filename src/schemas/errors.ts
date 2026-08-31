@@ -47,6 +47,22 @@ export const ErrorCodeSchema = z
 		"RATE_LIMIT_ERROR",
 		"RATE_LIMITED",
 		"INVALID_REQUEST",
+		/**
+		 * The request body is larger than the route will read.
+		 *
+		 * Only `POST /github/webhook` sets it today, against GitHub's own 25 MiB
+		 * payload cap — above that number a delivery cannot have come from GitHub,
+		 * whatever signature it carries. Separate from INVALID_REQUEST because the
+		 * two have different fixes and one of them is not a fix at all: a malformed
+		 * body is corrected and resent, an oversize one never can be, so a sender
+		 * that cannot tell them apart retries a request that will be refused
+		 * identically forever.
+		 *
+		 * Answered before the body is read, so it is also the one refusal in this
+		 * service that says nothing about what was sent — there was no reading of
+		 * it to say anything about.
+		 */
+		"PAYLOAD_TOO_LARGE",
 		"AUDIT_ERROR",
 		"NOT_FOUND",
 		"INTERNAL_ERROR",

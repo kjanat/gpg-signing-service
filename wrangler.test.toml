@@ -53,3 +53,12 @@ KEY_PASSPHRASE  = "test-passphrase"
 # ADMIN_TOKEN on purpose — equal values are a refused configuration, and
 # `admin-scope.test.ts` pins that refusal.
 ADMIN_READONLY_TOKEN = "test-readonly-admin-token"
+
+# The GitHub App integration ships off, and the suite asserts that a deployment
+# in this state is indistinguishable from one without the code. Every test that
+# needs the feature on supplies its own env, so leaving the default here as the
+# shipped default is what keeps "off" covered by every other suite in the tree
+# rather than by one assertion.
+GITHUB_APP_ENABLED    = "false"
+GITHUB_APP_ID         = "123456"
+GITHUB_WEBHOOK_SECRET = "test-webhook-secret"
