@@ -30,6 +30,17 @@ makes it GitHub's. The endpoint is off unless `GITHUB_APP_ENABLED` is the
 literal `"true"`, and a deployment that has not opted in answers it exactly as
 it answers any unrouted path.
 
+Inside that boundary there is a second one, and it is the one most easily
+missed: **a valid signature proves the sender, not the subject.** One App has
+one webhook secret and as many installations as accept it, so a delivery about a
+repository this deployment has no business touching carries exactly the same
+valid HMAC as one about the repository it was set up for. Authorization is
+therefore a separate decision, taken against `GITHUB_APP_ALLOWED_REPOSITORIES` —
+a list of `<installationId>:<owner>/<repo>` pairs only an operator can write.
+Pairs, not two independent lists, because two lists authorize every combination
+of their members. See
+[repository and installation authorization](github-app.md#repository-and-installation-authorization).
+
 ## Signing authority
 
 `POST /sign` accepts any non-empty text. It does not prove that the text is a
@@ -126,6 +137,21 @@ sign of one is not every caller failing at once.
   re-serialised body is never what a signature is checked against. An enabled
   integration with no `GITHUB_WEBHOOK_SECRET` refuses every delivery rather than
   accepting unauthenticated ones.
+- A verified delivery is then authorized against an operator-written allowlist
+  of `<installation, repository>` pairs. An unset or empty list grants nothing;
+  a malformed one refuses every delivery rather than applying the entries that
+  parsed. The repository a future handler acts on is taken from the matched
+  allowlist entry, not from the payload, so a delivery cannot name its own
+  subject even after passing the check.
+- A verified, authorized delivery is deduplicated on `X-GitHub-Delivery` in a
+  Durable Object, so a replayed or redelivered event is a no-op. The claim is
+  taken under `blockConcurrencyWhile`, which is what makes two simultaneous
+  copies of one delivery resolve to exactly one winner, and it is taken _after_
+  both checks above — a request that could consume an id before proving its
+  origin and its grant could suppress the real delivery carrying it. A delivery
+  with no usable id is refused rather than given a placeholder, because a
+  placeholder is a shared key. The claim is taken before the handler runs and is
+  never released, which makes deliveries at-most-once rather than at-least-once.
 - Both static admin tokens are compared in constant time. When
   `ADMIN_READONLY_TOKEN` is provisioned, both comparisons run on every request,
   so which of the two a valid bearer matched is not observable by timing. When
@@ -415,6 +441,17 @@ Before relying on the service for protected production branches, account for:
 - a GitHub App webhook, when enabled, whose deliveries are logged but not
   recorded in `audit_logs`, and whose rate-limit bucket is shared by every
   caller reaching it from one address;
+- webhook replay protection bounded by a retention window: a delivery captured
+  and replayed after it expires from the ledger is accepted again. No
+  TTL-based deduplication can prevent that — the signature carries no timestamp
+  to age against — and the window is set to cover every repeat GitHub itself can
+  cause. See [replay protection](github-app.md#replay-protection);
+- webhook deliveries that are **at-most-once**: the delivery id is claimed
+  before the route handler runs and is never released, so a handler that later
+  fails leaves the id consumed and an operator's redelivery is answered
+  `200 {"duplicate": true}` without acting. Harmless while the handler acts on
+  nothing; a hard prerequisite to resolve before one does. See
+  [claimed before the handler runs](github-app.md#claimed-before-the-handler-runs-at-most-once-not-at-least-once);
 - PGP-only behavior in the high-level CLI and Go wrapper; and
 - Git history rewriting when a detached signature is attached after commit
   creation.

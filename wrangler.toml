@@ -20,9 +20,23 @@ class_name = "KeyStorage"
 name       = "RATE_LIMITER"
 class_name = "RateLimiter"
 
+# Ledger of GitHub webhook delivery ids already acted upon. A Durable Object
+# rather than KV because the case that matters is two copies of one delivery
+# arriving at once, and KV is eventually consistent with no compare-and-set.
+# Declared unconditionally, in every environment: a binding that might be absent
+# is one whose absence has to be handled, and the handling would be either "act
+# twice" or "refuse everything". It costs nothing until a delivery is claimed.
+[[durable_objects.bindings]]
+name       = "WEBHOOK_DELIVERIES"
+class_name = "WebhookDeliveries"
+
 [[migrations]]  # Migrations for Durable Objects (SQLite-backed for free plan)
 tag                = "v1"
 new_sqlite_classes = ["KeyStorage", "RateLimiter"]
+
+[[migrations]]
+tag                = "v2"
+new_sqlite_classes = ["WebhookDeliveries"]
 
 [[d1_databases]]  # D1 Database for audit logs (docs: https://developers.cloudflare.com/workers/wrangler/configuration/#d1-databases)
 binding       = "AUDIT_DB"
@@ -84,6 +98,15 @@ GITHUB_APP_ENABLED = "false"
 # GITHUB_APP_ID: the App's numeric id, from its settings page. A plain var, not
 # a secret — it appears in the App's own public URL. Only needed once something
 # acts on a delivery; the scaffold acknowledges and stops.
+
+# GITHUB_APP_ALLOWED_REPOSITORIES: which <installation, repository> pairs a
+# delivery may be about, comma-separated as `<installationId>:<owner>/<repo>`.
+# Unset — which is the default, and why there is no value here — authorizes no
+# installation and no repository; only the App-level ping, which names neither,
+# still answers. Pairs rather than two independent lists because two lists
+# authorize every combination of their members, which is how a repository ends
+# up reachable under an installation nobody paired it with. A malformed entry
+# refuses every delivery rather than applying the ones that parsed.
 
 # KEY_EXPIRY_WARN_DAYS: days ahead of expiry a key starts being reported.
 # Unset means 60. Plain decimal digits naming a positive whole number; anything
@@ -149,6 +172,10 @@ class_name = "KeyStorage"
 [[env.staging.durable_objects.bindings]]
 name       = "RATE_LIMITER"
 class_name = "RateLimiter"
+
+[[env.staging.durable_objects.bindings]]
+name       = "WEBHOOK_DELIVERIES"
+class_name = "WebhookDeliveries"
 
 [[env.staging.d1_databases]]  # Staging D1 Database - create with: wrangler d1 create gpg-signing-audit-staging
 binding       = "AUDIT_DB"

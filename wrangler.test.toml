@@ -15,10 +15,18 @@ class_name = "KeyStorage"
 name       = "RATE_LIMITER"
 class_name = "RateLimiter"
 
+[[durable_objects.bindings]]
+name       = "WEBHOOK_DELIVERIES"
+class_name = "WebhookDeliveries"
+
 # Migrations for Durable Objects
 [[migrations]]
 tag                = "v1"
 new_sqlite_classes = ["KeyStorage", "RateLimiter"]
+
+[[migrations]]
+tag                = "v2"
+new_sqlite_classes = ["WebhookDeliveries"]
 
 # D1 Database for audit logs (use local database for tests)
 [[d1_databases]]
@@ -62,3 +70,9 @@ ADMIN_READONLY_TOKEN = "test-readonly-admin-token"
 GITHUB_APP_ENABLED    = "false"
 GITHUB_APP_ID         = "123456"
 GITHUB_WEBHOOK_SECRET = "test-webhook-secret"
+
+# GITHUB_APP_ALLOWED_REPOSITORIES is deliberately absent, so the default the
+# whole suite runs against is the fail-closed one: no installation and no
+# repository authorized. Every test that needs a grant supplies its own, which
+# is what keeps "an unset allowlist grants nothing" a property the other suites
+# demonstrate rather than one assertion demonstrating it alone.
