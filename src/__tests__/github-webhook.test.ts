@@ -100,28 +100,58 @@ async function deliverSigned(
 	);
 }
 
+/**
+ * The same request to two paths, so the only difference between the responses
+ * is which path the service was asked for.
+ */
+async function probe(path: string): Promise<Response> {
+	const ctx = createExecutionContext();
+	const response = await app.fetch(
+		new Request(`https://sign.test${path}`, {
+			method: "POST",
+			body: "{}",
+			headers: { "Content-Type": "application/json" },
+		}),
+		env,
+		ctx,
+	);
+	await waitOnExecutionContext(ctx);
+
+	return response;
+}
+
+/**
+ * A response's headers, comparably.
+ *
+ * `X-Request-ID` is dropped because it is a fresh UUID per request by
+ * construction, and it is the same shape on both paths. Everything else is
+ * compared, including values.
+ */
+function headerFingerprint(response: Response): string[] {
+	return [...response.headers]
+		.filter(([name]) => name.toLowerCase() !== "x-request-id")
+		.map(([name, value]) => `${name.toLowerCase()}: ${value}`)
+		.sort();
+}
+
 describe("the webhook route when the feature is off", () => {
 	// wrangler.test.toml ships GITHUB_APP_ENABLED="false", so the default env in
 	// every other suite in this tree is also the disabled one. That is the point:
 	// "off changes nothing" is checked by every test that never mentions it.
 	it("is indistinguishable from a path the service does not route", async () => {
-		const disabled = await deliver("{}");
-		const unrouted = await deliver("{}");
+		const disabled = await probe("/github/webhook");
+		const genuinelyUnrouted = await probe("/no-such-route");
 
-		const ctx = createExecutionContext();
-		const genuinelyUnrouted = await app.fetch(
-			new Request("https://sign.test/no-such-route", { method: "POST", body: "{}" }),
-			env,
-			ctx,
-		);
-		await waitOnExecutionContext(ctx);
-		const unroutedBody = (await genuinelyUnrouted.json()) as Envelope;
-
-		expect(disabled.response.status).toBe(genuinelyUnrouted.status);
-		// Compared against the other route's actual body rather than a literal, so
-		// a change to the 404 envelope cannot make these two drift apart silently.
-		expect(disabled.body).toEqual(unroutedBody);
-		expect(unrouted.body).toEqual(unroutedBody);
+		expect(disabled.status).toBe(genuinelyUnrouted.status);
+		// Compared as bytes against the other route's actual response rather than
+		// against a literal, so a change to the 404 envelope cannot make these two
+		// drift apart silently — and as bytes rather than as a parsed object,
+		// because a difference in key order is still one a prober can measure.
+		expect(await disabled.text()).toBe(await genuinelyUnrouted.text());
+		// The headers too, which is where a difference would otherwise hide: a
+		// stray `WWW-Authenticate`, a rate-limit header from a gate that ran when
+		// it should not have, a `Vary` only one of the two paths sets.
+		expect(headerFingerprint(disabled)).toEqual(headerFingerprint(genuinelyUnrouted));
 	});
 
 	it("refuses even a delivery signed with the right secret", async () => {
@@ -414,9 +444,10 @@ describe("rate limiting", () => {
 	});
 
 	it("fails closed when the limiter cannot be reached", async () => {
-		// A dropped delivery is redelivered by GitHub. An accepted one with no
-		// limit in front of the HMAC is unbounded verification work for an
-		// anonymous caller.
+		// An accepted delivery with no limit in front of the HMAC is unbounded
+		// verification work for an anonymous caller, so the limiter fails closed.
+		// GitHub does not automatically redeliver, so this 503 costs the event —
+		// deliberate while the handler acts on nothing.
 		const broken = {
 			...ENABLED,
 			RATE_LIMITER: {

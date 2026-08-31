@@ -120,9 +120,15 @@ export const githubWebhookGate: WebhookMiddleware = async (c, next) => {
  * shares a handful of buckets; that is the right shape for a limit whose job is
  * to bound *unverified* work.
  *
- * Fails closed, like every other limiter here. A webhook that is dropped is
- * redelivered by GitHub; one that is accepted without a limit in front of the
- * HMAC is unbounded verification work for an anonymous caller.
+ * Fails closed, like every other limiter here, and that costs more here than it
+ * does on `/admin`: GitHub does not automatically redeliver a failed delivery.
+ * A refusal or a 503 from this path loses the event until an operator
+ * redelivers it by hand from the App's "Advanced" tab, or through
+ * `POST /app/hook/deliveries/{id}/attempts`. Failing closed is still the right
+ * trade while the handler acts on nothing — an accepted delivery with no limit
+ * in front of the HMAC is unbounded verification work for an anonymous caller —
+ * but the budget this limiter sets is a dropped-event budget, not only a work
+ * budget, and the first handler that acts on an event has to weigh it as one.
  */
 export const webhookRateLimit: WebhookMiddleware = async (c, next) => {
 	const clientIp =
