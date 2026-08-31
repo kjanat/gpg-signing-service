@@ -75,7 +75,7 @@ export type PushRefusal =
 	 * A commit in the run could not be reproduced byte-for-byte from what the
 	 * API reports, so its rewrite would silently alter it.
 	 *
-	 * In practice: a timezone offset outside the candidates `recoverCommitOffsets`
+	 * In practice: a timezone offset outside the candidates `recoverCommitObject`
 	 * tries, or a header this service does not model. Refusing is the point —
 	 * rewriting a commit we cannot reconstruct means publishing a signature over
 	 * something other than what the author wrote.
