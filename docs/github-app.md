@@ -245,7 +245,10 @@ receives nothing.
 A `202` body carries a `skipped` field naming why nothing was signed —
 `nothing_to_sign` for a head that already carries a signature, `no_key_bound`
 for a repository the operator granted events but no key, `not_a_branch`,
-`branch_deleted`, `branch_moved`, `too_many_unsigned`. A `200` from a successful
+`branch_deleted`, `branch_moved`, `too_many_unsigned`, and `malformed` for a
+payload that could not be shown to describe a signable push — no usable `ref`,
+or a `deleted` flag that is not the literal `false` a non-deletion carries. A
+`200` from a successful
 sign carries `handled: true` and `signed: <count>`; a `200` from a repeat
 carries `duplicate: true`.
 
