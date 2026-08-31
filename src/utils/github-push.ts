@@ -60,7 +60,10 @@ export type PushRefusal =
 	| "not_a_branch"
 	/** The push deleted the branch. There is nothing at the tip to sign. */
 	| "branch_deleted"
-	/** The payload carried no usable ref at all. */
+	/**
+	 * The payload could not be shown to describe a signable push: no usable ref,
+	 * or a `deleted` flag that is not the literal `false` a non-deletion carries.
+	 */
 	| "malformed"
 	/** The head already carries a signature, so the run is empty. */
 	| "nothing_to_sign"
@@ -105,10 +108,21 @@ function isObject(value: unknown): value is Record<string, unknown> {
 /**
  * Decide whether this `push` payload describes something to sign.
  *
- * The `deleted` flag is read as "anything other than exactly false is a
- * deletion" — a missing flag, a string, a null. A push event that cannot be
- * shown to be a non-deletion is refused, because acting on a deleted branch
- * means recreating a branch somebody deleted.
+ * The `deleted` flag is read as a proof obligation rather than as a filter: a
+ * delivery acts only if it carries exactly `false`, the literal boolean GitHub
+ * sends on every non-deletion push. Exactly `true` is the deletion it names.
+ * Every other shape — a missing flag, a `null`, the string `"false"`, a `0`, an
+ * object — is `malformed` and causes nothing.
+ *
+ * The asymmetry is the point. Refusing only `=== true` would mean a payload
+ * that is silent about whether it is a deletion is treated as a non-deletion,
+ * so the one field that says "this branch is gone" could be removed to make it
+ * act; requiring `=== false` means a payload that cannot *prove* it is a
+ * non-deletion is refused. Acting on a deletion means recreating a branch
+ * somebody deleted, which is the direction that has to be closed.
+ *
+ * Checked before the ref, so a payload whose `deleted` cannot be believed is
+ * refused without its `ref` ever being read, let alone put in a URL.
  */
 export function planPush(payload: unknown): PushPlan {
 	if (!isObject(payload)) {
@@ -117,6 +131,10 @@ export function planPush(payload: unknown): PushPlan {
 
 	if (payload.deleted === true) {
 		return { act: false, reason: "branch_deleted" };
+	}
+
+	if (payload.deleted !== false) {
+		return { act: false, reason: "malformed" };
 	}
 
 	const branch = branchFromRef(payload.ref);

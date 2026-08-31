@@ -182,6 +182,48 @@ describe("deciding what a push may cause", () => {
 	});
 
 	it.each([
+		["absent", { ref: "refs/heads/main" }],
+		["null", { ref: "refs/heads/main", deleted: null }],
+		['the string "false"', { ref: "refs/heads/main", deleted: "false" }],
+		['the string "true"', { ref: "refs/heads/main", deleted: "true" }],
+		["the empty string", { ref: "refs/heads/main", deleted: "" }],
+		["zero", { ref: "refs/heads/main", deleted: 0 }],
+		["one", { ref: "refs/heads/main", deleted: 1 }],
+		["NaN", { ref: "refs/heads/main", deleted: Number.NaN }],
+		["an object", { ref: "refs/heads/main", deleted: {} }],
+		["an empty array", { ref: "refs/heads/main", deleted: [] }],
+		["an array holding false", { ref: "refs/heads/main", deleted: [false] }],
+		["a boxed false", { ref: "refs/heads/main", deleted: new Boolean(false) }],
+		["undefined, spelled out", { ref: "refs/heads/main", deleted: undefined }],
+	])("refuses a payload whose `deleted` is %s", (_case, payload) => {
+		// The rule is "prove you are not a deletion", not "do not look like one".
+		// Every value here is falsy, or truthy-but-not-true, or absent — and under
+		// a `deleted === true` test every single one of them would have acted. A
+		// payload that is merely *silent* about being a deletion must not be able
+		// to buy a branch rewrite by omitting the field that would have stopped it.
+		expect(planPush(payload)).toEqual({ act: false, reason: "malformed" });
+	});
+
+	it("refuses a `deleted` it cannot believe before it reads the ref at all", () => {
+		// Ordering, asserted rather than assumed: the ref is a value that ends up
+		// interpolated into an API path, and a payload that failed the deletion
+		// proof should not have that value examined, let alone used. A ref that
+		// would otherwise be `not_a_branch` still answers `malformed`, which is
+		// only true if the `deleted` gate ran first.
+		expect(planPush({ ref: "refs/tags/v1", deleted: "false" })).toEqual({ act: false, reason: "malformed" });
+		expect(planPush({ ref: "refs/heads/../../etc", deleted: null })).toEqual({ act: false, reason: "malformed" });
+	});
+
+	it("still tells a genuine deletion apart from a payload it cannot read", () => {
+		// Fail-closed must not collapse the two: `branch_deleted` is a repository
+		// state an operator can recognise in a log line, `malformed` is a delivery
+		// nobody should have sent. Widening the refusal is not the same as losing
+		// the distinction.
+		expect(planPush({ ref: "refs/heads/main", deleted: true })).toEqual({ act: false, reason: "branch_deleted" });
+		expect(planPush({ ref: "refs/heads/main", deleted: false })).toEqual({ act: true, branch: "main" });
+	});
+
+	it.each([
 		["a traversal", "refs/heads/../../etc"],
 		["a lock ref", "refs/heads/main.lock"],
 		["a reflog selector", "refs/heads/main@{1}"],
@@ -997,6 +1039,43 @@ describe("through the endpoint", () => {
 
 		expect(second.response.status).toBe(200);
 		expect(second.body.duplicate).toBe(true);
+	});
+
+	it.each([
+		["omits `deleted` entirely", {}],
+		["sends `deleted: null`", { deleted: null }],
+		['sends `deleted` as the string "false"', { deleted: "false" }],
+		["sends `deleted` as `0`", { deleted: 0 }],
+	])("reaches no GitHub call for a delivery that %s", async (_case, override) => {
+		// The whole point of the fail-closed reading, at the boundary that matters:
+		// not "the answer is malformed" but "nothing outside this Worker was
+		// touched". A delivery that cannot prove it is a non-deletion is refused
+		// before the installation token is minted, before the ref is read, and so
+		// necessarily before anything is signed or moved. These payloads are
+		// otherwise perfect — correctly signed, allowlisted installation, allowlisted
+		// repository, a real branch ref — so the only thing refusing them is the
+		// `deleted` proof. `signs the unsigned tip, moves the branch, and records
+		// what it did` below is the same payload with `deleted: false` spelled
+		// properly, and it signs; the difference between the two is this field.
+		const reached: string[] = [];
+		vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+			reached.push(new Request(input as RequestInfo).url);
+			return Promise.resolve(new Response("{}", { status: 200 }));
+		});
+
+		const payload: Record<string, unknown> = { ...pushPayload(INSTALLATION, REPOSITORY), ...override };
+		if (Object.keys(override).length === 0) {
+			delete payload.deleted;
+		}
+
+		const { response, body } = await deliverPush({
+			payload,
+			allowlist: `${INSTALLATION}:${REPOSITORY}=${KEY}`,
+		});
+
+		expect(response.status).toBe(202);
+		expect(body.skipped).toBe("malformed");
+		expect(reached).toHaveLength(0);
 	});
 
 	/**
