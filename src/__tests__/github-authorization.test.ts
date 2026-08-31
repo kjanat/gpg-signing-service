@@ -176,7 +176,19 @@ describe("allowlist parsing", () => {
 });
 
 describe("repository full names", () => {
-	it.each(["a/b", "kjanat/gpg-signing-service", "Org-1/repo.name_2"])("accepts %s", (name) => {
+	it.each([
+		"a/b",
+		"kjanat/gpg-signing-service",
+		"Org-1/repo.name_2",
+		// A repository may begin with a character an owner may not. `.github` is
+		// the one GitHub itself asks an organisation to create, so a pattern that
+		// refuses it refuses deliveries about a repository most accounts have —
+		// and, since a malformed allowlist entry refuses the whole list, bricks
+		// every delivery for the operator who tries to allowlist it.
+		"github/.github",
+		"kjanat/_internal",
+		"kjanat/-dash",
+	])("accepts %s", (name) => {
 		expect(isRepositoryFullName(name)).toBe(true);
 	});
 
@@ -186,7 +198,16 @@ describe("repository full names", () => {
 		["an empty owner", "/b"],
 		["an empty name", "a/"],
 		["a traversal", "a/../b"],
-		["a leading dot", ".a/b"],
+		// The two repository names that are not path segments. Everything else
+		// starting with a dot is a real repository; these two are the reason the
+		// leading character is checked at all.
+		["a bare dot", "a/."],
+		["a bare double dot", "a/.."],
+		["a leading dot in the owner", ".a/b"],
+		// Owner logins are alphanumerics and hyphens. Underscores and dots are
+		// repository-name characters, not login characters.
+		["an underscore in the owner", "a_b/c"],
+		["a dot in the owner", "a.b/c"],
 		["a scheme", "https://a/b"],
 		["a space", "a b/c"],
 		["a query string", "a/b?x=1"],
