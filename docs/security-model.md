@@ -41,6 +41,19 @@ Pairs, not two independent lists, because two lists authorize every combination
 of their members. See
 [repository and installation authorization](github-app.md#repository-and-installation-authorization).
 
+An allowlisted pair may additionally bind one signing key, and that binding is
+the opt-in for the one thing a delivery can now cause: a `push` to such a
+repository has the unsigned commits at its tip signed and the branch
+force-updated. A pair with no `=<keyId>` suffix receives its events and signs
+nothing — there is no default key and no fall back to `KEY_ID`. See
+[signing commits on push](github-app.md#signing-commits-on-push).
+
+Two properties of that handler belong here rather than only in its own document.
+**The repository it acts on is the operator's string, never the payload's**, so
+a delivery cannot name its own subject and have a check bless it. And **the
+commit it acts on is read from the ref rather than taken from `payload.after`**,
+so a forged or stale payload cannot aim a force update at some other commit.
+
 ## Signing authority
 
 `POST /sign` accepts any non-empty text. It does not prove that the text is a
@@ -161,8 +174,10 @@ sign of one is not every caller failing at once.
   both checks above — a request that could consume an id before proving its
   origin and its grant could suppress the real delivery carrying it. A delivery
   with no usable id is refused rather than given a placeholder, because a
-  placeholder is a shared key. The claim is taken before the handler runs and is
-  never released, which makes deliveries at-most-once rather than at-least-once.
+  placeholder is a shared key. The id is _reserved_ before the handler runs and
+  settled after it — released when the delivery caused nothing, committed once
+  it has caused something irreversible — so a failure that changed nothing stays
+  redeliverable while a repeat still cannot act twice.
 - Both static admin tokens are compared in constant time. When
   `ADMIN_READONLY_TOKEN` is provisioned, both comparisons run on every request,
   so which of the two a valid bearer matched is not observable by timing. When
@@ -234,14 +249,15 @@ carrying the request id.
 
 The token bucket holds 100 requests and refills at 100 per minute.
 
-| Surface                    | Identity                           |
-| -------------------------- | ---------------------------------- |
-| `/sign` with OIDC          | `issuer:subject`                   |
-| `/sign` with service token | synthetic issuer plus token name   |
-| Revoked-trust reuse record | `oidc-revoked-reuse:<subject row>` |
-| `/admin/*`                 | Client IP                          |
-| `POST /github/webhook`     | Client IP                          |
-| Public routes              | No application rate limiter        |
+| Surface                    | Identity                                |
+| -------------------------- | --------------------------------------- |
+| `/sign` with OIDC          | `issuer:subject`                        |
+| `/sign` with service token | synthetic issuer plus token name        |
+| Revoked-trust reuse record | `oidc-revoked-reuse:<subject row>`      |
+| `/admin/*`                 | Client IP                               |
+| `POST /github/webhook`     | Client IP                               |
+| Push signing               | `<installation>:<owner>/<repo>:<keyId>` |
+| Public routes              | No application rate limiter             |
 
 Rate-limiter failure returns `503` rather than allowing the request.
 
@@ -251,6 +267,15 @@ unsigned request choose its own bucket. It is metered before the HMAC is
 checked, so the limit bounds unverified verification work, and it is a namespace
 of its own so that a burst of deliveries cannot exhaust an operator's ability to
 reach `/admin`.
+
+That address meter is not a signing budget, and the distinction matters now that
+a delivery can cause signatures: it counts requests, and one request can carry
+twenty of them. Push signing therefore has its own meter, spending one token per
+signature at 120 a minute, keyed on the authorized installation, the operator's
+spelling of the repository and the bound key — every component from the
+authorization decision, so a delivery cannot vary a payload field to get a fresh
+bucket. It is consulted after the run is known and before anything is signed, so
+a refusal costs a read and leaves the delivery redeliverable.
 
 The OIDC signing identity is the caller's `sub`, and GitHub varies `sub` per ref,
 so one trusted row is not bounded to one bucket: a caller who can push branches
@@ -281,10 +306,16 @@ issuer will mint.
 There is no built-in retention, export, or tamper-evident log chain. Alerting is
 available but optional; see below.
 
-Accepted webhook deliveries are logged, not audited. `audit_logs` records
-operations on keys and credentials, and the scaffold acts on no event, so a row
-per acknowledged-and-discarded delivery would be a write per event nothing acted
-on. See [GitHub App webhook](github-app.md#audit-records).
+Webhook deliveries that cause nothing are logged, not audited. `audit_logs`
+records operations on keys and credentials, and a row per
+acknowledged-and-discarded delivery would be a write per event nothing acted on.
+
+A `push` that reaches the point of trying to sign does earn a row: `action =
+push_sign`, `issuer = github-app`, `subject` the authorized repository, `key_id`
+the bound key, and metadata carrying the branch, the commit count and the two
+head shas — or the reason it failed. No signature, no installation token, no key
+material and no GitHub response body reaches it. See
+[what is recorded](github-app.md#what-is-recorded).
 
 ## What Sentry receives
 
@@ -457,12 +488,29 @@ Before relying on the service for protected production branches, account for:
   TTL-based deduplication can prevent that — the signature carries no timestamp
   to age against — and the window is set to cover every repeat GitHub itself can
   cause. See [replay protection](github-app.md#replay-protection);
-- webhook deliveries that are **at-most-once**: the delivery id is claimed
-  before the route handler runs and is never released, so a handler that later
-  fails leaves the id consumed and an operator's redelivery is answered
-  `200 {"duplicate": true}` without acting. Harmless while the handler acts on
-  nothing; a hard prerequisite to resolve before one does. See
-  [claimed before the handler runs](github-app.md#claimed-before-the-handler-runs-at-most-once-not-at-least-once);
+- **at-most-once past the irreversible boundary**: once the push handler issues
+  its branch update the delivery id is spent, whatever the outcome. A request
+  that was sent and whose answer was lost may have landed, so it is not retried
+  — an operator's redelivery is answered `200 {"duplicate": true}` without
+  acting, and recovering means pushing again rather than redelivering. Failures
+  _before_ that point release the id and are genuine retries. See
+  [two phases, and where the line is](github-app.md#two-phases-and-where-the-line-is);
+- **an unsigned commit beneath a signed one is never signed**: rewriting a
+  commit invalidates its children's signatures, so push signing only ever
+  touches the unsigned run at the tip. A history with a signature in the middle
+  keeps unsigned commits below it. See
+  [only the unsigned run at the tip](github-app.md#only-the-unsigned-run-at-the-tip);
+- **push signing force-updates the branch**: a rewritten head is not a
+  descendant of the old one, so the update cannot be a fast-forward. The branch
+  is re-read immediately before the update and required to be unchanged, which
+  closes the window that is open in practice and not the one that is open in
+  theory;
+- **a rewritten commit keeps its metadata, including its timezone**: the tree,
+  the parents, the identities and both dates are the originals — offsets
+  included, which GitHub's JSON does not report and which are therefore
+  recovered and proven against the commit's own object id. A commit whose exact
+  bytes cannot be reconstructed is refused rather than rewritten approximately.
+  See [the timezone offset is recovered, not read](github-app.md#the-timezone-offset-is-recovered-not-read);
 - PGP-only behavior in the high-level CLI and Go wrapper; and
 - Git history rewriting when a detached signature is attached after commit
   creation.
