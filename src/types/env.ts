@@ -176,19 +176,30 @@ export interface Env {
 	 */
 	GITHUB_APP_ID?: string;
 	/**
-	 * Optional: which `<installation, repository>` pairs a delivery may be about.
+	 * Optional: which `<installation, repository>` pairs a delivery may be about,
+	 * and which signing key each of them may cause to sign with.
 	 *
-	 * Comma-separated `<installationId>:<owner>/<repo>` entries, e.g.
-	 * `12345678:kjanat/gpg-signing-service`. Unset authorizes no installation and
-	 * no repository — the App-level `ping`, which names neither, still answers so
-	 * an operator can check the endpoint before writing this.
+	 * Comma-separated `<installationId>:<owner>/<repo>[=<keyId>]` entries, e.g.
+	 * `12345678:kjanat/gpg-signing-service=62E75E54497815DD`. Unset authorizes no
+	 * installation and no repository — the App-level `ping`, which names neither,
+	 * still answers so an operator can check the endpoint before writing this.
+	 *
+	 * The `=<keyId>` suffix is optional and there is **no default**: a pair
+	 * written without one has its deliveries received, authorized and logged, and
+	 * may cause nothing to sign. `KEY_ID` is the default for `POST /sign`, where
+	 * the caller's own key grant has already been checked, and it is deliberately
+	 * not inherited here. See `src/utils/github-signing-key.ts`.
 	 *
 	 * A plain var rather than a secret: it is a policy an operator should be able
 	 * to read back from `wrangler.toml` and diff, and it grants nothing on its
-	 * own — reaching the check at all requires the webhook secret.
+	 * own — reaching the check at all requires the webhook secret. A key id is
+	 * not a secret either; `/public-key` serves the key it names.
 	 *
 	 * Pairs rather than two independent lists, because two lists authorize every
-	 * combination of their members. See `src/utils/github-authorization.ts`.
+	 * combination of their members, and the key rides inside the entry for the
+	 * same reason. A pair may appear at most once — a repeat refuses the whole
+	 * list rather than resolving to whichever entry came first. See
+	 * `src/utils/github-authorization.ts`.
 	 */
 	GITHUB_APP_ALLOWED_REPOSITORIES?: string;
 
