@@ -381,6 +381,13 @@ cannot publish a plan.
 Publishing is opt-in there too: `repair-history.sh` repairs, asserts and stops
 unless it is given `PUSH=true`, and prints the exact push command instead.
 
+The dispatch surface is `.github/workflows-pending/repair-history.yml` — a
+separate workflow rather than a mode on Sign Commits, for the same reason this
+is a separate command: a `mode:` dropdown would put a provenance rewrite one
+mis-click away from a routine signing run. It defaults `dry_run` to true and
+`push` to false, and `task test:repair-history` asserts both, because a YAML
+default is one character away from its opposite.
+
 #### Which `gpg-sign` runs it
 
 `repair-history` is newer than any published release, so nothing should resolve
@@ -415,7 +422,8 @@ rather than one in Go and a second in Python. The order is
 4. delete the Python path once nothing invokes it (this is that step,
    together with 3);
 5. run the production repair, with `PUSH=true`, from a checkout that has the
-   released CLI.
+   released CLI — or, until one exists, with the repair workflow's
+   `build_from_source` input, which is deliberate, named and off by default.
 
 Step 3 needs a token with the `workflows` permission, which is why the one-line
 workflow edit is applied by hand rather than in the change that removes the
