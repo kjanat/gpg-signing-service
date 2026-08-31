@@ -22,6 +22,12 @@ declare namespace Cloudflare {
 
 		/** ID of the signing key */
 		KEY_ID: string;
+
+		/** GitHub App id. In wrangler.test.toml, absent from wrangler.toml. */
+		GITHUB_APP_ID: string;
+
+		/** GitHub App webhook secret. In wrangler.test.toml, absent from wrangler.toml. */
+		GITHUB_WEBHOOK_SECRET: string;
 	}
 }
 
@@ -44,6 +50,9 @@ interface Env {
 
 	/** Fraction of requests traced, 0..1. */
 	SENTRY_TRACES_SAMPLE_RATE?: string;
+
+	/** The GitHub App's PEM private key. Never in a committed config. */
+	GITHUB_APP_PRIVATE_KEY?: string;
 }
 
 // Vite's `?raw` suffix, used by the error-docs suite to read `docs/errors.md`.

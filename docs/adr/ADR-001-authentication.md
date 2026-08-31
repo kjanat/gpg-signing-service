@@ -218,6 +218,29 @@ Implement OIDC (OpenID Connect) JWT validation as the primary authentication mec
 - **Cons**: GitHub-specific, requires app installation per org, no GitLab support
 - **Rejected**: Vendor lock-in, doesn't support multi-platform requirements
 
+**Amended.** The rejection above stands _for authenticating `/sign` callers_,
+which is what this ADR decides, and nothing about it has changed: OIDC remains
+the only way a CI job proves who it is, and a GitLab caller must not need a
+GitHub App to sign.
+
+What the rejection does not settle is the opposite direction — GitHub calling
+_us_. A deployment may now opt into `POST /github/webhook`, where a registered
+GitHub App delivers events and this service mints installation tokens to act on
+them. That is a second, narrower integration rather than a second way in:
+
+- It authenticates nothing on `/sign` and grants no signing authority. A
+  delivery cannot cause a signature; the endpoint acknowledges and discards.
+- It is off unless `GITHUB_APP_ENABLED` is the literal `"true"`, so a
+  multi-platform deployment that wants nothing to do with GitHub Apps is
+  unaffected and cannot be reached on the route at all.
+- Its trust is an HMAC over the raw request body, not a token presented to this
+  service, so none of the validation pipeline above applies to it.
+
+The vendor lock-in objection therefore does not transfer: nothing depends on the
+integration, and a deployment that never enables it behaves exactly as it did
+before the code existed. See [GitHub App webhook](../github-app.md) and
+[Security model](../security-model.md#trust-boundary).
+
 ### Signed URL with HMAC
 
 - **Pros**: Simple, no external validation
@@ -232,3 +255,4 @@ Implement OIDC (OpenID Connect) JWT validation as the primary authentication mec
 - **RFC 7519 (JWT)**: https://datatracker.ietf.org/doc/html/rfc7519
 - **RFC 7517 (JWKS)**: https://datatracker.ietf.org/doc/html/rfc7517
 - **Implementation**: `/src/middleware/oidc.ts`, `/src/types/oidc.ts`
+- **GitHub App webhooks (amendment)**: `/src/middleware/github-webhook.ts`, `/src/utils/github-app.ts`
