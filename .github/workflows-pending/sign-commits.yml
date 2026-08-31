@@ -8,6 +8,12 @@ name: Sign Commits
 #   git mv -f .github/workflows-pending/sign-commits.yml \
 #     .github/workflows/sign-commits.yml
 #
+# ...and, in the same commit, delete this header block and the "That workflow is
+# not live yet" paragraph in docs/integrations.md, which describes a boundary
+# that no longer exists. `task test:sign-commits` fails on that paragraph once
+# this file is gone, so it is a step you will be told about rather than one you
+# have to remember.
+#
 # The only difference from the live file is the step that signs:
 #
 #   -  run: python3 .github/scripts/sign-commits.py

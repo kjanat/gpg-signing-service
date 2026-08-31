@@ -1,8 +1,8 @@
 diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
-index 295a000..8983390 100644
+index 295a000..76333b9 100644
 --- a/.github/workflows/ci.yml
 +++ b/.github/workflows/ci.yml
-@@ -52,3 +52,29 @@ jobs:
+@@ -52,3 +52,34 @@
        { run: task c:t },
        { run: task c:l },
      ]
@@ -15,7 +15,12 @@ index 295a000..8983390 100644
 +  # Tests: .github/scripts/test-commit-provenance.sh (task test:commit-provenance).
 +  provenance:
 +    name: Commit provenance
-+    if: github.event_name == 'push'
++    # Deleting a branch is also a push, and on that event `github.sha` is the
++    # default branch's tip rather than anything the push added. `before..after`
++    # would then span commits the deletion had nothing to do with — history
++    # somebody else's merge wrote — and blame this push for them. There is
++    # nothing to check when a ref goes away, so do not run.
++    if: github.event_name == 'push' && github.event.deleted == false
 +    runs-on: ubuntu-latest
 +    steps:
 +      - { uses: actions/checkout@v7, with: { fetch-depth: 0 } }
