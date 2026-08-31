@@ -1,0 +1,34 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 295a000..8983390 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -52,3 +52,29 @@ jobs:
+       { run: task c:t },
+       { run: task c:l },
+     ]
++
++  # Turns the Aug 30 provenance failure from silent into loud. The REST squash
++  # path builds the merge commit itself and stamps `claude[bot]` / `GitHub` on
++  # it, which no signature check can catch — a manufactured commit signs
++  # perfectly well. This runs over the commits a push actually added, so the
++  # next one is a red build rather than the twentieth.
++  # Tests: .github/scripts/test-commit-provenance.sh (task test:commit-provenance).
++  provenance:
++    name: Commit provenance
++    if: github.event_name == 'push'
++    runs-on: ubuntu-latest
++    steps:
++      - { uses: actions/checkout@v7, with: { fetch-depth: 0 } }
++      - name: Check the pushed commits name a real author
++        env:
++          BEFORE: ${{ github.event.before }}
++          AFTER: ${{ github.sha }}
++        run: |
++          # The first push to a branch reports an all-zero "before"; there is
++          # no range to check then, and pre-existing history is repaired once
++          # rather than re-litigated on every push.
++          if [[ "${BEFORE}" =~ ^0+$ ]]; then
++            echo "no previous tip recorded for this push; nothing to compare"
++            exit 0
++          fi
++          .github/scripts/check-commit-provenance.sh "${BEFORE}..${AFTER}"

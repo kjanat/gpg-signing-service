@@ -438,6 +438,13 @@ rather than twenty commits later. `PROVENANCE_ALLOW` takes addresses to permit
 anyway, one per line. A `Co-authored-by:` trailer is a message trailer and is
 not affected.
 
+The CI job that calls it arrives as
+`.github/workflows-pending/ci-provenance-job.patch`, for the same reason the
+Sign Commits replacement does: an App token cannot write under
+`.github/workflows/`. Apply it with `git apply` and delete the patch.
+`task test:commit-provenance` refuses a patch that has stopped applying, and
+once the patch is gone it asserts that `ci.yml` still calls the guard.
+
 ### Upload a PGP key
 
 ```bash
