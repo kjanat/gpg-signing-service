@@ -42,9 +42,24 @@ export const AuditQuerySchema = z
 
 /**
  * Audit action types
+ *
+ * `push_sign` is the GitHub App's: one row per `push` delivery that reached the
+ * point of trying to sign, successful or not. Distinct from `sign` on purpose —
+ * a `sign` row is a caller asking for a signature over bytes it supplied, and a
+ * `push_sign` row is this service deciding by itself to rewrite somebody's
+ * branch, which is a different thing to be able to filter for.
  */
 export const AuditActionSchema = z
-	.enum(["sign", "key_upload", "key_rotate", "token_create", "token_revoke", "subject_create", "subject_revoke"])
+	.enum([
+		"sign",
+		"key_upload",
+		"key_rotate",
+		"token_create",
+		"token_revoke",
+		"subject_create",
+		"subject_revoke",
+		"push_sign",
+	])
 	.openapi("AuditAction");
 
 /**

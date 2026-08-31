@@ -17,7 +17,7 @@ implementation disagree.
 | Understand the trust boundary              | [Security model](security-model.md)           |
 | Review how CI writes to Dependabot PRs     | [Dependabot fix path](dependabot-fix-path.md) |
 | Understand how the `@claude` job is gated  | [Agent harness](claude-agent-harness.md)      |
-| Receive GitHub App webhooks                | [GitHub App webhook](github-app.md)           |
+| Sign pushed commits from a GitHub App      | [GitHub App webhook](github-app.md)           |
 | Look up an endpoint                        | [API guide](api.md)                           |
 | Diagnose a failure                         | [Troubleshooting](troubleshooting.md)         |
 | Look up an error code                      | [Error reference](errors.md)                  |

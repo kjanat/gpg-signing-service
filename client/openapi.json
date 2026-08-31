@@ -411,7 +411,8 @@
           "token_create",
           "token_revoke",
           "subject_create",
-          "subject_revoke"
+          "subject_revoke",
+          "push_sign"
         ]
       },
       "TokenCreatedResponse": {

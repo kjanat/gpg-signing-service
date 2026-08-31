@@ -60,13 +60,13 @@ const GRANT = `${INSTALLATION}:${REPOSITORY}=${KEY}`;
 const OTHER_GRANT = `${INSTALLATION}:${OTHER_REPOSITORY}=${OTHER_KEY}`;
 
 /** A `push`-shaped payload naming an installation and a repository. */
-function pushPayload(installationId: number, fullName: string) {
+function repositoryPayload(installationId: number, fullName: string) {
 	return { installation: { id: installationId }, repository: { full_name: fullName, name: fullName.split("/")[1] } };
 }
 
 /** The authorization for a delivery that the allowlist grants, or a failure. */
 function authorizationFor(allowlist: string, fullName: string): WebhookAuthorization {
-	const decision = authorizeDelivery(parseRepositoryAllowlist(allowlist), pushPayload(INSTALLATION, fullName));
+	const decision = authorizeDelivery(parseRepositoryAllowlist(allowlist), repositoryPayload(INSTALLATION, fullName));
 	if (!decision.allowed) {
 		throw new Error(`expected ${fullName} to be authorized, got ${decision.reason}`);
 	}
@@ -123,7 +123,12 @@ async function deliver(
 			headers: {
 				"Content-Type": "application/json",
 				[SIGNATURE_HEADER]: signature,
-				"X-GitHub-Event": "push",
+				// Deliberately not `push`. That event now has an acting handler, which
+				// signs and talks to GitHub; this file is about which key a *grant*
+				// binds, and `issues` reaches the same authorization and key-binding
+				// decisions without the handler behind them. What the push handler does
+				// with the binding is `push-signing.test.ts`.
+				"X-GitHub-Event": "issues",
 				"X-GitHub-Delivery": crypto.randomUUID(),
 				...(requestId === undefined ? {} : { "X-Request-ID": requestId }),
 			},
@@ -256,7 +261,7 @@ describe("one repository cannot reach another's key", () => {
 	});
 
 	it("refuses the right repository under the wrong installation, and leaks no key", () => {
-		const decision = authorizeDelivery(parseRepositoryAllowlist(allowlist), pushPayload(999, REPOSITORY));
+		const decision = authorizeDelivery(parseRepositoryAllowlist(allowlist), repositoryPayload(999, REPOSITORY));
 
 		expect(decision).toEqual({ allowed: false, reason: "pair_not_allowed" });
 		// Belt and braces: a refusal is not a place a key id may appear, whatever
@@ -265,7 +270,10 @@ describe("one repository cannot reach another's key", () => {
 	});
 
 	it("refuses a repository nobody allowlisted rather than giving it a neighbour's key", () => {
-		const decision = authorizeDelivery(parseRepositoryAllowlist(allowlist), pushPayload(INSTALLATION, "evil/repo"));
+		const decision = authorizeDelivery(
+			parseRepositoryAllowlist(allowlist),
+			repositoryPayload(INSTALLATION, "evil/repo"),
+		);
 
 		expect(decision).toEqual({ allowed: false, reason: "pair_not_allowed" });
 	});
@@ -283,7 +291,7 @@ describe("the payload cannot choose a key", () => {
 
 	for (const [index, injection] of injections.entries()) {
 		it(`ignores a payload that names a key (${index})`, () => {
-			const payload = { ...pushPayload(INSTALLATION, REPOSITORY), ...injection };
+			const payload = { ...repositoryPayload(INSTALLATION, REPOSITORY), ...injection };
 			const decision = authorizeDelivery(parseRepositoryAllowlist(`${GRANT},${OTHER_GRANT}`), payload);
 
 			expect(decision.allowed).toBe(true);
@@ -298,7 +306,7 @@ describe("the payload cannot choose a key", () => {
 		// it — and what it must never do is answer with `OTHER_KEY`.
 		const decision = authorizeDelivery(
 			parseRepositoryAllowlist(`${GRANT},999:${OTHER_REPOSITORY}=${OTHER_KEY}`),
-			pushPayload(INSTALLATION, OTHER_REPOSITORY),
+			repositoryPayload(INSTALLATION, OTHER_REPOSITORY),
 		);
 
 		expect(decision).toEqual({ allowed: false, reason: "pair_not_allowed" });
@@ -501,7 +509,7 @@ describe("through the endpoint", () => {
 		let body: Record<string, unknown> = {};
 
 		const entries = await captureLogEntries(async () => {
-			({ body } = await deliver(pushPayload(INSTALLATION, REPOSITORY), GRANT, requestId));
+			({ body } = await deliver(repositoryPayload(INSTALLATION, REPOSITORY), GRANT, requestId));
 		});
 
 		expect(body).toMatchObject({ received: true, scope: "repository", signingKey: true });
@@ -519,7 +527,10 @@ describe("through the endpoint", () => {
 
 	it("says so when an allowlisted repository has no key bound", async () => {
 		const entries = await captureLogEntries(async () => {
-			const { response, body } = await deliver(pushPayload(INSTALLATION, REPOSITORY), `${INSTALLATION}:${REPOSITORY}`);
+			const { response, body } = await deliver(
+				repositoryPayload(INSTALLATION, REPOSITORY),
+				`${INSTALLATION}:${REPOSITORY}`,
+			);
 
 			// Still accepted: receiving events and causing signatures are separate
 			// grants, and an operator may well want the first without the second.
@@ -545,7 +556,7 @@ describe("through the endpoint", () => {
 		// this is the assertion that says so from outside: the pair in the *good*
 		// entry is refused because a different entry is broken.
 		const { response, body } = await deliver(
-			pushPayload(INSTALLATION, REPOSITORY),
+			repositoryPayload(INSTALLATION, REPOSITORY),
 			`${GRANT},${INSTALLATION}:${OTHER_REPOSITORY}=zzzz111122223333`,
 		);
 
@@ -556,7 +567,7 @@ describe("through the endpoint", () => {
 	});
 
 	it("refuses every delivery while a pair is duplicated", async () => {
-		const { response, body } = await deliver(pushPayload(INSTALLATION, REPOSITORY), `${GRANT},${GRANT}`);
+		const { response, body } = await deliver(repositoryPayload(INSTALLATION, REPOSITORY), `${GRANT},${GRANT}`);
 
 		expect(response.status).toBe(500);
 		expect(body.code).toBe("SERVICE_MISCONFIGURED");
@@ -564,7 +575,7 @@ describe("through the endpoint", () => {
 
 	it("never puts a secret in the answer or the log", async () => {
 		const entries = await captureLogEntries(async () => {
-			const { body } = await deliver(pushPayload(INSTALLATION, REPOSITORY), GRANT);
+			const { body } = await deliver(repositoryPayload(INSTALLATION, REPOSITORY), GRANT);
 			expect(JSON.stringify(body)).not.toContain(SECRET);
 		});
 
