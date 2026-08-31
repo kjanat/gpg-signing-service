@@ -150,7 +150,8 @@ sign of one is not every caller failing at once.
   both checks above — a request that could consume an id before proving its
   origin and its grant could suppress the real delivery carrying it. A delivery
   with no usable id is refused rather than given a placeholder, because a
-  placeholder is a shared key.
+  placeholder is a shared key. The claim is taken before the handler runs and is
+  never released, which makes deliveries at-most-once rather than at-least-once.
 - Both static admin tokens are compared in constant time. When
   `ADMIN_READONLY_TOKEN` is provisioned, both comparisons run on every request,
   so which of the two a valid bearer matched is not observable by timing. When
@@ -445,6 +446,12 @@ Before relying on the service for protected production branches, account for:
   TTL-based deduplication can prevent that — the signature carries no timestamp
   to age against — and the window is set to cover every repeat GitHub itself can
   cause. See [replay protection](github-app.md#replay-protection);
+- webhook deliveries that are **at-most-once**: the delivery id is claimed
+  before the route handler runs and is never released, so a handler that later
+  fails leaves the id consumed and an operator's redelivery is answered
+  `200 {"duplicate": true}` without acting. Harmless while the handler acts on
+  nothing; a hard prerequisite to resolve before one does. See
+  [claimed before the handler runs](github-app.md#claimed-before-the-handler-runs-at-most-once-not-at-least-once);
 - PGP-only behavior in the high-level CLI and Go wrapper; and
 - Git history rewriting when a detached signature is attached after commit
   creation.

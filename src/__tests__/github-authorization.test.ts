@@ -43,6 +43,7 @@ import {
 	parseRepositoryAllowlist,
 } from "#utils/github-authorization";
 import { SIGNATURE_HEADER, SIGNATURE_PREFIX } from "#utils/github-webhook";
+import { captureLogEntries, logLine } from "./helpers/log-capture";
 
 const SECRET = "test-webhook-secret";
 
@@ -89,6 +90,9 @@ async function deliver(
 	// wrong reason.
 	allowlist: string | null = GRANT,
 	event = "push",
+	// Honoured only when it is a UUID, per `getRequestId` — so a test that wants
+	// to find its own line in the log has to send one that is.
+	requestId?: string,
 ): Promise<{ response: Response; body: Envelope }> {
 	const body = JSON.stringify(payload);
 	const ctx = createExecutionContext();
@@ -101,6 +105,7 @@ async function deliver(
 				[SIGNATURE_HEADER]: await sign(body),
 				"X-GitHub-Event": event,
 				"X-GitHub-Delivery": crypto.randomUUID(),
+				...(requestId === undefined ? {} : { "X-Request-ID": requestId }),
 			},
 		}),
 		{
@@ -468,5 +473,65 @@ describe("through the route", () => {
 
 		expect(response.status).toBe(401);
 		expect(((await response.json()) as Envelope).code).toBe("AUTH_MISSING");
+	});
+});
+
+describe("what a refused configuration reports to the operator", () => {
+	// The refusal body deliberately says almost nothing, so the log line is the
+	// operator's whole diagnostic. These assert the line is the shape a log
+	// aggregator and Sentry can use: the failure as an error, the request id as
+	// context, at the top level where every other line in the service puts it.
+	const PARSE_FAILURE = "GITHUB_APP_ALLOWED_REPOSITORIES could not be parsed";
+
+	it("logs the parse failure with the request id in context and the throw as the error", async () => {
+		const requestId = crypto.randomUUID();
+
+		const entries = await captureLogEntries(() =>
+			deliver(pushPayload(INSTALLATION, REPOSITORY), `${GRANT},broken-entry`, "push", requestId),
+		);
+		const line = logLine(entries, PARSE_FAILURE);
+
+		expect(line.level).toBe("error");
+		expect(line.requestId).toBe(requestId);
+		expect(line.event).toBe("push");
+		// The thrown `GitHubAppError`, serialised by `Logger.error` — not a
+		// pre-stringified message, and not the context object.
+		expect(line.error).toMatchObject({ name: "GitHubAppError" });
+		expect(String((line.error as { message?: string }).message)).toContain("broken-entry");
+	});
+
+	it("does not nest the request id inside the error payload", async () => {
+		// The regression this guards. `logger.error(msg, { requestId, error })`
+		// type-checks and logs *something*, but the id ends up one level down and
+		// `captureError` is handed no context at all, so the Sentry report cannot
+		// be correlated with the delivery that caused it.
+		const requestId = crypto.randomUUID();
+
+		const entries = await captureLogEntries(() =>
+			deliver(pushPayload(INSTALLATION, REPOSITORY), "broken-entry", "push", requestId),
+		);
+		const line = logLine(entries, PARSE_FAILURE);
+
+		expect((line.error as Record<string, unknown>).requestId).toBeUndefined();
+		expect((line.error as Record<string, unknown>).error).toBeUndefined();
+	});
+
+	it("still keeps the malformed entry out of the response it logged", async () => {
+		// The log names the entry; the body must not. Asserted together with the
+		// line above so the two cannot drift apart.
+		const requestId = crypto.randomUUID();
+		let body: Envelope | undefined;
+
+		const entries = await captureLogEntries(async () => {
+			({ body } = await deliver(
+				pushPayload(INSTALLATION, REPOSITORY),
+				"77:secret-org/secret-repo,broken",
+				"push",
+				requestId,
+			));
+		});
+
+		expect(String((logLine(entries, PARSE_FAILURE).error as { message?: string }).message)).toContain("broken");
+		expect(JSON.stringify(body)).not.toContain("broken");
 	});
 });
