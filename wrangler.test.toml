@@ -67,13 +67,19 @@ ADMIN_READONLY_TOKEN = "test-readonly-admin-token"
 # needs the feature on supplies its own env, so leaving the default here as the
 # shipped default is what keeps "off" covered by every other suite in the tree
 # rather than by one assertion.
-GITHUB_APP_ENABLED    = "false"
+GITHUB_APP_ENABLED          = "false"
 # Check-run reporting ships off too, and the suite asserts that an enabled
 # integration with this unset makes no Checks API call at all. The tests that
 # want it on supply their own env.
-GITHUB_APP_CHECK_RUNS = "false"
-GITHUB_APP_ID         = "123456"
-GITHUB_WEBHOOK_SECRET = "test-webhook-secret"
+GITHUB_APP_CHECK_RUNS       = "false"
+# Claude dispatch ships off as well, and the suite asserts that an enabled
+# integration with this unset makes no Actions API call at all — not even the
+# permission lookup, which is a GitHub call an arbitrary commenter must not be
+# able to cause. The tests that want it on supply their own env, including the
+# workflow and ref, which have no defaults.
+GITHUB_APP_COMMENT_DISPATCH = "false"
+GITHUB_APP_ID               = "123456"
+GITHUB_WEBHOOK_SECRET       = "test-webhook-secret"
 
 # GITHUB_APP_ALLOWED_REPOSITORIES is deliberately absent, so the default the
 # whole suite runs against is the fail-closed one: no installation and no

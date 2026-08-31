@@ -44,17 +44,59 @@ credentials the signing shim needs, and `--permission-mode bypassPermissions`.
 "Any collaborator" is not the right audience for that, and neither is "anyone
 who can comment".
 
-So the gate is the job's `if:`, and it is owner-only:
+So the gate is the job's `if:`, and on the natively-triggered events it is
+owner-only:
 
 ```yaml
 if: >-
-  github.actor == github.repository_owner &&
-  github.event.sender.type == 'User' && ( … per-event trigger match … )
+  github.event_name == 'workflow_dispatch' ||
+  (
+    github.actor == github.repository_owner &&
+    github.event.sender.type == 'User' && ( … per-event trigger match … )
+  )
 ```
 
 Each event is matched against its own field. A single `contains()` over
 `github.event.issue.body` would fire on _every_ comment made on an issue whose
 body happens to mention `@claude`.
+
+### The dispatched path is exempt here and gated harder elsewhere
+
+`issue_comment` is **not** among the triggers. Conversation comments on issues
+and pull requests now reach this workflow through the signing service's own
+GitHub App, which authenticates the delivery, authorizes the
+`<installation, repository>` pair, authorizes the comment's **author** against
+that repository's collaborator permissions, spends a budget and claims the
+delivery id — and then calls `workflow_dispatch`. See
+[the GitHub App webhook](github-app.md#dispatching-claude-from-a-comment).
+
+`github.actor` on a dispatched run is the App that dispatched it, so comparing
+it to the owner would refuse every dispatch while proving nothing about who
+asked. The subject there is the comment's author, and
+`claude-agent-harness.sh` establishes it from GitHub a second time:
+
+- `requested_by` must hold `write` or `admin` on this repository — asked with
+  `gh api repos/…/collaborators/…/permission`, and **failing closed** if the
+  question cannot be answered at all;
+- the fetched comment must have been _written by_ `requested_by`, or the
+  permission check authorized one person and the instruction came from another;
+- the comment must belong to the issue the dispatch named, or the session gets
+  one entity's instruction while writing to another's branch;
+- the comment must contain the trigger phrase. On this path the `if:` has no
+  comment to look at, so this is the only check that the thing being answered is
+  a request at all.
+
+Two answers either side of one hop, so the hop itself is not the thing being
+trusted. The comment's **body is fetched here**, from the id the dispatch
+carried, and never passed through a workflow input — an input is one `${{ }}`
+away from a command line.
+
+`task test:agent-harness` asserts that `issue_comment` is absent from the
+triggers, with a message saying why: one comment reaching both entrypoints
+starts two sessions on one request, which is two sessions pushing to one branch.
+The `issue_comment` case in the script is deliberately kept, so turning
+`GITHUB_APP_COMMENT_DISPATCH` off and putting the trigger back is a rollback
+rather than a code change.
 
 The same owner test is repeated inside `claude-agent-harness.sh`. That is not
 belt-and-braces for its own sake: GitHub withholds the `workflows` permission

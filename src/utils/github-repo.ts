@@ -57,6 +57,38 @@ export class GitHubApiError extends Error {
 	}
 }
 
+/** What GitHub said about one login's access, and whether it said anything. */
+export interface ActorPermission {
+	/** The legacy base role GitHub reports, or `none`. */
+	permission: "admin" | "write" | "read" | "none";
+	/**
+	 * Whether GitHub answered with a permission at all.
+	 *
+	 * False only for a 404 on a repository this installation can still see: that
+	 * login is not a collaborator here. True whenever a body came back, including
+	 * one naming a role this service does not recognise — which decides the same
+	 * way, and is not the same sentence in an audit row.
+	 */
+	collaborator: boolean;
+}
+
+/**
+ * The installation can no longer see the repository it is bound to.
+ *
+ * Its own type because it is the one GitHub failure on this path that is not a
+ * fact about the *user* being asked about. A caller that flattened it into an
+ * ordinary lookup failure would still fail closed, which is why this is a
+ * subclass and not a separate return channel; what it would lose is the ability
+ * to say so in an audit row, and "the App was removed from this repository" and
+ * "GitHub was having a bad minute" send an operator to different places.
+ */
+export class RepositoryNotVisibleError extends GitHubApiError {
+	constructor(message: string, status: number | null = null) {
+		super(message, status);
+		this.name = "RepositoryNotVisibleError";
+	}
+}
+
 /** A commit as the Git Data API returns it, reduced to the fields that matter. */
 const IdentitySchema = z.object({
 	name: z.string().min(1),
@@ -122,6 +154,30 @@ const CheckRunSchema = z.object({
 
 const CheckRunListSchema = z.object({
 	check_runs: z.array(CheckRunSchema).default([]),
+});
+
+/**
+ * A collaborator's permission on this repository, as GitHub states it.
+ *
+ * `permission` is the *legacy base role* — `admin`, `write`, `read`, `none` —
+ * and that is the field to read rather than `role_name`. GitHub collapses
+ * `maintain` into `write` and `triage` into `read` here, and it collapses
+ * custom roles onto whichever base role they were built from, so this is a
+ * closed set of four values with a defined meaning. `role_name` is open-ended:
+ * an organisation may call a role anything, and a check written against it
+ * would be a check against strings an org admin can invent.
+ *
+ * `user` is nullable in GitHub's schema and is read anyway, because the caller
+ * compares the login that comes back against the one it asked about — the same
+ * discipline the check reporter applies to a sha. An answer about somebody else
+ * is not an answer.
+ */
+const CollaboratorPermissionSchema = z.object({
+	permission: z.string().min(1),
+	user: z
+		.object({ login: z.string().min(1) })
+		.nullable()
+		.optional(),
 });
 
 /** A commit, as this service needs to see one. */
@@ -540,6 +596,167 @@ export class RepositoryClient {
 			.filter((run) => run.name === name && run.app?.id === appId)
 			.map((run) => ({ id: run.id }))
 			.sort((left, right) => left.id - right.id);
+	}
+
+	/**
+	 * Is this repository still visible to the installation bound to this client?
+	 *
+	 * One read of the repository itself, and the only question asked of it is
+	 * which of three answers came back: a 2xx is visible, a 404 is not, and
+	 * anything else is unanswerable and throws. The body is never parsed —
+	 * nothing here needs a field from it, and a schema would add a way for this
+	 * to fail that has nothing to do with the question.
+	 *
+	 * A 404 here is not ambiguous the way a 404 on the collaborator endpoint is.
+	 * The installation token was minted successfully, so the installation exists;
+	 * a repository it cannot see is one that was removed from the installation or
+	 * dropped from its repository selection. That is an operator's problem and
+	 * not a commenter's.
+	 */
+	private async repositoryVisible(): Promise<boolean> {
+		const response = await this.call("GET", "");
+
+		if (response.ok) {
+			return true;
+		}
+
+		if (response.status === 404) {
+			return false;
+		}
+
+		throw new GitHubApiError(`GitHub refused a repository visibility check for ${this.repository}`, response.status);
+	}
+
+	/**
+	 * What `login` may do to this repository, as one of GitHub's four base roles.
+	 *
+	 * Every non-2xx other than a 404 throws, and the caller fails closed on it —
+	 * an installation that has not granted the read, or an outage, must not read
+	 * as "no permission and carry on", because carrying on is what this call
+	 * gates.
+	 *
+	 * ### The 404 is two different answers and only one of them is settled
+	 *
+	 * `GET /collaborators/{login}/permission` answers 404 for "that user is not a
+	 * collaborator here", which is the ordinary answer for everybody who has ever
+	 * commented on a public repository. It answers 404 *identically* when the
+	 * installation cannot see the repository at all — removed from the
+	 * installation, or dropped from its repository selection. `getInstallationToken`
+	 * still succeeds in that case, because the installation itself is fine, so
+	 * this is the first place the difference can surface and there is nowhere
+	 * later that it would.
+	 *
+	 * Read as one answer they are catastrophic to conflate. "Not a collaborator"
+	 * is a settled fact about a person: a redelivery reaches it again, so the
+	 * delivery id is spent and the audit row says the author was not trusted.
+	 * "The App cannot see this repository" is a configuration failure that makes
+	 * *every* comment — the owner's included — look like an untrusted author,
+	 * with the delivery burned non-retryably and the audit pointing at the
+	 * commenter rather than at the installation.
+	 *
+	 * So the status is not taken as proof on its own. A 404 is followed by an
+	 * independent {@link RepositoryClient.repositoryVisible} read on the same
+	 * token: a visible repository turns it into `"none"`, and an invisible or
+	 * unanswerable one throws — {@link RepositoryNotVisibleError} for the former,
+	 * so the caller can name it in an audit row.
+	 *
+	 * The cost is one extra GitHub call per comment by a non-collaborator, which
+	 * is why the caller spends the dispatch budget before reaching this.
+	 *
+	 * The login that comes back is checked against the one asked about, case
+	 * insensitively because GitHub logins are. A redirect from a renamed account,
+	 * or any other answer about a different user, is refused rather than applied
+	 * to the user whose comment is being authorized.
+	 */
+	async getActorPermission(login: string): Promise<ActorPermission> {
+		const response = await this.call("GET", `/collaborators/${encodeURIComponent(login)}/permission`);
+
+		if (response.status === 404) {
+			if (await this.repositoryVisible()) {
+				return { permission: "none", collaborator: false };
+			}
+
+			throw new RepositoryNotVisibleError(
+				`GitHub answered a collaborator permission lookup for ${this.repository} with 404 and the installation can no longer see the repository`,
+				response.status,
+			);
+		}
+
+		const answer = await this.read(response, CollaboratorPermissionSchema, "a collaborator permission lookup");
+
+		if (answer.user && answer.user.login.toLowerCase() !== login.toLowerCase()) {
+			throw new GitHubApiError(
+				`GitHub answered a collaborator permission lookup about a different user for ${this.repository}`,
+				response.status,
+			);
+		}
+
+		// Anything outside the documented four is `none`. A value this service does
+		// not recognise is not a grant, and mapping it onto the *permissive* side
+		// is how a new role name silently becomes write access. `collaborator` stays
+		// true: GitHub answered about this person, and "a role we could not read"
+		// is a different sentence from "not a collaborator" even though both refuse.
+		return {
+			permission:
+				answer.permission === "admin" || answer.permission === "write" || answer.permission === "read"
+					? answer.permission
+					: "none",
+			collaborator: true,
+		};
+	}
+
+	/**
+	 * Start a workflow run, and report which side of the ambiguity the answer
+	 * landed on.
+	 *
+	 * Deliberately not a throw-or-succeed, because the caller's replay decision
+	 * turns on a distinction a thrown error erases. There is no idempotency key
+	 * on this endpoint and a repeat starts a second run, so the caller commits
+	 * the delivery id *before* calling — which means the only thing worth knowing
+	 * afterwards is whether GitHub definitely did nothing:
+	 *
+	 * - `refused` — a 4xx. A response arrived and it says no run was created: an
+	 *   unknown workflow, a ref it is not on, a permission the installation never
+	 *   granted. All operator-fixable, and all safely redeliverable, so this is
+	 *   the one outcome that hands the delivery id back.
+	 * - `unknown` — the call threw, or GitHub answered 5xx. Nothing here can tell
+	 *   a request that never arrived from one that arrived and whose answer was
+	 *   lost, so the delivery stays spent. That is the at-most-once direction,
+	 *   and it is chosen on purpose: a lost acknowledgement costs a run that has
+	 *   to be asked for again, and the other direction costs two agents editing
+	 *   one branch.
+	 * - `accepted` — a 2xx. GitHub used to answer 204 with no body here and now
+	 *   answers 200 with the run it created, so the status is not asserted to be
+	 *   either one; any 2xx is acceptance.
+	 *
+	 * `workflow` and `ref` are the operator's, from configuration. There is no
+	 * overload of this that takes them from anywhere else.
+	 */
+	async dispatchWorkflow(
+		workflow: string,
+		ref: string,
+		inputs: Record<string, string>,
+	): Promise<{ outcome: "accepted" | "refused" | "unknown"; status: number | null }> {
+		let response: Response;
+		try {
+			response = await this.call("POST", `/actions/workflows/${encodeURIComponent(workflow)}/dispatches`, {
+				ref,
+				inputs,
+			});
+		} catch (error) {
+			// The message is not reused. `call` already decided what a token failure
+			// and a transport failure may say, and this is not the place to widen it.
+			return { outcome: "unknown", status: error instanceof GitHubApiError ? error.status : null };
+		}
+
+		if (response.ok) {
+			return { outcome: "accepted", status: response.status };
+		}
+
+		return {
+			outcome: response.status >= 400 && response.status < 500 ? "refused" : "unknown",
+			status: response.status,
+		};
 	}
 
 	/** Create a check run, returning its id. */

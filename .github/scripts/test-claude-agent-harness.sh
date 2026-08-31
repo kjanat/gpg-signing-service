@@ -149,6 +149,58 @@ make_gh_stub() {
 	chmod +x "${path}"
 }
 
+# A gh stub for the dispatched path, which asks three different questions:
+# the requester's permission, the comment, and the issue. Written as a case on
+# the api path so a test can make exactly one of them fail or lie.
+#
+#   make_gh_dispatch_stub PATH PERMISSION COMMENT_JSON ISSUE_JSON
+#
+# PERMISSION of `-` makes the permission lookup itself fail, which is the
+# fail-closed case and is not the same thing as an answer of `none`.
+make_gh_dispatch_stub() {
+	local path="$1" permission="$2" comment_json="$3" issue_json="$4" pr_json="${5-}"
+	cat >"${path}" <<-STUB
+		#!/usr/bin/env bash
+		# args: api <path> [--jq <expr>]
+		case "\$2" in
+			*/collaborators/*/permission)
+				if [[ '${permission}' == '-' ]]; then exit 1; fi
+				# Bare, not JSON: the harness asks with --jq .permission
+				printf '%s' '${permission}'
+				;;
+			*/issues/comments/*) printf '%s' '${comment_json}' ;;
+			*/pulls/*)           printf '%s' '${pr_json}' ;;
+			*/issues/*)          printf '%s' '${issue_json}' ;;
+			*) echo "gh stub: unexpected path \$2" >&2; exit 1 ;;
+		esac
+	STUB
+	chmod +x "${path}"
+}
+
+dispatch_payload() {
+	local issue="$1" comment="$2" requester="$3"
+	jq -nc --arg issue "${issue}" --arg comment "${comment}" --arg requester "${requester}" \
+		'{repository: {default_branch: "master", full_name: "kjanat/gpg-signing-service"},
+		  inputs: {issue_number: $issue, comment_id: $comment, requested_by: $requester,
+		           delivery_id: "11111111-2222-3333-4444-555555555555"}}'
+}
+
+dispatch_comment_json() {
+	local issue="$1" author="$2" body="$3"
+	jq -nc --arg issue "${issue}" --arg author "${author}" --arg body "${body}" \
+		'{id: 42, body: $body, user: {login: $author},
+		  issue_url: "https://api.github.com/repos/kjanat/gpg-signing-service/issues/\($issue)",
+		  html_url: "https://github.com/kjanat/gpg-signing-service/issues/\($issue)#issuecomment-42"}'
+}
+
+dispatch_issue_json() {
+	local issue="$1" title="$2" is_pr="$3"
+	jq -nc --arg issue "${issue}" --arg title "${title}" --argjson is_pr "${is_pr}" \
+		'{number: ($issue | tonumber), title: $title,
+		  html_url: "https://github.com/kjanat/gpg-signing-service/issues/\($issue)"}
+		 + (if $is_pr then {pull_request: {url: "https://api.github.com/x"}} else {} end)'
+}
+
 # run_harness PAYLOAD_JSON EVENT_NAME [VAR=value ...]
 run_harness() {
 	local payload="$1" event="$2"
@@ -254,6 +306,139 @@ expect_stdout 'Actor was a-drive-by-contributor'
 rc="$(run_harness "$(issue_payload 11 'Do the thing' '@claude go')" issues GITHUB_REPOSITORY_OWNER=)"
 expect_rc 1 "${rc}" 'no authorization subject means no run'
 expect_stdout 'GITHUB_REPOSITORY_OWNER is not set'
+
+# --- the dispatched path -----------------------------------------------------
+#
+# `issue_comment` no longer reaches this script through GitHub's own trigger.
+# The signing service's GitHub App receives it, authorizes the delivery, the
+# <installation, repository> pair and the comment's AUTHOR, and dispatches this
+# workflow. Which means the owner test above cannot apply — GITHUB_ACTOR is the
+# App — and something stronger has to, or moving the entrypoint would have
+# removed the gate rather than moved it.
+#
+# The gate is the requester's repository permission, asked of GitHub here as
+# well as by the service before it dispatched. Two answers either side of one
+# hop, so the hop itself is not the thing being trusted. These are the ways it
+# must refuse.
+readonly APP_ACTOR='gpg-signing-service[bot]'
+
+dispatch_ok() {
+	make_gh_dispatch_stub "${tmp_dir}/gh-stub" "${1:-admin}" \
+		"$(dispatch_comment_json 7 "${2:-kjanat}" "${3:-@claude add a widget}")" \
+		"$(dispatch_issue_json 7 'Add a widget' false)"
+}
+
+run_dispatch() { run_harness "$1" workflow_dispatch GITHUB_ACTOR="${APP_ACTOR}" "${@:2}"; }
+
+# The happy path first, so the refusals below are refusals of something that
+# otherwise works.
+dispatch_ok
+rc="$(run_dispatch "$(dispatch_payload 7 42 kjanat)")"
+expect_rc 0 "${rc}" 'a dispatched comment from a write-holding requester is a request'
+expect_output 'entity-kind=issue'
+expect_output 'entity-number=7'
+expect_output 'request-kind=issue comment'
+expect_context '@claude add a widget'
+# The branch an earlier run on this issue already pushed, continued rather than
+# forked — the App dispatching does not change that.
+expect_output 'work-branch=issue-7-add-a-widget'
+expect_output 'branch-is-new=false'
+[[ "$(current_branch)" == 'issue-7-add-a-widget' ]] || fail 'a dispatched run must land on the issue branch'
+
+# A read-only collaborator. The one the whole gate exists for: they may comment
+# on this repository and must not be able to spend a job holding every secret in
+# it. `author_association` would report COLLABORATOR here and wave them through.
+dispatch_ok read
+rc="$(run_dispatch "$(dispatch_payload 7 42 a-read-only-collaborator)")"
+expect_rc 1 "${rc}" 'a read-only requester must not get a prepared workspace'
+expect_stdout '::error title=Claude harness: requester may not start this harness::'
+[[ ! -s "${tmp_dir}/github_output" ]] || fail 'a refused dispatch must not write step outputs'
+
+# An outside account, which GitHub answers `none` for.
+dispatch_ok none
+rc="$(run_dispatch "$(dispatch_payload 7 42 a-stranger)")"
+expect_rc 1 "${rc}" 'an outside account must not get a prepared workspace'
+expect_stdout 'not write or admin'
+
+# The lookup itself failing is NOT the same as an answer of `none`, and both
+# refuse. Reading an unreachable check as "no permission, carry on" would be
+# carrying on past the gate.
+dispatch_ok -
+rc="$(run_dispatch "$(dispatch_payload 7 42 kjanat)")"
+expect_rc 1 "${rc}" 'an unanswerable permission lookup must fail closed'
+expect_stdout '::error title=Claude harness: permission lookup failed::'
+
+# The permission is checked for the REQUESTER and the instruction comes from the
+# COMMENT. A dispatch pairing one person's access with another person's words
+# authorizes nothing it claims to.
+make_gh_dispatch_stub "${tmp_dir}/gh-stub" admin \
+	"$(dispatch_comment_json 7 'somebody-else' '@claude do it')" \
+	"$(dispatch_issue_json 7 'Add a widget' false)"
+rc="$(run_dispatch "$(dispatch_payload 7 42 kjanat)")"
+expect_rc 1 "${rc}" 'the authorized requester must be the comment author'
+expect_stdout '::error title=Claude harness: dispatch inputs disagree::'
+expect_stdout 'was written by somebody-else'
+
+# ...and the comment must belong to the entity the dispatch named, or the
+# session is handed one entity's instruction while writing to another's branch.
+make_gh_dispatch_stub "${tmp_dir}/gh-stub" admin \
+	"$(dispatch_comment_json 99 kjanat '@claude do it')" \
+	"$(dispatch_issue_json 7 'Add a widget' false)"
+rc="$(run_dispatch "$(dispatch_payload 7 42 kjanat)")"
+expect_rc 1 "${rc}" 'the comment must belong to the dispatched entity'
+expect_stdout 'belongs to issue 99'
+
+# The trigger phrase is re-checked against the FETCHED comment. On this path the
+# workflow `if:` has no comment to look at, so this is the only check that the
+# thing being answered is a request at all.
+dispatch_ok admin kjanat 'just a normal comment'
+rc="$(run_dispatch "$(dispatch_payload 7 42 kjanat)")"
+expect_rc 1 "${rc}" 'a dispatch naming a comment that never asked is not a request'
+expect_stdout '::error title=Claude harness: no trigger phrase::'
+
+# Inputs reach `gh api` paths and step outputs. Anything but digits and a login
+# is a dispatch this script does not recognize.
+for bad in '7; rm -rf /' '../../x' '' '7 8'; do
+	dispatch_ok
+	rc="$(run_dispatch "$(dispatch_payload "${bad}" 42 kjanat)")"
+	expect_rc 1 "${rc}" "issue_number '${bad}' must be refused"
+	expect_stdout '::error title=Claude harness: unusable dispatch inputs::'
+done
+dispatch_ok
+rc="$(run_dispatch "$(dispatch_payload 7 42 'kjanat/x')")"
+expect_rc 1 "${rc}" 'a requester that is not a login must be refused'
+expect_stdout 'is not a GitHub login'
+
+# A dispatched comment on a pull request goes to that pull request's head, the
+# same as the native trigger did.
+make_gh_dispatch_stub "${tmp_dir}/gh-stub" admin \
+	"$(dispatch_comment_json 5 kjanat '@claude address the review')" \
+	"$(dispatch_issue_json 5 'A pull request' true)" \
+	"$(pr_object 5 feat/existing-pr "${REPO}" open)"
+rc="$(run_dispatch "$(dispatch_payload 5 42 kjanat)")"
+expect_rc 0 "${rc}" 'a dispatched pull request comment must reach that pull request'
+expect_output 'entity-kind=pull_request'
+expect_output 'work-branch=feat/existing-pr'
+expect_output 'branch-is-new=false'
+
+# A dispatched comment on a FORK pull request is refused exactly as the native
+# one is. Moving the entrypoint must not move a refusal with it.
+make_gh_dispatch_stub "${tmp_dir}/gh-stub" admin \
+	"$(dispatch_comment_json 5 kjanat '@claude do it')" \
+	"$(dispatch_issue_json 5 'A pull request' true)" \
+	"$(pr_object 5 feat/existing-pr 'a-fork/gpg-signing-service' open)"
+rc="$(run_dispatch "$(dispatch_payload 5 42 kjanat)")"
+expect_rc 1 "${rc}" 'a dispatched fork pull request must be refused like a native one'
+expect_stdout '::error title=Claude harness: pull request head is a fork::'
+
+# The context file says who this was dispatched for, so a maintainer reading a
+# run knows whose request it answered without opening the App's delivery log.
+dispatch_ok
+run_dispatch "$(dispatch_payload 7 42 kjanat)" >/dev/null
+expect_context 'dispatched for | @kjanat'
+
+# And the native events are untouched by any of it.
+make_gh_stub "${tmp_dir}/gh-stub"
 
 # --- contexts we refuse to guess at ------------------------------------------
 rc="$(run_harness "$(issue_payload 11 'x' '@claude go')" pull_request)"
@@ -781,26 +966,62 @@ token_exports="$(grep -cF 'GH_TOKEN: ${{ github.token }}' "${workflow}" || true)
 expect_workflow 'workflow GITHUB_TOKEN is deliberately not exported' \
 	'the reason the claude step has no GH_TOKEN has to be written down next to it'
 
-# Every one of the four events the harness normalizes has to be able to
-# reach it, and no others.
-for event in issue_comment pull_request_review_comment pull_request_review issues; do
+# Every one of the events the harness normalizes has to be able to reach it,
+# and no others.
+for event in pull_request_review_comment pull_request_review issues; do
 	expect_workflow_re "^[[:space:]]+${event}: \\{" \
 		"the harness handles ${event}, so the workflow must trigger on it"
 done
+expect_workflow_re '^[[:space:]]+workflow_dispatch:$' \
+	'the App dispatches this workflow, so it must accept workflow_dispatch'
+for input in issue_number comment_id requested_by; do
+	expect_workflow_re "^[[:space:]]+${input}:$" \
+		"the harness reads inputs.${input}, so the workflow must declare it"
+done
+
+# THE NO-DOUBLE-LAUNCH CHECK, and the reason it is spelled out rather than left
+# to the set comparison below: `issue_comment` is the one trigger whose presence
+# is not merely unsupported but actively harmful. Conversation comments now
+# arrive by way of the App, which authorizes the author, spends a budget and
+# claims the delivery id before dispatching this workflow — and GitHub would
+# ALSO raise `issue_comment` for the same comment. Two sessions on one request
+# is two sessions pushing to one branch. The regression is one line long and
+# looks like a restoration, so it gets its own assertion with its own message.
+if grep -qE '^[[:space:]]+issue_comment:' "${workflow}"; then
+	fail 'claude.yml subscribes to issue_comment, which the GitHub App now owns: one comment would start two sessions (see docs/github-app.md)'
+fi
 # The converse, which the loop above cannot see: an event added to `on:` that
 # the harness does not normalize starts a job that immediately refuses itself
 # with "unsupported event". That reads as a broken workflow rather than as a
 # deliberate boundary, and it is the drift this pair is most likely to grow.
-declare -a on_events=()
+#
+# Read out of the harness's own `case` rather than restated here. A hardcoded
+# list is a third place to edit, and the one that gets forgotten is always the
+# one in the test.
+declare -a on_events=() normalized=()
 mapfile -t on_events < <(
 	sed -n '/^on:$/,/^[^[:space:]]/p' "${workflow}" | sed -n 's/^  \([a-z_]*\):.*/\1/p' | sort
 )
-supported_events='issue_comment
-issues
-pull_request_review
-pull_request_review_comment'
-[[ "$(printf '%s\n' "${on_events[@]}")" == "${supported_events}" ]] || fail \
-	"claude.yml triggers on [$(printf '%s ' "${on_events[@]}")] but claude-agent-harness.sh normalizes exactly [${supported_events//$'\n'/ }]"
+mapfile -t normalized < <(
+	# shellcheck disable=SC2016  # the harness's literal source line is the pattern
+	sed -n '/^case "\${event_name}" in$/,/^esac$/p' "${repo_root}/.github/scripts/claude-agent-harness.sh" \
+		| sed -n 's/^\t\([a-z_]*\))$/\1/p' | sort
+)
+[[ ${#on_events[@]} -gt 0 ]] || fail 'could not read the workflow triggers'
+[[ ${#normalized[@]} -gt 0 ]] || fail 'could not read the harness case labels'
+for event in "${on_events[@]}"; do
+	printf '%s\n' "${normalized[@]}" | grep -qxF -- "${event}" \
+		|| fail "claude.yml triggers on ${event} but claude-agent-harness.sh does not normalize it: the job would start and refuse itself"
+done
+
+# The one asymmetry, asserted so that it stays deliberate. `issue_comment` is
+# still normalized and is no longer triggered: the App owns that event now, and
+# the case survives as the rollback path — turn GITHUB_APP_COMMENT_DISPATCH off,
+# put `issue_comment: { types: [created] }` back, and the native trigger works
+# again with no change to this script. Deleting the case would make that
+# rollback a code change made under whatever pressure caused the rollback.
+printf '%s\n' "${normalized[@]}" | grep -qxF -- 'issue_comment' \
+	|| fail 'claude-agent-harness.sh no longer normalizes issue_comment, so turning the App dispatch off has no rollback path'
 
 # `pr-token` is a fail-closed check on the action's internals: if run.ts ever
 # stops exporting an App installation token, every issue-triggered session
