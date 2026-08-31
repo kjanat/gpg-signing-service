@@ -118,6 +118,25 @@ add bot-coauthor-own-domain.txt 'Kaj Kowalski' info@kajkowalski.nl 'Kaj Kowalski
 refuses 'a bot co-author at its own domain' 'not a co-author of the change' "${bot_coauthor}..HEAD"
 bot_coauthor="$(git -C "${test_repo}" rev-parse HEAD)"
 
+# The same bot, spelled the way a display name is allowed to be spelled. The
+# `[bot]` suffix is a convention GitHub renders, not one it enforces on the
+# name field, so a case-sensitive test refuses `renovate[bot]` and waves
+# `Renovate[Bot]` through — at an ordinary address, where the domain rule is
+# not there to catch it either. This is that exact bypass.
+add bot-coauthor-mixed-case.txt 'Kaj Kowalski' info@kajkowalski.nl 'Kaj Kowalski' info@kajkowalski.nl \
+	'Co-authored-by: Renovate[Bot] <renovate@example.com>' >/dev/null
+refuses 'a bot co-author spelled [Bot]' 'not a co-author of the change' "${bot_coauthor}..HEAD"
+refuses 'a bot co-author spelled [Bot]' 'Renovate[Bot]' "${bot_coauthor}..HEAD"
+bot_coauthor="$(git -C "${test_repo}" rev-parse HEAD)"
+
+# And the human it must not take with it, immediately after, at the same
+# address shape. The case fold widens the rule; this is what stops it widening
+# past a person who happens to write from a domain a bot also uses.
+add human-beside-mixed-case.txt 'Kaj Kowalski' info@kajkowalski.nl 'Kaj Kowalski' info@kajkowalski.nl \
+	'Co-authored-by: A Colleague <colleague@example.com>' >/dev/null
+accepts 'a human co-author beside the mixed-case bot rule' "${bot_coauthor}..HEAD"
+bot_coauthor="$(git -C "${test_repo}" rev-parse HEAD)"
+
 add gh-coauthor.txt 'Kaj Kowalski' info@kajkowalski.nl 'Kaj Kowalski' info@kajkowalski.nl \
 	'Co-authored-by: GitHub <noreply@github.com>' >/dev/null
 refuses 'a co-author credited to the merge machinery' \
@@ -156,6 +175,14 @@ bot_committer="$(git -C "${test_repo}" rev-parse HEAD)"
 # identity has no way through other than deleting the guard.
 output="$(cd "${test_repo}" && PROVENANCE_ALLOW='support@github.com' "${check_script}" "${web}..HEAD" 2>&1)"
 grep -Fq '1 commit(s)' <<<"${output}"
+
+# The header checks fold case for the same reason the trailer one does, so the
+# mixed-case spelling is refused there too. At an ordinary address, again:
+# `support@github.com` in the case above is caught by neither domain rule, so
+# it is the name doing the work in both.
+add bot-author-mixed-case.txt 'Renovate[Bot]' 'renovate@example.com' 'Kaj Kowalski' info@kajkowalski.nl >/dev/null
+refuses 'a bot author spelled [Bot]' 'not the author of the change' "${bot_committer}..HEAD"
+bot_committer="$(git -C "${test_repo}" rev-parse HEAD)"
 
 # An empty range is not a failure: a push that added nothing has nothing wrong
 # with it.
@@ -207,6 +234,37 @@ fi
 
 if ! grep -Fq 'check-commit-provenance.sh' "${job_source}"; then
 	printf 'FAIL: %s does not call check-commit-provenance.sh\n' "${job_name}" >&2
+	exit 1
+fi
+
+# The actions the job runs, pinned to commits. This job is the guard itself,
+# runs on the default branch, and checks out the repository before reading it:
+# an action resolved through a tag is a step someone else can repoint into that
+# position. Scoped to the provenance job rather than the whole of ci.yml, which
+# is not this change's to re-pin — the patch form is all added lines, and the
+# applied form is the block between `provenance:` and the next job.
+#
+# shellcheck source=.github/scripts/workflow-steps.sh
+source "${repo_root}/.github/scripts/workflow-steps.sh"
+
+job_block="${tmp_dir}/provenance-job.yml"
+awk '
+	/^\+?  provenance:/ { inside = 1; print; next }
+	inside && /^\+?  [a-z]/ { inside = 0 }
+	inside { print }
+' "${job_source}" >"${job_block}"
+
+if ! grep -q 'uses:' "${job_block}"; then
+	printf 'FAIL: no provenance job block found in %s\n' "${job_name}" >&2
+	exit 1
+fi
+
+mutable="$(workflow_mutable_uses "${job_block}")"
+if [[ -n "${mutable}" ]]; then
+	printf 'FAIL: the provenance job in %s resolves an external action through a mutable ref:\n' \
+		"${job_name}" >&2
+	printf '        %s\n' "${mutable}" >&2
+	printf '      Pin it to the full commit SHA, with the version as a trailing comment.\n' >&2
 	exit 1
 fi
 

@@ -36,14 +36,62 @@ pending_workflow="${repo_root}/.github/workflows-pending/sign-commits.yml"
 live_workflow="${repo_root}/.github/workflows/sign-commits.yml"
 
 # The path the job actually runs, whichever of the two implementations it is.
-# Scoped to the `run:` lines on purpose: the pending file's header quotes the
-# line it replaces, and a sweep of the whole file would read that quotation as
-# the wiring. Under pipefail a grep that matches nothing fails the pipeline, so
-# an unwired workflow has to reach the check below rather than end the suite.
+# `grep -F '<path>'` would answer a different question — whether the file
+# mentions the path — and this file mentions both: the pending workflow's own
+# header quotes the `run:` line it replaces. So the `run:` steps are parsed and
+# the command word is what counts. See workflow-steps.sh, and the
+# fixtures below, which are the shapes that must not read as wiring.
+#
+# shellcheck source=.github/scripts/workflow-steps.sh
+source "${repo_root}/.github/scripts/workflow-steps.sh"
+
 names_script() {
-	grep -E '^[[:space:]]*run: ' "$1" \
-		| grep -oE '\.github/scripts/sign-commits\.(sh|py)' | head -1 || true
+	workflow_runs_script "$1" .github/scripts/sign-commits.sh .github/scripts/sign-commits.py
 }
+
+# The matcher, before anything is concluded from it. A wiring test that cannot
+# tell "runs the script" from "says the word" is not a wiring test, and the
+# tree this suite has to fail on — a live workflow naming a script that is not
+# here — is exactly the one where the difference decides the answer.
+fixture_dir="$(mktemp -d)"
+trap 'rm -rf "${fixture_dir}"' EXIT
+
+# matcher_case <description> <expected> <workflow body>
+matcher_case() {
+	local description="$1" expected="$2" got
+	printf '%s\n' "$3" >"${fixture_dir}/workflow.yml"
+	got="$(names_script "${fixture_dir}/workflow.yml")"
+	if [[ "${got}" != "${expected}" ]]; then
+		printf 'FAIL: the wiring matcher read %s as %q, expected %q\n' \
+			"${description}" "${got}" "${expected}" >&2
+		exit 1
+	fi
+}
+
+matcher_case 'a step that runs the script' .github/scripts/sign-commits.sh \
+	'      - run: .github/scripts/sign-commits.sh'
+matcher_case 'a step that runs it through an interpreter' .github/scripts/sign-commits.py \
+	'      - run: python3 .github/scripts/sign-commits.py'
+matcher_case 'a step that runs it on the last line of a block' .github/scripts/sign-commits.sh \
+	'      - run: |
+          export SOMETHING=1
+          .github/scripts/sign-commits.sh
+      - run: git push'
+matcher_case 'a comment quoting the run line it replaces' '' \
+	'#   -  run: python3 .github/scripts/sign-commits.py
+#   +  run: .github/scripts/sign-commits.sh'
+matcher_case 'a step that only prints the path' '' \
+	'      - run: echo .github/scripts/sign-commits.sh'
+matcher_case 'a shell comment inside a run block' '' \
+	'      - run: |
+          # .github/scripts/sign-commits.sh used to run here
+          git push'
+matcher_case 'an env value naming the path' '' \
+	'        env:
+          SCRIPT: .github/scripts/sign-commits.sh'
+
+rm -rf "${fixture_dir}"
+trap - EXIT
 
 if [[ -f "${pending_workflow}" ]]; then
 	workflow="${pending_workflow}"
@@ -84,6 +132,19 @@ if [[ ! -x "${repo_root}/${named}" ]]; then
 fi
 if [[ "${named}" != .github/scripts/sign-commits.sh ]]; then
 	printf 'FAIL: %s still runs %s; the signing walk belongs to gpg-sign sign-commit\n' "${workflow}" "${named}" >&2
+	exit 1
+fi
+
+# Every external action this job runs, pinned. The steps before the signing
+# one hold `contents: write` and an OIDC token that mints real signatures, so
+# an action resolved through a tag is a step someone else can repoint into a
+# job with all of that. Asserted rather than reviewed once, because a tag and a
+# SHA look equally fine in a diff.
+mutable="$(workflow_mutable_uses "${workflow}")"
+if [[ -n "${mutable}" ]]; then
+	printf 'FAIL: %s resolves an external action through a mutable ref:\n' "${workflow}" >&2
+	printf '        %s\n' "${mutable}" >&2
+	printf '      Pin it to the full commit SHA, with the version as a trailing comment.\n' >&2
 	exit 1
 fi
 

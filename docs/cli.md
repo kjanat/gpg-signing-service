@@ -442,7 +442,9 @@ this checkout in the meantime.
 
 `.github/scripts/check-commit-provenance.sh <range>` refuses commits whose
 committer is `GitHub <noreply@github.com>` or whose author or committer name
-ends in `[bot]`. Run it on pushes to the default branch, over the commits the
+ends in `[bot]`, in any case — `Renovate[Bot]` names the same mechanism as
+`renovate[bot]`, and a display name is free text GitHub does not hold to the
+lower-case spelling. Run it on pushes to the default branch, over the commits the
 push added, so a merge that manufactures identities is a red build immediately
 rather than twenty commits later. `PROVENANCE_ALLOW` takes addresses to permit
 anyway, one per line.
@@ -453,8 +455,8 @@ commits carried one that no one typed: correct `Kaj Kowalski` headers over
 `Co-authored-by: Kaj Kowalski <6353477+kjanat@users.noreply.github.com>`, which
 the header-only guard passed without comment. So a trailer whose name ends in
 `[bot]`, or whose address is `noreply@github.com` or any
-`users.noreply.github.com` alias, is refused for the same reason the headers
-are — it credits an account a tool had the id for, not a correspondent. An
+`users.noreply.github.com` alias, is refused — case-folded the same way —
+for the same reason the headers are: it credits an account a tool had the id for, not a correspondent. An
 ordinary human co-author at an address they write from is untouched, and
 `PROVENANCE_ALLOW` reaches the trailers too. `Signed-off-by:` is a different
 claim and is not read.
@@ -471,6 +473,15 @@ Sign Commits replacement does: an App token cannot write under
 `.github/workflows/`. Apply it with `git apply` and delete the patch.
 `task test:commit-provenance` refuses a patch that has stopped applying, and
 once the patch is gone it asserts that `ci.yml` still calls the guard.
+
+All three staged files pin their external actions to full commit SHAs with the
+version as a trailing comment, and each of the three suites asserts it. These
+are the jobs that hold `contents: write`, mint OIDC tokens for real signatures,
+and check the provenance of what lands on the default branch; an action
+resolved through a tag is a step someone else can repoint into that position.
+The rest of `.github/workflows/` still uses tags and is not this change's to
+re-pin. Dependabot's `github-actions` ecosystem bumps a SHA-and-comment pin the
+same way it bumps a tag.
 
 ### Upload a PGP key
 

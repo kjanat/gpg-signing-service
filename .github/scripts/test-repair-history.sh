@@ -43,14 +43,79 @@ else
 	exit 1
 fi
 
-grep -Fq '.github/scripts/repair-history.sh' "${workflow}" || {
-	printf 'FAIL: %s does not run .github/scripts/repair-history.sh\n' "${workflow}" >&2
-	exit 1
+# What the workflow runs, not what it mentions. `grep -F '<path>'` cannot tell
+# the step that dispatches the repair from a comment describing it or a line
+# that prints the path, and the whole value of this assertion is that it fails
+# when the workflow stops calling the script this suite goes on to exercise.
+# The script's own `run:` block is several lines of setup with the call last,
+# so the block form has to be read as well as the inline one.
+#
+# shellcheck source=.github/scripts/workflow-steps.sh
+source "${repo_root}/.github/scripts/workflow-steps.sh"
+
+# The shapes that must not read as wiring, asserted before the workflow is
+# judged by them.
+fixture_dir="$(mktemp -d)"
+trap 'rm -rf "${fixture_dir}"' EXIT
+
+# matcher_case <description> <expected> <workflow body>
+matcher_case() {
+	local description="$1" expected="$2" got
+	printf '%s\n' "$3" >"${fixture_dir}/workflow.yml"
+	got="$(workflow_runs_script "${fixture_dir}/workflow.yml" .github/scripts/repair-history.sh)"
+	if [[ "${got}" != "${expected}" ]]; then
+		printf 'FAIL: the wiring matcher read %s as %q, expected %q\n' \
+			"${description}" "${got}" "${expected}" >&2
+		exit 1
+	fi
 }
+
+matcher_case 'a step that runs the script' .github/scripts/repair-history.sh \
+	'      - run: .github/scripts/repair-history.sh'
+# shellcheck disable=SC2016  # the fixture is YAML the matcher parses, so
+# `${GPG_SIGN_BIN}` is meant to stay unexpanded.
+matcher_case 'a step that runs it on the last line of a block' .github/scripts/repair-history.sh \
+	'      - run: |
+          [[ -n "${GPG_SIGN_BIN}" ]] || unset GPG_SIGN_BIN
+          .github/scripts/repair-history.sh'
+matcher_case 'a comment describing the step' '' \
+	'      # .github/scripts/repair-history.sh rewrites and signs, then asserts.
+      - run: git push'
+matcher_case 'a step that only prints the path' '' \
+	'      - run: echo .github/scripts/repair-history.sh'
+matcher_case 'a shell comment inside a run block' '' \
+	'      - run: |
+          # .github/scripts/repair-history.sh is dispatched from elsewhere
+          task client:build'
+matcher_case 'an env value naming the path' '' \
+	'        env:
+          SCRIPT: .github/scripts/repair-history.sh'
+
+rm -rf "${fixture_dir}"
+trap - EXIT
+
+if [[ "$(workflow_runs_script "${workflow}" .github/scripts/repair-history.sh)" != .github/scripts/repair-history.sh ]]; then
+	printf 'FAIL: no step in %s runs .github/scripts/repair-history.sh\n' "${workflow}" >&2
+	printf '      A step that names the path without running it is not the wiring.\n' >&2
+	exit 1
+fi
 [[ -x "${repair_script}" ]] || {
 	printf 'FAIL: %s is not an executable file in this tree\n' "${repair_script}" >&2
 	exit 1
 }
+
+# Every external action this job runs, pinned. The steps before the signing
+# one hold `contents: write` and an OIDC token that mints real signatures, so
+# an action resolved through a tag is a step someone else can repoint into a
+# job with all of that. Asserted rather than reviewed once, because a tag and a
+# SHA look equally fine in a diff.
+mutable="$(workflow_mutable_uses "${workflow}")"
+if [[ -n "${mutable}" ]]; then
+	printf 'FAIL: %s resolves an external action through a mutable ref:\n' "${workflow}" >&2
+	printf '        %s\n' "${mutable}" >&2
+	printf '      Pin it to the full commit SHA, with the version as a trailing comment.\n' >&2
+	exit 1
+fi
 
 # The two defaults that decide what an operator gets when they fill in the
 # bounds and press the button. A dispatch that plans is recoverable; one that
