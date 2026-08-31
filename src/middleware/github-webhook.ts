@@ -1,5 +1,5 @@
 /**
- * The four gates in front of `POST /github/webhook`, in the order they run.
+ * The six gates in front of `POST /github/webhook`, in the order they run.
  *
  * They are separate middlewares rather than one because the ordering between
  * them is itself a property worth being able to state and test:
@@ -21,6 +21,20 @@
  *    octets that actually arrive rather than trusting the ones step 2 was told
  *    about, and then the HMAC over exactly those bytes. Nothing downstream sees
  *    a body that did not pass this.
+ * 5. `githubWebhookAuthorize` — the delivery is genuine; is it *about something
+ *    this deployment granted*? One App has one webhook secret and many
+ *    installations, so a valid signature says who sent it and nothing about
+ *    what it may cause. Separate from step 4 because authentication and
+ *    authorization are separate questions, and a service whose purpose is to
+ *    sign things cannot afford to answer them with one check.
+ * 6. `webhookReplayGuard` — has this delivery id been acted on already? **Last,
+ *    and that position is the security property**, not an ordering convenience.
+ *    Claiming an id is one-way: whoever claims it first makes every later
+ *    arrival of that id a no-op. Put this ahead of step 4 or step 5 and an
+ *    unauthenticated stranger — or an authenticated one with no grant — could
+ *    burn the id of a delivery it is not allowed to cause, and so suppress the
+ *    real one. Nothing consumes an id until the delivery has proved both that
+ *    it came from GitHub and that it is allowed to be about what it says.
  *
  * Steps 2 and 4 are the same limit enforced twice on purpose, and neither is
  * redundant. The header is a claim by the party whose body is in question, so
@@ -35,9 +49,11 @@ import type { MiddlewareHandler } from "hono";
 import type { ErrorCode } from "#schemas/errors";
 import type { Env, RateLimitResult, Variables } from "#types";
 import { HEADERS, HTTP, TIME } from "#types";
-import { serviceMisconfigured, unauthorized } from "#utils/errors";
+import { serviceDegraded, serviceMisconfigured, unauthorized } from "#utils/errors";
 import { githubAppEnabled } from "#utils/github-app";
+import { ALLOWLIST_VAR, authorizeDelivery, parseRepositoryAllowlist } from "#utils/github-authorization";
 import {
+	acknowledgement,
 	DELIVERY_HEADER,
 	declaredBodyLength,
 	EVENT_HEADER,
@@ -49,6 +65,7 @@ import {
 } from "#utils/github-webhook";
 import { logger } from "#utils/logger";
 import { rateLimitExceeded, retryAfterSeconds } from "#utils/rate-limit";
+import { claimDelivery, isDeliveryId } from "#utils/webhook-replay";
 
 /**
  * Rate-limiter namespace for webhook deliveries.
@@ -58,6 +75,17 @@ import { rateLimitExceeded, retryAfterSeconds } from "#utils/rate-limit";
  * reach `/admin` and vice versa.
  */
 const WEBHOOK_METER = "webhook";
+
+/**
+ * What a delivery refused by an unreachable ledger is told to wait.
+ *
+ * The only caller that acts on it is a human redelivering from the App's
+ * Advanced tab or through the API — GitHub itself never retries — so this is an
+ * interval for a person, not a backoff schedule. Thirty seconds: long enough
+ * that an immediate second attempt does not land in the same outage, short
+ * enough that nobody walks away.
+ */
+const LEDGER_RETRY_AFTER_SECONDS = 30;
 
 /**
  * The shape every middleware here is written against.
@@ -328,12 +356,194 @@ export const githubWebhookAuth: WebhookMiddleware = async (c, next) => {
 		);
 	}
 
+	const deliveryId = c.req.header(DELIVERY_HEADER);
+
 	c.set("webhookPayload", payload);
 	c.set("webhookDelivery", {
 		event: c.req.header(EVENT_HEADER) ?? "unknown",
-		id: c.req.header(DELIVERY_HEADER) ?? "unknown",
+		// Null rather than a placeholder, and that is a correctness choice rather
+		// than tidiness. A default like `"unknown"` is a *shared* name: two
+		// deliveries that both arrived without an id would dedupe against each
+		// other, so the first id-less delivery to be claimed would silently
+		// suppress every later one — and an attacker who can send one signed
+		// request with no id gets to do that on purpose.
+		id: isDeliveryId(deliveryId) ? deliveryId : null,
 		installationId: installationIdOf(payload),
 	});
+
+	return next();
+};
+
+/**
+ * Decide what this delivery is allowed to be about.
+ *
+ * The check `githubWebhookAuth` does not do, and cannot: one App has one
+ * webhook secret and as many installations as accept it, so a signature proves
+ * the sender and says nothing about the subject. A delivery for a repository
+ * this deployment has no business touching carries exactly the same valid HMAC
+ * as one for the repository it was configured for.
+ *
+ * Refused with `AUTH_SUBJECT_UNTRUSTED`, the same code and the same 401 the
+ * OIDC path uses for a verified credential whose identity holds no trust —
+ * because that is the identical situation. The fix is to the allowlist, never
+ * to the credential, and a caller that reads this as `AUTH_INVALID` goes and
+ * rotates a webhook secret that is working exactly as provisioned.
+ *
+ * The *reason* is logged and never sent. The refusal body says which variable
+ * governs the decision, which an operator needs, and does not say which half of
+ * the pair was wrong — that is the one fact that would turn a refusal into a
+ * way to enumerate the allowlist.
+ */
+export const githubWebhookAuthorize: WebhookMiddleware = async (c, next) => {
+	const delivery = c.get("webhookDelivery");
+
+	if (!delivery) {
+		// Unreachable behind `githubWebhookAuth`. Present so a change to the
+		// mounting fails closed rather than authorizing an unverified payload.
+		logger.error("Webhook authorization reached without a verified delivery on the context");
+		return serviceMisconfigured(c, "Webhook authorization is not correctly mounted");
+	}
+
+	let allowlist: ReturnType<typeof parseRepositoryAllowlist>;
+	try {
+		allowlist = parseRepositoryAllowlist(c.env.GITHUB_APP_ALLOWED_REPOSITORIES);
+	} catch (error) {
+		// A malformed allowlist refuses every delivery rather than applying the
+		// entries that happened to parse. A typo must not silently drop a grant,
+		// and must certainly not silently widen one — so the whole list is refused
+		// and an operator is told which entry, by name, in the log.
+		// Three arguments, not two: `Logger.error` is `(message, error, context)`.
+		// Handing it one object puts the request id inside the *error* payload and
+		// leaves Sentry's context empty, which loses the only field that
+		// correlates the report with the delivery log line beside it.
+		logger.error("GITHUB_APP_ALLOWED_REPOSITORIES could not be parsed; refusing every delivery", error, {
+			requestId: c.get("requestId"),
+			event: delivery.event,
+		});
+		return serviceMisconfigured(c, "GitHub webhook authorization is not configured");
+	}
+
+	const decision = authorizeDelivery(allowlist, c.get("webhookPayload"));
+
+	if (!decision.allowed) {
+		// At warn with the reason and the subject the delivery claimed: all three
+		// are values the sender chose, and together they are what an operator needs
+		// to tell "I forgot to allowlist this repo" from "something is delivering
+		// events I never installed".
+		logger.warn("GitHub webhook delivery is not authorized", {
+			requestId: c.get("requestId"),
+			event: delivery.event,
+			reason: decision.reason,
+			installationId: delivery.installationId,
+		});
+
+		return unauthorized(c, "Webhook delivery is not authorized for this deployment", "AUTH_SUBJECT_UNTRUSTED", {
+			hint: `The installation and repository this delivery names are not paired in ${ALLOWLIST_VAR}. Entries are comma-separated \`<installationId>:<owner>/<repo>\`.`,
+		});
+	}
+
+	c.set("webhookAuthorization", decision.authorization);
+
+	return next();
+};
+
+/**
+ * Refuse a delivery id that has already been acted upon.
+ *
+ * A webhook signature covers the body and nothing else — no timestamp, no nonce
+ * — so a delivery that verified once verifies forever, and the only thing
+ * separating a repeat from a fresh event is `X-GitHub-Delivery`. See
+ * `#utils/webhook-replay` for what this can and cannot promise.
+ *
+ * Three decisions worth naming:
+ *
+ * **A repeat is answered here, not by the handler.** The guard short-circuits,
+ * so a duplicate never reaches a route. "Do not act twice" is then a property of
+ * the pipeline rather than a rule every future handler has to remember, and the
+ * one that forgets is the one that signs something twice.
+ *
+ * **A repeat gets 200, not an error.** GitHub marks any non-2xx as a failed
+ * delivery, and a redelivery an operator triggers on purpose is not a failure —
+ * the event was already handled, which is the outcome they wanted. The body says
+ * `duplicate: true` so the answer is still distinguishable from a first
+ * arrival.
+ *
+ * **The claim is taken before the handler runs, and never released.** So a
+ * delivery is consumed the moment it is accepted, however the handler behind
+ * this guard ends: one that acts and then throws leaves the id spent, the
+ * response is a 500, and the operator's redelivery — the one recovery
+ * affordance GitHub offers — is answered `200 {"duplicate": true}` without
+ * acting. That is **at-most-once**, which is the right default for a service
+ * that signs things, and it is free while the handler acts on nothing. It is
+ * not free afterwards: the first handler that acts must either be idempotent
+ * and recoverable from GitHub's own state, or this ledger must become
+ * two-phase (`reserve` under `blockConcurrencyWhile`, `commit` after success).
+ * See `docs/github-app.md` — "Claimed before the handler runs".
+ *
+ * **An unreachable ledger refuses the delivery.** Fail closed, like every other
+ * dependency on this path: a claim that did not happen is not a claim, and
+ * treating an unreachable ledger as "not seen before" removes the protection at
+ * exactly the moment nothing can check it. That costs a dropped event, because
+ * GitHub does not redeliver on its own — the same trade `webhookRateLimit`
+ * documents, and answered 503 with a `Retry-After` so the one caller that
+ * *does* retry, an operator with the API, is told when.
+ */
+export const webhookReplayGuard: WebhookMiddleware = async (c, next) => {
+	const delivery = c.get("webhookDelivery");
+
+	if (!delivery) {
+		logger.error("Webhook replay guard reached without a verified delivery on the context");
+		return serviceMisconfigured(c, "Webhook replay protection is not correctly mounted");
+	}
+
+	if (delivery.id === null) {
+		// Signed, and unusable. Not an authentication failure — the sender proved
+		// it holds the secret — but there is no id to dedupe on, so this delivery
+		// cannot be protected from being repeated, and accepting it would mean
+		// accepting the one shape a replay attack would choose.
+		logger.warn("Verified webhook delivery carried no usable delivery id", {
+			requestId: c.get("requestId"),
+			event: delivery.event,
+		});
+		return c.json(
+			{
+				error: "Webhook delivery has no usable delivery id",
+				code: "INVALID_REQUEST" as const satisfies ErrorCode,
+				hint: `Deliveries must carry a ${DELIVERY_HEADER} of 8 to 200 characters from [A-Za-z0-9._-]. GitHub sends a GUID; a delivery without one cannot be protected against replay and is refused.`,
+			},
+			HTTP.BadRequest,
+		);
+	}
+
+	let claim: Awaited<ReturnType<typeof claimDelivery>>;
+	try {
+		claim = await claimDelivery(c.env, delivery.id);
+	} catch (error) {
+		// Same three-argument form as the allowlist failure above, and as
+		// `WebhookDeliveries`: the thrown value is the error, the request id and
+		// the event are context.
+		logger.error("Delivery ledger failed", error, {
+			requestId: c.get("requestId"),
+			event: delivery.event,
+		});
+		return serviceDegraded(c, "Webhook replay protection is unavailable", {
+			retryAfter: LEDGER_RETRY_AFTER_SECONDS,
+			hint: "The delivery was not accepted, because it could not be checked against ones already handled. Redeliver it from the App's Advanced tab.",
+		});
+	}
+
+	if (!claim.claimed) {
+		logger.info("GitHub webhook delivery is a repeat", {
+			requestId: c.get("requestId"),
+			event: delivery.event,
+			delivery: delivery.id,
+			firstSeen: new Date(claim.firstSeen).toISOString(),
+		});
+
+		return c.json(acknowledgement(delivery, c.get("webhookAuthorization"), { duplicate: true }), HTTP.OK);
+	}
+
+	c.set("webhookReplay", { firstSeen: claim.firstSeen });
 
 	return next();
 };
