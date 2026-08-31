@@ -297,9 +297,19 @@ async function handlePush(
 	}
 
 	if (result.outcome === "skipped") {
-		// Nothing was published, and nothing would be by a repeat: the head is
-		// already signed, the branch is gone, the run is too long, or somebody
-		// else's push won the race and will raise its own delivery. Committed.
+		// Nothing was published. Most of these would reach the same answer on a
+		// repeat — the head is already signed, the branch is gone, the run is too
+		// long, or somebody else's push won the race and will raise its own
+		// delivery — so the id stays committed.
+		//
+		// `unsupported_key` is the exception, and it is the same shape as
+		// `no_key_bound` above: an operator bound an X.509 key to this repository,
+		// nothing was signed, and the fix is to bind a PGP one and redeliver. A
+		// committed id would answer that redelivery `duplicate: true`, which is
+		// exactly the lost-event failure the two-phase ledger exists to prevent.
+		if (result.reason === "unsupported_key") {
+			retryable(c);
+		}
 		logger.info("Push signing did nothing", {
 			requestId,
 			delivery: delivery.id,
