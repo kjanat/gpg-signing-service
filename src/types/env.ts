@@ -4,6 +4,7 @@
 
 import type { Context } from "hono";
 import type { Identity } from "#types/branded";
+import type { WebhookDelivery } from "#types/github";
 import type { ValidatedOIDCClaims } from "#types/oidc";
 
 /** Context variables (for c.set/c.get) */
@@ -30,6 +31,21 @@ export interface Variables {
 	 * which is already metered per credential.
 	 */
 	subjectPolicyId?: string;
+	/**
+	 * A GitHub webhook delivery whose `X-Hub-Signature-256` verified.
+	 *
+	 * Written only by `githubWebhookAuth`, so a handler that finds it may assume
+	 * the HMAC passed. Absent on every other route, like `allowedKeyIds` above.
+	 */
+	webhookDelivery?: WebhookDelivery;
+	/**
+	 * The verified webhook payload, parsed once.
+	 *
+	 * `unknown` rather than a modelled type: see `#types/github`. Published on
+	 * the context rather than re-read with `c.req.json()` so that the bytes the
+	 * signature covered are the only bytes anything downstream ever sees.
+	 */
+	webhookPayload?: unknown;
 }
 
 /** Cloudflare Workers environment bindings */
@@ -114,6 +130,24 @@ export interface Env {
 	 */
 	KEY_EXPIRY_ALERT_TO?: string;
 
+	/** GitHub App integration */
+	/**
+	 * Optional: set to the literal `"true"` to serve `POST /github/webhook`.
+	 *
+	 * Anything else — unset, `"false"`, `"1"`, `"TRUE"` — leaves the route
+	 * answering exactly what an unrouted path answers, so a deployment that has
+	 * not opted in does not advertise that the feature exists. See
+	 * `githubAppEnabled` in `src/utils/github-app.ts` for why only one spelling
+	 * is accepted.
+	 */
+	GITHUB_APP_ENABLED?: string;
+	/**
+	 * Optional: the App's numeric id, from its settings page. A plain var, not a
+	 * secret: it is printed in the App's own public URL and proves nothing on its
+	 * own.
+	 */
+	GITHUB_APP_ID?: string;
+
 	/** Error tracking */
 	/**
 	 * Optional: Sentry DSN. Unset — or set to whitespace — disables Sentry
@@ -161,6 +195,25 @@ export interface Env {
 	 * one outcome this binding exists to prevent.
 	 */
 	ADMIN_READONLY_TOKEN?: string;
+
+	/**
+	 * Optional: the GitHub App's RSA private key, PEM-encoded.
+	 *
+	 * Accepted in either PKCS#1 (`BEGIN RSA PRIVATE KEY`, which is what GitHub's
+	 * download button produces) or PKCS#8 (`BEGIN PRIVATE KEY`) form;
+	 * `toPkcs8Pem` converts the first into the second, because WebCrypto imports
+	 * only the second. Holding it *is* being the App, so it is a secret in the
+	 * strongest sense: it mints credentials for every installation.
+	 */
+	GITHUB_APP_PRIVATE_KEY?: string;
+	/**
+	 * Optional: the webhook secret configured on the App.
+	 *
+	 * The sole control on `POST /github/webhook` — the URL is public by
+	 * construction — so an enabled integration with this unset refuses every
+	 * delivery rather than accepting unauthenticated ones.
+	 */
+	GITHUB_WEBHOOK_SECRET?: string;
 }
 
 /** Hono context with env bindings and variables */

@@ -565,6 +565,7 @@ error envelope and therefore has no `docs` either.
 | `RATE_LIMIT_ERROR`        | `503` | Rate limiter service unavailable                                      |
 | `RATE_LIMITED`            | `429` | Rate limit exceeded for this identity                                 |
 | `INVALID_REQUEST`         | `400` | Malformed request (missing fields, invalid format)                    |
+| `PAYLOAD_TOO_LARGE`       | `413` | Request body is over the route's ceiling; it was not read             |
 | `AUDIT_ERROR`             | `500` | Failed to retrieve audit logs                                         |
 | `NOT_FOUND`               | `404` | Endpoint not found                                                    |
 | `INTERNAL_ERROR`          | `500` | Unexpected server error                                               |
