@@ -41,8 +41,21 @@ Pairs, not two independent lists, because two lists authorize every combination
 of their members. See
 [repository and installation authorization](github-app.md#repository-and-installation-authorization).
 
+There is a third boundary inside that one, and it is new: **an allowlisted
+repository is not an allowlisted commenter.** The pair authorizes what a
+delivery may be _about_; on an `issue_comment` it says nothing about who wrote
+the comment, and comments on a public repository are written by anyone at all —
+arriving under the same installation, about the same repository, with the same
+valid HMAC as the owner's. So the comment's author is authorized separately and
+against GitHub, by reading its repository permission, and must hold `write` or
+`admin`. `author_association` is deliberately not the check: it reports
+`COLLABORATOR` for a read-only collaborator. Every answer that is not an
+unambiguous grant — including a lookup that could not be made at all, and one
+that answers about a different login — refuses. See
+[dispatching `@claude` from a comment](github-app.md#dispatching-claude-from-a-comment).
+
 An allowlisted pair may additionally bind one signing key, and that binding is
-the opt-in for the one thing a delivery can now cause: a `push` to such a
+the opt-in for one of the things a delivery can now cause: a `push` to such a
 repository has the unsigned commits at its tip signed and the branch
 force-updated. A pair with no `=<keyId>` suffix receives its events and signs
 nothing — there is no default key and no fall back to `KEY_ID`. See
@@ -509,9 +522,27 @@ Before relying on the service for protected production branches, account for:
   trust rule, token name and audit record;
 - no audit retention, and no alerting unless the optional `SENTRY_DSN` is
   configured (see [What Sentry receives](#what-sentry-receives));
-- a GitHub App webhook, when enabled, whose deliveries are logged but not
-  recorded in `audit_logs`, and whose rate-limit bucket is shared by every
+- a GitHub App webhook, when enabled, whose non-acting deliveries are logged but
+  not recorded in `audit_logs`, and whose rate-limit bucket is shared by every
   caller reaching it from one address;
+- **comment dispatch starts a job this service does not control**: the workflow
+  it starts holds `contents: write`, `id-token: write` and every repository
+  secret, and the only thing standing between a commenter and that job is the
+  author's repository permission. The workflow and the ref are operator
+  configuration and no payload field influences either, but a repository whose
+  write access is broad has correspondingly broad access to that job. Grant the
+  App `Actions: Read and write` only on repositories where that is acceptable;
+- **a comment posted through a GitHub App is refused, including a maintainer's**:
+  loop prevention is on the identity GitHub attaches rather than on the text, so
+  a `performed_via_github_app` comment does not dispatch even when its author
+  holds admin. Commenting again from the web UI works. Erring the other way
+  costs a session that starts sessions;
+- **dispatch is at-most-once past the request**: there is no idempotency key on
+  GitHub's workflow-dispatch endpoint and a second call starts a second agent
+  session, so the delivery id is committed before the request leaves. A 5xx or a
+  lost connection is not retried. GitHub answering 4xx _is_ — it created
+  nothing, and said so. See
+  [replay: at-most-once, on purpose](github-app.md#replay-at-most-once-on-purpose);
 - webhook replay protection bounded by a retention window: a delivery captured
   and replayed after it expires from the ledger is accepted again. No
   TTL-based deduplication can prevent that — the signature carries no timestamp

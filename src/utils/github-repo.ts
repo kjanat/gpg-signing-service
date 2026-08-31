@@ -124,6 +124,30 @@ const CheckRunListSchema = z.object({
 	check_runs: z.array(CheckRunSchema).default([]),
 });
 
+/**
+ * A collaborator's permission on this repository, as GitHub states it.
+ *
+ * `permission` is the *legacy base role* — `admin`, `write`, `read`, `none` —
+ * and that is the field to read rather than `role_name`. GitHub collapses
+ * `maintain` into `write` and `triage` into `read` here, and it collapses
+ * custom roles onto whichever base role they were built from, so this is a
+ * closed set of four values with a defined meaning. `role_name` is open-ended:
+ * an organisation may call a role anything, and a check written against it
+ * would be a check against strings an org admin can invent.
+ *
+ * `user` is nullable in GitHub's schema and is read anyway, because the caller
+ * compares the login that comes back against the one it asked about — the same
+ * discipline the check reporter applies to a sha. An answer about somebody else
+ * is not an answer.
+ */
+const CollaboratorPermissionSchema = z.object({
+	permission: z.string().min(1),
+	user: z
+		.object({ login: z.string().min(1) })
+		.nullable()
+		.optional(),
+});
+
 /** A commit, as this service needs to see one. */
 export interface RepositoryCommit {
 	sha: string;
@@ -540,6 +564,101 @@ export class RepositoryClient {
 			.filter((run) => run.name === name && run.app?.id === appId)
 			.map((run) => ({ id: run.id }))
 			.sort((left, right) => left.id - right.id);
+	}
+
+	/**
+	 * What `login` may do to this repository, as one of GitHub's four base roles.
+	 *
+	 * A 404 is `"none"` rather than an error: "that user is not a collaborator
+	 * here" is the ordinary answer for everybody who has ever commented on a
+	 * public repository, and turning the common refusal into an exception would
+	 * make the caller tell "not allowed" from "could not tell" by reading an
+	 * error message. Every *other* non-2xx does throw, and the caller fails
+	 * closed on it — an installation that has not granted the read, or an outage,
+	 * must not read as "no permission and carry on", because carrying on is what
+	 * this call gates.
+	 *
+	 * The login that comes back is checked against the one asked about, case
+	 * insensitively because GitHub logins are. A redirect from a renamed account,
+	 * or any other answer about a different user, is refused rather than applied
+	 * to the user whose comment is being authorized.
+	 */
+	async getActorPermission(login: string): Promise<"admin" | "write" | "read" | "none"> {
+		const response = await this.call("GET", `/collaborators/${encodeURIComponent(login)}/permission`);
+
+		if (response.status === 404) {
+			return "none";
+		}
+
+		const answer = await this.read(response, CollaboratorPermissionSchema, "a collaborator permission lookup");
+
+		if (answer.user && answer.user.login.toLowerCase() !== login.toLowerCase()) {
+			throw new GitHubApiError(
+				`GitHub answered a collaborator permission lookup about a different user for ${this.repository}`,
+				response.status,
+			);
+		}
+
+		// Anything outside the documented four is `none`. A value this service does
+		// not recognise is not a grant, and mapping it onto the *permissive* side
+		// is how a new role name silently becomes write access.
+		return answer.permission === "admin" || answer.permission === "write" || answer.permission === "read"
+			? answer.permission
+			: "none";
+	}
+
+	/**
+	 * Start a workflow run, and report which side of the ambiguity the answer
+	 * landed on.
+	 *
+	 * Deliberately not a throw-or-succeed, because the caller's replay decision
+	 * turns on a distinction a thrown error erases. There is no idempotency key
+	 * on this endpoint and a repeat starts a second run, so the caller commits
+	 * the delivery id *before* calling — which means the only thing worth knowing
+	 * afterwards is whether GitHub definitely did nothing:
+	 *
+	 * - `refused` — a 4xx. A response arrived and it says no run was created: an
+	 *   unknown workflow, a ref it is not on, a permission the installation never
+	 *   granted. All operator-fixable, and all safely redeliverable, so this is
+	 *   the one outcome that hands the delivery id back.
+	 * - `unknown` — the call threw, or GitHub answered 5xx. Nothing here can tell
+	 *   a request that never arrived from one that arrived and whose answer was
+	 *   lost, so the delivery stays spent. That is the at-most-once direction,
+	 *   and it is chosen on purpose: a lost acknowledgement costs a run that has
+	 *   to be asked for again, and the other direction costs two agents editing
+	 *   one branch.
+	 * - `accepted` — a 2xx. GitHub used to answer 204 with no body here and now
+	 *   answers 200 with the run it created, so the status is not asserted to be
+	 *   either one; any 2xx is acceptance.
+	 *
+	 * `workflow` and `ref` are the operator's, from configuration. There is no
+	 * overload of this that takes them from anywhere else.
+	 */
+	async dispatchWorkflow(
+		workflow: string,
+		ref: string,
+		inputs: Record<string, string>,
+	): Promise<{ outcome: "accepted" | "refused" | "unknown"; status: number | null }> {
+		let response: Response;
+		try {
+			response = await this.call("POST", `/actions/workflows/${encodeURIComponent(workflow)}/dispatches`, {
+				ref,
+				inputs,
+			});
+		} catch (error) {
+			// The message is not reused. `call` already decided what a token failure
+			// and a transport failure may say, and this is not the place to widen it.
+			return { outcome: "unknown", status: error instanceof GitHubApiError ? error.status : null };
+		}
+
+		if (response.ok) {
+			return { outcome: "accepted", status: response.status };
+		}
+
+		return {
+			outcome: response.status >= 400 && response.status < 500 ? "refused" : "unknown",
+			status: response.status,
+		};
 	}
 
 	/** Create a check run, returning its id. */
