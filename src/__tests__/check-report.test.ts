@@ -913,11 +913,19 @@ describe("through the endpoint", () => {
 			checksForbidden?: boolean;
 			createLosesResponse?: boolean;
 			refMissing?: boolean;
+			/** Hold every Checks API call until this resolves. */
+			gate?: Promise<void>;
 		} = {},
 	) {
 		const calls: { method: string; path: string; body: Record<string, unknown> | undefined }[] = [];
 		let nextId = 100;
 		const runs = [...(options.existing ?? [])];
+		// Resolves the moment a Checks API call arrives, so a test can wait for the
+		// report to *be* in flight rather than assume it is by the time it looks.
+		let announceChecks = () => {};
+		const reachedChecks = new Promise<void>((resolve) => {
+			announceChecks = resolve;
+		});
 
 		vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
 			const request = new Request(input as RequestInfo, init as RequestInit);
@@ -963,6 +971,13 @@ describe("through the endpoint", () => {
 				});
 			}
 
+			if (url.pathname.includes("/check-runs")) {
+				// Held here rather than at one verb, so a reporter that reordered its
+				// calls could not slip past the gate.
+				announceChecks();
+				await options.gate;
+			}
+
 			if (url.pathname.endsWith("/check-runs") && request.method === "GET") {
 				return Response.json({
 					check_runs: runs.map((run) => ({
@@ -993,7 +1008,7 @@ describe("through the endpoint", () => {
 			throw new Error(`unexpected path ${url.pathname}`);
 		});
 
-		return { calls, runs };
+		return { calls, runs, reachedChecks };
 	}
 
 	function pushPayload(installationId: number, repository: string) {
@@ -1009,36 +1024,51 @@ describe("through the endpoint", () => {
 		};
 	}
 
-	async function deliver(options: {
-		allowlist: string;
-		deliveryId?: string;
-		checkRuns?: string;
-		payload?: unknown;
-	}): Promise<{ response: Response; body: Record<string, unknown> }> {
+	type Delivery = { allowlist: string; deliveryId?: string; checkRuns?: string; payload?: unknown };
+
+	/**
+	 * Start a delivery and hand back the unresolved response.
+	 *
+	 * Separate from {@link deliver} because one property below cannot be asserted
+	 * on a response that has already been awaited alongside its background work:
+	 * that the acknowledgement lands *before* the Checks API answers.
+	 */
+	async function startDelivery(options: Delivery): Promise<{ ctx: ExecutionContext; response: Promise<Response> }> {
 		const body = JSON.stringify(options.payload ?? pushPayload(INSTALLATION, REPOSITORY));
 		const ctx = createExecutionContext();
-		const response = await app.fetch(
-			new Request("https://sign.test/github/webhook", {
-				method: "POST",
-				body,
-				headers: {
-					"Content-Type": "application/json",
-					"X-Hub-Signature-256": await hmac(body),
-					"X-GitHub-Event": "push",
-					"X-GitHub-Delivery": options.deliveryId ?? crypto.randomUUID(),
+		// `Promise.resolve`, because `app.fetch` is typed as possibly synchronous
+		// and the point of this helper is to hold an unresolved response.
+		const response = Promise.resolve(
+			app.fetch(
+				new Request("https://sign.test/github/webhook", {
+					method: "POST",
+					body,
+					headers: {
+						"Content-Type": "application/json",
+						"X-Hub-Signature-256": await hmac(body),
+						"X-GitHub-Event": "push",
+						"X-GitHub-Delivery": options.deliveryId ?? crypto.randomUUID(),
+					},
+				}),
+				{
+					...env,
+					GITHUB_APP_ENABLED: "true",
+					GITHUB_WEBHOOK_SECRET: SECRET,
+					GITHUB_APP_ALLOWED_REPOSITORIES: options.allowlist,
+					GITHUB_APP_ID: String(APP_ID),
+					GITHUB_APP_PRIVATE_KEY: APP_PRIVATE_KEY,
+					GITHUB_APP_CHECK_RUNS: options.checkRuns ?? "true",
 				},
-			}),
-			{
-				...env,
-				GITHUB_APP_ENABLED: "true",
-				GITHUB_WEBHOOK_SECRET: SECRET,
-				GITHUB_APP_ALLOWED_REPOSITORIES: options.allowlist,
-				GITHUB_APP_ID: String(APP_ID),
-				GITHUB_APP_PRIVATE_KEY: APP_PRIVATE_KEY,
-				GITHUB_APP_CHECK_RUNS: options.checkRuns ?? "true",
-			},
-			ctx,
+				ctx,
+			),
 		);
+
+		return { ctx, response };
+	}
+
+	async function deliver(options: Delivery): Promise<{ response: Response; body: Record<string, unknown> }> {
+		const { ctx, response: pending } = await startDelivery(options);
+		const response = await pending;
 		await waitOnExecutionContext(ctx);
 
 		return { response, body: (await response.json()) as Record<string, unknown> };
@@ -1057,17 +1087,15 @@ describe("through the endpoint", () => {
 
 		expect(response.status).toBe(202);
 		expect(body.skipped).toBe("nothing_to_sign");
-		expect(body.check).toBeUndefined();
 		expect(calls.some((call) => call.path.includes("check-runs"))).toBe(false);
 	});
 
 	it("publishes a check for the sha the ref holds, not the one the payload claims", async () => {
 		const { calls } = stubGitHub();
 
-		const { response, body } = await deliver({ allowlist: `${INSTALLATION}:${REPOSITORY}=${KEY}` });
+		const { response } = await deliver({ allowlist: `${INSTALLATION}:${REPOSITORY}=${KEY}` });
 
 		expect(response.status).toBe(202);
-		expect(body.check).toBe("service_key_valid");
 
 		const created = calls.find((call) => call.method === "POST" && call.path.endsWith("/check-runs"));
 		expect(created?.body?.head_sha).toBe(HEAD_SHA);
@@ -1124,16 +1152,16 @@ describe("through the endpoint", () => {
 		const allowlist = `${INSTALLATION}:${REPOSITORY}=${KEY}`;
 		const lost = stubGitHub({ createLosesResponse: true });
 
-		const first = await deliver({ allowlist });
-		expect(first.body.check).toBeUndefined();
+		await deliver({ allowlist });
 		expect(lost.runs).toHaveLength(1);
 
 		const { calls } = stubGitHub({ existing: lost.runs });
-		const second = await deliver({ allowlist });
+		await deliver({ allowlist });
 
-		expect(second.body.check).toBe("service_key_valid");
 		expect(calls.filter((call) => call.method === "POST" && call.path.endsWith("/check-runs"))).toHaveLength(0);
-		expect(calls.filter((call) => call.method === "PATCH")).toHaveLength(1);
+		const patched = calls.filter((call) => call.method === "PATCH");
+		expect(patched).toHaveLength(1);
+		expect(patched[0]?.body?.conclusion).toBe("success");
 	});
 
 	it("creates its own run beside another app's with the same name", async () => {
@@ -1170,7 +1198,6 @@ describe("through the endpoint", () => {
 		const { body } = await deliver({ allowlist: `${INSTALLATION}:${REPOSITORY}=${KEY}` });
 
 		expect(body.skipped).toBe("branch_missing");
-		expect(body.check).toBeUndefined();
 		expect(calls.some((call) => call.path.includes("check-runs"))).toBe(false);
 	});
 
@@ -1195,10 +1222,57 @@ describe("through the endpoint", () => {
 		const first = await deliver({ allowlist, deliveryId: id });
 		expect(first.response.status).toBe(202);
 		expect(first.body.skipped).toBe("nothing_to_sign");
-		expect(first.body.check).toBeUndefined();
 
 		const second = await deliver({ allowlist, deliveryId: id });
 		expect(second.body.duplicate).toBe(true);
+	});
+
+	it("acknowledges the delivery before the Checks API has answered", async () => {
+		// The property, stated as a race rather than as a timing: the whole Checks
+		// path is held shut, and the acknowledgement still arrives. A reporter on
+		// the response path would deadlock here instead of failing an assertion,
+		// so the wait is bounded and the timeout is the assertion.
+		let release = () => {};
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const { calls, reachedChecks } = stubGitHub({ gate });
+
+		const { ctx, response: pending } = await startDelivery({ allowlist: `${INSTALLATION}:${REPOSITORY}=${KEY}` });
+		const acknowledged = await Promise.race([
+			pending,
+			new Promise<null>((resolve) => {
+				setTimeout(() => resolve(null), 3000);
+			}),
+		]);
+
+		expect(acknowledged).not.toBeNull();
+		expect((acknowledged as Response).status).toBe(202);
+
+		// The report is genuinely in flight and genuinely held — waited for rather
+		// than assumed, so this is not a race the reporter can win by being quick.
+		// Nothing has been written, and the acknowledgement is already sent.
+		await reachedChecks;
+		expect(calls.some((call) => call.method === "POST" && call.path.endsWith("/check-runs"))).toBe(false);
+		expect(calls.some((call) => call.method === "PATCH")).toBe(false);
+
+		release();
+		await waitOnExecutionContext(ctx);
+
+		// It did run, afterwards. A report that had been dropped rather than
+		// deferred would satisfy every assertion above this line.
+		expect(calls.some((call) => call.method === "POST" && call.path.endsWith("/check-runs"))).toBe(true);
+	});
+
+	it("never describes the check run in the acknowledgement", async () => {
+		// The field the response used to carry. It is gone because the response no
+		// longer knows: what was published is in the log line and the audit row.
+		const { calls } = stubGitHub();
+
+		const { body } = await deliver({ allowlist: `${INSTALLATION}:${REPOSITORY}=${KEY}` });
+
+		expect(calls.some((call) => call.method === "POST" && call.path.endsWith("/check-runs"))).toBe(true);
+		expect(body).not.toHaveProperty("check");
 	});
 
 	it("records what it published, with no signature or token in the row", async () => {

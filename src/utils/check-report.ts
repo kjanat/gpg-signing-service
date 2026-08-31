@@ -46,6 +46,13 @@
  * `webhookRetryable`. A check run that could not be published leaves an audit
  * row and a log line, and the push-signing outcome that was already decided
  * stands exactly as it was.
+ *
+ * The route takes that further and does not wait for any of this: reporting is
+ * handed to `waitUntil` after the outcome is decided, so a slow or blocked
+ * Checks API cannot delay the acknowledgement GitHub is timing. It is also not
+ * reached at all when the signing budget refused a delivery — a refusal is a
+ * decision that this service must stop acting on that repository, and the four
+ * authenticated calls below are acting on it.
  */
 
 import type { AnyStoredKey } from "#schemas/keys";
@@ -144,6 +151,29 @@ const TITLES: Record<SignatureState, string> = {
 };
 
 /**
+ * The prose each state earns, and why it is a table rather than a chain.
+ *
+ * A `Record<SignatureState, string>` is the whole exhaustiveness argument: a
+ * sixth state fails to compile *here*, in the file that has to describe it,
+ * rather than falling through an `if / else if / else` to whichever branch
+ * happened to be last — which would publish the `unverifiable` wording under a
+ * state that is not `unverifiable`. The summary is text this service publishes
+ * under its own name; the compiler is the right thing to be enforcing that a
+ * new state cannot inherit an old state's sentence.
+ */
+const EXPLANATIONS: Record<SignatureState, string> = {
+	service_key_valid:
+		"The commit object carries an OpenPGP signature made by the key this deployment binds to this repository, and it verifies over the commit's own bytes.",
+	invalid_signature:
+		"The commit carries an OpenPGP signature naming this deployment's signing key that does not verify under it.",
+	other_signer:
+		"The commit is signed by a key other than the one this deployment binds to this repository. No claim is made about whether that signature is good; GitHub's own verdict is above.",
+	unsigned: "The commit carries no signature.",
+	unverifiable:
+		"The bytes GitHub reported for this commit could not be tied back to its own object id, so nothing was established either way. A commit carrying a header this service does not model reaches this state with a perfectly good signature.",
+};
+
+/**
  * The body of the check run.
  *
  * Everything in it is either a constant from this file, a 40-character object
@@ -164,25 +194,7 @@ export function checkRunSummary(sha: string, keyId: string, finding: SignatureFi
 		"",
 	];
 
-	if (finding.state === "service_key_valid") {
-		lines.push(
-			"The commit object carries an OpenPGP signature made by the key this deployment binds to this repository, and it verifies over the commit's own bytes.",
-		);
-	} else if (finding.state === "invalid_signature") {
-		lines.push(
-			"The commit carries an OpenPGP signature naming this deployment's signing key that does not verify under it.",
-		);
-	} else if (finding.state === "other_signer") {
-		lines.push(
-			"The commit is signed by a key other than the one this deployment binds to this repository. No claim is made about whether that signature is good; GitHub's own verdict is above.",
-		);
-	} else if (finding.state === "unsigned") {
-		lines.push("The commit carries no signature.");
-	} else {
-		lines.push(
-			"The bytes GitHub reported for this commit could not be tied back to its own object id, so nothing was established either way. A commit carrying a header this service does not model reaches this state with a perfectly good signature.",
-		);
-	}
+	lines.push(EXPLANATIONS[finding.state]);
 
 	return lines.join("\n");
 }

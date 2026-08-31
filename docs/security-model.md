@@ -68,6 +68,15 @@ has no standing to fail a commit over either. GitHub's own verdict is repeated
 alongside, labelled as GitHub's and only from a known set of reasons. See
 [reporting the signature as a check run](github-app.md#reporting-the-signature-as-a-check-run).
 
+Two properties of _when_ it publishes belong here too. It runs off the response
+path — handed to the runtime after the outcome is decided — so an unreachable
+Checks API costs a report rather than the ten seconds GitHub gives a webhook
+receiver, and a reporting failure still cannot make a signing delivery
+redeliverable. And **a delivery the signing budget refused publishes nothing and
+reads nothing**: a check run is four authenticated calls against the repository,
+so reporting past a refusal would take the budget below out of the loop at the
+exact moment it is being enforced.
+
 ## Signing authority
 
 `POST /sign` accepts any non-empty text. It does not prove that the text is a
@@ -289,7 +298,10 @@ signature at 120 a minute, keyed on the authorized installation, the operator's
 spelling of the repository and the bound key — every component from the
 authorization decision, so a delivery cannot vary a payload field to get a fresh
 bucket. It is consulted after the run is known and before anything is signed, so
-a refusal costs a read and leaves the delivery redeliverable.
+a refusal costs a read and leaves the delivery redeliverable — and, since it is
+a bound on this service acting on a repository rather than on signatures alone,
+a refusal also stops the check-run report, which would otherwise be four more
+authenticated calls against that repository per refused delivery.
 
 The OIDC signing identity is the caller's `sub`, and GitHub varies `sub` per ref,
 so one trusted row is not bounded to one bucket: a caller who can push branches

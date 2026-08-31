@@ -186,19 +186,31 @@ function auditPush(
  * Publish the check run for the head of `branch`, and never fail the delivery
  * over it.
  *
+ * **This runs off the response path.** {@link scheduleCheckReport} hands it to
+ * `waitUntil`, so the acknowledgement GitHub is waiting for is not behind four
+ * authenticated calls — a ref read, a commit read, a check-run lookup and a
+ * write, each with its own ten-second ceiling — for a result that by
+ * construction cannot change the response. GitHub gives a webhook receiver ten
+ * seconds in total; a best-effort observational write does not get to spend
+ * them. The cost is that the acknowledgement can no longer name the state it
+ * published, which is a nicety, and the delivery no longer waits on the Checks
+ * API, which is not.
+ *
  * Two things this deliberately does not do. It does not touch
  * `webhookRetryable`: a check run is idempotent, so a redelivery that publishes
  * it again converges on the same run rather than causing a second effect, and
  * handing the delivery id back would instead make a signing push repeatable
- * because a *report* failed. And it does not raise: the response has already
- * been decided by the signing path, and a reporting failure is a thing to
- * record, not a thing to turn a completed signing into a 500 over.
+ * because a *report* failed. That is now doubly true — by the time this runs
+ * the response has been sent and the ledger written, so there is nothing left
+ * for it to change even if it tried. And it does not raise: a reporting failure
+ * is a thing to record, not a thing to turn a completed signing into a 500 over.
  *
  * The audit row is `check_report`, separate from `push_sign`, because it
  * records a different act — a verdict published about somebody's commit — and
- * because one delivery can do it without signing anything. Its metadata is
- * shas, a state from a closed set, a check run id and a branch. No signature, no
- * token, no key material, no GitHub response body.
+ * because one delivery can do it without signing anything, which is what an
+ * already-signed tip does. Its metadata is shas, a state from a closed set, a
+ * check run id and a branch. No signature, no token, no key material, no GitHub
+ * response body.
  */
 async function reportCheck(
 	c: AppContext,
@@ -270,7 +282,15 @@ async function reportCheck(
 	return report;
 }
 
-/** The audit row for one check-run report. See {@link reportCheck}. */
+/**
+ * The audit row for one check-run report. See {@link reportCheck}.
+ *
+ * Written directly rather than through `scheduleBackgroundTask`, which is the
+ * one difference from {@link auditPush}: its caller is *already* a background
+ * task, so scheduling from here would be asking `waitUntil` to adopt a promise
+ * from inside a `waitUntil` callback. Awaiting it keeps the row inside the task
+ * the runtime is already keeping alive, and inside the same failure handler.
+ */
 function auditCheck(
 	c: AppContext,
 	authorization: WebhookAuthorization,
@@ -278,20 +298,41 @@ function auditCheck(
 	success: boolean,
 	metadata: Record<string, unknown>,
 ): Promise<void> {
-	return scheduleBackgroundTask(
-		c,
-		c.get("requestId"),
-		logAuditEvent(c.env.AUDIT_DB, {
-			requestId: c.get("requestId"),
-			action: "check_report",
-			issuer: "github-app",
-			subject: authorization.repository ?? "unknown",
-			keyId,
-			success,
-			...(success ? {} : { errorCode: "INTERNAL_ERROR" as const }),
-			metadata: JSON.stringify(metadata),
-		}),
-	);
+	return logAuditEvent(c.env.AUDIT_DB, {
+		requestId: c.get("requestId"),
+		action: "check_report",
+		issuer: "github-app",
+		subject: authorization.repository ?? "unknown",
+		keyId,
+		success,
+		...(success ? {} : { errorCode: "INTERNAL_ERROR" as const }),
+		metadata: JSON.stringify(metadata),
+	});
+}
+
+/**
+ * Hand {@link reportCheck} to the runtime and return, without waiting for it.
+ *
+ * The whole reason reporting is safe to move here is the reason it was safe to
+ * put after the outcome branches in the first place: it decides nothing. It
+ * cannot change the status, it cannot change the body, and it cannot change
+ * `webhookRetryable` — so the only thing awaiting it ever bought was latency on
+ * a response GitHub times out in ten seconds.
+ *
+ * `scheduleBackgroundTask` awaits the task when there is no `executionCtx` to
+ * hand it to, which is the documented fallback for environments that do not
+ * provide one. That is the one case where this still costs the response, and it
+ * is not a case any deployment is in.
+ */
+function scheduleCheckReport(
+	c: AppContext,
+	client: RepositoryClient,
+	authorization: WebhookAuthorization,
+	keyId: string,
+	key: AnyStoredKey,
+	branch: string,
+): Promise<void> {
+	return scheduleBackgroundTask(c, c.get("requestId"), reportCheck(c, client, authorization, keyId, key, branch));
 }
 
 /**
@@ -401,22 +442,52 @@ async function handlePush(
 		return c.json({ error: "Internal server error", code: "INTERNAL_ERROR" }, HTTP.InternalServerError);
 	}
 
+	if (result.outcome === "refused") {
+		// The budget said no. Nothing was signed and nothing was published, so the
+		// delivery goes back: this is exactly the case where an operator waits and
+		// redelivers.
+		//
+		// **Answered before the report is scheduled, and that ordering is the
+		// point.** The budget is a bound on this service acting on a repository
+		// under one `<installation, repository, key>` grant, and a check run is
+		// this service acting on that repository: a ref read, a commit read, a
+		// check-run lookup and a write, all under the installation token. Publish
+		// after a refusal and the budget stops bounding GitHub API usage at the
+		// moment it is being enforced — a delivery loop that the budget refuses
+		// every time would still spend four calls per delivery, and would still
+		// have this service posting a verdict about a commit it had just declined
+		// to touch. The report is not lost: a refusal is redeliverable, and the
+		// redelivery that eventually signs reports then.
+		retryable(c);
+		logger.warn("Push signing refused by its budget", {
+			requestId,
+			delivery: delivery.id,
+			repository: grant.repository,
+			reason: result.reason,
+		});
+		await auditPush(c, grant, decision.keyId, false, { branch: plan.branch, reason: result.reason });
+		return c.json(
+			{ error: "Push signing is over budget", code: "RATE_LIMITED", retryAfter: 60 },
+			result.reason === "rate_limited" ? HTTP.TooManyRequests : HTTP.ServiceUnavailable,
+		);
+	}
+
 	// The head as it stands *after* whatever the signing path did or declined to
 	// do, reported as a check run. Deliberately outside every outcome branch
 	// below: the useful thing to publish is the state of the commit the branch
 	// actually points at, and that is worth saying whether this delivery signed
-	// it, found it already signed, or refused to touch it.
+	// it, found it already signed, or failed part way.
 	//
-	// It cannot change any of those outcomes. `reportCheck` swallows its own
-	// failures into an audit row, and nothing in it touches `webhookRetryable`,
-	// so the replay decisions `signPushedCommits` drove are exactly the ones that
-	// stand — see `#utils/check-report` for why an idempotent write does not want
-	// the ledger's protection in the first place.
-	const report = await reportCheck(c, client, grant, decision.keyId, loaded.key, plan.branch);
-	// Named back to the sender when one was published, for the same reason the
-	// delivery id is: "Recent Deliveries" is where an operator looks first, and a
-	// state there saves a trip to the commit.
-	const checked = report.outcome === "published" ? { check: report.state } : {};
+	// Scheduled rather than awaited, so none of the responses below wait on the
+	// Checks API — see {@link scheduleCheckReport}. It cannot change any of those
+	// outcomes either: `reportCheck` swallows its own failures into an audit row,
+	// and nothing in it touches `webhookRetryable`, so the replay decisions
+	// `signPushedCommits` drove are exactly the ones that stand — see
+	// `#utils/check-report` for why an idempotent write does not want the
+	// ledger's protection in the first place.
+	//
+	// The one outcome above it: a budget refusal, which returned already.
+	await scheduleCheckReport(c, client, grant, decision.keyId, loaded.key, plan.branch);
 
 	if (result.outcome === "signed") {
 		logger.info("Signed pushed commits", {
@@ -440,7 +511,6 @@ async function handlePush(
 				...acknowledgement(delivery, authorization, { duplicate: false }),
 				handled: true,
 				signed: result.commits,
-				...checked,
 			},
 			HTTP.OK,
 		);
@@ -468,26 +538,8 @@ async function handlePush(
 			reason: result.reason,
 		});
 		return c.json(
-			{ ...acknowledgement(delivery, authorization, { duplicate: false }), skipped: result.reason, ...checked },
+			{ ...acknowledgement(delivery, authorization, { duplicate: false }), skipped: result.reason },
 			HTTP.Accepted,
-		);
-	}
-
-	if (result.outcome === "refused") {
-		// The budget said no. Nothing was signed and nothing was published, so the
-		// delivery goes back: this is exactly the case where an operator waits and
-		// redelivers.
-		retryable(c);
-		logger.warn("Push signing refused by its budget", {
-			requestId,
-			delivery: delivery.id,
-			repository: grant.repository,
-			reason: result.reason,
-		});
-		await auditPush(c, grant, decision.keyId, false, { branch: plan.branch, reason: result.reason });
-		return c.json(
-			{ error: "Push signing is over budget", code: "RATE_LIMITED", retryAfter: 60 },
-			result.reason === "rate_limited" ? HTTP.TooManyRequests : HTTP.ServiceUnavailable,
 		);
 	}
 

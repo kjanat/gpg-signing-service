@@ -421,10 +421,23 @@ Advanced tab and the second answer is `200` with `"duplicate": true`.
 | `503`  | —                        | The bound key is gone, key storage is down, or the budget could not be read.  |
 | `500`  | `SIGN_ERROR`             | Signing or talking to GitHub failed. See `handled`/`skipped` in the body.     |
 
-A `check` field appears in the body when a check run was published, carrying
-the state it reported. A report that failed changes no status: the answer is
-whatever the signing path decided, and the failure is in the log and the audit
-trail.
+**No field in the body describes the check run**, because the response does not
+wait for it. Reporting is handed to the runtime after the signing outcome is
+decided and runs on after the acknowledgement has been sent, so that a slow or
+unreachable Checks API cannot spend the ten seconds GitHub gives a receiver on a
+write that changes nothing. What was published is in the delivery's log line and
+in the `check_report` audit row; the commit itself is the other place to look. A
+report that failed changes no status either: the answer is whatever the signing
+path decided.
+
+A delivery the **signing budget refused** publishes no check at all and makes no
+Checks API call, which is the one case where the ordering is load-bearing rather
+than incidental. A refusal is a decision that this service must stop acting on
+that `<installation, repository, key>` for now, and a check run is four
+authenticated calls against that repository — so publishing one after a refusal
+would let a delivery loop keep spending GitHub API budget the refusal exists to
+stop. A refusal is redeliverable; the redelivery that eventually signs reports
+then.
 
 `AUTH_SUBJECT_UNTRUSTED` rather than `AUTH_INVALID` for an unauthorized pair,
 and it is the same distinction the OIDC path draws: the credential is right and
