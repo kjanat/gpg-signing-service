@@ -72,7 +72,16 @@ jobs:
     name: Repair Provenance
     runs-on: ubuntu-latest
     steps:
-      - { uses: actions/checkout@v7, with: { fetch-depth: 0 } }
+      # Pinned to commits, not tags. This job holds `contents: write` and an
+      # OIDC token that mints real signatures, and every step below runs after
+      # these: an action whose tag is repointed runs first and with all of it.
+      # A tag is a mutable pointer in someone else's repository; a commit is
+      # not. The trailing comment is the readable version and what Dependabot
+      # bumps — it is a comment, so a step that carries one cannot also be
+      # written in the `{ uses: ..., with: ... }` flow form, where the `#`
+      # would swallow the rest of the line.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0 }
       - { uses: ./ }
 
       # Deliberate, named, and off by default. `repair-history` is newer than
@@ -82,7 +91,9 @@ jobs:
       # The toolchain is set up the way .github/workflows/ci.yml sets it up for
       # the Go client: mise resolves the Go version from client/go.mod, and
       # client:build reads the CLI version out of package.json with bun.
-      - { uses: jdx/mise-action@v4, if: inputs.build_from_source, with: { working_directory: client } }
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        if: inputs.build_from_source
+        with: { working_directory: client }
       - { uses: ./.github/actions/setup-bun, if: inputs.build_from_source }
       - name: Build the checked-out CLI
         if: inputs.build_from_source
@@ -93,7 +104,7 @@ jobs:
 
       - name: Get OIDC Token
         id: oidc
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const token = await core.getIDToken('gpg-signing-service');

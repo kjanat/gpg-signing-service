@@ -14,7 +14,7 @@ name: Sign Commits
 # this file is gone, so it is a step you will be told about rather than one you
 # have to remember.
 #
-# The only difference from the live file is the step that signs:
+# The difference that matters is the step that signs:
 #
 #   -  run: python3 .github/scripts/sign-commits.py
 #   +  run: .github/scripts/sign-commits.sh
@@ -26,6 +26,12 @@ name: Sign Commits
 # branch that removes the Python script cannot also edit this workflow, so
 # merging one without the other points the live job at a file that is not
 # there.
+#
+# The other difference is that the external actions are pinned to commits
+# rather than tags, which the live file is not. This job holds `contents:
+# write` and an OIDC token that mints real signatures; the rest of ci.yml has
+# the same class of exposure and is not this change's to re-pin, so it is left
+# alone rather than swept in. `task test:sign-commits` asserts the pins here.
 #
 # ORDERING: `sign-commit` is not in every release, and `uses: ./` installs the
 # release the action resolves. Publish a release containing the command before
@@ -67,12 +73,21 @@ jobs:
     name: Sign Commits
     runs-on: ubuntu-latest
     steps:
-      - { uses: actions/checkout@v7, with: { fetch-depth: 0 } }
+      # Pinned to commits, not tags. This job holds `contents: write` and an
+      # OIDC token that mints real signatures, and every step below runs after
+      # these: an action whose tag is repointed runs first and with all of it.
+      # A tag is a mutable pointer in someone else's repository; a commit is
+      # not. The trailing comment is the readable version and what Dependabot
+      # bumps — it is a comment, so a step that carries one cannot also be
+      # written in the `{ uses: ..., with: ... }` flow form, where the `#`
+      # would swallow the rest of the line.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0 }
       - { uses: ./ }
 
       - name: Get OIDC Token
         id: oidc
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const token = await core.getIDToken('gpg-signing-service');
