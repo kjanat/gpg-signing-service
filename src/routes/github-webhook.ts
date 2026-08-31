@@ -1,19 +1,26 @@
 /**
  * `POST /github/webhook` — the endpoint a GitHub App delivers events to.
  *
- * One event is acted on: `push`, which signs the unsigned commits at the tip of
- * the pushed branch with the key the operator bound to that repository, moves
- * the branch to them, and — when an operator has switched that on separately —
- * publishes a check run saying what the resulting head's signature turned out
- * to be. Everything else is acknowledged and dropped, as the whole route used to
- * be. Dispatching `@claude` is still named in issue #26 and still absent.
+ * Two events are acted on and everything else is acknowledged and dropped.
  *
- * `push` is the only subscribed event the check needs, and that is worth saying
- * because a "signature check on pull requests" sounds like it wants
+ * `push` signs the unsigned commits at the tip of the pushed branch with the key
+ * the operator bound to that repository, moves the branch to them, and — when an
+ * operator has switched that on separately — publishes a check run saying what
+ * the resulting head's signature turned out to be.
+ *
+ * `issue_comment` starts the configured Claude workflow when a comment invokes
+ * it, replacing the native Actions trigger that used to do so. It is behind its
+ * own flag as well, and for a sharper reason than the check runs are: this is
+ * the one handler whose effect is entirely outside the service — an Actions run
+ * holding repository secrets — so the author of the comment is authorized
+ * against GitHub before anything starts. See `#utils/comment-dispatch`.
+ *
+ * `push` is the only subscribed event the *check* needs, and that is worth
+ * saying because a "signature check on pull requests" sounds like it wants
  * `pull_request`. It does not: a PR's head branch lives in a repository, pushes
  * to it raise `push` there, and a check run is attached to a *commit* — which is
- * what a PR displays. Subscribing to more would widen the payload surface this
- * service accepts to gain nothing it does not already have.
+ * what a PR displays. `issue_comment` covers pull request conversation comments
+ * too, for the same reason: GitHub raises it for both.
  *
  * By the time an event reaches this file, four gates have already run and this
  * handler re-derives none of what they decided:
@@ -28,7 +35,10 @@
  * - `webhookReplayGuard` — a delivery id reserved before this runs, and
  *   committed or released after it, so a duplicate cannot double-act and a
  *   failure that changed nothing stays redeliverable. This handler sets
- *   `webhookRetryable`; the guard is what writes the ledger.
+ *   `webhookRetryable`; the guard is what writes the ledger. The one exception
+ *   is comment dispatch, which has no idempotence of its own for a redelivery
+ *   to meet and so writes a durable *hold* on the id itself, before its request
+ *   leaves; the guard's settle then commits or releases that hold.
  *
  * ### What this handler owes the pipeline
  *
@@ -56,6 +66,14 @@ import { createIdentity, HTTP } from "#types";
 import { logAuditEvent } from "#utils/audit";
 import type { CheckReportResult } from "#utils/check-report";
 import { reportSignatureCheck } from "#utils/check-report";
+import type { CommentDispatchResult, DispatchTarget } from "#utils/comment-dispatch";
+import {
+	commentDispatchEnabled,
+	DISPATCH_LIMIT,
+	dispatchCommentRequest,
+	planCommentDispatch,
+	requireDispatchTarget,
+} from "#utils/comment-dispatch";
 import { fetchRateLimiter } from "#utils/durable-objects";
 import { scheduleBackgroundTask } from "#utils/execution";
 import { planPush } from "#utils/github-push";
@@ -65,6 +83,7 @@ import { acknowledgement } from "#utils/github-webhook";
 import { logger } from "#utils/logger";
 import type { PushSigningResult } from "#utils/push-signing";
 import { signPushedCommits } from "#utils/push-signing";
+import { holdDelivery } from "#utils/webhook-replay";
 
 const app = createOpenAPIApp();
 
@@ -110,18 +129,52 @@ export function signingBudgetIdentity(authorization: WebhookAuthorization, keyId
 	return createIdentity(PUSH_SIGNING_METER, `${authorization.installationId}:${authorization.repository}:${keyId}`);
 }
 
-/** Spend one token per commit, stopping at the first refusal. */
-async function spendSigningBudget(
+/**
+ * Rate-limiter namespace for the comment-dispatch budget.
+ *
+ * A third namespace, disjoint from `github-push` and from the `webhook` meter
+ * in front of the route, because it bounds a different thing: the `webhook`
+ * meter counts requests per source address and GitHub's delivery addresses are
+ * a small shared set, so it is exhausted by traffic rather than by abuse.
+ * This counts *comments that would cost a GitHub call*, per repository.
+ */
+const DISPATCH_METER = "github-dispatch";
+
+/**
+ * The bucket a repository's dispatch attempts are counted in.
+ *
+ * Both components come from the authorization decision — the operator's
+ * installation id and the operator's spelling of the repository — so a comment
+ * cannot move itself into a fresh bucket by varying a payload field. No key id,
+ * unlike {@link signingBudgetIdentity}: dispatching starts a workflow and
+ * touches no key, so a per-key bucket here would be keyed on something the act
+ * does not involve.
+ */
+export function dispatchBudgetIdentity(authorization: WebhookAuthorization): string {
+	return createIdentity(DISPATCH_METER, `${authorization.installationId}:${authorization.repository}`);
+}
+
+/**
+ * Spend `units` tokens from `identity`'s bucket, stopping at the first refusal.
+ *
+ * One function for both budgets rather than one each, because the part worth
+ * getting right is the same for both and is easy to get wrong the same way: a
+ * denied consume arrives as a 429 carrying the verdict, so `!response.ok` alone
+ * reads the one answer this is asking for as an outage. The *limits* differ and
+ * are the caller's; the reading of the answer does not.
+ */
+async function spendBudget(
 	c: AppContext,
 	identity: string,
-	commits: number,
+	limit: number,
+	units: number,
 ): Promise<"ok" | "limited" | "unavailable"> {
-	for (let spent = 0; spent < commits; spent += 1) {
+	for (let spent = 0; spent < units; spent += 1) {
 		let response: Response;
 		try {
-			response = await fetchRateLimiter(c.env, identity, PUSH_SIGNING_LIMIT);
+			response = await fetchRateLimiter(c.env, identity, limit);
 		} catch (error) {
-			logger.error("Push-signing rate limiter unreachable", error, { requestId: c.get("requestId") });
+			logger.error("Webhook rate limiter unreachable", error, { identity, requestId: c.get("requestId") });
 			return "unavailable";
 		}
 
@@ -129,7 +182,7 @@ async function spendSigningBudget(
 		// the body, so `!ok` alone would read the one answer this is asking for as
 		// an outage — the bug `/sign`'s `resolveRateLimit` carries a comment about.
 		if (!response.ok && response.status !== HTTP.TooManyRequests) {
-			logger.error("Push-signing rate limiter failed", { status: response.status, requestId: c.get("requestId") });
+			logger.error("Webhook rate limiter failed", { identity, status: response.status, requestId: c.get("requestId") });
 			return "unavailable";
 		}
 
@@ -173,7 +226,7 @@ function auditPush(
 			requestId: c.get("requestId"),
 			action: "push_sign",
 			issuer: "github-app",
-			subject: authorization.repository ?? "unknown",
+			subject: authorization?.repository ?? "unknown",
 			keyId,
 			success,
 			...(success ? {} : { errorCode: "SIGN_ERROR" as const }),
@@ -415,7 +468,7 @@ async function handlePush(
 	let result: PushSigningResult;
 	try {
 		result = await signPushedCommits(client, plan.branch, loaded.key, c.env.KEY_PASSPHRASE, {
-			reserveBudget: (commits) => spendSigningBudget(c, identity, commits),
+			reserveBudget: (commits) => spendBudget(c, identity, PUSH_SIGNING_LIMIT, commits),
 			// The irreversible boundary. Deciding *before* the branch moves that this
 			// delivery is no longer retryable is what makes an ambiguous outcome —
 			// request sent, answer lost — a non-repeat: a redelivery finds the id
@@ -568,6 +621,294 @@ async function handlePush(
 }
 
 /**
+ * The audit row for one comment-dispatch decision.
+ *
+ * Written for refusals as well as for runs that started, which is the point: a
+ * comment declined for want of write access is exactly the row an operator
+ * wants to be able to find, and it is the row that does not exist anywhere else
+ * — the Actions run list shows what ran and never what was turned away.
+ *
+ * `keyId` is `"none"` rather than `"unknown"`. The column cannot be null, and
+ * the two sentinels say different things: `unknown` is admin's "a key was
+ * involved and we could not name it", whereas dispatching a workflow involves
+ * no key at all. Reusing `unknown` here would make a `WHERE key_id = 'unknown'`
+ * over the table mean two things at once.
+ *
+ * The metadata carries an issue number, a comment id, an actor login and a
+ * reason — public facts about a repository the App is installed on, all of them
+ * visible to anyone who can read the comment. It carries no token, no key
+ * material, and no GitHub response body.
+ */
+function auditDispatch(
+	c: AppContext,
+	authorization: WebhookAuthorization | undefined,
+	success: boolean,
+	errorCode: "AUTH_SUBJECT_UNTRUSTED" | "RATE_LIMITED" | "INTERNAL_ERROR" | null,
+	metadata: Record<string, unknown>,
+): Promise<void> {
+	return scheduleBackgroundTask(
+		c,
+		c.get("requestId"),
+		logAuditEvent(c.env.AUDIT_DB, {
+			requestId: c.get("requestId"),
+			action: "comment_dispatch",
+			issuer: "github-app",
+			subject: authorization?.repository ?? "unknown",
+			keyId: "none",
+			success,
+			...(errorCode === null ? {} : { errorCode }),
+			metadata: JSON.stringify(metadata),
+		}),
+	);
+}
+
+/**
+ * Start the configured workflow for an `@claude` comment, or explain why not.
+ *
+ * The order is the policy and it is chosen so that the cheapest refusals come
+ * first: the flag, then the payload, then the budget, then GitHub. An arbitrary
+ * comment on a busy repository is dropped before it costs an API call, and the
+ * first thing that *can* cost one — the actor's permission lookup — is behind a
+ * per-repository budget.
+ *
+ * Every exit before {@link CommentDispatchHooks.beforeDispatch} leaves the
+ * delivery retryable, and everything from there on does not. See
+ * `#utils/comment-dispatch` for why the ambiguous case resolves that way.
+ */
+async function handleIssueComment(
+	c: AppContext,
+	delivery: WebhookDelivery,
+	authorization: WebhookAuthorization | undefined,
+): Promise<Response> {
+	const requestId = c.get("requestId");
+
+	const acknowledged = (reason: string) =>
+		c.json({ ...acknowledgement(delivery, authorization, { duplicate: false }), skipped: reason }, HTTP.Accepted);
+
+	if (!commentDispatchEnabled(c.env)) {
+		// Not merely "did not dispatch": no GitHub call is made at all, which is
+		// what makes an upgraded deployment that has not granted `Actions: write`
+		// behave exactly as it did before. Deliberately *before* the payload is
+		// read, so a deployment with the feature off does no work per comment.
+		return acknowledged("dispatch_disabled");
+	}
+
+	const plan = planCommentDispatch(c.get("webhookPayload"));
+	if (!plan.act) {
+		// Deterministic no-ops, every one of them: an edit rather than a new
+		// comment, no trigger phrase, a bot, an unreadable payload. A redelivery
+		// reaches the same answer, so the id stays spent. At debug for the two that
+		// are the overwhelming majority of deliveries on a busy repository — a
+		// comment with no phrase in it is not an event, it is the weather.
+		const routine = plan.reason === "no_trigger_phrase" || plan.reason === "not_created";
+		const line = { requestId, delivery: delivery.id, reason: plan.reason, repository: authorization?.repository };
+		if (routine) {
+			logger.debug("Comment delivery is not a request", line);
+		} else {
+			logger.info("Comment delivery will not be dispatched", line);
+		}
+
+		// Two of these earn a row, and the volume argument is what decides which.
+		// `actor_is_not_human` only fires on a comment that *does* invoke the
+		// phrase — which is the App recognising its own completion comment, or an
+		// integration posting under somebody's name — and `unreadable_actor` is a
+		// `sender` disagreeing with `comment.user`, which a real
+		// `issue_comment.created` never produces. Both are rare by construction and
+		// both are the security-significant ones. The rest are weather: a comment
+		// with no phrase in it is not an event, and a row per one of those would be
+		// a D1 write per comment on the repository.
+		if (plan.reason === "actor_is_not_human" || plan.reason === "unreadable_actor") {
+			await auditDispatch(c, authorization, false, "AUTH_SUBJECT_UNTRUSTED", { reason: plan.reason });
+		}
+
+		return acknowledged(plan.reason);
+	}
+
+	const client = RepositoryClient.forAuthorization(c.env, authorization);
+	if (client === null) {
+		// An `issue_comment` always names a repository, so reaching this means the
+		// grant was not a repository-scoped one — refused upstream — and there is
+		// nothing an operator can redeliver into.
+		logger.warn("Comment delivery has no repository to act on", { requestId, delivery: delivery.id });
+		return acknowledged("not_repository_scope");
+	}
+
+	// Non-null: `forAuthorization` returns a client only at `repository` scope.
+	const grant = authorization as WebhookAuthorization;
+
+	let target: DispatchTarget;
+	try {
+		target = requireDispatchTarget(c.env);
+	} catch (error) {
+		// An operator switched the flag on and did not say what to dispatch. Named
+		// in the log and never in the body, the same posture as the webhook secret
+		// guard; retryable, because setting the two vars and redelivering is
+		// exactly the recovery.
+		retryable(c);
+		logger.error("Comment dispatch is enabled but not configured", error, { requestId, delivery: delivery.id });
+		await auditDispatch(c, grant, false, "INTERNAL_ERROR", { reason: "misconfigured" });
+		return c.json({ error: "Service is misconfigured", code: "SERVICE_MISCONFIGURED" }, HTTP.InternalServerError);
+	}
+
+	const identity = dispatchBudgetIdentity(grant);
+
+	const deliveryId = delivery.id;
+
+	let result: CommentDispatchResult;
+	try {
+		result = await dispatchCommentRequest(client, target, plan.plan, deliveryId ?? "unknown", {
+			reserveBudget: () => spendBudget(c, identity, DISPATCH_LIMIT, 1),
+			// The irreversible boundary, and it is a *durable write* rather than a
+			// decision to write later. There is no idempotency key on the dispatch
+			// endpoint, so an isolate that died between the POST and the replay
+			// guard's `finally` would leave a reservation that lapses in five
+			// minutes and a redelivery that starts a second agent session. Holding
+			// the id here closes that window: the ledger has the delivery for the
+			// full retention window from the moment the request leaves.
+			//
+			// The context flag is set as well, and it is set *after* the write. It
+			// is what the guard reads to decide commit-or-release, and a flag set
+			// before a write that did not happen would say the delivery was spent
+			// when nothing had recorded it.
+			beforeDispatch: async () => {
+				if (deliveryId === null) {
+					// Unreachable behind `webhookReplayGuard`, which refuses a delivery
+					// with no usable id before any handler runs. Present so that a
+					// change to the mounting cannot dispatch onto a ledger key that
+					// every id-less delivery would share.
+					logger.error("Comment dispatch reached the irreversible boundary with no delivery id", { requestId });
+					return "unavailable";
+				}
+
+				try {
+					await holdDelivery(c.env, deliveryId);
+				} catch (error) {
+					// Fail closed, and nothing has left: the dispatch is refused and the
+					// delivery stays retryable, which is the same posture the guard
+					// itself takes when the ledger cannot be reached.
+					logger.error("Delivery ledger could not hold a delivery before dispatching", error, {
+						requestId,
+						delivery: deliveryId,
+						repository: grant.repository,
+					});
+					return "unavailable";
+				}
+
+				c.set("webhookRetryable", false);
+				return "held";
+			},
+		});
+	} catch (error) {
+		// Anything `dispatchCommentRequest` did not model. It reports its own
+		// failures with a `retryable` flag, so reaching here means something
+		// unexpected went wrong at an unknown point; the delivery is left
+		// committed, which is the direction that cannot start two runs.
+		logger.error("Comment dispatch failed unexpectedly", error, {
+			requestId,
+			delivery: delivery.id,
+			repository: grant.repository,
+		});
+		await auditDispatch(c, grant, false, "INTERNAL_ERROR", { reason: "unexpected_error" });
+		return c.json({ error: "Internal server error", code: "INTERNAL_ERROR" }, HTTP.InternalServerError);
+	}
+
+	if (result.outcome === "dispatched") {
+		logger.info("Dispatched a workflow for a comment", {
+			requestId,
+			delivery: delivery.id,
+			repository: grant.repository,
+			workflow: result.workflow,
+			ref: result.ref,
+			issue: result.plan.issueNumber,
+			comment: result.plan.commentId,
+			actor: result.plan.actor,
+		});
+		await auditDispatch(c, grant, true, null, {
+			workflow: result.workflow,
+			ref: result.ref,
+			issue: result.plan.issueNumber,
+			comment: result.plan.commentId,
+			actor: result.plan.actor,
+			pullRequest: result.plan.isPullRequest,
+		});
+		return c.json(
+			{ ...acknowledgement(delivery, authorization, { duplicate: false }), handled: true, dispatched: true },
+			HTTP.OK,
+		);
+	}
+
+	if (result.outcome === "skipped") {
+		// `actor_not_permitted`, and today only that. Audited as a failure with
+		// `AUTH_SUBJECT_UNTRUSTED` rather than logged and forgotten: somebody who
+		// may read this repository asked it to run something, and that is the
+		// record worth keeping. The reply says nothing about *why*, which would
+		// otherwise be a way to probe who holds write access here.
+		if (result.retryable) {
+			retryable(c);
+		}
+		logger.warn("Comment delivery was not authorized to dispatch", {
+			requestId,
+			delivery: delivery.id,
+			repository: grant.repository,
+			reason: result.reason,
+			detail: result.detail,
+			actor: plan.plan.actor,
+		});
+		await auditDispatch(c, grant, false, "AUTH_SUBJECT_UNTRUSTED", {
+			reason: result.reason,
+			// Which shape of refusal. `not_a_collaborator` is an outsider on a
+			// repository the App can still see; `insufficient_permission` is somebody
+			// with read or triage. Neither is `repository_not_visible`, which never
+			// reaches this branch because it is not a settled answer.
+			detail: result.detail,
+			actor: plan.plan.actor,
+			issue: plan.plan.issueNumber,
+			comment: plan.plan.commentId,
+		});
+		return acknowledged(result.reason);
+	}
+
+	// Failed. `retryable` is the only thing that decides whether the delivery
+	// goes back, and it is decided where the knowledge is — see
+	// `#utils/comment-dispatch`.
+	if (result.retryable) {
+		retryable(c);
+	}
+
+	logger.error("Comment dispatch failed", {
+		requestId,
+		delivery: delivery.id,
+		repository: grant.repository,
+		reason: result.reason,
+		detail: result.detail,
+		status: result.status,
+		retryable: result.retryable,
+		actor: plan.plan.actor,
+	});
+	await auditDispatch(c, grant, false, result.reason === "rate_limited" ? "RATE_LIMITED" : "INTERNAL_ERROR", {
+		reason: result.reason,
+		// `repository_not_visible` lands here, and it is the row that says the
+		// problem is the installation rather than the commenter — the distinction
+		// a bare 404 on the collaborator endpoint cannot express.
+		detail: result.detail,
+		status: result.status,
+		retryable: result.retryable,
+		actor: plan.plan.actor,
+		issue: plan.plan.issueNumber,
+		comment: plan.plan.commentId,
+	});
+
+	if (result.reason === "rate_limited") {
+		return c.json(
+			{ error: "Comment dispatch is over budget", code: "RATE_LIMITED", retryAfter: 60 },
+			HTTP.TooManyRequests,
+		);
+	}
+
+	return c.json({ error: "Comment dispatch failed", code: "INTERNAL_ERROR" }, HTTP.InternalServerError);
+}
+
+/**
  * Handle a verified, authorized, first-time delivery.
  *
  * Everything interesting about *trust* has already happened by the time this
@@ -602,6 +943,10 @@ app.post("/webhook", async (c) => {
 
 	if (delivery.event === "push") {
 		return await handlePush(c as AppContext, delivery, authorization);
+	}
+
+	if (delivery.event === "issue_comment") {
+		return await handleIssueComment(c as AppContext, delivery, authorization);
 	}
 
 	// At info, not debug: for an event nothing acts on, this is the only record

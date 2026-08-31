@@ -1,5 +1,5 @@
 /**
- * The ledger of webhook delivery ids, in two phases.
+ * The ledger of webhook delivery ids, in three phases.
  *
  * Why a Durable Object and not KV or D1 is argued in `#utils/webhook-replay`;
  * the short version is that the only interesting case is two copies of one
@@ -11,7 +11,7 @@
  * reaper has not reached them — the expiry stored in the value is what decides,
  * so a lagging sweep can waste storage but can never waste a refusal.
  *
- * ### Why two phases and not one
+ * ### Why more than one phase
  *
  * A single-phase claim is consumed the instant a delivery is accepted and is
  * never given back, which makes every failure permanent: a handler that fails
@@ -26,6 +26,11 @@
  *   under `blockConcurrencyWhile`, which is what keeps simultaneous copies to
  *   one winner. A reservation is short-lived: it expires on its own, so a
  *   handler whose isolate died does not hold an id hostage.
+ * - **Held** by {@link WebhookDeliveries.settle} immediately *before* an
+ *   irreversible request leaves. This is the phase that makes at-most-once
+ *   independent of the handler surviving: the retention window starts when the
+ *   request is sent rather than when the answer comes back, so a process that
+ *   dies mid-flight still leaves the id spent.
  * - **Committed** by {@link WebhookDeliveries.settle} once the delivery has
  *   caused something irreversible. A committed record lasts the full retention
  *   window and is what makes a replay a no-op. It is written whether or not the
@@ -33,10 +38,11 @@
  *   record instead, because the alternative is an irreversible action nothing
  *   remembers.
  *
- * And one way back: {@link WebhookDeliveries.release} drops a reservation that
- * caused nothing, so a redelivery is a genuine retry. Release refuses to touch
- * a committed record — that direction is one-way on purpose, because it is the
- * direction that would let a second arrival un-say the first one's action.
+ * And one way back: release drops a record that caused nothing — a reservation,
+ * or a hold whose request came back as a definite refusal — so a redelivery is
+ * a genuine retry. Release refuses to touch a *committed* record, and that
+ * direction stays one-way on purpose, because it is the direction that would
+ * let a second arrival un-say the first one's action.
  */
 
 import { HTTP, MediaType } from "#types";
@@ -57,6 +63,15 @@ interface DeliveryRecord {
 	 * fact about the world and is never removed before its retention elapses.
 	 */
 	committed: boolean;
+	/**
+	 * Whether an irreversible request is *in flight* for this delivery.
+	 *
+	 * Set by {@link WebhookDeliveries.settle}'s hold phase, before the request
+	 * leaves, and it is what makes the retention window start at that moment
+	 * rather than when the handler comes back. Absent on records written before
+	 * the phase existed, so it is read as `=== true` rather than trusted.
+	 */
+	held?: boolean;
 }
 
 export class WebhookDeliveries implements DurableObject {
@@ -85,7 +100,7 @@ export class WebhookDeliveries implements DurableObject {
 		try {
 			const operation = url.pathname;
 
-			if (operation !== "/reserve" && operation !== "/commit" && operation !== "/release") {
+			if (operation !== "/reserve" && operation !== "/commit" && operation !== "/hold" && operation !== "/release") {
 				return new Response("Not found", { status: HTTP.NotFound });
 			}
 
@@ -110,7 +125,7 @@ export class WebhookDeliveries implements DurableObject {
 				return await this.reserve(id);
 			}
 
-			return await this.settle(id, operation === "/commit");
+			return await this.settle(id, operation === "/commit" ? "commit" : operation === "/hold" ? "hold" : "release");
 		} catch (error) {
 			// The end of the line, as in `RateLimiter.fetch`: nothing above this
 			// catches a fault from inside a Durable Object, so it is reported here or
@@ -185,16 +200,22 @@ export class WebhookDeliveries implements DurableObject {
 			// after its window starts a fresh one, which is the same thing that would
 			// have happened had the reaper got to it first. The two must not differ.
 			if (existing && existing.expiresAt > now) {
-				return { reserved: false, firstSeen: existing.firstSeen, committed: existing.committed };
+				return {
+					reserved: false,
+					firstSeen: existing.firstSeen,
+					committed: existing.committed,
+					held: existing.held === true,
+				};
 			}
 
 			await this.state.storage.put<DeliveryRecord>(key, {
 				firstSeen: now,
 				expiresAt: now + DELIVERY_RESERVATION_MS,
 				committed: false,
+				held: false,
 			});
 
-			return { reserved: true, firstSeen: now, committed: false };
+			return { reserved: true, firstSeen: now, committed: false, held: false };
 		});
 
 		// Outside the critical section: arming the reaper is not part of the
@@ -209,43 +230,60 @@ export class WebhookDeliveries implements DurableObject {
 	}
 
 	/**
-	 * Finish with `id`: keep it for the retention window, or give it back.
+	 * Move `id` on: hold it, commit it, or give it back.
 	 *
-	 * `commit` extends the record to the full retention window and marks it
-	 * irreversible. `release` deletes it, so a redelivery is a real retry.
+	 * `hold` and `commit` both extend the record to the full retention window;
+	 * `release` deletes it, so a redelivery is a real retry.
 	 *
-	 * Release will not touch a committed record. That asymmetry is the point: a
-	 * committed record is a statement that something happened in a repository, and
-	 * a later request able to erase it could make a replay act a second time. There
-	 * is no code path from committed back to absent except the retention window
-	 * elapsing.
+	 * ### Why there are three phases and not two
 	 *
-	 * ### An absent record means opposite things on the two paths
+	 * A reservation lasts {@link DELIVERY_RESERVATION_MS} and a handler that dies
+	 * mid-request gives it back by lapsing. That is the right default — a crashed
+	 * request usually caused nothing — and it is wrong for the instant a handler
+	 * is *about to* do something irreversible that has no idempotency key, which
+	 * is what dispatching a workflow is. Between "reserved, and a crash means
+	 * nothing happened" and "committed, and nothing may ever reopen it" there is
+	 * a real third state: **an irreversible request is in flight, and if this
+	 * process disappears the delivery must stay spent.**
 	 *
-	 * A reservation lapses on its own after {@link DELIVERY_RESERVATION_MS}, so a
-	 * handler can outlive its own reservation and arrive here with nothing to
-	 * settle. What that means depends entirely on which way it was going.
+	 * `hold` is that state. It is durable before the request leaves, so the
+	 * at-most-once guarantee does not depend on the handler surviving long enough
+	 * to settle; and it is still `committed: false`, so the one party that can
+	 * ever learn the request definitely did nothing — the handler that made it,
+	 * which is also the only request holding the reservation — may release it.
+	 *
+	 * That asymmetry is deliberate and it is narrower than reopening a committed
+	 * record would be. There is still **no path from committed back to absent**
+	 * except the retention window elapsing: a committed record is a statement
+	 * that something happened in a repository, and a later request able to erase
+	 * it could make a replay act a second time. A held record says only that
+	 * something was *attempted*.
+	 *
+	 * ### An absent record means opposite things on the phases
+	 *
+	 * A reservation lapses on its own, so a handler can outlive its own
+	 * reservation and arrive here with nothing to settle. What that means depends
+	 * entirely on which way it was going.
 	 *
 	 * On **release** it means nothing: the delivery caused nothing, the record is
 	 * already gone, and gone is where release was taking it. Reported and dropped.
 	 *
-	 * On **commit** it is the one state this ledger exists to prevent. The caller
-	 * only commits once something irreversible has happened — a branch has moved —
-	 * and answering "absent, nothing written" would leave that fact recorded
-	 * nowhere, so the operator's redelivery would be handled as a first arrival
-	 * and force-update the branch a second time. So commit **writes the record it
-	 * did not find**, for the full retention window, and reports that it had to.
-	 * `firstSeen` is the write itself: the original reservation's timestamp went
-	 * with the record that lapsed, and inventing an earlier one would misdate the
-	 * only evidence of what happened.
+	 * On **commit** and on **hold** it is the one state this ledger exists to
+	 * prevent. The caller only reaches either once something irreversible has
+	 * happened or is about to — a branch has moved, a dispatch is leaving — and
+	 * answering "absent, nothing written" would leave that fact recorded nowhere,
+	 * so the operator's redelivery would be handled as a first arrival and do it
+	 * again. So both **write the record they did not find**, for the full
+	 * retention window, and report that they had to. `firstSeen` is the write
+	 * itself: the original reservation's timestamp went with the record that
+	 * lapsed, and inventing an earlier one would misdate the only evidence of
+	 * what happened.
 	 *
-	 * This is the module's "absent means committed" principle applied to the
-	 * ledger's own storage rather than only to the handler's flag. Nothing else
-	 * covers it: the object-graph defence in `#utils/github-push` would also stop
-	 * the second rewrite, and a ledger that quietly stopped recording would then
-	 * only be discovered by whatever broke next.
+	 * A `hold` never downgrades a committed record, and a `commit` never clears a
+	 * hold. The two flags accumulate, because each is a fact about what the
+	 * delivery did and neither un-says the other.
 	 */
-	private async settle(id: string, commit: boolean): Promise<Response> {
+	private async settle(id: string, phase: "commit" | "hold" | "release"): Promise<Response> {
 		const key = `${this.keyPrefix}${id}`;
 
 		const result = await this.exclusively(async () => {
@@ -253,40 +291,51 @@ export class WebhookDeliveries implements DurableObject {
 			const now = Date.now();
 
 			if (!existing) {
-				if (!commit) {
+				if (phase === "release") {
 					return { settled: false, reason: "absent" as const };
 				}
 
 				await this.state.storage.put<DeliveryRecord>(key, {
 					firstSeen: now,
 					expiresAt: now + DELIVERY_RETENTION_MS,
-					committed: true,
+					committed: phase === "commit",
+					held: phase === "hold",
 				});
-				return { settled: true, reason: "committed_without_reservation" as const };
+				return {
+					settled: true,
+					reason:
+						phase === "commit" ? ("committed_without_reservation" as const) : ("held_without_reservation" as const),
+				};
 			}
 
-			if (commit) {
+			if (phase !== "release") {
 				await this.state.storage.put<DeliveryRecord>(key, {
 					firstSeen: existing.firstSeen,
 					expiresAt: now + DELIVERY_RETENTION_MS,
-					committed: true,
+					committed: phase === "commit" || existing.committed,
+					held: phase === "hold" || existing.held === true,
 				});
-				return { settled: true, reason: "committed" as const };
+				return { settled: true, reason: phase === "commit" ? ("committed" as const) : ("held" as const) };
 			}
 
 			if (existing.committed) {
 				return { settled: false, reason: "already_committed" as const };
 			}
 
+			// Reached by a held record as well as a reserved one, and that is the
+			// 4xx path: GitHub answered that it created nothing, so the delivery
+			// that was held a moment ago goes back and an operator's fix plus a
+			// redelivery is a real retry.
 			await this.state.storage.delete(key);
 			return { settled: true, reason: "released" as const };
 		});
 
-		// A commit can now create a record where `reserve` created none, and the
-		// reaper is only ever armed by `reserve`. Without this, a record written
-		// after the sweep emptied the ledger — which stops re-arming itself when it
-		// finds nothing — would sit there until the next unrelated reservation.
-		if (commit) {
+		// A commit or a hold can now create a record where `reserve` created none,
+		// and the reaper is only ever armed by `reserve`. Without this, a record
+		// written after the sweep emptied the ledger — which stops re-arming itself
+		// when it finds nothing — would sit there until the next unrelated
+		// reservation.
+		if (phase !== "release") {
 			await this.scheduleSweep();
 		}
 
