@@ -49,13 +49,21 @@ if [[ -f "${pending_workflow}" ]]; then
 	workflow="${pending_workflow}"
 	printf '  note: the Sign Commits workflow is still pending activation (git mv -f %s .github/workflows/sign-commits.yml)\n' \
 		'.github/workflows-pending/sign-commits.yml'
-	# The live file still names whatever it named before the move. Say so
-	# rather than assert against it: while the pending file exists, the pair is
-	# activatable and the merge that takes one has to take both.
+	# The live file still names whatever it named before the move, and that is
+	# the whole hazard: a merge that takes the deletion without the move points
+	# the live job at a file that is not there, and the failure surfaces the
+	# next time someone dispatches a signing run rather than here. So this is an
+	# assertion, not a note. It is red on the branch that removes the Python
+	# script and stays red until the `git mv` above lands in the same tree —
+	# which is exactly the atomicity the two-file split cannot otherwise
+	# enforce, since the branch that writes one of them cannot write the other.
 	live_names="$(names_script "${live_workflow}")"
 	if [[ -n "${live_names}" && ! -x "${repo_root}/${live_names}" ]]; then
-		printf '  note: .github/workflows/sign-commits.yml still runs %s, which this branch removed — the move above must land in the same merge\n' \
-			"${live_names}"
+		printf 'FAIL: .github/workflows/sign-commits.yml still runs %s, which is not in this tree.\n' \
+			"${live_names}" >&2
+		printf '      The deletion and the activation have to land in the same merge. Activate with:\n' >&2
+		printf '        git mv -f .github/workflows-pending/sign-commits.yml .github/workflows/sign-commits.yml\n' >&2
+		exit 1
 	fi
 elif [[ -f "${live_workflow}" ]]; then
 	workflow="${live_workflow}"
