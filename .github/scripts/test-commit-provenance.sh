@@ -111,3 +111,41 @@ refuses 'a range git cannot resolve' 'could not resolve the revision range' \
 	'refs/heads/never-existed..HEAD'
 
 printf 'commit provenance guard: all cases passed\n'
+
+# --- the wiring ---------------------------------------------------------------
+#
+# A guard nothing calls is not a guard. It is wired into .github/workflows/ci.yml
+# as a job, and a GitHub App token cannot write under .github/workflows/ — the
+# push is rejected outright and takes the whole push with it — so the job
+# arrives as a patch a human applies:
+#
+#   git apply .github/workflows-pending/ci-provenance-job.patch
+#   git rm .github/workflows-pending/ci-provenance-job.patch
+#
+# Resolved PATCH-first, the same way the pending workflow files are. While the
+# patch exists the job is not in CI yet and this says so; once it is applied and
+# the patch removed, the check below becomes a standing assertion that CI still
+# calls the guard.
+patch="${repo_root}/.github/workflows-pending/ci-provenance-job.patch"
+ci_workflow="${repo_root}/.github/workflows/ci.yml"
+
+if [[ -f "${patch}" ]]; then
+	printf '  note: the CI provenance job is still pending (git apply %s)\n' \
+		'.github/workflows-pending/ci-provenance-job.patch'
+	# A patch that no longer applies is worse than no patch: it is a job
+	# everyone believes is one command away.
+	if ! git -C "${repo_root}" apply --check "${patch}" 2>/dev/null; then
+		printf 'FAIL: %s no longer applies to .github/workflows/ci.yml\n' \
+			'.github/workflows-pending/ci-provenance-job.patch' >&2
+		exit 1
+	fi
+	if ! grep -Fq 'check-commit-provenance.sh' "${patch}"; then
+		printf 'FAIL: the pending patch does not call check-commit-provenance.sh\n' >&2
+		exit 1
+	fi
+elif ! grep -Fq 'check-commit-provenance.sh' "${ci_workflow}"; then
+	printf 'FAIL: .github/workflows/ci.yml does not call check-commit-provenance.sh, and no pending patch adds it\n' >&2
+	exit 1
+fi
+
+printf 'commit provenance guard: wired\n'
