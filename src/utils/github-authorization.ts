@@ -110,6 +110,16 @@ interface AllowlistEntry {
 const OWNER_SEGMENT = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})";
 
 /**
+ * The same rule, anchored, for validating a login on its own.
+ *
+ * An owner and a comment author are the same kind of name, so they get the same
+ * test rather than a second one written next to it — a parallel pattern is a
+ * pattern that can be relaxed in one place. `#utils/comment-dispatch` uses this
+ * on a login that reaches a URL path.
+ */
+export const LOGIN_PATTERN = new RegExp(`^${OWNER_SEGMENT}$`);
+
+/**
  * A repository name, which is not the same shape as an owner.
  *
  * A repository *may* begin with `.`, `_` or `-`: `owner/.github` is the

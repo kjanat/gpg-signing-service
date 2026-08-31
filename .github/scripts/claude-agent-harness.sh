@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Turn one of the four @claude trigger events into one context file and one
-# ref that is safe to write, or refuse to run.
+# Turn one of the @claude trigger events into one context file and one ref that
+# is safe to write, or refuse to run.
 #
 # Called by .github/workflows/claude.yml. It exists because that workflow runs
 # claude-code-action in *agent* mode: supplying `prompt:` makes the action skip
@@ -23,9 +23,28 @@
 # that is the default branch all exit non-zero with an annotation, because the
 # alternative is a job that quietly writes somewhere nobody asked it to.
 #
+# One of those events does not come from GitHub's own trigger. `issue_comment`
+# is delivered to the signing service's GitHub App webhook, which authenticates
+# it, authorizes the <installation, repository> pair, authorizes the comment's
+# AUTHOR against that repository's collaborator permissions, and only then
+# starts this workflow with `workflow_dispatch`. See docs/github-app.md.
+#
+# That path needs two things the native events do not:
+#
+#   * The comment is FETCHED here, from the id it was handed. It is never passed
+#     through a workflow input, because an input is one `${{ }}` away from a
+#     command line and a comment body is written by whoever felt like it.
+#   * The authorization subject is the comment's author, not GITHUB_ACTOR.
+#     GITHUB_ACTOR on a dispatched run is the App that dispatched it, so the
+#     owner test below would either pass for the wrong reason or refuse every
+#     dispatch. The author's permission is asked of GitHub instead, and the
+#     service asks the same question independently before it dispatches at all.
+#     Two checks either side of one hop, because the hop is what would otherwise
+#     have to be trusted.
+#
 #   usage:  claude-agent-harness.sh
 #
-#   env:    GITHUB_EVENT_NAME       one of the four supported events
+#   env:    GITHUB_EVENT_NAME       one of the supported events
 #           GITHUB_EVENT_PATH       the webhook payload
 #           GITHUB_REPOSITORY       owner/repo
 #           GITHUB_REPOSITORY_OWNER the owner half; the authorization subject
@@ -92,7 +111,14 @@ if [[ -z "${repository_owner}" ]]; then
 	refuse 'missing environment' 'GITHUB_REPOSITORY_OWNER is not set; refusing to run without an authorization subject'
 fi
 
-if [[ "${actor}" != "${repository_owner}" ]]; then
+# `workflow_dispatch` is exempt from the owner test and from nothing else. The
+# actor on a dispatched run is the App that dispatched it, so comparing it to
+# the owner would refuse every dispatch while proving nothing about who asked.
+# The subject there is the comment's author, established from GitHub inside the
+# case below and required to hold write or admin — which is a strictly stronger
+# statement than "the login in this environment variable is the owner", because
+# it is answered by GitHub about the repository rather than read out of the run.
+if [[ "${event_name}" != 'workflow_dispatch' && "${actor}" != "${repository_owner}" ]]; then
 	refuse 'actor is not the repository owner' \
 		"This harness grants contents: write, id-token: write, repository secrets and" \
 		"unrestricted Bash, so only ${repository_owner} may start it. Actor was ${actor}." \
@@ -116,6 +142,9 @@ request_body=''
 request_url=''
 request_author=''
 review_location=''
+dispatch_issue=''
+dispatch_comment=''
+dispatch_requester=''
 # What the trigger phrase is searched in. It is the request body for every
 # event except `issues`, where the workflow condition also accepts the phrase
 # in the title — see the check below.
@@ -152,6 +181,88 @@ case "${event_name}" in
 		request_url="$(payload '.comment.html_url')"
 		request_author="$(payload '.comment.user.login')"
 		;;
+	workflow_dispatch)
+		# Dispatched by the signing service's GitHub App for an issue or pull
+		# request comment. Everything about the request is fetched, and every
+		# fetched fact is checked against the input that claimed it — an input is
+		# a claim by the caller, and the two agreeing is what makes it evidence.
+		dispatch_issue="$(payload '.inputs.issue_number')"
+		dispatch_comment="$(payload '.inputs.comment_id')"
+		dispatch_requester="$(payload '.inputs.requested_by')"
+
+		if [[ ! "${dispatch_issue}" =~ ^[0-9]+$ || ! "${dispatch_comment}" =~ ^[0-9]+$ ]]; then
+			refuse 'unusable dispatch inputs' \
+				"issue_number and comment_id must both be digits (got '${dispatch_issue}' and '${dispatch_comment}')."
+		fi
+
+		# The login reaches a URL path. GitHub's own rule, so a login this refuses
+		# is not a login.
+		if [[ ! "${dispatch_requester}" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}$ ]]; then
+			refuse 'unusable dispatch inputs' \
+				"requested_by is not a GitHub login (got '${dispatch_requester}')."
+		fi
+
+		# THE TRUST BOUNDARY on this path, and the reason it is asked here rather
+		# than inherited: the service asked the same question before dispatching,
+		# and a second answer from the same authority is what makes the dispatch
+		# hop itself untrusted. A permission that cannot be established refuses;
+		# it is never read as "no permission, carry on".
+		dispatch_permission="$("${gh_bin}" api \
+			"repos/${repository}/collaborators/${dispatch_requester}/permission" --jq '.permission' 2>/dev/null)" \
+			|| refuse 'permission lookup failed' \
+				"Could not read ${dispatch_requester}'s permission on ${repository}." \
+				'The job needs a token that can read collaborator permissions. Refusing rather' \
+				'than assuming, because this is the check that decides who may spend this job.'
+
+		case "${dispatch_permission}" in
+			admin | write) ;;
+			*)
+				refuse 'requester may not start this harness' \
+					"${dispatch_requester} holds '${dispatch_permission:-none}' on ${repository}, not write or admin." \
+					'This job holds contents: write, id-token: write and every repository secret.' \
+					'A read-only collaborator commenting @claude must not be able to spend it.'
+				;;
+		esac
+
+		comment_json="$("${gh_bin}" api "repos/${repository}/issues/comments/${dispatch_comment}" 2>/dev/null)" \
+			|| refuse 'comment lookup failed' \
+				"Could not read repos/${repository}/issues/comments/${dispatch_comment}."
+
+		issue_json="$("${gh_bin}" api "repos/${repository}/issues/${dispatch_issue}" 2>/dev/null)" \
+			|| refuse 'issue lookup failed' \
+				"Could not read repos/${repository}/issues/${dispatch_issue}."
+
+		# The comment must belong to the entity the dispatch named. Without this a
+		# dispatch could pair any comment with any issue, and the session would be
+		# handed one entity's instruction while writing to another's branch.
+		comment_issue="$(jq -r '.issue_url // empty' <<<"${comment_json}" | sed -E 's#.*/issues/##')"
+		if [[ "${comment_issue}" != "${dispatch_issue}" ]]; then
+			refuse 'dispatch inputs disagree' \
+				"Comment ${dispatch_comment} belongs to issue ${comment_issue:-unknown}, not ${dispatch_issue}."
+		fi
+
+		# And it must have been written by the account whose permission was just
+		# checked. Otherwise the permission check authorizes one person and the
+		# instruction comes from another.
+		request_author="$(jq -r '.user.login // empty' <<<"${comment_json}")"
+		if [[ "${request_author,,}" != "${dispatch_requester,,}" ]]; then
+			refuse 'dispatch inputs disagree' \
+				"Comment ${dispatch_comment} was written by ${request_author:-unknown}, not ${dispatch_requester}."
+		fi
+
+		if jq -e '.pull_request' >/dev/null 2>&1 <<<"${issue_json}"; then
+			entity_kind='pull_request'
+			request_kind='pull request comment'
+		else
+			entity_kind='issue'
+			request_kind='issue comment'
+		fi
+		entity_number="${dispatch_issue}"
+		entity_title="$(jq -r '.title // empty' <<<"${issue_json}")"
+		entity_url="$(jq -r '.html_url // empty' <<<"${issue_json}")"
+		request_body="$(jq -r '.body // empty' <<<"${comment_json}")"
+		request_url="$(jq -r '.html_url // empty' <<<"${comment_json}")"
+		;;
 	pull_request_review_comment)
 		entity_kind='pull_request'
 		entity_number="$(payload '.pull_request.number')"
@@ -178,7 +289,7 @@ case "${event_name}" in
 		;;
 	*)
 		refuse 'unsupported event' \
-			"${event_name} is not one of issue_comment, pull_request_review_comment, pull_request_review, issues." \
+			"${event_name} is not one of workflow_dispatch, issue_comment, pull_request_review_comment, pull_request_review, issues." \
 			'Add it to the case in this script and to the workflow trigger together, or not at all.'
 		;;
 esac
@@ -206,10 +317,12 @@ request_author="$(sanitize_cell "${request_author}")"
 # problem.
 entity_title="$(printf '%s' "${entity_title}" | tr '\r\n\t' '   ')"
 
-# The workflow condition already tested for the trigger phrase. Repeating it
-# guards the case the condition cannot see: a payload that reached this step by
-# some other route (workflow_dispatch during debugging, a re-run against an
-# edited event) is not a request anybody made.
+# The workflow condition already tested for the trigger phrase on the native
+# events. Repeating it guards the case the condition cannot see, which is now
+# the ordinary case rather than a debugging one: on `workflow_dispatch` the
+# condition has no comment to look at, so THIS is the only check that the
+# fetched comment is a request at all. A dispatch naming a comment that never
+# invoked the phrase gets no session.
 if ! grep -qiF -- "${trigger_phrase}" <<<"${trigger_text:-${request_body}}"; then
 	refuse 'no trigger phrase' \
 		"The ${request_kind} does not contain ${trigger_phrase}, so there is no request to act on." \
@@ -232,6 +345,8 @@ valid_branch() {
 	[[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] && [[ "$1" != *".."* ]] && [[ "$1" != *"//"* ]]
 }
 
+# Present on every payload GitHub sends, `workflow_dispatch` included. The
+# fallback is for a hand-built payload in a test, not for a real delivery.
 default_branch="$(jq -r '.repository.default_branch // "master"' "${event_path}")"
 readonly default_branch
 if ! valid_branch "${default_branch}"; then
@@ -400,6 +515,9 @@ done
 	printf '| field | value |\n| --- | --- |\n'
 	printf '| repository | `%s` |\n' "${repository}"
 	printf '| event | `%s` |\n' "${event_name}"
+	if [[ -n "${dispatch_requester}" ]]; then
+		printf '| dispatched for | @%s (write or admin on this repository) |\n' "$(sanitize_cell "${dispatch_requester}")"
+	fi
 	printf '| request kind | %s |\n' "${request_kind}"
 	printf '| %s | [#%s](%s) |\n' "${entity_kind}" "${entity_number}" "${entity_url}"
 	printf '| requested by | @%s |\n' "${request_author}"

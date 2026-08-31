@@ -261,6 +261,117 @@ describe("the ledger", () => {
 		expect(DELIVERY_RETENTION_MS).toBeGreaterThan(3 * 24 * 60 * 60 * 1000);
 	});
 
+	it("holds an id for the retention window without committing it", async () => {
+		// The phase the dispatch path takes *before* its request leaves. Durable and
+		// retention-length, so an isolate that never runs again still leaves the id
+		// spent — which is the whole difference from a reservation, and the reason
+		// the expiry is asserted against the constant rather than against "longer
+		// than a moment".
+		const id = crypto.randomUUID();
+		const stub = ledger("holding");
+
+		await stub.fetch(`http://internal/reserve?id=${id}`, { method: "POST" });
+		const held = await stub.fetch(`http://internal/hold?id=${id}`, { method: "POST" });
+
+		expect(await held.json()).toMatchObject({ settled: true, reason: "held" });
+
+		const record = await runInDurableObject(stub, async (_instance: WebhookDeliveries, state) =>
+			state.storage.get<{ expiresAt: number; committed: boolean; held: boolean }>(`d:${id}`),
+		);
+
+		expect(record?.committed).toBe(false);
+		expect(record?.held).toBe(true);
+		expect(record?.expiresAt).toBeGreaterThan(Date.now() + DELIVERY_RETENTION_MS - 60_000);
+	});
+
+	it("refuses a redelivery of a held id, and says which kind of repeat it is", async () => {
+		// What a process that died after its dispatch left behind. The second
+		// arrival is a duplicate — at-most-once holds without the first handler ever
+		// having come back — and it reports `held` rather than `committed`, because
+		// "sent something and vanished" and "finished" are different lines in a log.
+		const id = crypto.randomUUID();
+		const stub = ledger("deliveries");
+
+		await reserveDelivery(env, id);
+		await stub.fetch(`http://internal/hold?id=${id}`, { method: "POST" });
+
+		const again = await reserveDelivery(env, id);
+
+		expect(again.reserved).toBe(false);
+		expect(again.held).toBe(true);
+		expect(again.committed).toBe(false);
+	});
+
+	it("hands a held id back when it is released", async () => {
+		// The 4xx path. A hold is releasable and a commit is not, which is the only
+		// reason it is a separate phase: GitHub stating it created nothing is an
+		// answer worth acting on, and an operator's fix plus a redelivery has to be
+		// a real retry.
+		const id = crypto.randomUUID();
+		const stub = ledger("release-held");
+
+		await stub.fetch(`http://internal/reserve?id=${id}`, { method: "POST" });
+		await stub.fetch(`http://internal/hold?id=${id}`, { method: "POST" });
+		const released = await stub.fetch(`http://internal/release?id=${id}`, { method: "POST" });
+
+		expect(await released.json()).toMatchObject({ settled: true, reason: "released" });
+		const record = await runInDurableObject(stub, async (_instance: WebhookDeliveries, state) =>
+			state.storage.get(`d:${id}`),
+		);
+		expect(record).toBeUndefined();
+	});
+
+	it("will not release a committed id, however it got there", async () => {
+		// The asymmetry that makes the hold safe to add. There is still no path from
+		// committed back to absent except the retention window elapsing — a
+		// committed record is a statement that something happened in a repository,
+		// and a later arrival able to erase it could make a replay act again.
+		const id = crypto.randomUUID();
+		const stub = ledger("no-uncommit");
+
+		await stub.fetch(`http://internal/reserve?id=${id}`, { method: "POST" });
+		await stub.fetch(`http://internal/hold?id=${id}`, { method: "POST" });
+		await stub.fetch(`http://internal/commit?id=${id}`, { method: "POST" });
+		const released = await stub.fetch(`http://internal/release?id=${id}`, { method: "POST" });
+
+		expect(await released.json()).toMatchObject({ settled: false, reason: "already_committed" });
+		const record = await runInDurableObject(stub, async (_instance: WebhookDeliveries, state) =>
+			state.storage.get<{ committed: boolean }>(`d:${id}`),
+		);
+		expect(record?.committed).toBe(true);
+	});
+
+	it("holds an id whose reservation had already lapsed", async () => {
+		// The state that used to leave an irreversible delivery recorded nowhere,
+		// now reachable one step earlier: a handler slow enough to outrun its own
+		// reservation still has to be able to record that its request is leaving.
+		const id = crypto.randomUUID();
+		const stub = ledger("hold-lapsed");
+
+		const response = await stub.fetch(`http://internal/hold?id=${id}`, { method: "POST" });
+
+		expect(await response.json()).toMatchObject({ settled: true, reason: "held_without_reservation" });
+		const record = await runInDurableObject(stub, async (_instance: WebhookDeliveries, state) =>
+			state.storage.get<{ expiresAt: number; held: boolean }>(`d:${id}`),
+		);
+		expect(record?.held).toBe(true);
+		expect(record?.expiresAt).toBeGreaterThan(Date.now() + DELIVERY_RETENTION_MS - 60_000);
+	});
+
+	it("does not let a late hold downgrade a committed record", async () => {
+		const id = crypto.randomUUID();
+		const stub = ledger("no-downgrade");
+
+		await stub.fetch(`http://internal/reserve?id=${id}`, { method: "POST" });
+		await stub.fetch(`http://internal/commit?id=${id}`, { method: "POST" });
+		await stub.fetch(`http://internal/hold?id=${id}`, { method: "POST" });
+
+		const record = await runInDurableObject(stub, async (_instance: WebhookDeliveries, state) =>
+			state.storage.get<{ committed: boolean }>(`d:${id}`),
+		);
+		expect(record?.committed).toBe(true);
+	});
+
 	it("arms a reaper when the first id is reserved", async () => {
 		const stub = ledger("arming");
 		await stub.fetch(`http://internal/reserve?id=${crypto.randomUUID()}`, { method: "POST" });

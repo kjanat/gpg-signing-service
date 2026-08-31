@@ -413,7 +413,8 @@
           "subject_create",
           "subject_revoke",
           "push_sign",
-          "check_report"
+          "check_report",
+          "comment_dispatch"
         ]
       },
       "TokenCreatedResponse": {

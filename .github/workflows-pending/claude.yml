@@ -12,14 +12,15 @@ name: Claude Code
 # The trade is that agent mode also stops doing the trigger-time gating for us,
 # so the two halves it used to cover are explicit here instead:
 #
-#   * WHO may run    — the `if:` below. Owner only. A second copy of the same
-#                      rule lives in .github/scripts/claude-agent-harness.sh,
-#                      because GitHub withholds the `workflows` permission from
-#                      App tokens and this file therefore changes by a
-#                      different route than that one does.
-#   * WHERE it works — .github/scripts/claude-agent-harness.sh, which turns the
-#                      four events into one context file and one writable ref,
-#                      and fails the job rather than guessing.
+#   * WHO may run    — the `if:` below. Owner only on the native events. A
+#                      second copy of the same rule lives in
+#                      .github/scripts/claude-agent-harness.sh, because GitHub
+#                      withholds the `workflows` permission from App tokens and
+#                      this file therefore changes by a different route than
+#                      that one does.
+#   * WHERE it works — .github/scripts/claude-agent-harness.sh, which turns
+#                      every supported event into one context file and one
+#                      writable ref, and fails the job rather than guessing.
 #
 # See docs/claude-agent-harness.md. Tests:
 # .github/scripts/test-claude-agent-harness.sh (`task test:agent-harness`).
@@ -35,16 +36,50 @@ name: Claude Code
 # Nothing else changes: `task test:agent-harness` resolves the pending path
 # first, so its assertions already guard this file, and keeps guarding it once
 # it lands.
+#
+# `issue_comment` is DELIBERATELY ABSENT from the triggers below, and that
+# absence is load-bearing rather than an oversight. Conversation comments on
+# issues and pull requests are now delivered to the signing service's GitHub App
+# webhook, which authenticates the delivery, authorizes the
+# <installation, repository> pair, authorizes the comment's AUTHOR against the
+# repository's collaborator permissions, spends a per-repository budget, claims
+# the delivery id so a redelivery cannot start a second session — and then
+# dispatches this workflow. Subscribing to `issue_comment` here as well would
+# start two sessions for one comment: one from GitHub's own trigger and one from
+# the dispatch. Do not add it back without turning GITHUB_APP_COMMENT_DISPATCH
+# off in the same change. See docs/github-app.md.
+#
+# The other three events have no App path and are unchanged.
 on:
-  issue_comment: { types: [created] }
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: The issue or pull request the comment is on
+        required: true
+        type: string
+      comment_id:
+        description: The comment to answer. Its body is FETCHED, never passed in.
+        required: true
+        type: string
+      requested_by:
+        description: The comment's author, re-verified against this repository
+        required: true
+        type: string
+      delivery_id:
+        description: The webhook delivery this run came from, for correlation
+        required: false
+        type: string
   pull_request_review_comment: { types: [created] }
   issues: { types: [opened] }
   pull_request_review: { types: [submitted] }
 
 # Two requests on one entity would otherwise race for the same branch. Queue
 # rather than cancel: a cancelled session leaves half-finished work pushed.
+# A dispatched run carries the number as an input rather than in an entity, so
+# it has to be named first — otherwise two requests on one issue, one native and
+# one dispatched, land in different groups and race for the same branch.
 concurrency:
-  group: claude-agent-${{ github.event.issue.number || github.event.pull_request.number }}
+  group: claude-agent-${{ inputs.issue_number || github.event.issue.number || github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
@@ -58,18 +93,27 @@ jobs:
     # Each event is matched against its own field. A single `contains()` over
     # `github.event.issue.body` would fire on every comment made on an issue
     # whose body happens to mention @claude.
+    #
+    # A dispatched run is exempt here and gated harder elsewhere. GITHUB_ACTOR on
+    # one is the App that dispatched it, so `github.actor == owner` would refuse
+    # every dispatch while proving nothing about who asked; the subject is the
+    # comment's author, and it is established from GitHub twice — once by the
+    # service before it dispatches, once by the harness after — and required to
+    # hold write or admin. Dispatching at all already requires write access.
     if: >-
-      github.actor == github.repository_owner &&
-      github.event.sender.type == 'User' &&
+      github.event_name == 'workflow_dispatch' ||
       (
-        (github.event_name == 'issues' &&
-          (contains(github.event.issue.body, '@claude') ||
-           contains(github.event.issue.title, '@claude'))) ||
-        ((github.event_name == 'issue_comment' ||
-          github.event_name == 'pull_request_review_comment') &&
-          contains(github.event.comment.body, '@claude')) ||
-        (github.event_name == 'pull_request_review' &&
-          contains(github.event.review.body, '@claude'))
+        github.actor == github.repository_owner &&
+        github.event.sender.type == 'User' &&
+        (
+          (github.event_name == 'issues' &&
+            (contains(github.event.issue.body, '@claude') ||
+             contains(github.event.issue.title, '@claude'))) ||
+          (github.event_name == 'pull_request_review_comment' &&
+            contains(github.event.comment.body, '@claude')) ||
+          (github.event_name == 'pull_request_review' &&
+            contains(github.event.review.body, '@claude'))
+        )
       )
     runs-on: ubuntu-latest
     permissions: { contents: write, pull-requests: write, issues: write, id-token: write, actions: read }
@@ -80,7 +124,9 @@ jobs:
       - { uses: ./.github/actions/setup-bun, id: bun }
       - { run: runner install }
 
-      # Normalize the four events into one context file and one writable ref.
+      # Normalize the event into one context file and one writable ref. On a
+      # dispatched run this is also where the comment is fetched and its author's
+      # write access re-established — see the script's header.
       # Agent mode creates no branch of its own — `prepareAgentMode` leaves the
       # tree wherever actions/checkout put it — so without this step a session
       # triggered from an issue would edit master.

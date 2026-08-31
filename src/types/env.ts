@@ -234,6 +234,51 @@ export interface Env {
 	 * `src/utils/check-report.ts`.
 	 */
 	GITHUB_APP_CHECK_RUNS?: string;
+	/**
+	 * Optional: set to the literal `"true"` to dispatch the Claude workflow when
+	 * an issue or pull request comment invokes it.
+	 *
+	 * Its own flag, and the third one, for the reason `GITHUB_APP_CHECK_RUNS` is
+	 * the second: it needs permissions and an event subscription no earlier slice
+	 * asked for — `issue_comment` deliveries, which need `Issues: read` and
+	 * `Pull requests: read`, and `Actions: write` to dispatch. An installation
+	 * has to approve those, so an operator who upgrades without touching the App
+	 * gets no calls it has not granted rather than a 403 per comment.
+	 *
+	 * It also has a prerequisite the other flags do not: **the workflow named by
+	 * `GITHUB_APP_DISPATCH_WORKFLOW` has to accept `workflow_dispatch`, and it
+	 * must no longer subscribe to `issue_comment` itself.** One comment reaching
+	 * both entrypoints would start two sessions on one request. See
+	 * `docs/github-app.md` for the migration.
+	 */
+	GITHUB_APP_COMMENT_DISPATCH?: string;
+	/**
+	 * Optional: the workflow file this service dispatches, e.g. `claude.yml`.
+	 *
+	 * A file name, not a path and not an id: GitHub resolves it under
+	 * `.github/workflows/`, and accepting a path would let a value that looks
+	 * like configuration reach further than the directory that holds workflows.
+	 * Nothing in a payload can influence it — an operator writes it here, and a
+	 * delivery that would like a different workflow run has no field in which to
+	 * say so.
+	 *
+	 * Unset while `GITHUB_APP_COMMENT_DISPATCH` is `"true"` is a
+	 * misconfiguration, refused rather than defaulted: a default would be this
+	 * service choosing which of somebody's workflows to run.
+	 */
+	GITHUB_APP_DISPATCH_WORKFLOW?: string;
+	/**
+	 * Optional: the ref the dispatched workflow runs on, e.g. `master`.
+	 *
+	 * Operator-controlled for the same reason the workflow name is. The ref
+	 * decides which *version* of the workflow — and so which prompt, which tool
+	 * allowlist and which permissions — a comment gets to start, so a delivery
+	 * able to choose it would be able to choose the code that runs.
+	 *
+	 * Required alongside the workflow name; see above for why there is no
+	 * default.
+	 */
+	GITHUB_APP_DISPATCH_REF?: string;
 
 	/** Error tracking */
 	/**

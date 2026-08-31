@@ -55,6 +55,24 @@ export const AuditQuerySchema = z
  * and one states a verdict about it — and because a delivery can do the second
  * without doing the first, which is what happens whenever the tip is already
  * signed and there is nothing left to rewrite.
+ *
+ * `comment_dispatch` is the third, and the one that records this service
+ * spending somebody else's budget: one row per `issue_comment` delivery that got
+ * far enough to decide whether a Claude workflow run should start. Its own value
+ * rather than a metadata field on another, because it is the only act here whose
+ * effect is outside this service entirely — an Actions run with repository
+ * secrets — and "what has this service started, and at whose request" is a
+ * question that deserves to be a `WHERE action = ?` rather than a JSON scan.
+ * Rows are written for refusals too, which is the point: a comment refused for
+ * want of write access is exactly the row an operator wants to be able to find.
+ *
+ * "Far enough to decide" is doing real work in that sentence. A comment with no
+ * trigger phrase in it is not a decision, it is the weather, and a row per one
+ * would be a D1 write per comment on the repository. The two refusals that are
+ * decided before the actor lookup and *do* earn a row are `actor_is_not_human`
+ * and `unreadable_actor` — both rare by construction, both security-significant,
+ * and the first of them is this App recognising its own completion comment.
+ * `docs/github-app.md` carries the table.
  */
 export const AuditActionSchema = z
 	.enum([
@@ -67,6 +85,7 @@ export const AuditActionSchema = z
 		"subject_revoke",
 		"push_sign",
 		"check_report",
+		"comment_dispatch",
 	])
 	.openapi("AuditAction");
 

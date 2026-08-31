@@ -2,11 +2,14 @@
 
 An opt-in endpoint that lets a GitHub App deliver events to this service.
 
-**One event is acted on.** A `push` to an allowlisted repository whose grant
+**Two events are acted on.** A `push` to an allowlisted repository whose grant
 binds a signing key has the unsigned commits at its tip signed with that key,
 and the branch moved to them. A deployment that opts into it separately also
 publishes a check run saying what the resulting head's signature turned out to
-be. Every other event is acknowledged and discarded.
+be. An `issue_comment` invoking `@claude` — separately opt-in again — starts the
+configured Claude workflow, once the comment's **author** has been shown to hold
+write access to that repository. Every other event is acknowledged and
+discarded.
 
 Off by default, twice over. A deployment that has not set
 `GITHUB_APP_ENABLED="true"` answers `POST /github/webhook` exactly the way it
@@ -34,13 +37,13 @@ are separate grants, and the key suffix is the opt-in for the second one.**
 
 ## What does not
 
-Named in [#26](https://github.com/kjanat/gpg-signing-service/issues/26) and
-deliberately absent: dispatching `@claude`. It is a handler that acts, and it
-needs its own answer to the question [Two phases](#two-phases-and-where-the-line-is) settles for push signing — what, for
-that action, is the point past which nothing can be taken back.
+Only conversation comments dispatch. `pull_request_review_comment`,
+`pull_request_review` and `issues` still reach the workflow through GitHub's own
+Actions triggers; those three are not subscribed here and nothing about them
+changed.
 
-Also absent, and more likely to surprise: **an unsigned commit underneath a
-signed one is never signed.** See
+Absent, and more likely to surprise: **an unsigned commit underneath a signed
+one is never signed.** See
 [Only the unsigned run at the tip](#only-the-unsigned-run-at-the-tip).
 
 ## Signing commits on push
@@ -311,6 +314,213 @@ Nothing secret rides along: no signature, no installation token, no key
 material, and no GitHub response body. The states and reasons are values from
 closed sets in this repository, not text from an API response.
 
+## Dispatching `@claude` from a comment
+
+A comment on an issue or a pull request that invokes `@claude` used to start the
+Claude workflow through GitHub's own `issue_comment` Actions trigger. It now
+arrives here first: this service authenticates the delivery, authorizes the
+repository, authorizes **the person who wrote the comment**, spends a budget,
+claims the delivery id, and dispatches the workflow.
+
+Off by default, and off separately from everything else:
+
+```toml
+GITHUB_APP_COMMENT_DISPATCH  = "true"
+GITHUB_APP_DISPATCH_WORKFLOW = "claude.yml"
+GITHUB_APP_DISPATCH_REF      = "master"
+```
+
+Unset — which is the shipped default — an `issue_comment` delivery is
+acknowledged and dropped, and **no GitHub call is made at all**, not even the
+permission lookup.
+
+### An allowlisted repository is not an allowlisted commenter
+
+This is the whole reason the slice exists. `githubWebhookAuthorize` establishes
+that a delivery is about an `<installation, repository>` pair an operator wrote
+down. It says nothing about who wrote the comment — and comments on a public
+repository are written by anyone at all, arriving under the same installation,
+about the same repository, with the same valid HMAC as the owner's.
+
+So the author is authorized separately, against GitHub:
+
+```http
+GET /repos/{owner}/{repo}/collaborators/{login}/permission
+```
+
+and must come back `admin` or `write`. That field is GitHub's _legacy base
+role_, which is deliberately the one to read: it collapses `maintain` into
+`write`, `triage` into `read`, and every custom role onto whichever base role it
+was built from — a closed set of four values with a defined meaning.
+`role_name` is open-ended, and a check written against it would be a check
+against strings an organisation admin can invent.
+
+**`author_association` is not the check.** It reports `COLLABORATOR` for a
+read-only collaborator, which is precisely the account that has to be excluded.
+
+Everything that is not an unambiguous grant refuses:
+
+| Answer                                     | Result                                   |
+| ------------------------------------------ | ---------------------------------------- |
+| `admin`, `write`                           | Dispatched                               |
+| `read`, `none`                             | `actor_not_permitted`, nothing started   |
+| `404`, and the repository is still visible | `actor_not_permitted`, nothing started   |
+| `404`, and the repository is **not**       | `permission_lookup_failed`, fails closed |
+| `403`, `5xx`, a timeout                    | `permission_lookup_failed`, fails closed |
+| An answer about a _different_ login        | `permission_lookup_failed`, fails closed |
+
+Two rows are worth naming.
+
+**The two 404s.** That status is not only "this login is not a collaborator". It
+is also what an installation token gets when it cannot see the repository at all
+— removed from the installation, or dropped from its repository selection. The
+token still mints in that case, because the installation itself is fine, so this
+lookup is the first place the difference can surface and there is nowhere later
+that it would. Read as one answer they are catastrophic to conflate: an operator
+who narrows an installation by accident would find every `@claude` — the owner's
+included — answered "the author is not trusted", with the delivery burned
+non-retryably and the audit row pointing at the commenter. So a 404 is followed
+by an independent read of the repository on the same token, and only a visible
+repository turns it into the settled refusal. An invisible or unanswerable one
+fails closed, stays retryable, and is audited as `repository_not_visible`. The
+cost is one extra API call per comment by a non-collaborator, which is what the
+dispatch budget in front of the lookup bounds.
+
+**An answer about somebody else.** The login that comes back is compared against
+the one that was asked about. An answer about a different account is not an
+answer, and taking it would authorize this comment with that account's access.
+
+### Nothing here may become a loop
+
+The session this starts finishes by writing a comment on the same issue, and
+quoting the request it answered is the obvious thing for it to do. So the check
+is on the identity GitHub attaches rather than on anything the text says:
+
+- `comment.user.type` must be `User`. Bots are `Bot`.
+- `sender.type` must be `User`, and must be the same login as the author.
+- `comment.performed_via_github_app` must be absent or null.
+
+The last one has a cost, stated rather than hidden: a maintainer whose client
+posts through a GitHub App is refused too, and comments again from the web UI.
+Erring the other way costs a session that starts sessions.
+
+`action` must be `created`. An `edited` delivery is a comment somebody changed,
+and accepting it would mean a year-old comment can be edited into a fresh
+request — and edited again, each edit a new delivery id the replay ledger has no
+reason to refuse.
+
+### What the workflow is told, and what it is not
+
+The dispatch carries four inputs and **no comment text**:
+
+| Input          | Value                                                    |
+| -------------- | -------------------------------------------------------- |
+| `issue_number` | The issue or pull request the comment is on              |
+| `comment_id`   | The comment. Its body is _fetched_ by the run            |
+| `requested_by` | The author, already authorized here and re-checked there |
+| `delivery_id`  | The webhook delivery, for correlation                    |
+
+That is not a size precaution. A comment body arriving as a workflow input is a
+comment body one `${{ }}` away from a command line, and the safest place for
+untrusted text is a place it was never interpolated into. The run fetches it and
+writes it to a file behind a grown fence — see
+[`docs/claude-agent-harness.md`](claude-agent-harness.md).
+
+The workflow and the ref are **operator configuration and nothing else**. The
+ref decides which version of a privileged workflow a comment gets to start —
+which prompt, which tool allowlist, which permissions — so a delivery able to
+choose it would be able to choose the code that runs. Neither has a default:
+a default workflow would be this service picking which of somebody's workflows a
+comment may start.
+
+`.github/scripts/claude-agent-harness.sh` then asks GitHub the _same_ permission
+question again, on the other side of the dispatch, and refuses the run if the
+answer is not `write` or `admin`, if the fetched comment was written by somebody
+other than `requested_by`, if it belongs to a different issue, or if it never
+contained the trigger phrase. Two answers either side of one hop, so the hop
+itself is not the thing being trusted.
+
+### Replay: at-most-once, on purpose
+
+There is no idempotency key on GitHub's workflow-dispatch endpoint and a second
+call starts a second run. Two agent sessions on one request is not a duplicate
+log line — it is two sessions pushing to one branch. So the delivery id is
+written to the ledger **before** the request leaves, and the ambiguous outcome
+resolves as at-most-once.
+
+Written, and not merely decided. Every other handler settles its delivery id
+after it returns, and relies on its own idempotence to cover the gap — a
+redelivery of a push meets a head commit that is already signed. Comment
+dispatch has nothing to meet, so a flag on the request context would not be
+enough: an isolate evicted between the POST and the settle would leave a
+reservation that lapses in five minutes, after which a redelivery starts a
+second session. The ledger therefore has a third phase between _reserved_ and
+_committed_ — **held**, durable for the full retention window from the moment
+the request leaves, and still releasable by the one request that can learn
+nothing happened. A hold that does not land refuses the dispatch outright, and
+nothing is sent.
+
+| Outcome                                        | Delivery                                         |
+| ---------------------------------------------- | ------------------------------------------------ |
+| Budget refused, or the limiter was unreachable | Released — a real retry                          |
+| The permission lookup could not be made        | Released                                         |
+| The repository is no longer visible            | Released                                         |
+| `GITHUB_APP_DISPATCH_*` not set                | Released                                         |
+| The ledger could not be reached at the hold    | Released — nothing was sent                      |
+| The author holds no write access               | Committed — a redelivery reaches the same answer |
+| GitHub answered **4xx**                        | Held, then released — it created nothing         |
+| GitHub answered **2xx**                        | Held, then committed                             |
+| GitHub answered **5xx**, or never answered     | Held, then committed                             |
+| The process died after the hold                | Held — and a hold is already spent               |
+
+The 4xx row is the one exception and it is a narrow one: an unknown workflow, a
+ref the workflow is not on, a permission the installation never granted. GitHub
+answered, and its answer was that it did nothing — all operator-fixable, and a
+redelivery afterwards is a real retry. A 5xx or a lost connection is not
+distinguishable from a run that started, so it is not treated as one.
+
+The last row is the one the hold exists for, and it needs nothing to run
+afterwards to be true: the record is already in the ledger, for the full
+retention window, before the POST is made.
+
+### The dispatch budget
+
+A per-`<installation, repository>` bucket, ten a minute, spent **before** the
+permission lookup — because the lookup is the first GitHub call an arbitrary
+commenter can cause, one per `@claude`-containing comment on a repository where
+anybody may comment. The bucket is built entirely from the authorization
+decision, so a payload cannot move itself into a fresh one. It is disjoint from
+the signing budget and from the per-IP meter in front of the whole route, which
+counts GitHub's own delivery addresses and would never bound this.
+
+### What is recorded
+
+One `comment_dispatch` row per delivery that got as far as being **about a
+request**, refusals included — the Actions run list shows what ran and never what
+was turned away. Stated precisely, because "every refusal" is not what happens
+and volume is the reason:
+
+| Delivery                                                     | Row |
+| ------------------------------------------------------------ | --- |
+| Dispatched                                                   | Yes |
+| Refused at the actor check, the budget, the ledger or GitHub | Yes |
+| `actor_is_not_human` — a bot, or a comment posted via an App | Yes |
+| `unreadable_actor` — `sender` disagreeing with the author    | Yes |
+| No trigger phrase, an edit, a delete, an unreadable payload  | No  |
+
+The two named refusals earn a row because both are rare by construction and both
+are security-significant: `actor_is_not_human` only fires on a comment that _does_
+invoke the phrase, which is the App recognising its own completion comment, and
+`unreadable_actor` is a shape a real `issue_comment.created` never has. The rest
+is weather — a comment with no phrase in it is not an event, and a row per one of
+those would be a D1 write per comment on the repository.
+
+The metadata carries the workflow, the ref, the issue number, the comment id, the
+actor and a `detail` naming which shape of refusal it was: public facts, all of
+them visible to anyone who can read the comment. No token, no key material, no
+GitHub response body. `key_id` is the sentinel `none` rather than `unknown`,
+because dispatching involves no key at all.
+
 ## Setup
 
 ### 1. Register the App
@@ -319,13 +529,30 @@ Settings → Developer settings → GitHub Apps → New GitHub App.
 
 - **Webhook URL**: `https://<your-deployment>/github/webhook`
 - **Webhook secret**: generate one and keep it; you need it in step 3.
-- **Permissions**: `Contents: Read and write`, if you want push signing, and
-  `Checks: Read and write` as well if you want [the signature check run](#reporting-the-signature-as-a-check-run). Nothing is required otherwise —
-  grant only what the work you add later actually needs. Adding `Checks` to an
-  App that is already installed requires the installation to approve the new
-  permission before any of its deliveries can publish one.
-- **Subscribe to events**: `Push`, for the same reason. `ping` is delivered on
-  registration regardless, which is enough to check the setup without either.
+- **Permissions**: grant only what the feature you want actually needs.
+
+  | Feature                                                         | Permissions                                                                        | Events          |
+  | --------------------------------------------------------------- | ---------------------------------------------------------------------------------- | --------------- |
+  | Nothing (setup check only)                                      | —                                                                                  | —               |
+  | [Push signing](#signing-commits-on-push)                        | `Contents: Read and write`                                                         | `Push`          |
+  | [Signature check runs](#reporting-the-signature-as-a-check-run) | `Checks: Read and write`                                                           | `Push`          |
+  | [`@claude` dispatch](#dispatching-claude-from-a-comment)        | `Actions: Read and write`, `Issues: Read`, `Pull requests: Read`, `Metadata: Read` | `Issue comment` |
+
+  `ping` is delivered on registration regardless, which is enough to check the
+  setup without any of them.
+
+- **Migrating an existing installation.** Adding a permission to an App that is
+  already installed does **not** grant it: the installation has to approve the
+  new permission before any of its deliveries can use it, and GitHub emails the
+  account owner a link to do so. Until it is approved, the affected feature
+  fails closed and says which one — a check run reports `403` in a
+  `check_report` audit row, and a dispatch refuses with
+  `permission_lookup_failed` rather than starting anything. Subscribing to a new
+  _event_ needs no approval, but a delivery whose feature is unapproved is a
+  delivery that does nothing.
+
+  `Metadata: Read` is granted to every installation and needs no action; it is
+  named above because it is what the collaborator-permission lookup reads.
 
 ### 2. Get the private key
 
@@ -361,7 +588,34 @@ GITHUB_APP_ALLOWED_REPOSITORIES = "12345678:kjanat/gpg-signing-service=62E75E544
 # handles a push for. Needs `Checks: Read and write` on the App. Off by default;
 # unset, no Checks API call is made at all.
 GITHUB_APP_CHECK_RUNS = "true"
+
+# Start the Claude workflow when a comment invokes it. Needs `Actions: Read and
+# write`, `Issues: Read` and `Pull requests: Read` on the App, plus the workflow
+# migration below. Off by default; unset, no Actions API call is made at all.
+GITHUB_APP_COMMENT_DISPATCH  = "true"
+GITHUB_APP_DISPATCH_WORKFLOW = "claude.yml"  # under .github/workflows/
+GITHUB_APP_DISPATCH_REF      = "master"
 ```
+
+**Before turning `GITHUB_APP_COMMENT_DISPATCH` on, migrate the workflow.** The
+dispatched workflow has to accept `workflow_dispatch` _and_ stop subscribing to
+`issue_comment` — GitHub raises that event for the same comment, so a workflow
+that still listens for it starts a second session alongside the dispatched one.
+In this repository that is one move:
+
+```bash
+git mv -f .github/workflows-pending/claude.yml .github/workflows/claude.yml
+```
+
+The file in `workflows-pending/` is the agent-mode harness with
+`workflow_dispatch` declared and `issue_comment` deliberately absent; it lives
+there because a GitHub App token has no `workflows` permission and cannot write
+under `.github/workflows/`. `task test:agent-harness` asserts the absence, so a
+change that puts the trigger back fails the suite with a message saying why.
+
+To roll back: set `GITHUB_APP_COMMENT_DISPATCH = "false"` and add
+`issue_comment: { types: [created] }` back to the workflow's triggers, in that
+order. The harness still normalizes `issue_comment`, so nothing else changes.
 
 The installation id is in the URL of the App's "Configure" page for that
 account: `.../settings/installations/12345678`. It is also the `installation.id`
@@ -371,8 +625,8 @@ Leaving `GITHUB_APP_ALLOWED_REPOSITORIES` unset is a valid state and grants
 nothing — the `ping` below still answers, so you can check the endpoint before
 you have the installation id to write here.
 
-`GITHUB_APP_ENABLED` and `GITHUB_APP_CHECK_RUNS` both accept the literal
-`"true"` and nothing else. `"TRUE"`, `"1"` and `"yes"` all mean off. A flag guarding an inbound webhook is the wrong
+`GITHUB_APP_ENABLED`, `GITHUB_APP_CHECK_RUNS` and `GITHUB_APP_COMMENT_DISPATCH`
+all accept the literal `"true"` and nothing else. `"TRUE"`, `"1"` and `"yes"` all mean off. A flag guarding an inbound webhook is the wrong
 place to be generous — every near-miss must read as off, because the
 alternative is a deployment that is on by accident.
 
