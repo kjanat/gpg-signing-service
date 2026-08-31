@@ -412,8 +412,13 @@ export const githubWebhookAuthorize: WebhookMiddleware = async (c, next) => {
 		// entries that happened to parse. A typo must not silently drop a grant,
 		// and must certainly not silently widen one — so the whole list is refused
 		// and an operator is told which entry, by name, in the log.
-		logger.error("GITHUB_APP_ALLOWED_REPOSITORIES could not be parsed; refusing every delivery", {
-			error: error instanceof Error ? error.message : String(error),
+		// Three arguments, not two: `Logger.error` is `(message, error, context)`.
+		// Handing it one object puts the request id inside the *error* payload and
+		// leaves Sentry's context empty, which loses the only field that
+		// correlates the report with the delivery log line beside it.
+		logger.error("GITHUB_APP_ALLOWED_REPOSITORIES could not be parsed; refusing every delivery", error, {
+			requestId: c.get("requestId"),
+			event: delivery.event,
 		});
 		return serviceMisconfigured(c, "GitHub webhook authorization is not configured");
 	}
@@ -463,6 +468,18 @@ export const githubWebhookAuthorize: WebhookMiddleware = async (c, next) => {
  * `duplicate: true` so the answer is still distinguishable from a first
  * arrival.
  *
+ * **The claim is taken before the handler runs, and never released.** So a
+ * delivery is consumed the moment it is accepted, however the handler behind
+ * this guard ends: one that acts and then throws leaves the id spent, the
+ * response is a 500, and the operator's redelivery — the one recovery
+ * affordance GitHub offers — is answered `200 {"duplicate": true}` without
+ * acting. That is **at-most-once**, which is the right default for a service
+ * that signs things, and it is free while the handler acts on nothing. It is
+ * not free afterwards: the first handler that acts must either be idempotent
+ * and recoverable from GitHub's own state, or this ledger must become
+ * two-phase (`reserve` under `blockConcurrencyWhile`, `commit` after success).
+ * See `docs/github-app.md` — "Claimed before the handler runs".
+ *
  * **An unreachable ledger refuses the delivery.** Fail closed, like every other
  * dependency on this path: a claim that did not happen is not a claim, and
  * treating an unreachable ledger as "not seen before" removes the protection at
@@ -502,9 +519,12 @@ export const webhookReplayGuard: WebhookMiddleware = async (c, next) => {
 	try {
 		claim = await claimDelivery(c.env, delivery.id);
 	} catch (error) {
-		logger.error("Delivery ledger failed", {
+		// Same three-argument form as the allowlist failure above, and as
+		// `WebhookDeliveries`: the thrown value is the error, the request id and
+		// the event are context.
+		logger.error("Delivery ledger failed", error, {
 			requestId: c.get("requestId"),
-			error: error instanceof Error ? error.message : String(error),
+			event: delivery.event,
 		});
 		return serviceDegraded(c, "Webhook replay protection is unavailable", {
 			retryAfter: LEDGER_RETRY_AFTER_SECONDS,
