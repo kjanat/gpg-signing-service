@@ -65,7 +65,7 @@ import {
 } from "#utils/github-webhook";
 import { logger } from "#utils/logger";
 import { rateLimitExceeded, retryAfterSeconds } from "#utils/rate-limit";
-import { claimDelivery, isDeliveryId } from "#utils/webhook-replay";
+import { commitDelivery, isDeliveryId, releaseDelivery, reserveDelivery } from "#utils/webhook-replay";
 
 /**
  * Rate-limiter namespace for webhook deliveries.
@@ -448,14 +448,14 @@ export const githubWebhookAuthorize: WebhookMiddleware = async (c, next) => {
 };
 
 /**
- * Refuse a delivery id that has already been acted upon.
+ * Refuse a delivery id that is already taken, and settle it afterwards.
  *
  * A webhook signature covers the body and nothing else — no timestamp, no nonce
  * — so a delivery that verified once verifies forever, and the only thing
  * separating a repeat from a fresh event is `X-GitHub-Delivery`. See
  * `#utils/webhook-replay` for what this can and cannot promise.
  *
- * Three decisions worth naming:
+ * Four decisions worth naming:
  *
  * **A repeat is answered here, not by the handler.** The guard short-circuits,
  * so a duplicate never reaches a route. "Do not act twice" is then a property of
@@ -468,25 +468,31 @@ export const githubWebhookAuthorize: WebhookMiddleware = async (c, next) => {
  * `duplicate: true` so the answer is still distinguishable from a first
  * arrival.
  *
- * **The claim is taken before the handler runs, and never released.** So a
- * delivery is consumed the moment it is accepted, however the handler behind
- * this guard ends: one that acts and then throws leaves the id spent, the
- * response is a 500, and the operator's redelivery — the one recovery
- * affordance GitHub offers — is answered `200 {"duplicate": true}` without
- * acting. That is **at-most-once**, which is the right default for a service
- * that signs things, and it is free while the handler acts on nothing. It is
- * not free afterwards: the first handler that acts must either be idempotent
- * and recoverable from GitHub's own state, or this ledger must become
- * two-phase (`reserve` under `blockConcurrencyWhile`, `commit` after success).
- * See `docs/github-app.md` — "Claimed before the handler runs".
+ * **The id is reserved before the handler and settled after it.** The
+ * reservation is atomic, so simultaneous copies still produce exactly one
+ * winner; what changed from the scaffold is what happens next. A handler that
+ * published nothing sets `webhookRetryable`, the reservation is released, and
+ * the operator's redelivery is a real retry — which is what a rate-limit
+ * refusal, a missing key, a key-storage outage or a GitHub API failure has to
+ * be, because none of them changed anything. A handler that did not say so has
+ * its id committed for the retention window: the default direction is
+ * at-most-once, because acting twice is worse than not acting, and the settle
+ * runs in a `finally` initialised to that direction so no exit can skip it or
+ * fall out of it the other way.
  *
  * **An unreachable ledger refuses the delivery.** Fail closed, like every other
- * dependency on this path: a claim that did not happen is not a claim, and
- * treating an unreachable ledger as "not seen before" removes the protection at
- * exactly the moment nothing can check it. That costs a dropped event, because
- * GitHub does not redeliver on its own — the same trade `webhookRateLimit`
- * documents, and answered 503 with a `Retry-After` so the one caller that
- * *does* retry, an operator with the API, is told when.
+ * dependency on this path: a reservation that did not happen is not a
+ * reservation, and treating an unreachable ledger as "not seen before" removes
+ * the protection at exactly the moment nothing can check it. That costs a
+ * dropped event, because GitHub does not redeliver on its own — the same trade
+ * `webhookRateLimit` documents, and answered 503 with a `Retry-After` so the one
+ * caller that *does* retry, an operator with the API, is told when.
+ *
+ * A failure to *settle* is not the same thing and is not fatal. The delivery has
+ * already been answered by then, and a settle that does not land leaves a
+ * reservation that lapses on its own — after which a redelivery is allowed
+ * through and meets the handler's own idempotence, which for push signing is a
+ * head commit that is already signed.
  */
 export const webhookReplayGuard: WebhookMiddleware = async (c, next) => {
 	const delivery = c.get("webhookDelivery");
@@ -515,9 +521,11 @@ export const webhookReplayGuard: WebhookMiddleware = async (c, next) => {
 		);
 	}
 
-	let claim: Awaited<ReturnType<typeof claimDelivery>>;
+	const deliveryId = delivery.id;
+
+	let reservation: Awaited<ReturnType<typeof reserveDelivery>>;
 	try {
-		claim = await claimDelivery(c.env, delivery.id);
+		reservation = await reserveDelivery(c.env, deliveryId);
 	} catch (error) {
 		// Same three-argument form as the allowlist failure above, and as
 		// `WebhookDeliveries`: the thrown value is the error, the request id and
@@ -532,18 +540,69 @@ export const webhookReplayGuard: WebhookMiddleware = async (c, next) => {
 		});
 	}
 
-	if (!claim.claimed) {
+	if (!reservation.reserved) {
 		logger.info("GitHub webhook delivery is a repeat", {
 			requestId: c.get("requestId"),
 			event: delivery.event,
-			delivery: delivery.id,
-			firstSeen: new Date(claim.firstSeen).toISOString(),
+			delivery: deliveryId,
+			firstSeen: new Date(reservation.firstSeen).toISOString(),
+			// Which kind of repeat: a delivery already acted upon, or a second copy
+			// arriving while the first is still being handled. Same answer to the
+			// sender, different thing to see in a log.
+			committed: reservation.committed,
 		});
 
 		return c.json(acknowledgement(delivery, c.get("webhookAuthorization"), { duplicate: true }), HTTP.OK);
 	}
 
-	c.set("webhookReplay", { firstSeen: claim.firstSeen });
+	c.set("webhookReplay", { firstSeen: reservation.firstSeen });
 
-	return next();
+	// `finally`, so that every way out of the handler settles the id — asserted by
+	// requiring a thrown handler's record to be *committed* rather than merely
+	// still reserved, which is the difference between at-most-once and a
+	// reservation that lapses into retryable five minutes later.
+	//
+	// A `catch` branch beside the ordinary exit would be two paths where one will
+	// do, and the second would be unreachable: Hono resolves a thrown handler
+	// through its own error handling rather than by rejecting `next()`, so there
+	// is exactly one exit here whatever the handler does. For the same reason the
+	// initialiser below is defense rather than behaviour — under Hono the
+	// assignment always runs — and it is the committing direction because that is
+	// the one a future where it does not run should fail into.
+	let published = true;
+	try {
+		await next();
+		published = c.get("webhookRetryable") !== true;
+	} finally {
+		await settleDelivery(c, deliveryId, published);
+	}
+
+	// Explicit, because every other exit from this middleware returns a response:
+	// a bare fall-through would be an implicit `undefined` among them, which is
+	// the shape a mistakenly deleted `return` also has.
+	return undefined;
 };
+
+/**
+ * Commit or release `deliveryId`, and never fail the response over it.
+ *
+ * The response has already been decided by the time this runs. A ledger that
+ * cannot be reached here is logged and nothing more: raising would turn a
+ * bookkeeping failure into a 500 for a delivery that may have been handled
+ * perfectly, which is the least useful signal available.
+ */
+async function settleDelivery(c: Parameters<WebhookMiddleware>[0], deliveryId: string, commit: boolean): Promise<void> {
+	try {
+		await (commit ? commitDelivery(c.env, deliveryId) : releaseDelivery(c.env, deliveryId));
+	} catch (error) {
+		logger.error("Delivery ledger could not settle a delivery", error, {
+			requestId: c.get("requestId"),
+			delivery: deliveryId,
+			// Which way it was going, because the consequences differ: a failed
+			// commit leaves a reservation that lapses and lets a redelivery through,
+			// and a failed release leaves one that lapses and lets a redelivery
+			// through slightly later. Both are recoverable; neither is silent.
+			intent: commit ? "commit" : "release",
+		});
+	}
+}

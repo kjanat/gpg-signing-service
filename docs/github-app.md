@@ -2,46 +2,130 @@
 
 An opt-in endpoint that lets a GitHub App deliver events to this service.
 
-**It acts on nothing.** Every verified delivery is acknowledged and discarded.
-What is here is the trust boundary, the credential exchange, and the two checks
-that have to stand between "this delivery is genuine" and "this delivery may
-cause something" — shipped before anything that uses them, because those are the
-parts that are hard to get right and easy to get wrong quietly.
+**One event is acted on.** A `push` to an allowlisted repository whose grant
+binds a signing key has the unsigned commits at its tip signed with that key,
+and the branch moved to them. Every other event is acknowledged and discarded.
 
-Off by default. A deployment that has not opted in answers `POST
-/github/webhook` exactly the way it answers any path it does not route, so
-shipping this code does not advertise the feature.
+Off by default, twice over. A deployment that has not set
+`GITHUB_APP_ENABLED="true"` answers `POST /github/webhook` exactly the way it
+answers any path it does not route, so shipping this code does not advertise the
+feature — and a repository whose allowlist entry carries no `=<keyId>` suffix
+receives its events and signs nothing. **Receiving events and causing signatures
+are separate grants, and the key suffix is the opt-in for the second one.**
 
 ## What works today
 
-|                        |                                                               |
-| ---------------------- | ------------------------------------------------------------- |
-| `POST /github/webhook` | Verifies `X-Hub-Signature-256` and answers `202 Accepted`     |
-| Authorization          | `<installation, repository>` pairs from an operator allowlist |
-| Replay protection      | `X-GitHub-Delivery` claimed once, atomically, for four days   |
-| Signing key binding    | One key per grant, from the same allowlist entry, or none     |
-| Delivery semantics     | At-most-once: a claimed id is never released, even on failure |
-| App JWT minting        | RS256, from `GITHUB_APP_PRIVATE_KEY`                          |
-| Installation tokens    | Minted on demand, cached in KV under a namespaced key         |
+|                        |                                                                      |
+| ---------------------- | -------------------------------------------------------------------- |
+| `POST /github/webhook` | Verifies `X-Hub-Signature-256` and answers `202`, or `200` on a sign |
+| Authorization          | `<installation, repository>` pairs from an operator allowlist        |
+| Replay protection      | `X-GitHub-Delivery` reserved once atomically, committed on action    |
+| Signing key binding    | One key per grant, from the same allowlist entry, or none            |
+| Delivery semantics     | Two-phase: released when nothing was published, else at-most-once    |
+| `push` auto-signing    | The unsigned run at the tip, signed and force-updated                |
+| Signing budget         | Per `<installation, repository, key>`, one token per signature       |
+| Audit                  | One `push_sign` row per attempt that got as far as trying            |
+| App JWT minting        | RS256, from `GITHUB_APP_PRIVATE_KEY`                                 |
+| Installation tokens    | Minted on demand, cached in KV under a namespaced key                |
 
 ## What does not
 
 Named in [#26](https://github.com/kjanat/gpg-signing-service/issues/26) and
-deliberately absent: auto-signing pushed commits, publishing a "GPG verified"
-check run, and dispatching `@claude`. Each of those is a handler that _acts_,
-and before one can be written the at-most-once question in
-[Claimed before the handler runs](#claimed-before-the-handler-runs-at-most-once-not-at-least-once)
-has to be answered for the action it performs. `getInstallationToken` and
-`loadSigningKey` both have no caller in the request path for the same reason:
-they are what an acting handler will use, shipped ahead of it so it inherits
-their refusals rather than inventing its own.
+deliberately absent: publishing a "GPG verified" check run, and dispatching
+`@claude`. Each is a handler that acts, and each needs its own answer to the
+question [Two phases](#two-phases-and-where-the-line-is) settles for push
+signing — what, for that action, is the point past which nothing can be taken
+back.
 
-What is here is everything that has to be right _before_ any of that can be
-written: the trust boundary, the credential exchange, and the three checks
-between "this delivery is genuine" and "this delivery may cause something" —
-[authorization](#repository-and-installation-authorization),
-[replay protection](#replay-protection) and
-[which key it may sign with](#which-key-a-delivery-may-sign-with).
+Also absent, and more likely to surprise: **an unsigned commit underneath a
+signed one is never signed.** See
+[Only the unsigned run at the tip](#only-the-unsigned-run-at-the-tip).
+
+## Signing commits on push
+
+The whole operation, in the order it happens:
+
+1. **Read** the branch the delivery names — from `payload.ref`, and then asked
+   of GitHub, so the commit acted on is the one the repository holds rather than
+   the one `payload.after` claims it holds.
+2. **Walk** back from that head collecting unsigned commits, stopping at the
+   first one that carries a signature, at a root commit, or at 20.
+3. **Spend** one token per commit from the repository's signing budget.
+4. **Sign** each commit payload and **create** each commit object, checking
+   GitHub's returned object id against one computed locally.
+5. **Re-read** the branch, require it to be where step 1 found it, and **move**
+   it.
+
+Steps 1–4 change nothing anyone can observe: a signature exists only in memory,
+and a commit object no ref points at is unreachable and collected. Step 5 is the
+one a person sees.
+
+### Only the unsigned run at the tip
+
+Replacing a commit changes its object id, which changes its children's ids,
+which invalidates any signature those children carry. So the set this service
+may touch is exactly the unsigned commits at the tip, and the walk stops at the
+first signature — whoever made it.
+
+The consequence is worth stating plainly rather than discovering: **an unsigned
+commit below a signed one stays unsigned, forever.** The alternative is
+destroying a signature somebody else made, which is not a trade this service
+makes on its own.
+
+A run longer than 20 commits is refused rather than rewritten. A push of two
+hundred unsigned commits is a history event that wants a person looking at it.
+
+Merges keep their shape: the walk follows first parents only, so a merge
+commit's other parents are not rewritten and keep their ids and signatures.
+
+### How the loop stops
+
+Moving the branch raises another `push` delivery, for a head this service just
+signed. The walk sees a signature immediately, the run is empty, and the plan is
+`nothing_to_sign`.
+
+The suppression is **the state of the object graph**, not a guess about who
+pushed. `sender`, `pusher` and the event name are all fields in a document the
+sender controls; a signature on the head commit is a fact about the repository.
+A loop stopped by the second one stops whether or not the first says what was
+expected.
+
+### Why the object id is checked against GitHub's
+
+GitHub's create-a-commit endpoint takes a `signature` and inserts it into the
+object as the `gpgsig` header. It does not tell you what payload it assembled.
+If its assembly differs from ours by one byte — a date offset normalised, a
+header we did not model — the signature is over a different object than the one
+that now exists, and the result is a commit that says it is signed and verifies
+as broken. Nothing in the response announces that.
+
+The object id does. The SHA-1 of the signed object is a total check on the whole
+payload: equal ids mean identical bytes, and there is no way for them to be
+equal and the signature to be wrong. The comparison happens **before** the ref
+moves, so a mismatch costs a dangling object nobody can reach.
+
+### The signing budget
+
+The rate limiter in front of the whole route counts **requests per source
+address**. That is not a signing budget: one request can carry twenty
+signatures, and what needs bounding is a repository's authority to cause them.
+
+So there is a second meter, keyed
+`github-push:<installation>:<owner>/<repo>:<keyId>` — every component from the
+authorization decision, so a delivery cannot move itself into a fresh bucket by
+varying a payload field — spending one token per signature, 120 a minute. A
+refusal happens before the first signature, so it costs a read and nothing else,
+and the delivery stays redeliverable.
+
+### What is recorded
+
+One `audit_logs` row per attempt that got as far as trying, `action =
+push_sign`, `issuer = github-app`, `subject` the **authorized** repository and
+`key_id` the bound key. The metadata carries the branch, the commit count and
+the two head shas, or a failure reason.
+
+Nothing secret rides along: no signature, no installation token, no key
+material, and no GitHub response body.
 
 ## Setup
 
@@ -51,10 +135,10 @@ Settings → Developer settings → GitHub Apps → New GitHub App.
 
 - **Webhook URL**: `https://<your-deployment>/github/webhook`
 - **Webhook secret**: generate one and keep it; you need it in step 3.
-- **Permissions**: none are required by the scaffold. Grant only what the work
-  you add later actually needs.
-- **Subscribe to events**: nothing is required either. `ping` is delivered on
-  registration regardless, which is enough to check the setup.
+- **Permissions**: `Contents: Read and write`, if you want push signing. Nothing
+  is required otherwise — grant only what the work you add later actually needs.
+- **Subscribe to events**: `Push`, for the same reason. `ping` is delivered on
+  registration regardless, which is enough to check the setup without either.
 
 ### 2. Get the private key
 
@@ -118,29 +202,32 @@ answers:
 }
 ```
 
-`handled` is always `false` while this is a scaffold. `scope` is what the
+`handled` is `true` only on a `push` that signed something; every other event
+is received and dropped, and a ping is one of those. `scope` is what the
 allowlist granted this delivery — `none` for the App-level ping, which names
 neither an installation nor a repository. `signingKey` says whether the matched
 grant binds a key, not which one; the id itself is in the delivery's log line
 rather than in the response, because the sender has no use for it. `duplicate`
-marks a delivery id that was already claimed; redeliver the same event from the
+marks a delivery id that was already taken; redeliver the same event from the
 Advanced tab and the second answer is `200` with `"duplicate": true`.
 
 ## What each answer means
 
-| Status | Code                     | Meaning                                                                      |
-| ------ | ------------------------ | ---------------------------------------------------------------------------- |
-| `202`  | —                        | Verified and authorized. Acknowledged, not acted upon.                       |
-| `200`  | —                        | A delivery id already claimed. Acknowledged again, not acted upon again.     |
-| `400`  | `INVALID_REQUEST`        | Signature verified; body was not JSON, or `X-GitHub-Delivery` is unusable.   |
-| `401`  | `AUTH_MISSING`           | No `X-Hub-Signature-256`. The App has no webhook secret set.                 |
-| `401`  | `AUTH_INVALID`           | The signature did not verify. The two secrets differ.                        |
-| `401`  | `AUTH_SUBJECT_UNTRUSTED` | Verified, and the pair it names is not in `GITHUB_APP_ALLOWED_REPOSITORIES`. |
-| `404`  | `NOT_FOUND`              | `GITHUB_APP_ENABLED` is not `"true"`.                                        |
-| `413`  | `PAYLOAD_TOO_LARGE`      | Body over GitHub's 25 MiB cap. It was not read.                              |
-| `429`  | `RATE_LIMITED`           | Too many deliveries from this address. Not retried by GitHub.                |
-| `500`  | `SERVICE_MISCONFIGURED`  | Enabled, but `GITHUB_WEBHOOK_SECRET` is unset or the allowlist is unusable.  |
-| `503`  | `SERVICE_DEGRADED`       | The delivery ledger could not be reached, so replay could not be ruled out.  |
+| Status | Code                     | Meaning                                                                       |
+| ------ | ------------------------ | ----------------------------------------------------------------------------- |
+| `200`  | —                        | Either commits were signed and the branch moved, or the id was already taken. |
+| `202`  | —                        | Verified and authorized. Acknowledged, not acted upon.                        |
+| `400`  | `INVALID_REQUEST`        | Signature verified; body was not JSON, or `X-GitHub-Delivery` is unusable.    |
+| `401`  | `AUTH_MISSING`           | No `X-Hub-Signature-256`. The App has no webhook secret set.                  |
+| `401`  | `AUTH_INVALID`           | The signature did not verify. The two secrets differ.                         |
+| `401`  | `AUTH_SUBJECT_UNTRUSTED` | Verified, and the pair it names is not in `GITHUB_APP_ALLOWED_REPOSITORIES`.  |
+| `404`  | `NOT_FOUND`              | `GITHUB_APP_ENABLED` is not `"true"`.                                         |
+| `413`  | `PAYLOAD_TOO_LARGE`      | Body over GitHub's 25 MiB cap. It was not read.                               |
+| `429`  | `RATE_LIMITED`           | Too many deliveries from this address, or over the signing budget.            |
+| `500`  | `SERVICE_MISCONFIGURED`  | Enabled, but `GITHUB_WEBHOOK_SECRET` is unset or the allowlist is unusable.   |
+| `503`  | `SERVICE_DEGRADED`       | The delivery ledger could not be reached, so replay could not be ruled out.   |
+| `503`  | —                        | The bound key is gone, key storage is down, or the budget could not be read.  |
+| `500`  | `SIGN_ERROR`             | Signing or talking to GitHub failed. See `handled`/`skipped` in the body.     |
 
 `AUTH_SUBJECT_UNTRUSTED` rather than `AUTH_INVALID` for an unauthorized pair,
 and it is the same distinction the OIDC path draws: the credential is right and
@@ -154,6 +241,13 @@ integration configured. The 500 is deliberately _not_ hidden that way — an
 operator who opted in and cannot receive deliveries needs to be able to tell
 that apart from a deployment that never opted in, or the integration silently
 receives nothing.
+
+A `202` body carries a `skipped` field naming why nothing was signed —
+`nothing_to_sign` for a head that already carries a signature, `no_key_bound`
+for a repository the operator granted events but no key, `not_a_branch`,
+`branch_deleted`, `branch_moved`, `too_many_unsigned`. A `200` from a successful
+sign carries `handled: true` and `signed: <count>`; a `200` from a repeat
+carries `duplicate: true`.
 
 ## How it is protected
 
@@ -378,12 +472,17 @@ answers with the key or with `key_missing` / `key_storage_unavailable`. No
 separate check, therefore no cache, no staleness and no window — the same
 boundary `POST /sign` already uses.
 
+The _storage fetch_ is what the two share, not the whole boundary: `/sign` also
+meters its caller and writes an audit row, and `loadSigningKey` does neither.
+A caller that acts on the key owes both, and the push handler provides them —
+[the signing budget](#the-signing-budget) and
+[what is recorded](#what-is-recorded).
+
 ### What is logged
 
 An accepted delivery's log line carries the bound key id, and the reason when
 there is none — `no_key_bound` is the one worth watching for, because it means
-an allowlisted repository is missing its suffix and would be refused the moment
-a handler tried to sign for it. A key id is not a secret: `/public-key` serves
+an allowlisted repository is missing its suffix and would sign nothing on push. A key id is not a secret: `/public-key` serves
 the key it names. It is logged rather than returned because the sender has no
 use for it, and both the id and the repository come from the matched entry, so
 a log line cannot be made to name a key nobody granted.
@@ -444,52 +543,60 @@ over the payload ceiling, and one arriving at a deployment with the feature off
 all leave the id unclaimed. Each is asserted by afterwards presenting the same
 id as a legitimate delivery and requiring it to be accepted as a first arrival.
 
-### Claimed before the handler runs: at-most-once, not at-least-once
+### Two phases, and where the line is
 
-The id is claimed by the middleware and then `next()` is called, and **the claim
-is never released**. So the delivery is consumed the instant it is accepted,
-before any handler behind the guard has done anything, and it stays consumed
-however that handler ends.
+The id is **reserved** before the handler runs and **settled** after it: kept
+for the retention window when the delivery caused something, given back when it
+caused nothing. The reservation is what keeps simultaneous copies to one winner,
+so the concurrency property is unchanged — at every instant exactly one request
+holds a given id.
 
-While the scaffold acts on nothing this costs nothing. The moment a handler
-does act, it is a real trade and it points the wrong way from what the GitHub UI
-suggests:
+Two phases rather than one because a one-way claim makes every failure
+permanent, and it points the wrong way from what the GitHub UI suggests:
 
-1. The handler acts, and fails partway through.
+1. The handler fails before doing anything at all — the budget refused, the
+   bound key is gone, key storage is down, GitHub would not mint a token.
 2. The service answers `5xx`, so GitHub marks the delivery failed and the
    operator sees a red row in **Recent Deliveries**.
-3. They press **Redeliver** — the one recovery affordance this design is built
-   around.
-4. They get `200 {"duplicate": true}`. The event is never processed, and the
-   answer looks like success.
+3. They press **Redeliver** — the one recovery affordance this design has.
+4. Under a one-way claim they get `200 {"duplicate": true}`. The event is never
+   processed, and the answer looks like success.
 
-That is **at-most-once** delivery: an event is acted on no more than once, and
-possibly not at all. It is a deliberate choice for a signing service — acting
-twice is worse than not acting — but it is the opposite of what a red delivery
-row leads an operator to expect, and nothing about it is visible from the
-response.
+So the line the phases turn on is not "did the handler succeed" but **"has
+anything left this service that cannot be taken back"**. For push signing that
+is the ref update: a signature exists only in memory, a created commit object is
+unreachable until a ref points at it, and moving the branch is the first step a
+person can observe.
 
-**A hard prerequisite for the first acting handler.** A handler that assumes a
-failure can be recovered by redelivering is assuming semantics this ledger does
-not provide, and it will be wrong quietly. Before one lands, this has to be
-resolved one of these ways, in writing:
+The id is committed **immediately before** the update is issued, not after it.
+That is deliberate and it is the asymmetric case: a request that was sent and
+whose answer was lost may well have landed, and repeating a force update on the
+assumption that it did not is how a branch gets moved twice.
 
-- **Make the handler's own action idempotent and recoverable from GitHub's
-  state**, so a lost event is repaired by the next one rather than by a repeat
-  of this one. Then at-most-once is simply correct and nothing changes.
-- **Two-phase the ledger**: `reserve` under `blockConcurrencyWhile`, which is
-  what keeps twelve simultaneous copies to one winner, and `commit` only after
-  the handler succeeds; a reservation that is never committed expires in
-  seconds. This keeps the concurrency property and makes a redelivery after a
-  crash behave the way the operator expects.
-- **Release on `5xx`**: delete the record when the handler produces a server
-  error. Simpler, and strictly weaker — a handler that half-acted and then threw
-  becomes replayable — but it does not reopen the concurrency window.
+Everything before that point releases:
 
-Not decided here, because the choice depends on what the first handler actually
-does, and a scaffold that acts on nothing cannot make it well. What is decided
-here is that it must be chosen deliberately rather than discovered in
-production.
+| Outcome                                      | Delivery  |
+| -------------------------------------------- | --------- |
+| Signed, branch moved                         | Committed |
+| Branch update failed after being issued      | Committed |
+| No key bound to the pair                     | Released  |
+| Bound key missing, or key storage down       | Released  |
+| Over the signing budget, or budget unread    | Released  |
+| GitHub refused a token, a read or a create   | Released  |
+| Object id did not match what was signed      | Released  |
+| Nothing to sign, tag, deletion, moved branch | Committed |
+| Handler threw, state unknown                 | Committed |
+
+The last two rows are the ones worth reading twice. A deterministic no-op stays
+committed because a redelivery would reach the same answer, so handing the id
+back would make it replayable for nothing. And an uncaught throw stays committed
+because nothing is known about what it did — the default direction is
+at-most-once, since acting twice is worse than not acting.
+
+A reservation that is never settled — the isolate died mid-request — lapses on
+its own after five minutes, after which a redelivery is allowed through and
+meets the handler's own idempotence: a head this service already signed is
+`nothing_to_sign`.
 
 ### A missing id is refused, not defaulted
 
