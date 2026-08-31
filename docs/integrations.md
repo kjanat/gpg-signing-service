@@ -181,10 +181,11 @@ See [the CLI reference](cli.md#apply-signatures-to-commits) for the full flag
 set and output.
 
 The repository's
-[`sign-commits.yml`](../.github/workflows/sign-commits.yml) drives the same
-algorithm from a Python script and adds the final force push. It is an internal
-example, not a drop-in reusable workflow: it uses repository-local setup
-actions, and it handles PGP signatures only.
+[`sign-commits.yml`](../.github/workflows/sign-commits.yml) runs this same
+command through [`.github/scripts/sign-commits.sh`](../.github/scripts/sign-commits.sh)
+— which is flag assembly and nothing else — and adds the final force push. It
+is an internal example, not a drop-in reusable workflow: it uses
+repository-local setup actions, and it handles PGP signatures only.
 
 ## X.509
 

@@ -1,0 +1,92 @@
+name: Sign Commits
+# NOT ACTIVE YET. This file is in .github/workflows-pending/ because a GitHub
+# App token has no `workflows` permission and cannot write under
+# .github/workflows/ — the push is rejected outright, and the rejection kills
+# the whole push rather than just that file. It REPLACES the workflow still
+# live at .github/workflows/sign-commits.yml. Activate it with:
+#
+#   git mv -f .github/workflows-pending/sign-commits.yml \
+#     .github/workflows/sign-commits.yml
+#
+# The only difference from the live file is the step that signs:
+#
+#   -  run: python3 .github/scripts/sign-commits.py
+#   +  run: .github/scripts/sign-commits.sh
+#
+# and that one line is the whole point. `.github/scripts/sign-commits.py` was a
+# second implementation of the signing walk `gpg-sign sign-commit` already owns
+# — the same walk `gpg-sign repair-history` is built on — and this change
+# deletes it. THE MOVE AND THE DELETION HAVE TO LAND IN THE SAME MERGE: the
+# branch that removes the Python script cannot also edit this workflow, so
+# merging one without the other points the live job at a file that is not
+# there.
+#
+# ORDERING: `sign-commit` is not in every release, and `uses: ./` installs the
+# release the action resolves. Publish a release containing the command before
+# activating this. Until then the run refuses by name rather than failing
+# somewhere inside cobra's usage text — `sign-commits.sh` asks the binary for
+# `sign-commit --help` before it signs anything. See docs/cli.md, "Landing
+# order". Tests: .github/scripts/test-sign-commits.sh (`task
+# test:sign-commits`), which resolves this pending file first and keeps
+# guarding it once it lands.
+
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Sign every commit after this ref (exclusive). Defaults to the merge base with the default branch.
+        type: string
+        required: false
+      allow_resign:
+        description: Permit rewriting commits that already carry a signature
+        type: boolean
+        required: false
+        default: false
+      sign_others:
+        description: Attach the signing key to commits committed by other identities
+        type: boolean
+        required: false
+        default: false
+      scan_limit:
+        description: Stop looking for the last signed commit after this many commits. Blank searches the whole history.
+        type: number
+        required: false
+
+permissions:
+  id-token: write # Required for OIDC token
+  contents: write # Required to push signed commits
+
+jobs:
+  sign:
+    name: Sign Commits
+    runs-on: ubuntu-latest
+    steps:
+      - { uses: actions/checkout@v7, with: { fetch-depth: 0 } }
+      - { uses: ./ }
+
+      - name: Get OIDC Token
+        id: oidc
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const token = await core.getIDToken('gpg-signing-service');
+            core.setSecret(token);
+            core.setOutput('token', token);
+
+      # The signing walk lives in `gpg-sign sign-commit`. The script is flag
+      # assembly and the up-front check that the installed binary has the
+      # command; it moves no ref of its own beyond the local HEAD the CLI
+      # updates, and it publishes nothing.
+      - name: Sign Commits
+        env:
+          GPG_SIGN_TOKEN: ${{ steps.oidc.outputs.token }}
+          GPG_SIGN_URL: ${{ vars.SIGNING_SERVICE_URL }}
+          BASE_REF: ${{ inputs.base }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          ALLOW_RESIGN: ${{ inputs.allow_resign }}
+          SIGN_OTHERS: ${{ inputs.sign_others }}
+          SCAN_LIMIT: ${{ inputs.scan_limit }}
+        run: .github/scripts/sign-commits.sh
+
+      - name: Push Signed Commits
+        run: git push origin HEAD --force-with-lease

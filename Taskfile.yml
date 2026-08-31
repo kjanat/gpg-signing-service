@@ -115,7 +115,7 @@ tasks:
     cmd: bash .github/scripts/test-release-workflow.sh
 
   test:sign-commits:
-    desc: Test commit re-signing behavior
+    desc: Test the routine signing run's flag assembly and the CLI it requires
     cmd: bash .github/scripts/test-sign-commits.sh
 
   test:repair-history:
