@@ -9,6 +9,8 @@ The deployment operator and Cloudflare infrastructure are trusted with:
 
 - uploaded private-key material;
 - `KEY_PASSPHRASE`, `ADMIN_TOKEN` and `ADMIN_READONLY_TOKEN`;
+- `GITHUB_APP_PRIVATE_KEY` and `GITHUB_WEBHOOK_SECRET`, on a deployment that
+  opts into the GitHub App webhook;
 - data submitted for signing;
 - generated signatures;
 - audit records; and
@@ -20,6 +22,13 @@ This section is about the deployed service. The repository's CI carries a second
 and unrelated trust boundary, between a job that executes a Dependabot pull
 request and a job that can push to its branch. It is described in
 [the Dependabot fix path](dependabot-fix-path.md).
+
+A deployment that opts into the [GitHub App webhook](github-app.md) accepts a
+third: `POST /github/webhook` takes an untrusted JSON payload from an
+unauthenticated network peer, and `X-Hub-Signature-256` is the only thing that
+makes it GitHub's. The endpoint is off unless `GITHUB_APP_ENABLED` is the
+literal `"true"`, and a deployment that has not opted in answers it exactly as
+it answers any unrouted path.
 
 ## Signing authority
 
@@ -112,6 +121,11 @@ sign of one is not every caller failing at once.
 - Service tokens support expiration, revocation, and optional key allowlists.
 - Trusted OIDC subjects support the same three, managed at runtime through
   `/admin/subjects` rather than by redeploying.
+- GitHub webhook deliveries are verified with HMAC-SHA-256 over the raw request
+  bytes, compared in constant time. The parse happens after the verdict, so a
+  re-serialised body is never what a signature is checked against. An enabled
+  integration with no `GITHUB_WEBHOOK_SECRET` refuses every delivery rather than
+  accepting unauthenticated ones.
 - Both static admin tokens are compared in constant time. When
   `ADMIN_READONLY_TOKEN` is provisioned, both comparisons run on every request,
   so which of the two a valid bearer matched is not observable by timing. When
@@ -189,9 +203,17 @@ The token bucket holds 100 requests and refills at 100 per minute.
 | `/sign` with service token | synthetic issuer plus token name   |
 | Revoked-trust reuse record | `oidc-revoked-reuse:<subject row>` |
 | `/admin/*`                 | Client IP                          |
+| `POST /github/webhook`     | Client IP                          |
 | Public routes              | No application rate limiter        |
 
 Rate-limiter failure returns `503` rather than allowing the request.
+
+The webhook bucket is keyed by address, not by installation: the installation id
+is inside a body that has not been verified yet, so metering on it would let an
+unsigned request choose its own bucket. It is metered before the HMAC is
+checked, so the limit bounds unverified verification work, and it is a namespace
+of its own so that a burst of deliveries cannot exhaust an operator's ability to
+reach `/admin`.
 
 The OIDC signing identity is the caller's `sub`, and GitHub varies `sub` per ref,
 so one trusted row is not bounded to one bucket: a caller who can push branches
@@ -221,6 +243,11 @@ issuer will mint.
 
 There is no built-in retention, export, or tamper-evident log chain. Alerting is
 available but optional; see below.
+
+Accepted webhook deliveries are logged, not audited. `audit_logs` records
+operations on keys and credentials, and the scaffold acts on no event, so a row
+per acknowledged-and-discarded delivery would be a write per event nothing acted
+on. See [GitHub App webhook](github-app.md#audit-records).
 
 ## What Sentry receives
 
@@ -263,8 +290,9 @@ What is never reported, redacted by property name _and_ by value shape,
 recursively, across request data, extras, contexts, breadcrumbs, exception
 messages and nested values:
 
-- `KEY_PASSPHRASE`, `ADMIN_TOKEN`, `ADMIN_READONLY_TOKEN` — both under their own
-  names and as literal values, wherever they appear;
+- `KEY_PASSPHRASE`, `ADMIN_TOKEN`, `ADMIN_READONLY_TOKEN`,
+  `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET` — both under their own names
+  and as literal values, wherever they appear;
 - armored PGP or PEM private key material, including a block truncated
   mid-transit;
 - raw OIDC JWTs, `gst_` service tokens, and `Bearer`/`Basic` credentials;
@@ -272,8 +300,9 @@ messages and nested values:
 - request bodies, which are not collected at all: the SDK's body capture is
   pinned off and `request.data` is deleted on the way out regardless.
 
-The deployment's own `KEY_PASSPHRASE`, `ADMIN_TOKEN`, `ADMIN_READONLY_TOKEN` and
-DSN are swept out of every string **by literal value**, with no minimum length —
+The deployment's own `KEY_PASSPHRASE`, `ADMIN_TOKEN`, `ADMIN_READONLY_TOKEN`,
+`GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET` and DSN are swept out of every
+string **by literal value**, with no minimum length —
 a short secret is still this deployment's secret, and that sweep is the only
 rule that catches one arriving under a name nobody predicted. Only an empty or
 all-whitespace value is skipped, because it is not a configured secret. The
@@ -383,6 +412,9 @@ Before relying on the service for protected production branches, account for:
   trust rule, token name and audit record;
 - no audit retention, and no alerting unless the optional `SENTRY_DSN` is
   configured (see [What Sentry receives](#what-sentry-receives));
+- a GitHub App webhook, when enabled, whose deliveries are logged but not
+  recorded in `audit_logs`, and whose rate-limit bucket is shared by every
+  caller reaching it from one address;
 - PGP-only behavior in the high-level CLI and Go wrapper; and
 - Git history rewriting when a detached signature is attached after commit
   creation.

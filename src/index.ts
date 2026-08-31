@@ -8,10 +8,12 @@ import { RateLimiter as RateLimiterClass } from "#durable-objects/rate-limiter";
 import { createOpenAPIApp, openApiConfig, registerSecuritySchemes } from "#lib/openapi";
 import { callerAuth } from "#middleware/caller-auth";
 import { errorDocs } from "#middleware/error-docs";
+import { githubWebhookAuth, githubWebhookGate, webhookRateLimit } from "#middleware/github-webhook";
 import { adminAuth } from "#middleware/oidc";
 import { requestIdMiddleware } from "#middleware/request-id";
 import { adminRateLimit, productionCors, securityHeaders } from "#middleware/security";
 import adminRoutes from "#routes/admin";
+import githubWebhookRoutes from "#routes/github-webhook";
 import subjectRoutes from "#routes/oidc-subjects";
 import signRoutes from "#routes/sign";
 import tokenRoutes from "#routes/tokens";
@@ -238,6 +240,24 @@ app.route(
 		.route("/", adminRoutes)
 		.route("/", tokenRoutes)
 		.route("/", subjectRoutes),
+);
+
+// GitHub App webhook, opt-in.
+//
+// Three middlewares rather than one, and in this order: the feature gate first
+// so a deployment that has not set GITHUB_APP_ENABLED spends nothing at all on
+// a request to a route it does not serve, then the limiter, then the HMAC — the
+// same "meter before you verify" shape /admin uses, for the same reason.
+//
+// Nothing under here is in the OpenAPI document; see the comment at the top of
+// `#routes/github-webhook` for why.
+app.route(
+	"/github",
+	createOpenAPIApp()
+		.use("*", githubWebhookGate)
+		.use("*", webhookRateLimit)
+		.use("*", githubWebhookAuth)
+		.route("/", githubWebhookRoutes),
 );
 
 // OpenAPI Docs

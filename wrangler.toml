@@ -74,6 +74,17 @@ KEY_ID          = "62E75E54497815DD"
 # addresses must match the send_email binding's restrictions above.
 KEY_EXPIRY_ALERT_FROM = "gpg-signing-service@kjanat.dev"
 KEY_EXPIRY_ALERT_TO   = "info@kajkowalski.nl"
+
+# GitHub App webhook. Off, and off is the whole default: with this unset or set
+# to anything but the literal "true", POST /github/webhook answers exactly what
+# an unrouted path answers, so shipping this code does not advertise the
+# feature. Turning it on without GITHUB_WEBHOOK_SECRET refuses every delivery
+# rather than accepting unauthenticated ones. See docs/github-app.md.
+GITHUB_APP_ENABLED = "false"
+# GITHUB_APP_ID: the App's numeric id, from its settings page. A plain var, not
+# a secret — it appears in the App's own public URL. Only needed once something
+# acts on a delivery; the scaffold acknowledges and stops.
+
 # KEY_EXPIRY_WARN_DAYS: days ahead of expiry a key starts being reported.
 # Unset means 60. Plain decimal digits naming a positive whole number; anything
 # else — including `1e3` and `0x3C`, which Number() would read as 1000 and 60 —
@@ -90,6 +101,13 @@ KEY_EXPIRY_ALERT_TO   = "info@kajkowalski.nl"
 # - ADMIN_TOKEN: Token for admin endpoints
 # - ADMIN_READONLY_TOKEN (optional): Second admin bearer, GET/HEAD only. Must
 #   differ from ADMIN_TOKEN — equal values refuse the whole admin surface.
+# - GITHUB_APP_PRIVATE_KEY (optional): The GitHub App's RSA private key, PEM.
+#   Either the `BEGIN RSA PRIVATE KEY` file GitHub's download button produces or
+#   a `BEGIN PRIVATE KEY` conversion of it; both are accepted. Holding it is
+#   being the App, so it mints credentials for every installation.
+# - GITHUB_WEBHOOK_SECRET (optional): The webhook secret set on the App. The
+#   only control on POST /github/webhook — the URL is public by construction —
+#   so an enabled integration without it refuses every delivery.
 # - SENTRY_DSN (optional): Error tracking and tracing. Unset — which is the
 #   default, and why there is no value here — disables Sentry completely: no
 #   events, no traces, and none of the SDK's integrations are installed, so
@@ -112,6 +130,8 @@ KEY_EXPIRY_ALERT_TO   = "info@kajkowalski.nl"
 # STAGING ENVIRONMENT
 # Deploy with: wrangler deploy --env staging
 # Secrets: wrangler secret put KEY_PASSPHRASE --env staging
+#          wrangler secret put GITHUB_APP_PRIVATE_KEY --env staging
+#          wrangler secret put GITHUB_WEBHOOK_SECRET --env staging
 # =============================================================================
 [env.staging]
 name        = "gpg-signing-service-staging"
@@ -156,3 +176,4 @@ KEY_ID                = "62E75E54497815DD"
 ENVIRONMENT           = "staging"
 KEY_EXPIRY_ALERT_FROM = "gpg-signing-service@kjanat.dev"
 KEY_EXPIRY_ALERT_TO   = "info@kajkowalski.nl"
+GITHUB_APP_ENABLED    = "false"
