@@ -33,6 +33,7 @@
 
 import { createExecutionContext, runInDurableObject, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import type { Context } from "hono";
 import { Hono } from "hono";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { WebhookDeliveries } from "#durable-objects/webhook-deliveries";
@@ -40,7 +41,14 @@ import app from "#gpg-signing-service";
 import { githubWebhookAuthorize, webhookReplayGuard } from "#middleware/github-webhook";
 import type { Env, Variables } from "#types";
 import { SIGNATURE_HEADER, SIGNATURE_PREFIX } from "#utils/github-webhook";
-import { claimDelivery, DELIVERY_RETENTION_MS, isDeliveryId } from "#utils/webhook-replay";
+import {
+	commitDelivery,
+	DELIVERY_RESERVATION_MS,
+	DELIVERY_RETENTION_MS,
+	isDeliveryId,
+	releaseDelivery,
+	reserveDelivery,
+} from "#utils/webhook-replay";
 import { captureLogEntries, logLine } from "./helpers/log-capture";
 
 /** Cold-starting a Durable Object costs more than vitest's default hook budget. */
@@ -156,17 +164,17 @@ describe("the ledger", () => {
 	}
 
 	beforeAll(async () => {
-		await ledger("warmup").fetch("http://internal/claim?id=warmup-delivery-id", { method: "POST" });
+		await ledger("warmup").fetch("http://internal/reserve?id=warmup-delivery-id", { method: "POST" });
 	}, WARMUP_TIMEOUT_MS);
 
-	it("claims an unseen id once and refuses it thereafter", async () => {
+	it("reserves an unseen id once and refuses it thereafter", async () => {
 		const id = crypto.randomUUID();
 
-		const first = await claimDelivery(env, id);
-		const second = await claimDelivery(env, id);
+		const first = await reserveDelivery(env, id);
+		const second = await reserveDelivery(env, id);
 
-		expect(first.claimed).toBe(true);
-		expect(second.claimed).toBe(false);
+		expect(first.reserved).toBe(true);
+		expect(second.reserved).toBe(false);
 		// The repeat reports when the *first* one happened, not now: that is what
 		// makes a redelivery legible in a log without correlating two lines.
 		expect(second.firstSeen).toBe(first.firstSeen);
@@ -175,36 +183,36 @@ describe("the ledger", () => {
 	it("keeps distinct ids distinct", async () => {
 		const [a, b] = [crypto.randomUUID(), crypto.randomUUID()];
 
-		expect((await claimDelivery(env, a)).claimed).toBe(true);
-		expect((await claimDelivery(env, b)).claimed).toBe(true);
+		expect((await reserveDelivery(env, a)).reserved).toBe(true);
+		expect((await reserveDelivery(env, b)).reserved).toBe(true);
 	});
 
-	it("gives exactly one winner to concurrent claims of one id", async () => {
+	it("gives exactly one winner to concurrent reservations of one id", async () => {
 		// **The test the whole design exists for.** A check-then-write implemented
 		// across two round trips passes every sequential test above and fails here,
 		// because both copies observe "not present" before either writes.
 		const id = crypto.randomUUID();
 
-		const claims = await Promise.all(Array.from({ length: 12 }, () => claimDelivery(env, id)));
+		const attempts = await Promise.all(Array.from({ length: 12 }, () => reserveDelivery(env, id)));
 
-		expect(claims.filter((claim) => claim.claimed)).toHaveLength(1);
-		// And every loser is told about the same first claim, rather than about
-		// whichever write happened to land last.
-		const firstSeen = new Set(claims.map((claim) => claim.firstSeen));
+		expect(attempts.filter((attempt) => attempt.reserved)).toHaveLength(1);
+		// And every loser is told about the same first reservation, rather than
+		// about whichever write happened to land last.
+		const firstSeen = new Set(attempts.map((attempt) => attempt.firstSeen));
 		expect(firstSeen.size).toBe(1);
 	});
 
-	it("refuses a claim with no id rather than sharing one key between them", async () => {
+	it("refuses a reservation with no id rather than sharing one key between them", async () => {
 		// The caller validates first; this is the second of two guards. Without it
 		// an empty id becomes the key `d:` — one name every id-less delivery would
 		// dedupe against.
-		const response = await ledger("deliveries").fetch("http://internal/claim?id=", { method: "POST" });
+		const response = await ledger("deliveries").fetch("http://internal/reserve?id=", { method: "POST" });
 
 		expect(response.status).toBe(400);
 	});
 
-	it("refuses a GET on the claim path", async () => {
-		const response = await ledger("deliveries").fetch("http://internal/claim?id=abcdefghij");
+	it("refuses a GET on the reserve path", async () => {
+		const response = await ledger("deliveries").fetch("http://internal/reserve?id=abcdefghij");
 
 		expect(response.status).toBe(405);
 	});
@@ -223,12 +231,12 @@ describe("the ledger", () => {
 		const stub = ledger("expiry");
 
 		await runInDurableObject(stub, async (_instance: WebhookDeliveries, state) => {
-			await state.storage.put(`d:${id}`, { firstSeen: Date.now() - 1000, expiresAt: Date.now() - 1 });
+			await state.storage.put(`d:${id}`, { firstSeen: Date.now() - 1000, expiresAt: Date.now() - 1, committed: true });
 		});
 
-		const response = await stub.fetch(`http://internal/claim?id=${id}`, { method: "POST" });
+		const response = await stub.fetch(`http://internal/reserve?id=${id}`, { method: "POST" });
 
-		expect(await response.json()).toMatchObject({ claimed: true });
+		expect(await response.json()).toMatchObject({ reserved: true });
 	});
 
 	it("remembers an id for GitHub's redelivery window", async () => {
@@ -237,7 +245,11 @@ describe("the ledger", () => {
 		// says how long a replay is caught for.
 		const id = crypto.randomUUID();
 		const stub = ledger("retention");
-		await stub.fetch(`http://internal/claim?id=${id}`, { method: "POST" });
+		// Reserved *and committed*: the retention window belongs to the second
+		// phase. A reservation on its own is held for minutes, which is the
+		// property `holds a reservation for minutes` asserts further down.
+		await stub.fetch(`http://internal/reserve?id=${id}`, { method: "POST" });
+		await stub.fetch(`http://internal/commit?id=${id}`, { method: "POST" });
 
 		const record = await runInDurableObject(stub, async (_instance: WebhookDeliveries, state) =>
 			state.storage.get<{ expiresAt: number }>(`d:${id}`),
@@ -249,9 +261,9 @@ describe("the ledger", () => {
 		expect(DELIVERY_RETENTION_MS).toBeGreaterThan(3 * 24 * 60 * 60 * 1000);
 	});
 
-	it("arms a reaper when the first id is claimed", async () => {
+	it("arms a reaper when the first id is reserved", async () => {
 		const stub = ledger("arming");
-		await stub.fetch(`http://internal/claim?id=${crypto.randomUUID()}`, { method: "POST" });
+		await stub.fetch(`http://internal/reserve?id=${crypto.randomUUID()}`, { method: "POST" });
 
 		const alarm = await runInDurableObject(stub, async (_instance: WebhookDeliveries, state) =>
 			state.storage.getAlarm(),
@@ -265,8 +277,12 @@ describe("the ledger", () => {
 		const [dead, alive] = [crypto.randomUUID(), crypto.randomUUID()];
 
 		await runInDurableObject(stub, async (instance: WebhookDeliveries, state) => {
-			await state.storage.put(`d:${dead}`, { firstSeen: 0, expiresAt: Date.now() - 1 });
-			await state.storage.put(`d:${alive}`, { firstSeen: Date.now(), expiresAt: Date.now() + 600_000 });
+			await state.storage.put(`d:${dead}`, { firstSeen: 0, expiresAt: Date.now() - 1, committed: true });
+			await state.storage.put(`d:${alive}`, {
+				firstSeen: Date.now(),
+				expiresAt: Date.now() + 600_000,
+				committed: true,
+			});
 
 			await instance.alarm();
 
@@ -283,7 +299,7 @@ describe("the ledger", () => {
 		const stub = ledger("quiescence");
 
 		await runInDurableObject(stub, async (instance: WebhookDeliveries, state) => {
-			await state.storage.put(`d:${crypto.randomUUID()}`, { firstSeen: 0, expiresAt: Date.now() - 1 });
+			await state.storage.put(`d:${crypto.randomUUID()}`, { firstSeen: 0, expiresAt: Date.now() - 1, committed: true });
 			await state.storage.deleteAlarm();
 
 			await instance.alarm();
@@ -295,7 +311,7 @@ describe("the ledger", () => {
 	it("keeps waking itself while records remain", async () => {
 		// The converse, and the half that actually reclaims storage: an object that
 		// stopped re-arming while live records sat in it would leak them until the
-		// next claim happened to arrive.
+		// next reservation happened to arrive.
 		const stub = ledger("rearming");
 
 		await runInDurableObject(stub, async (instance: WebhookDeliveries, state) => {
@@ -339,7 +355,7 @@ describe("the ledger", () => {
 	it("reports a fault as a 500 rather than letting it escape", async () => {
 		// Nothing above a Durable Object catches a fault from inside it, so this
 		// handler is the end of the line. A throw that escaped would reach
-		// `claimDelivery` as an opaque runtime error rather than a status, and the
+		// `reserveDelivery` as an opaque runtime error rather than a status, and the
 		// delivery would be refused for a reason no log line explains.
 		const stub = ledger("faulty");
 
@@ -357,7 +373,7 @@ describe("the ledger", () => {
 			// storage to fail, is not a test.
 			(instance as unknown as { state: unknown }).state = broken;
 
-			return instance.fetch(new Request("http://internal/claim?id=abcdefghij", { method: "POST" }));
+			return instance.fetch(new Request("http://internal/reserve?id=abcdefghij", { method: "POST" }));
 		});
 
 		expect(response.status).toBe(500);
@@ -414,7 +430,7 @@ describe("mounted without the gates in front of it", () => {
 		expect(((await response.json()) as Envelope).code).toBe("SERVICE_MISCONFIGURED");
 	});
 
-	it("refuses to claim an id for a request no signature check ran on", async () => {
+	it("refuses to reserve an id for a request no signature check ran on", async () => {
 		const response = await bare(webhookReplayGuard);
 
 		expect(response.status).toBe(500);
@@ -536,8 +552,8 @@ describe("through the route", () => {
 	});
 
 	it("refuses the delivery when the ledger cannot be reached", async () => {
-		// Fails closed, like every other dependency on this path: a claim that did
-		// not happen is not a claim, and reading an unreachable ledger as "not seen
+		// Fails closed, like every other dependency on this path: a reservation that
+		// did not happen is not a reservation, and reading an unreachable ledger as "not seen
 		// before" removes the protection exactly when nothing can check it.
 		const { response, body } = await deliver({
 			overrides: {
@@ -558,7 +574,7 @@ describe("through the route", () => {
 	});
 
 	it("refuses the delivery when the ledger answers with an error status", async () => {
-		// A non-2xx from the ledger is not a verdict. Reading one as "not claimed"
+		// A non-2xx from the ledger is not a verdict. Reading one as "not reserved"
 		// would turn every ledger fault into an invitation to act twice.
 		const { response, body } = await deliver({
 			overrides: {
@@ -574,14 +590,14 @@ describe("through the route", () => {
 	});
 
 	it("refuses the delivery when the ledger answers something unreadable", async () => {
-		// A malformed body read as `claimed: undefined` would be falsy, which
+		// A malformed body read as `reserved: undefined` would be falsy, which
 		// happens to fail closed. That is an accident of coercion, not a property,
 		// so the parse is explicit and this is what says so.
 		const { response, body } = await deliver({
 			overrides: {
 				WEBHOOK_DELIVERIES: {
 					idFromName: () => ({}),
-					get: () => ({ fetch: async () => Response.json({ claimed: "yes" }) }),
+					get: () => ({ fetch: async () => Response.json({ reserved: "yes" }) }),
 				},
 			},
 		});
@@ -661,7 +677,7 @@ describe("what a ledger failure reports to the operator", () => {
 
 	it("reports a ledger that answered rather than threw the same way", async () => {
 		// A non-2xx and an unreadable body are turned into errors by
-		// `claimDelivery` rather than by the middleware, so this checks the
+		// `reserveDelivery` rather than by the middleware, so this checks the
 		// synthesised error survives the same path.
 		const requestId = crypto.randomUUID();
 
@@ -683,56 +699,223 @@ describe("what a ledger failure reports to the operator", () => {
 	});
 });
 
-describe("a claimed id is not released when the handler fails", () => {
-	// The semantics `docs/github-app.md` names "at-most-once", asserted rather
-	// than only described. The guard claims the id and then calls `next()`, and
-	// nothing gives the claim back — so a handler that fails after the claim
-	// leaves the delivery consumed, and the redelivery an operator sends after
-	// seeing the red row is answered as a duplicate without acting.
+describe("two phases: a delivery that caused nothing stays redeliverable", () => {
+	// The prerequisite `docs/github-app.md` named before the first acting handler
+	// could land, now resolved and asserted rather than described.
 	//
-	// Harmless while the handler acts on nothing. A hard prerequisite for the
-	// first one that does, which is why this is a test and not a paragraph: a
-	// future two-phase ledger has to fail here deliberately rather than pass by
-	// accident.
-	it("consumes the id for a handler that throws, so the redelivery is a duplicate", async () => {
+	// A one-way claim taken before the handler is *at-most-once*: an event is
+	// acted on no more than once and possibly not at all. That was right for a
+	// scaffold and wrong for a handler that signs, because it makes every failure
+	// permanent — a delivery the rate limiter refused, or one that arrived while
+	// key storage was down, caused nothing at all, and the operator's redelivery
+	// would come back `duplicate: true` without acting.
+	//
+	// So the id is reserved before the handler and settled after it: released when
+	// the handler says it published nothing, committed otherwise. The three tests
+	// below are the three outcomes, and the direction of each is a security
+	// property rather than an ergonomic one.
+
+	/** The guard as mounted, with a handler under test behind it. */
+	async function through(id: string, handler: (c: Context<{ Bindings: Env; Variables: Variables }>) => unknown) {
+		const pipeline = new Hono<{ Bindings: Env; Variables: Variables }>();
+		pipeline.use("*", async (c, next) => {
+			// Stands in for `githubWebhookAuth`, which has already run by the time
+			// the guard sees a request through the real route.
+			c.set("webhookDelivery", { event: "push", id, installationId: INSTALLATION });
+			c.set("webhookPayload", grantedPayload());
+			await next();
+		});
+		pipeline.use("*", webhookReplayGuard);
+		pipeline.post("/webhook", (c) => handler(c) as never);
+		pipeline.onError((_error, c) => c.json({ code: "INTERNAL_ERROR" }, 500));
+
+		const ctx = createExecutionContext();
+		const response = await pipeline.fetch(
+			new Request("https://sign.test/webhook", { method: "POST", body: "{}" }),
+			{ ...env, ...ENABLED },
+			ctx,
+		);
+		await waitOnExecutionContext(ctx);
+
+		return response;
+	}
+
+	it("releases the id when the handler published nothing, so a redelivery retries", async () => {
+		// The case the whole two-phase change exists for. A handler that refused
+		// before doing anything sets `webhookRetryable`, and the redelivery must
+		// reach it — not be answered as a duplicate.
+		const id = crypto.randomUUID();
+		let reached = 0;
+
+		const first = await through(id, (c) => {
+			reached += 1;
+			c.set("webhookRetryable", true);
+			return c.json({ refused: true }, 503);
+		});
+		expect(first.status).toBe(503);
+
+		const second = await through(id, (c) => {
+			reached += 1;
+			c.set("webhookRetryable", true);
+			return c.json({ refused: true }, 503);
+		});
+
+		expect(reached).toBe(2);
+		expect(((await second.json()) as Envelope).duplicate).toBeUndefined();
+	});
+
+	it("commits the id when the handler says nothing, so a redelivery is a duplicate", async () => {
+		// The default direction, and deliberately the safe one rather than the
+		// convenient one: a handler that acted and forgot to say so must not be
+		// repeatable. Absent means committed.
+		const id = crypto.randomUUID();
+		let reached = 0;
+
+		await through(id, (c) => {
+			reached += 1;
+			return c.json({ ok: true }, 200);
+		});
+
+		const redelivered = await through(id, (c) => {
+			reached += 1;
+			return c.json({ ok: true }, 200);
+		});
+
+		expect(reached).toBe(1);
+		expect(redelivered.status).toBe(200);
+		expect(((await redelivered.json()) as Envelope).duplicate).toBe(true);
+	});
+
+	it("commits the id when the handler throws, because nothing is known about what it did", async () => {
+		// An uncaught throw says nothing about whether the handler published. The
+		// unknown state is treated as "may have acted", because acting twice is
+		// worse than not acting — and the acting handler catches its own failures
+		// and marks them explicitly rather than relying on this.
 		const id = crypto.randomUUID();
 
-		/** The pipeline as mounted, with a handler that fails after the claim. */
-		async function through(handler: () => unknown): Promise<Response> {
-			const failing = new Hono<{ Bindings: Env; Variables: Variables }>();
-			failing.use("*", async (c, next) => {
-				// Stands in for `githubWebhookAuth`, which has already run by the time
-				// the guard sees a request through the real route.
-				c.set("webhookDelivery", { event: "push", id, installationId: INSTALLATION });
-				c.set("webhookPayload", grantedPayload());
-				await next();
-			});
-			failing.use("*", webhookReplayGuard);
-			failing.post("/webhook", () => handler() as never);
-			failing.onError((_error, c) => c.json({ code: "INTERNAL_ERROR" }, 500));
-
-			const ctx = createExecutionContext();
-			const response = await failing.fetch(
-				new Request("https://sign.test/webhook", { method: "POST", body: "{}" }),
-				{ ...env, ...ENABLED },
-				ctx,
-			);
-			await waitOnExecutionContext(ctx);
-
-			return response;
-		}
-
-		const failed = await through(() => {
-			throw new Error("handler failed after the id was claimed");
+		const failed = await through(id, () => {
+			throw new Error("handler failed");
 		});
 		expect(failed.status).toBe(500);
 
-		// The redelivery. It never reaches the handler: the guard short-circuits it
-		// as a repeat, which is the cost this documents.
-		const redelivered = await through(() => {
+		// Committed, not merely still reserved. The distinction is the whole test:
+		// a settle that was skipped altogether would leave a reservation, which
+		// also answers the redelivery below as a duplicate — and then lapses five
+		// minutes later and becomes retryable, which is the wrong direction for an
+		// outcome nobody can describe. The stored record is what tells them apart.
+		const stored = await runInDurableObject(
+			env.WEBHOOK_DELIVERIES.get(env.WEBHOOK_DELIVERIES.idFromName("deliveries")),
+			async (_instance: WebhookDeliveries, state) => state.storage.get<{ committed: boolean }>(`d:${id}`),
+		);
+		expect(stored?.committed).toBe(true);
+
+		const redelivered = await through(id, () => {
 			throw new Error("the handler was reached, which this test says it is not");
 		});
 		expect(redelivered.status).toBe(200);
 		expect(((await redelivered.json()) as Envelope).duplicate).toBe(true);
+	});
+
+	it("will not release a committed record, so a second arrival cannot un-say the first", async () => {
+		// The asymmetry that makes the phases safe. If release could undo a commit,
+		// anything able to call it could reopen an action that already happened.
+		const id = crypto.randomUUID();
+
+		await reserveDelivery(env, id);
+		await commitDelivery(env, id);
+		await releaseDelivery(env, id);
+
+		expect((await reserveDelivery(env, id)).reserved).toBe(false);
+	});
+
+	it("holds a reservation for minutes, not for the retention window", async () => {
+		// An uncommitted reservation must lapse on its own: a handler whose isolate
+		// died would otherwise hold the id for four days, and every redelivery in
+		// the meantime would be answered as a duplicate without acting — at exactly
+		// the moment an operator is trying to recover.
+		const id = crypto.randomUUID();
+		const stub = env.WEBHOOK_DELIVERIES.get(env.WEBHOOK_DELIVERIES.idFromName("deliveries"));
+
+		await reserveDelivery(env, id);
+		const reserved = await runInDurableObject(stub, async (_instance: WebhookDeliveries, state) =>
+			state.storage.get<{ expiresAt: number; committed: boolean }>(`d:${id}`),
+		);
+
+		expect(reserved?.committed).toBe(false);
+		expect((reserved as { expiresAt: number }).expiresAt).toBeLessThanOrEqual(Date.now() + DELIVERY_RESERVATION_MS);
+		// Asserted as a relation rather than against a repeated literal, so
+		// widening the reservation towards the retention window fails here.
+		expect(DELIVERY_RESERVATION_MS).toBeLessThan(DELIVERY_RETENTION_MS);
+
+		await commitDelivery(env, id);
+		const committed = await runInDurableObject(stub, async (_instance: WebhookDeliveries, state) =>
+			state.storage.get<{ expiresAt: number; committed: boolean }>(`d:${id}`),
+		);
+
+		expect(committed?.committed).toBe(true);
+		expect((committed as { expiresAt: number }).expiresAt).toBeGreaterThan(Date.now() + DELIVERY_RESERVATION_MS);
+	});
+
+	it("reports a repeat of a committed id differently from one still being handled", async () => {
+		// Same answer to the sender either way. Different thing to find in a log:
+		// one says the event was handled, the other says two copies arrived at once.
+		const id = crypto.randomUUID();
+
+		await reserveDelivery(env, id);
+		expect((await reserveDelivery(env, id)).committed).toBe(false);
+
+		await commitDelivery(env, id);
+		expect((await reserveDelivery(env, id)).committed).toBe(true);
+	});
+
+	it("does not fail a response because the ledger could not be settled", async () => {
+		// The response is already decided by the time the settle runs. Raising here
+		// would turn a bookkeeping failure into a 500 for a delivery that may have
+		// been handled perfectly — and a reservation that was not settled lapses on
+		// its own, after which a redelivery meets the handler's own idempotence.
+		const id = crypto.randomUUID();
+		let reserved = false;
+
+		const flaky = {
+			WEBHOOK_DELIVERIES: {
+				idFromName: () => ({}),
+				get: () => ({
+					fetch: (request: Request) => {
+						if (new URL(request.url).pathname === "/reserve") {
+							reserved = true;
+							return Promise.resolve(Response.json({ reserved: true, firstSeen: Date.now(), committed: false }));
+						}
+						return Promise.resolve(new Response("ledger is down", { status: 500 }));
+					},
+				}),
+			},
+		};
+
+		const pipeline = new Hono<{ Bindings: Env; Variables: Variables }>();
+		pipeline.use("*", async (c, next) => {
+			c.set("webhookDelivery", { event: "push", id, installationId: INSTALLATION });
+			c.set("webhookPayload", grantedPayload());
+			await next();
+		});
+		pipeline.use("*", webhookReplayGuard);
+		pipeline.post("/webhook", (c) => c.json({ ok: true }, 200));
+
+		const ctx = createExecutionContext();
+		const response = await pipeline.fetch(
+			new Request("https://sign.test/webhook", { method: "POST", body: "{}" }),
+			{ ...env, ...ENABLED, ...flaky },
+			ctx,
+		);
+		await waitOnExecutionContext(ctx);
+
+		expect(reserved).toBe(true);
+		expect(response.status).toBe(200);
+	});
+
+	it("settles nothing for an id it never held", async () => {
+		// A reservation that lapsed mid-handler is gone by the time its handler
+		// settles. That is a race to report calmly rather than a failure to raise.
+		await expect(commitDelivery(env, crypto.randomUUID())).resolves.toBeUndefined();
+		await expect(releaseDelivery(env, crypto.randomUUID())).resolves.toBeUndefined();
 	});
 });

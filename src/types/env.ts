@@ -59,11 +59,25 @@ export interface Variables {
 	/**
 	 * Proof that this delivery id had not been seen before.
 	 *
-	 * Written only by `webhookReplayGuard`, and only when the claim succeeded — a
-	 * repeat is answered by the guard and never reaches a handler. So a handler
-	 * that finds it is running for the first time on this event.
+	 * Written only by `webhookReplayGuard`, and only when the reservation
+	 * succeeded — a repeat is answered by the guard and never reaches a handler.
+	 * So a handler that finds it is running for the first time on this event.
 	 */
 	webhookReplay?: WebhookReplay;
+	/**
+	 * A handler's statement that this delivery caused nothing irreversible.
+	 *
+	 * Read by `webhookReplayGuard` after the handler returns, to decide whether
+	 * to commit the delivery id for the retention window or release it so a
+	 * redelivery is a genuine retry.
+	 *
+	 * **Absent means committed.** The default is deliberately the safe direction
+	 * rather than the convenient one: a handler that acts and forgets to say so
+	 * is not repeatable, whereas a handler that acts and is treated as repeatable
+	 * signs the same commits twice. Only a handler that *knows* it published
+	 * nothing sets this, and it sets it at the point it knows.
+	 */
+	webhookRetryable?: boolean;
 }
 
 /** Cloudflare Workers environment bindings */
