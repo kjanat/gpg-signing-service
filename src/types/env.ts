@@ -216,6 +216,24 @@ export interface Env {
 	 * `src/utils/github-authorization.ts`.
 	 */
 	GITHUB_APP_ALLOWED_REPOSITORIES?: string;
+	/**
+	 * Optional: set to the literal `"true"` to publish a signature check run for
+	 * the head of every branch this service handles a `push` for.
+	 *
+	 * Separate from `GITHUB_APP_ENABLED`, and separate on purpose: the check
+	 * needs the App to hold `checks: write`, which is a permission an
+	 * installation has to approve after it is added to the App. Folding it into
+	 * the existing flag would mean every deployment that upgraded started making
+	 * calls its installation had not granted. Unset, this feature makes no GitHub
+	 * call at all and the push-signing path behaves exactly as it does without
+	 * it.
+	 *
+	 * Only the pairs that bind a signing key are reported on. A repository whose
+	 * allowlist entry has no `=<keyId>` suffix has no key to attribute a
+	 * signature to, so there is no check to publish. See
+	 * `src/utils/check-report.ts`.
+	 */
+	GITHUB_APP_CHECK_RUNS?: string;
 
 	/** Error tracking */
 	/**

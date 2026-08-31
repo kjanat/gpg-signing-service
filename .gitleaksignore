@@ -38,3 +38,9 @@
 # to POST /admin/keys so the scope suite can prove the read-only credential is
 # refused before the handler parses anything. Nothing to rotate.
 bce1f4a2a9c28ed9e6594704fb415fe508ee501b:src/__tests__/admin-scope.test.ts:private-key:181
+
+# The RSA key `generateAppKey` mints in src/__tests__/check-report.test.ts so the
+# endpoint suite can have a GitHub App sign its own JWT. Generated per run by
+# crypto.subtle.generateKey, PEM-armored only to be handed straight back to the
+# same process, and never written anywhere. Nothing to rotate.
+bb4060b91ed772e61ebee9a3feba488ebfd26223:src/__tests__/check-report.test.ts:private-key:792

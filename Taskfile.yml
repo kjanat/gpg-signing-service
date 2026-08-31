@@ -84,6 +84,7 @@ tasks:
       bun run test --coverage.enabled=false src/__tests__/github-webhook.test.ts
       src/__tests__/github-authorization.test.ts src/__tests__/webhook-replay.test.ts
       src/__tests__/github-signing-key.test.ts src/__tests__/push-signing.test.ts
+      src/__tests__/check-report.test.ts
 
   test:gnupg-interop:
     desc: Verify signatures against real gpg and git (skips if gpg is absent)

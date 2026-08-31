@@ -94,10 +94,19 @@ KEY_EXPIRY_ALERT_TO   = "info@kajkowalski.nl"
 # an unrouted path answers, so shipping this code does not advertise the
 # feature. Turning it on without GITHUB_WEBHOOK_SECRET refuses every delivery
 # rather than accepting unauthenticated ones. See docs/github-app.md.
-GITHUB_APP_ENABLED = "false"
+GITHUB_APP_ENABLED    = "false"
+# Signature check runs. Off, and separate from GITHUB_APP_ENABLED on purpose:
+# publishing one needs the App to hold `checks: write`, which is a permission an
+# installation has to approve after it is added, so folding it into the flag
+# above would make every upgraded deployment start calling an endpoint its
+# installation had not granted. With this unset the reporter makes no GitHub call
+# at all and push signing behaves exactly as it does without it. Only pairs that
+# bind a signing key are reported on. See docs/github-app.md.
+GITHUB_APP_CHECK_RUNS = "false"
 # GITHUB_APP_ID: the App's numeric id, from its settings page. A plain var, not
-# a secret — it appears in the App's own public URL. Only needed once something
-# acts on a delivery; the scaffold acknowledges and stops.
+# a secret — it appears in the App's own public URL. Needed to act on a delivery
+# — minting an installation token — and to tell this App's own check runs from
+# another app's with the same name.
 
 # GITHUB_APP_ALLOWED_REPOSITORIES: which <installation, repository> pairs a
 # delivery may be about, and which key each of them may cause to sign with,
@@ -210,3 +219,4 @@ ENVIRONMENT           = "staging"
 KEY_EXPIRY_ALERT_FROM = "gpg-signing-service@kjanat.dev"
 KEY_EXPIRY_ALERT_TO   = "info@kajkowalski.nl"
 GITHUB_APP_ENABLED    = "false"
+GITHUB_APP_CHECK_RUNS = "false"
