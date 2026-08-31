@@ -71,21 +71,33 @@ interface AllowlistEntry {
 }
 
 /**
- * What GitHub allows in a login or a repository name, conservatively.
+ * An owner login, exactly as GitHub allows one.
  *
- * Deliberately narrower than a full parse of GitHub's rules: this is applied to
- * a value arriving in a webhook payload as well as to one an operator typed,
- * and the point of the pattern is that anything a handler is later handed can
- * safely be put in a URL path. A legitimate name this refuses is a bug report;
- * a name it accepts that is not a repository is a hole.
+ * Alphanumeric first character, alphanumerics and hyphens after it, 39
+ * characters at most. Nothing conservative is given up here — this *is*
+ * GitHub's rule — so a login this refuses is not a login.
  */
-const NAME_SEGMENT = "[A-Za-z0-9](?:[A-Za-z0-9._-]{0,99})";
+const OWNER_SEGMENT = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})";
+
+/**
+ * A repository name, which is not the same shape as an owner.
+ *
+ * A repository *may* begin with `.`, `_` or `-`: `owner/.github` is the
+ * repository GitHub's own documentation asks you to create, and refusing it
+ * would refuse deliveries about it and — worse — make an operator who
+ * allowlisted it brick every delivery, since a malformed entry refuses the
+ * whole list. So the leading character is unrestricted within the charset, and
+ * the two names excluded are the two that are not path segments: `.` and `..`.
+ * The value still reaches a URL path, which is why that exclusion is here and
+ * not left to the caller.
+ */
+const REPO_SEGMENT = "(?!\\.{1,2}(?:$|/))[A-Za-z0-9._-]{1,100}";
 
 /** `owner/repo`, anchored. */
-const FULL_NAME_PATTERN = new RegExp(`^${NAME_SEGMENT}/${NAME_SEGMENT}$`);
+const FULL_NAME_PATTERN = new RegExp(`^${OWNER_SEGMENT}/${REPO_SEGMENT}$`);
 
 /** `<digits>:<owner>/<repo>`, anchored. */
-const ENTRY_PATTERN = new RegExp(`^(\\d{1,19}):(${NAME_SEGMENT}/${NAME_SEGMENT})$`);
+const ENTRY_PATTERN = new RegExp(`^(\\d{1,19}):(${OWNER_SEGMENT}/${REPO_SEGMENT})$`);
 
 /** Is `value` a well-formed `owner/repo`? */
 export function isRepositoryFullName(value: string): boolean {
