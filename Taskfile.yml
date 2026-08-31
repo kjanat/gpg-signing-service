@@ -61,6 +61,7 @@ tasks:
       - task: test:go-modernize-gate
       - task: test:typegen-pin
       - task: test:tool-pins
+      - task: test:composite-actions
 
   test:sentry:
     desc: Run the Sentry boundary suite alone — the inner loop of the mutation set
@@ -133,6 +134,12 @@ tasks:
     aliases: [tp, pins]
     cmd: bash scripts/test-tool-pins.sh
 
+  test:composite-actions:
+    desc: Test that composite-action shell regressions cannot bypass linting
+    aliases: [tca]
+    deps: [install:noscripts]
+    cmd: bash scripts/test-composite-action-lint.sh
+
   test:coverage:
     desc: Run tests with coverage
     aliases: [tc]
@@ -156,6 +163,7 @@ tasks:
       - task: test:go-modernize-gate
       - task: test:typegen-pin
       - task: test:tool-pins
+      - task: test:composite-actions
 
   test:watch:
     desc: Run tests in watch mode
@@ -202,9 +210,26 @@ tasks:
     # workflows-pending/ is included because that is where the workflows this
     # repository's own automation cannot push wait for a human `git mv`. They
     # are the ones nobody has run yet, so they are the ones most worth linting.
-    cmd: >-
-      find .github/workflows .github/workflows-pending -maxdepth 1 -name '*.yml' 2>/dev/null
-      | xargs -r mise exec -- actionlint
+    cmds:
+      - >-
+        find .github/workflows .github/workflows-pending -maxdepth 1 -name '*.yml' 2>/dev/null
+        | xargs -r mise exec -- actionlint
+      - task: lint:actions:composite
+
+  lint:actions:composite:
+    desc: Lint the shell embedded in composite action.yml files
+    aliases: [lac, composite]
+    deps: [install:noscripts]
+    # actionlint has no composite-action schema: pointed at an action.yml it
+    # stops at `"jobs" section is missing in workflow` and never reaches its own
+    # ShellCheck integration, and `lint:shell` globs *.sh, which an action.yml is
+    # not. So `runs.steps[*].run` was the one kind of shell this repo owns that
+    # nothing read -- both bugs #124 repaired had shipped through that hole.
+    #
+    # `mise exec` rather than a bare `bun` so the checker shells out to the same
+    # pinned shellcheck as lint:shell, and so a machine without it fails loudly
+    # instead of quietly reducing this gate to a YAML parse.
+    cmd: mise exec -- bun scripts/lint-composite-actions.ts
 
   lint:fix:
     desc: Lint and fix code
