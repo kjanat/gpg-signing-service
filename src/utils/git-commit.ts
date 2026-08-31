@@ -41,12 +41,28 @@
  * value and agree on the same wrong answer.
  *
  * So the offset is **recovered and proven** rather than read.
- * {@link recoverCommitOffsets} reconstructs the original object under candidate
+ * {@link recoverCommitObject} reconstructs the original object under candidate
  * offsets and keeps the one whose {@link commitObjectId} equals the sha the
  * commit already has. That sha was computed by Git over the real bytes, so a
  * match is proof — of the offsets, and of every other byte of the
  * reconstruction with them. A commit that no candidate reproduces is one this
  * service declines to rewrite rather than one it rewrites approximately.
+ *
+ * ### And the message, for the same reason and by the same proof
+ *
+ * The offsets are not the only thing that endpoint renders away. It also strips
+ * a trailing newline from the message — the one `git commit` puts on every
+ * message it writes — and the JSON looks identical whether the object had one or
+ * not. So the reconstruction has to try both, and what it returns is not "the
+ * offsets" but **the representation that reproduced the sha**: offsets *and*
+ * message together, because they were proven together and only together.
+ *
+ * Carrying only half of that proof forward is the same class of bug as echoing
+ * the date: the signature would be made over a message the author did not write,
+ * the created object would hold that message, and the round-trip id check would
+ * agree with itself about it — both sides having started from the same stripped
+ * string. {@link CommitReconstruction} is what the proof is carried in, and
+ * `RepositoryClient.getCommit` returns its message rather than the API's.
  *
  * With the offsets known, {@link isoWithOffset} renders them back into the ISO
  * 8601 that create-a-commit takes, and GitHub stores what it is given — verified
@@ -66,7 +82,7 @@ export interface CommitIdentity {
 	/**
 	 * `±HHMM`, the offset the stored object actually carries.
 	 *
-	 * Supplied by {@link recoverCommitOffsets}, which proves it against the
+	 * Supplied by {@link recoverCommitObject}, which proves it against the
 	 * commit's own sha. When it is absent the offset in {@link date} is used —
 	 * which, for anything that came out of GitHub's JSON, means `+0000`. So an
 	 * absent offset is not "unknown, assume UTC"; it is "this identity was not
@@ -251,7 +267,7 @@ export async function commitObjectId(content: string): Promise<string> {
  *
  * A commit whose offset is outside this set — a historical `+0020`, a
  * hand-written oddity — is not reproduced, and therefore not rewritten. See
- * {@link recoverCommitOffsets}.
+ * {@link recoverCommitObject}.
  */
 export const GIT_OFFSET_CANDIDATES: readonly string[] = (() => {
 	const minutes: number[] = [];
@@ -275,6 +291,31 @@ export interface CommitOffsets {
 }
 
 /**
+ * What reproducing an existing commit object proved about its bytes.
+ *
+ * Both fields come from the same successful match and neither is usable without
+ * the other: the id that proves the offsets is the id over an object containing
+ * this exact message, so a caller that took the offsets and kept the API's
+ * message would be relying on a proof of something it then did not do.
+ */
+export interface CommitReconstruction {
+	/** The `±HHMM` offsets the stored object carries. */
+	offsets: CommitOffsets;
+	/**
+	 * The message exactly as the object holds it — trailing newline and all.
+	 *
+	 * `GET /git/commits/{sha}` strips a single trailing `\n`, which is precisely
+	 * the byte `git commit` writes on every message it makes. So this is the API's
+	 * message for a commit that had none and the API's message plus that newline
+	 * for one that had it, and which of the two it is was decided by the object
+	 * id rather than guessed. This is the message to sign and the message to send
+	 * back — GitHub's create-a-commit endpoint stores the trailing newline it is
+	 * given, verified against the live API.
+	 */
+	message: string;
+}
+
+/**
  * Work out what offsets `sha` was really written with, by reproducing it.
  *
  * The reconstruction is checked against the commit's own object id rather than
@@ -290,8 +331,9 @@ export interface CommitOffsets {
  * - **The offsets**, which `GET /git/commits/{sha}` renders away entirely.
  * - **A trailing newline on the message**, which that endpoint strips: some
  *   objects have one and some do not, and the JSON looks identical either way.
- *   Only the offsets are returned — the message is the caller's to keep as it
- *   was — but the variant has to be tried or the id never matches.
+ *   The variant that matched is *returned*, not merely tried: it is the message
+ *   the object holds, and signing the other one would publish a signature over
+ *   bytes the author did not write.
  *
  * Author and committer offsets are searched together first, since a commit
  * whose two offsets differ is the exception (a rebase across a timezone, an
@@ -302,22 +344,23 @@ export interface CommitOffsets {
  * @param commit - The commit as GitHub's JSON described it, offsets absent
  * @param sha - The object id that reconstruction has to reproduce
  * @param authorOffset - `±HHMM`, when it is already known
- * @returns The proven offsets, or null when nothing reproduced `sha` — a commit
- *   carrying a header this module does not model, or an offset outside
- *   {@link GIT_OFFSET_CANDIDATES}. Null means "do not rewrite this", never
- *   "assume UTC".
+ * @returns The proven offsets and message, or null when nothing reproduced
+ *   `sha` — a commit carrying a header this module does not model, or an offset
+ *   outside {@link GIT_OFFSET_CANDIDATES}. Null means "do not rewrite this",
+ *   never "assume UTC" and never "use the message as it arrived".
  */
-export async function recoverCommitOffsets(
+export async function recoverCommitObject(
 	commit: CommitObject,
 	sha: string,
 	authorOffset?: string,
-): Promise<CommitOffsets | null> {
+): Promise<CommitReconstruction | null> {
 	if (authorOffset !== undefined && !GIT_OFFSET.test(authorOffset)) {
 		return null;
 	}
 
 	// As returned, then with the newline the API strips. Order matters only for
-	// speed; both are tried before a candidate is discarded.
+	// speed; both are tried before a candidate is discarded, and whichever one
+	// matched is what comes back.
 	const messages = [commit.message, `${commit.message}\n`];
 
 	for (const candidate of GIT_OFFSET_CANDIDATES) {
@@ -333,7 +376,7 @@ export async function recoverCommitOffsets(
 			});
 
 			if ((await commitObjectId(payload)) === sha) {
-				return offsets;
+				return { offsets, message };
 			}
 		}
 	}
