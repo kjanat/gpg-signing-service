@@ -19,6 +19,7 @@ shipping this code does not advertise the feature.
 | `POST /github/webhook` | Verifies `X-Hub-Signature-256` and answers `202 Accepted`     |
 | Authorization          | `<installation, repository>` pairs from an operator allowlist |
 | Replay protection      | `X-GitHub-Delivery` claimed once, atomically, for four days   |
+| Delivery semantics     | At-most-once: a claimed id is never released, even on failure |
 | App JWT minting        | RS256, from `GITHUB_APP_PRIVATE_KEY`                          |
 | Installation tokens    | Minted on demand, cached in KV under a namespaced key         |
 
@@ -310,6 +311,53 @@ So an unsigned request, a wrongly signed one, one the allowlist refuses, one
 over the payload ceiling, and one arriving at a deployment with the feature off
 all leave the id unclaimed. Each is asserted by afterwards presenting the same
 id as a legitimate delivery and requiring it to be accepted as a first arrival.
+
+### Claimed before the handler runs: at-most-once, not at-least-once
+
+The id is claimed by the middleware and then `next()` is called, and **the claim
+is never released**. So the delivery is consumed the instant it is accepted,
+before any handler behind the guard has done anything, and it stays consumed
+however that handler ends.
+
+While the scaffold acts on nothing this costs nothing. The moment a handler
+does act, it is a real trade and it points the wrong way from what the GitHub UI
+suggests:
+
+1. The handler acts, and fails partway through.
+2. The service answers `5xx`, so GitHub marks the delivery failed and the
+   operator sees a red row in **Recent Deliveries**.
+3. They press **Redeliver** — the one recovery affordance this design is built
+   around.
+4. They get `200 {"duplicate": true}`. The event is never processed, and the
+   answer looks like success.
+
+That is **at-most-once** delivery: an event is acted on no more than once, and
+possibly not at all. It is a deliberate choice for a signing service — acting
+twice is worse than not acting — but it is the opposite of what a red delivery
+row leads an operator to expect, and nothing about it is visible from the
+response.
+
+**A hard prerequisite for the first acting handler.** A handler that assumes a
+failure can be recovered by redelivering is assuming semantics this ledger does
+not provide, and it will be wrong quietly. Before one lands, this has to be
+resolved one of these ways, in writing:
+
+- **Make the handler's own action idempotent and recoverable from GitHub's
+  state**, so a lost event is repaired by the next one rather than by a repeat
+  of this one. Then at-most-once is simply correct and nothing changes.
+- **Two-phase the ledger**: `reserve` under `blockConcurrencyWhile`, which is
+  what keeps twelve simultaneous copies to one winner, and `commit` only after
+  the handler succeeds; a reservation that is never committed expires in
+  seconds. This keeps the concurrency property and makes a redelivery after a
+  crash behave the way the operator expects.
+- **Release on `5xx`**: delete the record when the handler produces a server
+  error. Simpler, and strictly weaker — a handler that half-acted and then threw
+  becomes replayable — but it does not reopen the concurrency window.
+
+Not decided here, because the choice depends on what the first handler actually
+does, and a scaffold that acts on nothing cannot make it well. What is decided
+here is that it must be chosen deliberately rather than discovered in
+production.
 
 ### A missing id is refused, not defaulted
 

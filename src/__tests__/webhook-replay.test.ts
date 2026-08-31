@@ -41,6 +41,7 @@ import { githubWebhookAuthorize, webhookReplayGuard } from "#middleware/github-w
 import type { Env, Variables } from "#types";
 import { SIGNATURE_HEADER, SIGNATURE_PREFIX } from "#utils/github-webhook";
 import { claimDelivery, DELIVERY_RETENTION_MS, isDeliveryId } from "#utils/webhook-replay";
+import { captureLogEntries, logLine } from "./helpers/log-capture";
 
 /** Cold-starting a Durable Object costs more than vitest's default hook budget. */
 const WARMUP_TIMEOUT_MS = 30_000;
@@ -601,5 +602,137 @@ describe("through the route", () => {
 		const { body } = await deliver({ deliveryId: other });
 
 		expect(JSON.stringify(body)).not.toContain(seen);
+	});
+});
+
+describe("what a ledger failure reports to the operator", () => {
+	// A 503 carries no detail on purpose, so the log line is the only account of
+	// why a delivery was dropped — and a dropped delivery is one GitHub will not
+	// resend. These require it to arrive with the request id where every other
+	// line in the service puts it, and the thrown value where `captureError`
+	// looks for an exception.
+	const LEDGER_FAILURE = "Delivery ledger failed";
+
+	/** A ledger that is reliably unreachable. */
+	const UNREACHABLE = {
+		WEBHOOK_DELIVERIES: {
+			idFromName: () => ({}),
+			get: () => ({
+				fetch: () => {
+					throw new Error("durable object unavailable");
+				},
+			}),
+		},
+	};
+
+	it("logs the failure with the request id in context and the throw as the error", async () => {
+		const requestId = crypto.randomUUID();
+		let response: Response | undefined;
+
+		const entries = await captureLogEntries(async () => {
+			({ response } = await deliver({ overrides: UNREACHABLE, headers: { "X-Request-ID": requestId } }));
+		});
+		const line = logLine(entries, LEDGER_FAILURE);
+
+		expect(response?.status).toBe(503);
+		expect(line.level).toBe("error");
+		// The same id the caller sent and the response echoes, so the 503 a person
+		// is holding and the line an operator is reading are the same request.
+		expect(line.requestId).toBe(requestId);
+		expect(response?.headers.get("X-Request-ID")).toBe(requestId);
+		expect(line.event).toBe("push");
+		expect(line.error).toMatchObject({ message: "durable object unavailable", name: "Error" });
+	});
+
+	it("does not nest the request id inside the error payload", async () => {
+		// `logger.error(msg, { requestId, error })` — the two-argument mistake —
+		// produces a line with no top-level request id and a `context` of
+		// `undefined` on the Sentry report. This is what says so.
+		const requestId = crypto.randomUUID();
+
+		const entries = await captureLogEntries(() =>
+			deliver({ overrides: UNREACHABLE, headers: { "X-Request-ID": requestId } }),
+		);
+		const line = logLine(entries, LEDGER_FAILURE);
+
+		expect((line.error as Record<string, unknown>).requestId).toBeUndefined();
+		expect((line.error as Record<string, unknown>).error).toBeUndefined();
+	});
+
+	it("reports a ledger that answered rather than threw the same way", async () => {
+		// A non-2xx and an unreadable body are turned into errors by
+		// `claimDelivery` rather than by the middleware, so this checks the
+		// synthesised error survives the same path.
+		const requestId = crypto.randomUUID();
+
+		const entries = await captureLogEntries(() =>
+			deliver({
+				overrides: {
+					WEBHOOK_DELIVERIES: {
+						idFromName: () => ({}),
+						get: () => ({ fetch: async () => new Response("nope", { status: 500 }) }),
+					},
+				},
+				headers: { "X-Request-ID": requestId },
+			}),
+		);
+		const line = logLine(entries, LEDGER_FAILURE);
+
+		expect(line.requestId).toBe(requestId);
+		expect(String((line.error as { message?: string }).message)).toContain("500");
+	});
+});
+
+describe("a claimed id is not released when the handler fails", () => {
+	// The semantics `docs/github-app.md` names "at-most-once", asserted rather
+	// than only described. The guard claims the id and then calls `next()`, and
+	// nothing gives the claim back — so a handler that fails after the claim
+	// leaves the delivery consumed, and the redelivery an operator sends after
+	// seeing the red row is answered as a duplicate without acting.
+	//
+	// Harmless while the handler acts on nothing. A hard prerequisite for the
+	// first one that does, which is why this is a test and not a paragraph: a
+	// future two-phase ledger has to fail here deliberately rather than pass by
+	// accident.
+	it("consumes the id for a handler that throws, so the redelivery is a duplicate", async () => {
+		const id = crypto.randomUUID();
+
+		/** The pipeline as mounted, with a handler that fails after the claim. */
+		async function through(handler: () => unknown): Promise<Response> {
+			const failing = new Hono<{ Bindings: Env; Variables: Variables }>();
+			failing.use("*", async (c, next) => {
+				// Stands in for `githubWebhookAuth`, which has already run by the time
+				// the guard sees a request through the real route.
+				c.set("webhookDelivery", { event: "push", id, installationId: INSTALLATION });
+				c.set("webhookPayload", grantedPayload());
+				await next();
+			});
+			failing.use("*", webhookReplayGuard);
+			failing.post("/webhook", () => handler() as never);
+			failing.onError((_error, c) => c.json({ code: "INTERNAL_ERROR" }, 500));
+
+			const ctx = createExecutionContext();
+			const response = await failing.fetch(
+				new Request("https://sign.test/webhook", { method: "POST", body: "{}" }),
+				{ ...env, ...ENABLED },
+				ctx,
+			);
+			await waitOnExecutionContext(ctx);
+
+			return response;
+		}
+
+		const failed = await through(() => {
+			throw new Error("handler failed after the id was claimed");
+		});
+		expect(failed.status).toBe(500);
+
+		// The redelivery. It never reaches the handler: the guard short-circuits it
+		// as a repeat, which is the cost this documents.
+		const redelivered = await through(() => {
+			throw new Error("the handler was reached, which this test says it is not");
+		});
+		expect(redelivered.status).toBe(200);
+		expect(((await redelivered.json()) as Envelope).duplicate).toBe(true);
 	});
 });

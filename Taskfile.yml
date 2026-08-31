@@ -80,7 +80,9 @@ tasks:
     # single-file run trips them on the files it did not load. `task
     # test:coverage` is what enforces them; this is the fast inner loop for
     # checking that a mutation to the webhook gates is caught.
-    cmd: bun run test --coverage.enabled=false src/__tests__/github-webhook.test.ts
+    cmd: >-
+      bun run test --coverage.enabled=false src/__tests__/github-webhook.test.ts
+      src/__tests__/github-authorization.test.ts src/__tests__/webhook-replay.test.ts
 
   test:gnupg-interop:
     desc: Verify signatures against real gpg and git (skips if gpg is absent)
