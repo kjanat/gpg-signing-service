@@ -68,7 +68,43 @@ if [[ "${push_default}" != "false" ]]; then
 	exit 1
 fi
 
-printf 'repair workflow: wired, dry by default\n'
+# The bounds that make a repair explicit rather than guessed. `expected_tip` is
+# the one that turns the publish into a claim about which object is being
+# replaced — repair-history.sh spends it on
+# `--force-with-lease=refs/heads/<branch>:<expected_tip>`, so a dispatch that
+# could leave it blank would degrade that into an unconditional force push.
+# `required: true` with no `default:` is what forces the operator to re-read the
+# branch immediately before dispatching. Asserted per input, over the block
+# between one input key and the next.
+input_block() {
+	awk -v key="      $2:" '
+		$0 == key { inside = 1; next }
+		inside && /^      [a-z_]+:/ { exit }
+		inside { print }
+	' "$1"
+}
+
+for bound in base expected_tip expect_identities; do
+	block="$(input_block "${workflow}" "${bound}")"
+	if ! grep -Fq 'required: true' <<<"${block}"; then
+		printf 'FAIL: %s does not mark %s required\n' "${workflow}" "${bound}" >&2
+		exit 1
+	fi
+	if grep -Fq 'default:' <<<"${block}"; then
+		printf 'FAIL: %s gives %s a default; a repair bound must be typed out, not inherited\n' \
+			"${workflow}" "${bound}" >&2
+		exit 1
+	fi
+done
+
+# And the expected tip has to reach the lease, not just the dispatch form. The
+# script is what spends it; this asserts the two stay wired together.
+grep -Fq -- '--force-with-lease="refs/heads/${branch}:${expected_tip}"' "${repair_script}" || {
+	printf 'FAIL: %s no longer leases the push against the expected tip\n' "${repair_script}" >&2
+	exit 1
+}
+
+printf 'repair workflow: wired, dry by default, bounds required\n'
 
 # The fixture must inherit no GIT_* state at all. Worst first: GIT_DIR and
 # GIT_WORK_TREE aim the fixture's commands back at the caller's own repository,
