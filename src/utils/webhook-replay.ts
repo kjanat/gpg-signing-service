@@ -74,9 +74,31 @@
  * anything left this service that cannot be taken back"**. For push signing
  * that line is the ref update: signing a commit produces bytes nobody can see,
  * creating a commit object leaves something unreachable that GitHub collects,
- * and *moving the branch* is the first step a person could observe. See
- * `#routes/github-webhook` for where the commit is taken and why it is taken
- * before the ref update rather than after it.
+ * and *moving the branch* is the first step a person could observe.
+ *
+ * ### What happens before the ref update is the *decision*, not the write
+ *
+ * Stated precisely, because the two are easy to conflate and only one of them
+ * is true. `#utils/push-signing` calls `beforePublish` immediately before it
+ * issues the update, and `#routes/github-webhook` uses that call to set
+ * `webhookRetryable` to false — a flag on the request context. The Durable
+ * Object write happens later, in `webhookReplayGuard`'s `finally`, after the
+ * handler has returned and the response has been built.
+ *
+ * At-most-once does not depend on that ordering, and this is why: the
+ * reservation is held for the *whole* request, so no second copy of the
+ * delivery can be handled while the first is still running, whenever the commit
+ * lands within it. What the ordering does buy is that the decision is taken
+ * while the code still knows what it is about to do, rather than reconstructed
+ * afterwards from an outcome.
+ *
+ * Two gaps follow from the write being last, and both are closed rather than
+ * argued away. A handler that dies between the ref update and the `finally`
+ * writes nothing — so the ledger's commit path creates the record it does not
+ * find (see `WebhookDeliveries.settle`), and the redelivery that gets past even
+ * that finds a signed head and signs nothing. A ledger that cannot be reached
+ * at all is logged and leaves a reservation that lapses; that one is genuinely
+ * open, and it is why the object-graph check exists as well.
  */
 
 import type { Env } from "#types";
@@ -205,11 +227,21 @@ export async function reserveDelivery(env: Env, deliveryId: string): Promise<Del
  * this, every later arrival of the id is a no-op — including a redelivery an
  * operator triggers because the response looked like a failure.
  *
+ * The ledger's answer is returned rather than discarded, because one of its
+ * values is worth seeing: `committed_without_reservation` means the reservation
+ * had already lapsed when the handler finished, so the record was created from
+ * scratch. The dedupe still holds — that is the ledger failing closed — but a
+ * handler outrunning {@link DELIVERY_RESERVATION_MS} is a thing an operator
+ * should be told about rather than a thing to infer later.
+ *
+ * @returns The reason the ledger reported, or null if it reported none.
  * @throws When the ledger cannot be reached. The caller decides what that means
  *   for the response; it does not mean the action can be undone.
  */
-export async function commitDelivery(env: Env, deliveryId: string): Promise<void> {
-	await ledgerCall(env, "commit", deliveryId);
+export async function commitDelivery(env: Env, deliveryId: string): Promise<string | null> {
+	const body = await ledgerCall(env, "commit", deliveryId);
+
+	return typeof body.reason === "string" ? body.reason : null;
 }
 
 /**

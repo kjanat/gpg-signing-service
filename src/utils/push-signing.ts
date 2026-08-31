@@ -19,17 +19,26 @@
  *    collects them, and until a ref moves nobody can reach them or know they
  *    were made.
  * 4. **Move the branch.** This is the one a person sees, the one that cannot be
- *    taken back, and the one the delivery id is committed in front of.
+ *    taken back, and the one the delivery is marked non-retryable in front of.
  *
  * So a failure anywhere in 1–3 leaves the world exactly as it was, and the
  * delivery is released for a genuine retry. From 4 onward the delivery is spent,
  * whatever the outcome — including an ambiguous one, where the request was sent
- * and the answer was lost, which is the case that makes "commit before, not
- * after" the only safe order.
+ * and the answer was lost. That case is why the *decision* has to be taken in
+ * front of step 4: afterwards there is nothing left to distinguish "the update
+ * did not happen" from "the update happened and the answer was lost", and
+ * retrying a force update on the wrong reading of that is how a branch gets
+ * moved twice.
  *
  * {@link PushSigningHooks.beforePublish} is that boundary, made explicit rather
  * than left as a comment about statement order. The caller supplies what to do
- * at it; this module guarantees where it happens.
+ * at it; this module guarantees where it happens. **What the caller does there
+ * is record a decision, not a durable write** — `#routes/github-webhook` sets a
+ * flag, and `webhookReplayGuard` writes the ledger from its `finally` once this
+ * function has returned. At-most-once comes from the reservation being held for
+ * the whole request rather than from where that write lands; see
+ * `#utils/webhook-replay` for the two gaps that ordering leaves and what closes
+ * them.
  *
  * ### The branch is re-read before it is moved
  *
@@ -65,7 +74,9 @@ export interface PushSigningHooks {
 	 * Called once, immediately before the branch is moved.
 	 *
 	 * Everything up to this call is reversible; nothing after it is. The caller
-	 * uses it to commit the delivery id.
+	 * uses it to decide that the delivery is no longer retryable — which for the
+	 * route means setting a flag the replay guard reads afterwards, not writing
+	 * to the ledger from inside here.
 	 */
 	beforePublish(): Promise<void>;
 }
@@ -243,10 +254,10 @@ export async function signPushedCommits(
 	try {
 		await client.updateBranch(branch, head, true);
 	} catch (error) {
-		// Past the boundary. The delivery is already committed, so this is reported
-		// and not retried: the update may have landed and the answer been lost, and
-		// repeating a force update on that assumption is how a branch gets moved
-		// twice.
+		// Past the boundary. The delivery is already marked non-retryable, so this
+		// is reported and not retried: the update may have landed and the answer
+		// been lost, and repeating a force update on that assumption is how a
+		// branch gets moved twice.
 		return {
 			outcome: "failed",
 			reason: error instanceof Error ? error.message : "Branch update failed",

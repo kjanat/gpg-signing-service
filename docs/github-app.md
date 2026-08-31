@@ -104,6 +104,43 @@ payload: equal ids mean identical bytes, and there is no way for them to be
 equal and the signature to be wrong. The comparison happens **before** the ref
 moves, so a mismatch costs a dangling object nobody can reach.
 
+That check is only worth having if the two sides can actually disagree, which is
+why the timezone offset below is recovered rather than echoed: while both sides
+started from GitHub's already-normalised `Z`, they agreed on the same wrong
+answer and the check could not see it.
+
+### The timezone offset is recovered, not read
+
+A commit object stores `<epoch> <±HHMM>` and the offset is part of the object —
+change it and the commit gets a different id. **GitHub's API does not report
+it.** `GET /git/commits/{sha}` renders both dates in UTC for a commit whose
+object says `+0200`, and so does `GET /commits/{sha}`, and so does GraphQL's
+`GitTimestamp` despite its schema documentation saying otherwise. A rewrite that
+echoed that string back would quietly relocate every commit made outside UTC —
+which is most commits made on a laptop — and `git log` would show a different
+local time than the author committed at.
+
+So the offset is worked out and then **proven**: the original object is
+reconstructed under candidate offsets and the one whose SHA-1 equals the sha the
+commit already has is kept. That sha was computed by Git over the real bytes, so
+a match is proof rather than a guess, and it settles a second ambiguity for
+free — the API also strips a trailing newline from the message, and only one of
+the two variants can reproduce the id.
+
+Author and committer offsets are searched together first, since a commit whose
+two differ is the exception. When that fails, the **patch representation**
+(`Accept: application/vnd.github.patch`) is fetched, because its RFC 2822
+`Date:` header is the one rendering GitHub still shows the offset in; that pins
+the author's, and the committer's is searched alone. A commit that nothing
+reproduces is refused as `unreproducible_commit` rather than rewritten
+approximately.
+
+Going back out, the recovered offset is rendered into the ISO 8601 that
+create-a-commit takes, and GitHub stores the offset it is given — verified
+against the live API with an author at `+0545` and a committer at `-0330`, both
+preserved in the created object. Which is what finally puts the object-id check
+on both sides of a real disagreement.
+
 ### The signing budget
 
 The rate limiter in front of the whole route counts **requests per source
@@ -245,7 +282,9 @@ receives nothing.
 A `202` body carries a `skipped` field naming why nothing was signed —
 `nothing_to_sign` for a head that already carries a signature, `no_key_bound`
 for a repository the operator granted events but no key, `not_a_branch`,
-`branch_deleted`, `branch_moved`, `too_many_unsigned`, and `malformed` for a
+`branch_deleted`, `branch_moved`, `too_many_unsigned`,
+`unreproducible_commit` for a commit whose exact bytes could not be
+reconstructed from what the API reports, and `malformed` for a
 payload that could not be shown to describe a signable push — no usable `ref`,
 or a `deleted` flag that is not the literal `false` a non-deletion carries. A
 `200` from a successful
@@ -571,16 +610,37 @@ is the ref update: a signature exists only in memory, a created commit object is
 unreachable until a ref points at it, and moving the branch is the first step a
 person can observe.
 
-The id is committed **immediately before** the update is issued, not after it.
-That is deliberate and it is the asymmetric case: a request that was sent and
-whose answer was lost may well have landed, and repeating a force update on the
-assumption that it did not is how a branch gets moved twice.
+The delivery is marked **non-retryable immediately before** the update is
+issued, not after it. That is deliberate and it is the asymmetric case: a
+request that was sent and whose answer was lost may well have landed, and
+repeating a force update on the assumption that it did not is how a branch gets
+moved twice.
+
+What sits in front of the update is the **decision**. The Durable Object write
+happens afterwards, from the replay guard's `finally`, once the handler has
+returned — the two are worth keeping apart because only one of them is where
+at-most-once comes from. That comes from the reservation, which is held for the
+whole request: no second copy of a delivery is handled while the first is still
+running, wherever inside it the ledger write lands.
+
+Two consequences of the write being last, both closed:
+
+- A handler that dies between the ref update and the `finally` writes nothing.
+  So `commit` **creates the record it does not find** rather than reporting
+  `absent` and moving on: an irreversible delivery is recorded for the full
+  retention window whether or not its reservation survived. The log line
+  `Delivery committed after its reservation had lapsed` is that case.
+- A ledger that cannot be reached at all is logged and leaves a reservation that
+  lapses. That one is genuinely open, and it is why the handler's own
+  idempotence — a head that is already signed is `nothing_to_sign` — is a second
+  control rather than a nicety.
 
 Everything before that point releases:
 
 | Outcome                                      | Delivery  |
 | -------------------------------------------- | --------- |
 | Signed, branch moved                         | Committed |
+| A commit in the run could not be reproduced  | Committed |
 | Branch update failed after being issued      | Committed |
 | No key bound to the pair                     | Released  |
 | Bound key missing, or key storage down       | Released  |

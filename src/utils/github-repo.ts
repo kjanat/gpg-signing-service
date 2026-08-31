@@ -32,6 +32,8 @@ import { z } from "@hono/zod-openapi";
 import type { Env, WebhookAuthorization } from "#types";
 import { TIME } from "#types";
 import { fetchWithTimeout } from "#utils/fetch";
+import type { CommitIdentity, CommitOffsets } from "#utils/git-commit";
+import { isoWithOffset, recoverCommitOffsets } from "#utils/git-commit";
 import { getInstallationToken, githubApiUrl } from "#utils/github-app";
 
 /** How long any single GitHub call may take. */
@@ -90,8 +92,17 @@ export interface RepositoryCommit {
 	message: string;
 	tree: string;
 	parents: string[];
-	author: { name: string; email: string; date: string };
-	committer: { name: string; email: string; date: string };
+	author: CommitIdentity;
+	committer: CommitIdentity;
+	/**
+	 * The `±HHMM` offsets the stored object carries, proven against `sha`.
+	 *
+	 * Null when they could not be proven — a signed commit, whose object holds a
+	 * `gpgsig` this reconstruction does not model and is never rewritten anyway,
+	 * or an unsigned one carrying something else unmodelled. Null is a refusal to
+	 * rewrite, handled by `signableRun`; it is never read as "UTC".
+	 */
+	offsets: CommitOffsets | null;
 	/**
 	 * Whether the commit already carries *some* signature.
 	 *
@@ -124,6 +135,61 @@ function encodeRefPath(ref: string): string {
 		.split("/")
 		.map((segment) => encodeURIComponent(segment))
 		.join("/");
+}
+
+/**
+ * The author's `±HHMM` offset, read out of a `git format-patch` rendering.
+ *
+ * The patch representation is the one place GitHub still shows a commit's real
+ * offset: `Date: Sun, 30 Aug 2026 21:05:00 +0200` for an object that says
+ * `1788116700 +0200`, where every JSON rendering of the same commit says `Z`.
+ *
+ * The `From <sha>` sentinel is checked rather than assumed, and that check is
+ * what makes this safe on a merge: asking for a merge commit's patch returns the
+ * patches of the commits it merged, whose first line names one of *them*. A
+ * mismatch answers null and the caller falls back to refusing, instead of
+ * stamping some other commit's timezone onto this one.
+ *
+ * @param patch - The body of a `application/vnd.github.patch` response
+ * @param sha - The commit that body was asked for
+ */
+export function patchAuthorOffset(patch: string, sha: string): string | null {
+	const lines = patch.split("\n");
+
+	if (lines[0] === undefined || !lines[0].startsWith(`From ${sha} `)) {
+		return null;
+	}
+
+	for (const line of lines.slice(1)) {
+		// The mail header block ends at the first blank line. Stopping there keeps
+		// a `Date:` inside the diff body — a patch to a changelog, say — from being
+		// read as the commit's own.
+		if (line.trim() === "") {
+			return null;
+		}
+
+		const match = /^Date:\s.*\s([+-]\d{4})$/.exec(line.trimEnd());
+		if (match) {
+			return match[1] as string;
+		}
+	}
+
+	return null;
+}
+
+/**
+ * An identity as create-a-commit takes it: ISO 8601 carrying the real offset.
+ *
+ * An identity with no recovered offset is sent exactly as it arrived, which is
+ * the shape a caller that never went through {@link recoverCommitOffsets} has —
+ * and the shape nothing in this service signs.
+ */
+function wireIdentity(identity: CommitIdentity): { name: string; email: string; date: string } {
+	return {
+		name: identity.name,
+		email: identity.email,
+		date: identity.offset === undefined ? identity.date : isoWithOffset(identity.date, identity.offset),
+	};
 }
 
 /** The GitHub API bound to one authorized repository and one installation. */
@@ -165,8 +231,20 @@ export class RepositoryClient {
 		return new RepositoryClient(env, authorization.installationId, authorization.repository);
 	}
 
-	/** A call to the pinned host, on this repository's path, as this installation. */
-	private async call(method: string, path: string, body?: unknown): Promise<Response> {
+	/**
+	 * A call to the pinned host, on this repository's path, as this installation.
+	 *
+	 * `accept` is the media type, defaulting to JSON. The one caller that overrides
+	 * it is {@link RepositoryClient.authorOffsetFromPatch}, which needs the patch
+	 * representation because it is the only one of GitHub's renderings that keeps
+	 * a commit's timezone offset.
+	 */
+	private async call(
+		method: string,
+		path: string,
+		body?: unknown,
+		accept = "application/vnd.github+json",
+	): Promise<Response> {
 		const url = githubApiUrl(`/repos/${this.repoPath}${path}`);
 
 		let token: string;
@@ -187,7 +265,7 @@ export class RepositoryClient {
 					method,
 					headers: {
 						Authorization: `Bearer ${token}`,
-						Accept: "application/vnd.github+json",
+						Accept: accept,
 						"X-GitHub-Api-Version": "2022-11-28",
 						"User-Agent": "gpg-signing-service",
 						...(body === undefined ? {} : { "Content-Type": "application/json" }),
@@ -243,20 +321,86 @@ export class RepositoryClient {
 		return { ref: ref.ref, sha: ref.object.sha };
 	}
 
-	/** One commit object. */
+	/**
+	 * One commit object, with the timezone offsets this API does not report.
+	 *
+	 * The JSON is the source for everything except the two offsets, which it
+	 * renders to `Z` unconditionally. Those are recovered by reproducing the
+	 * object id — see {@link recoverCommitOffsets} — and the patch representation
+	 * is consulted only when that fails, which happens when a commit's author and
+	 * committer offsets differ. So the common commit costs exactly the request it
+	 * always cost, and the unusual one costs a second read rather than a wrong
+	 * answer.
+	 *
+	 * Signed commits are not reproduced at all: their object carries a `gpgsig`,
+	 * so no reconstruction of ours can match their sha, and they are never
+	 * rewritten. Skipping them turns what would be a guaranteed-failing search
+	 * plus a wasted patch fetch into nothing.
+	 */
 	async getCommit(sha: string): Promise<RepositoryCommit> {
 		const response = await this.call("GET", `/git/commits/${encodeURIComponent(sha)}`);
 		const commit = await this.read(response, CommitSchema, "a commit lookup");
 
-		return {
-			sha: commit.sha,
-			message: commit.message,
+		const signed = typeof commit.verification?.signature === "string";
+
+		const object = {
 			tree: commit.tree.sha,
 			parents: commit.parents.map((parent) => parent.sha),
 			author: commit.author,
 			committer: commit.committer,
-			signed: typeof commit.verification?.signature === "string",
+			message: commit.message,
 		};
+
+		let offsets: CommitOffsets | null = null;
+		if (!signed) {
+			offsets = await recoverCommitOffsets(object, commit.sha);
+
+			if (offsets === null) {
+				const authorOffset = await this.authorOffsetFromPatch(commit.sha);
+				if (authorOffset !== null) {
+					offsets = await recoverCommitOffsets(object, commit.sha, authorOffset);
+				}
+			}
+		}
+
+		return {
+			sha: commit.sha,
+			message: commit.message,
+			tree: object.tree,
+			parents: object.parents,
+			author: offsets === null ? commit.author : { ...commit.author, offset: offsets.author },
+			committer: offsets === null ? commit.committer : { ...commit.committer, offset: offsets.committer },
+			offsets,
+			signed,
+		};
+	}
+
+	/**
+	 * The author offset from `sha`'s patch rendering, or null.
+	 *
+	 * Every failure is null rather than a throw. This is a fallback consulted
+	 * after a cheaper answer did not work, and its absence costs a refusal to
+	 * rewrite one commit — which is already the outcome without it. Turning a 404
+	 * on an unusual commit into an exception would instead turn that refusal into
+	 * a delivery-wide read failure.
+	 */
+	private async authorOffsetFromPatch(sha: string): Promise<string | null> {
+		try {
+			const response = await this.call(
+				"GET",
+				`/commits/${encodeURIComponent(sha)}`,
+				undefined,
+				"application/vnd.github.patch",
+			);
+
+			if (!response.ok) {
+				return null;
+			}
+
+			return patchAuthorOffset(await response.text(), sha);
+		} catch {
+			return null;
+		}
 	}
 
 	/**
@@ -266,16 +410,32 @@ export class RepositoryClient {
 	 * commit is unreachable and GitHub garbage-collects it. That is what makes
 	 * this the last *recoverable* step and {@link updateBranch} the irreversible
 	 * one.
+	 *
+	 * The dates go out with their recovered offsets rather than as the `Z` this
+	 * API handed back, and rendering them is done *here* rather than by the
+	 * caller so it cannot drift from the identity the payload was built over:
+	 * both come from the same {@link CommitIdentity}, one through `gitTimestamp`
+	 * and one through {@link isoWithOffset}. GitHub stores the offset it is given
+	 * — an author at `+0545` and a committer at `-0330` both survive — and if it
+	 * ever stopped doing so, the object id the caller checks would no longer
+	 * match and nothing would be published.
 	 */
 	async createCommit(input: {
 		message: string;
 		tree: string;
 		parents: string[];
-		author: { name: string; email: string; date: string };
-		committer: { name: string; email: string; date: string };
+		author: CommitIdentity;
+		committer: CommitIdentity;
 		signature: string;
 	}): Promise<string> {
-		const response = await this.call("POST", "/git/commits", input);
+		const response = await this.call("POST", "/git/commits", {
+			message: input.message,
+			tree: input.tree,
+			parents: input.parents,
+			author: wireIdentity(input.author),
+			committer: wireIdentity(input.committer),
+			signature: input.signature,
+		});
 		const created = await this.read(response, CommitSchema, "a commit creation");
 
 		return created.sha;
@@ -287,8 +447,10 @@ export class RepositoryClient {
 	 * `force` is required and true in practice: replacing a commit changes its
 	 * id, so the rewritten head is not a descendant of the old one and the update
 	 * is not a fast-forward. That is exactly why the caller re-reads the branch
-	 * immediately before calling this, and why the delivery id is committed
-	 * before it rather than after — see `#routes/github-webhook`.
+	 * immediately before calling this, and why the delivery is marked
+	 * non-retryable before it rather than after — the ledger write itself lands
+	 * afterwards, from `webhookReplayGuard`'s `finally`. See
+	 * `#utils/webhook-replay`.
 	 */
 	async updateBranch(branch: string, sha: string, force: boolean): Promise<void> {
 		const response = await this.call("PATCH", `/git/refs/heads/${encodeRefPath(branch)}`, { sha, force });

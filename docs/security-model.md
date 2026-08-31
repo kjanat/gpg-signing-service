@@ -505,6 +505,12 @@ Before relying on the service for protected production branches, account for:
   is re-read immediately before the update and required to be unchanged, which
   closes the window that is open in practice and not the one that is open in
   theory;
+- **a rewritten commit keeps its metadata, including its timezone**: the tree,
+  the parents, the identities and both dates are the originals — offsets
+  included, which GitHub's JSON does not report and which are therefore
+  recovered and proven against the commit's own object id. A commit whose exact
+  bytes cannot be reconstructed is refused rather than rewritten approximately.
+  See [the timezone offset is recovered, not read](github-app.md#the-timezone-offset-is-recovered-not-read);
 - PGP-only behavior in the high-level CLI and Go wrapper; and
 - Git history rewriting when a detached signature is attached after commit
   creation.
