@@ -32,6 +32,7 @@
  */
 
 import type { WebhookAuthorization, WebhookDelivery } from "#types";
+import { requireSigningKey } from "#utils/github-signing-key";
 
 /** The header GitHub puts the HMAC in. */
 export const SIGNATURE_HEADER = "X-Hub-Signature-256";
@@ -275,7 +276,8 @@ export async function readBodyWithin(request: Request, limit: number): Promise<A
  *
  * @param delivery - The verified delivery
  * @param authorization - What it was authorized to be about, when that has been
- *   decided; `scope` is omitted otherwise rather than guessed at
+ *   decided; `scope` and `signingKey` are omitted otherwise rather than guessed
+ *   at
  * @param options - `duplicate` marks a delivery id already claimed
  */
 export function acknowledgement(
@@ -290,7 +292,19 @@ export function acknowledgement(
 		/** Whether a token could be minted for this event, not whether one was. */
 		installation: delivery.installationId !== null,
 		/** How much authority the allowlist granted this delivery. */
-		...(authorization === undefined ? {} : { scope: authorization.scope }),
+		...(authorization === undefined
+			? {}
+			: {
+					scope: authorization.scope,
+					/**
+					 * Whether the grant binds a signing key, not which one.
+					 *
+					 * Read through `requireSigningKey` rather than off the field, so
+					 * this cannot claim a key for a state that function refuses — the
+					 * answer an operator reads here is the answer a handler would get.
+					 */
+					signingKey: requireSigningKey(authorization).allowed,
+				}),
 		/** True when this delivery id had already been claimed inside the retention window. */
 		duplicate: options.duplicate,
 		/** Always false while this is a scaffold. See `src/routes/github-webhook.ts`. */
