@@ -249,6 +249,7 @@ const unpinnedStatuses: Record<string, { suite: string; needs: string }> = {
 	AUDIT_ERROR: { suite: "admin.test.ts", needs: "D1 stubbed into failure" },
 	SERVICE_DEGRADED: { suite: "middleware.test.ts", needs: "an unreachable JWKS or store" },
 	SERVICE_MISCONFIGURED: { suite: "middleware.test.ts", needs: "an ALLOWED_ISSUERS entry the SSRF guard refuses" },
+	PAYLOAD_TOO_LARGE: { suite: "github-webhook.test.ts", needs: "the integration enabled and an oversize delivery" },
 };
 
 describe("the status a code actually arrives with", () => {

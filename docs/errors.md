@@ -262,6 +262,25 @@ routes with a declared request schema produce it; a hand-written `400` does not.
 Key ids are the 16-character long id — `62E75E54497815DD`, not
 `signing-key-v1`.
 
+### PAYLOAD_TOO_LARGE
+
+**413.** The request body is larger than the route will read, and it was not
+read. Only `POST /github/webhook` sets it today, against GitHub's own 25 MiB
+(26214400-byte) payload cap — a delivery over that is not truncated by GitHub,
+it is not sent at all, so a body above the ceiling did not come from GitHub
+whatever signature it carries.
+
+Not a variant of [`INVALID_REQUEST`](#invalid_request), because the two have
+different fixes and one of them is not a fix: a malformed body is corrected and
+resent, an oversize one is refused identically forever.
+
+The refusal is the same whether the request _declared_ an oversize
+`Content-Length` or merely turned out to be oversize while being read. That is
+deliberate — a sender able to tell those apart would have learnt that the header
+is consulted, which is the one fact needed to pick the cheaper attack — and it
+means the `hint` names the ceiling but never what was sent. Nothing about the
+body is reported back, because the body was not read.
+
 ### NOT_FOUND
 
 **404.** No route matches. Also returned by `/e/<CODE>` for a code this service

@@ -1,19 +1,34 @@
 /**
- * The three gates in front of `POST /github/webhook`, in the order they run.
+ * The four gates in front of `POST /github/webhook`, in the order they run.
  *
  * They are separate middlewares rather than one because the ordering between
  * them is itself a property worth being able to state and test:
  *
  * 1. `githubWebhookGate` — is the feature on, and is it completely configured?
  *    First, so a deployment that has not opted in spends nothing on a request
- *    to a route it does not serve. Putting the rate limiter ahead of this would
- *    mean a Durable Object round trip per probe on every deployment in the
- *    world that has this code and not this feature.
- * 2. `webhookRateLimit` — before the HMAC, for the same reason `adminRateLimit`
+ *    to a route it does not serve. Putting anything ahead of this would mean
+ *    work per probe on every deployment in the world that has this code and not
+ *    this feature.
+ * 2. `webhookBodyLimit` — does the request already say it is too big? One
+ *    header read and no body read, so it is strictly cheaper than the Durable
+ *    Object round trip that would otherwise precede it, and a request that
+ *    announces a body no route here will read should not consume a bucket that
+ *    GitHub's real delivery addresses share.
+ * 3. `webhookRateLimit` — before the HMAC, for the same reason `adminRateLimit`
  *    sits before `adminAuth`: the expensive, attacker-triggerable work is the
  *    verification, and a limiter behind it is a limiter that has already paid.
- * 3. `githubWebhookAuth` — the HMAC over the raw bytes. Nothing downstream sees
+ * 4. `githubWebhookAuth` — reads the body under the same ceiling, counting the
+ *    octets that actually arrive rather than trusting the ones step 2 was told
+ *    about, and then the HMAC over exactly those bytes. Nothing downstream sees
  *    a body that did not pass this.
+ *
+ * Steps 2 and 4 are the same limit enforced twice on purpose, and neither is
+ * redundant. The header is a claim by the party whose body is in question, so
+ * it can only ever be used to refuse early, never to accept; the count during
+ * the read is the one that holds, and it costs at most one chunk beyond the
+ * ceiling. Enforcing only the header would be a guard any sender can step
+ * around by declaring a smaller number, and enforcing only the read would spend
+ * a Durable Object round trip on requests that already told us the answer.
  */
 
 import type { MiddlewareHandler } from "hono";
@@ -24,8 +39,11 @@ import { serviceMisconfigured, unauthorized } from "#utils/errors";
 import { githubAppEnabled } from "#utils/github-app";
 import {
 	DELIVERY_HEADER,
+	declaredBodyLength,
 	EVENT_HEADER,
 	installationIdOf,
+	MAX_WEBHOOK_BODY_BYTES,
+	readBodyWithin,
 	SIGNATURE_HEADER,
 	verifyWebhookSignature,
 } from "#utils/github-webhook";
@@ -105,6 +123,62 @@ export const githubWebhookGate: WebhookMiddleware = async (c, next) => {
 			"GITHUB_APP_ENABLED is true but GITHUB_WEBHOOK_SECRET is not set; refusing every delivery. Put one with `wrangler secret put GITHUB_WEBHOOK_SECRET` and set the same value on the App.",
 		);
 		return serviceMisconfigured(c, "GitHub webhook delivery is not configured");
+	}
+
+	return next();
+};
+
+/**
+ * The one refusal here that is not about who sent the request.
+ *
+ * Written once and used from both ends of the ceiling — the declared length and
+ * the counted one — so a request that lies about its size and one that is
+ * honest about it are answered identically. A sender that could tell those
+ * apart would have learnt that this deployment reads the header, which is the
+ * one fact needed to choose the cheaper of the two attacks.
+ *
+ * The hint names the number rather than describing it. An operator reading this
+ * in a delivery log needs to know whether their payload is near a limit, and
+ * "too large" without a figure sends them to the source to find out.
+ */
+function tooLarge(c: Parameters<WebhookMiddleware>[0]) {
+	return c.json(
+		{
+			error: "Webhook payload too large",
+			code: "PAYLOAD_TOO_LARGE" as const satisfies ErrorCode,
+			hint: `Deliveries are limited to ${MAX_WEBHOOK_BODY_BYTES} bytes, GitHub's own payload cap. A delivery larger than that is not sent by GitHub at all.`,
+		},
+		HTTP.ContentTooLarge,
+	);
+}
+
+/**
+ * Refuse a request that has already declared a body over the ceiling.
+ *
+ * Nothing but a header read: the body is never touched, so this costs the same
+ * whether the sender goes on to upload 25 MiB or hangs up. That is why it sits
+ * ahead of the rate limiter rather than behind it — the limiter is a
+ * cross-region Durable Object round trip, and spending one to decide a question
+ * already answered by a header the request arrived with would make the meter
+ * more expensive than the thing it meters.
+ *
+ * It is only ever a refusal. A declared length under the ceiling means nothing
+ * has been established — the header is the sender's own account of a body that
+ * has not arrived — so passing this gate buys no trust downstream, and
+ * `githubWebhookAuth` counts the octets again as it reads them.
+ */
+export const webhookBodyLimit: WebhookMiddleware = async (c, next) => {
+	const declared = declaredBodyLength(c.req.header("Content-Length"));
+
+	if (declared !== null && declared > MAX_WEBHOOK_BODY_BYTES) {
+		// At info: an oversize declaration is this gate working, and the volume is
+		// the caller's to choose, not ours to page on.
+		logger.info("Webhook delivery declared a body over the ceiling", {
+			requestId: c.get("requestId"),
+			declared,
+			limit: MAX_WEBHOOK_BODY_BYTES,
+		});
+		return tooLarge(c);
 	}
 
 	return next();
@@ -199,10 +273,30 @@ export const githubWebhookAuth: WebhookMiddleware = async (c, next) => {
 		});
 	}
 
-	// `c.req.arrayBuffer()` and not `c.req.json()`: GitHub signs the octets it
-	// sent, and a re-serialised document is a different sequence of octets for
-	// the same JSON. See the module comment in `#utils/github-webhook`.
-	const raw = await c.req.arrayBuffer();
+	// The raw octets, and not `c.req.json()`: GitHub signs the bytes it sent, and
+	// a re-serialised document is a different sequence of octets for the same
+	// JSON. See the module comment in `#utils/github-webhook`.
+	//
+	// `readBodyWithin` rather than `c.req.arrayBuffer()`, which buffers whatever
+	// arrives: this counts as it reads and stops at the first chunk past the
+	// ceiling, so the most an anonymous delivery can cost is the limit plus one
+	// chunk. `webhookBodyLimit` has already refused the ones that *declared* more
+	// than that; this is what catches a sender that declared less, or nothing at
+	// all, which is one line of client code away.
+	const raw = await readBodyWithin(c.req.raw, MAX_WEBHOOK_BODY_BYTES);
+
+	if (raw === null) {
+		// Answered before the signature is examined, and that is the point rather
+		// than an accident of ordering: a body over GitHub's own cap did not come
+		// from GitHub, so there is no signature worth the CPU to check. It also
+		// keeps the refusal identical to the declared-length one — see `tooLarge`.
+		logger.info("Webhook delivery exceeded the ceiling while being read", {
+			requestId: c.get("requestId"),
+			limit: MAX_WEBHOOK_BODY_BYTES,
+			declared: declaredBodyLength(c.req.header("Content-Length")),
+		});
+		return tooLarge(c);
+	}
 
 	if (!(await verifyWebhookSignature(c.env.GITHUB_WEBHOOK_SECRET ?? "", raw, signature))) {
 		// No detail about *why*. A caller learning that its digest was well-formed

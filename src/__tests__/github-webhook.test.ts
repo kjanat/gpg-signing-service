@@ -22,6 +22,11 @@
  *   must be in front of the HMAC and behind the feature flag, and both halves
  *   are observable: rate-limit headers appear on a refused delivery, and do not
  *   appear on a disabled one.
+ * - **The body is bounded before it is buffered, and not on the sender's word.**
+ *   The limiter caps request *count*, so the bytes are capped separately. A
+ *   guard that only read `Content-Length` would pass every test that sends an
+ *   honest one — so the tests below send a dishonest one, and a body with no
+ *   declared length at all, and require the same refusal.
  */
 
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
@@ -29,7 +34,13 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import app from "#gpg-signing-service";
 import { HEADERS } from "#types";
-import { SIGNATURE_HEADER, SIGNATURE_PREFIX } from "#utils/github-webhook";
+import {
+	declaredBodyLength,
+	MAX_WEBHOOK_BODY_BYTES,
+	readBodyWithin,
+	SIGNATURE_HEADER,
+	SIGNATURE_PREFIX,
+} from "#utils/github-webhook";
 
 const SECRET = "test-webhook-secret";
 
@@ -515,5 +526,355 @@ describe("secret non-observability", () => {
 		const seen = JSON.stringify(body) + [...response.headers].flat().join(" ");
 
 		expect(seen).not.toContain(SECRET);
+	});
+});
+
+/**
+ * A body that arrives as a stream, so the request carries no `Content-Length`
+ * unless one is set by hand.
+ *
+ * The same 64 KiB buffer is enqueued `chunks` times rather than allocating the
+ * whole thing: the point is the number of octets the reader is offered, and a
+ * test that really materialised 25 MiB would spend its time on the allocator
+ * instead of on the property.
+ */
+function streamed(chunks: number, chunkBytes = 64 * 1024, headers: Record<string, string> = {}): Request {
+	const chunk = new Uint8Array(chunkBytes).fill(0x20);
+	let sent = 0;
+
+	return new Request("https://sign.test/github/webhook", {
+		method: "POST",
+		body: new ReadableStream<Uint8Array>({
+			pull(controller) {
+				if (sent >= chunks) {
+					controller.close();
+					return;
+				}
+				sent++;
+				controller.enqueue(chunk);
+			},
+		}),
+		headers: {
+			"Content-Type": "application/json",
+			"X-GitHub-Event": "push",
+			// A well-formed digest that is wrong, so the request reaches the read at
+			// all: a delivery presenting *no* signature is refused before the body is
+			// touched, which is correct and cheaper but tests nothing about the
+			// ceiling. It also sharpens what a 413 here means — the size ended the
+			// request while a signature was sitting there waiting to be checked.
+			[SIGNATURE_HEADER]: `${SIGNATURE_PREFIX}${"0".repeat(64)}`,
+			...headers,
+		},
+		// Required by the Streams spec for a request with a streaming body, and
+		// absent from the generated Workers types.
+		duplex: "half",
+	} as RequestInit);
+}
+
+/** Send a hand-built request through the app, the way `deliver` does. */
+async function send(request: Request, overrides: Record<string, unknown> = ENABLED): Promise<Response> {
+	const ctx = createExecutionContext();
+	const response = await app.fetch(request, { ...env, ...overrides }, ctx);
+	await waitOnExecutionContext(ctx);
+
+	return response;
+}
+
+describe("the payload ceiling", () => {
+	/** One byte over GitHub's cap, as a `Content-Length` value. */
+	const OVER = String(MAX_WEBHOOK_BODY_BYTES + 1);
+
+	it("is GitHub's own documented cap", () => {
+		// Pinned as a number rather than as an expression, so a change to the
+		// constant has to be made twice — once against the arithmetic and once
+		// against the figure quoted in `docs/errors.md` and `docs/github-app.md`.
+		expect(MAX_WEBHOOK_BODY_BYTES).toBe(26_214_400);
+	});
+
+	it("refuses a delivery that declares a body over it", async () => {
+		const response = await send(
+			new Request("https://sign.test/github/webhook", {
+				method: "POST",
+				body: "{}",
+				headers: { "X-GitHub-Event": "push", "Content-Length": OVER },
+			}),
+		);
+
+		expect(response.status).toBe(413);
+		expect(((await response.json()) as Envelope).code).toBe("PAYLOAD_TOO_LARGE");
+	});
+
+	it("refuses it before the signature is examined", async () => {
+		// The decisive one for "rejected without buffering or HMAC work". The body
+		// is two bytes and correctly signed, so a guard that read the octets and
+		// ignored the declaration would answer 202. Answering 413 means the
+		// declaration alone ended the request — which is the only way the guard can
+		// be cheaper than the upload it is there to avoid.
+		const response = await send(
+			new Request("https://sign.test/github/webhook", {
+				method: "POST",
+				body: "{}",
+				headers: {
+					[SIGNATURE_HEADER]: await sign("{}"),
+					"X-GitHub-Event": "push",
+					"Content-Length": OVER,
+				},
+			}),
+		);
+
+		expect(response.status).toBe(413);
+	});
+
+	it("refuses it before the rate limiter is consulted", async () => {
+		// Ordering, observed the same way the limiter's own position is: the
+		// headers are set on the way through, so their absence places this gate in
+		// front of a Durable Object round trip it would otherwise pay for a request
+		// that had already announced it could not be honoured.
+		const response = await send(
+			new Request("https://sign.test/github/webhook", {
+				method: "POST",
+				body: "{}",
+				headers: { "X-GitHub-Event": "push", "Content-Length": OVER },
+			}),
+		);
+
+		expect(response.status).toBe(413);
+		expect(response.headers.get(HEADERS.RATE_LIMIT_REMAINING)).toBeNull();
+	});
+
+	it("accepts a delivery that declares exactly the ceiling", async () => {
+		// The boundary is inclusive, and asserted through the whole route rather
+		// than against the constant: a `>=` in the guard would refuse a delivery
+		// GitHub is willing to send, and the failure would look like GitHub having
+		// stopped delivering rather than like a bug here.
+		const payload = JSON.stringify({ zen: "Approachable is better than simple." });
+		const response = await send(
+			new Request("https://sign.test/github/webhook", {
+				method: "POST",
+				body: payload,
+				headers: {
+					[SIGNATURE_HEADER]: await sign(payload),
+					"X-GitHub-Event": "push",
+					"Content-Length": String(MAX_WEBHOOK_BODY_BYTES),
+				},
+			}),
+		);
+
+		expect(response.status).toBe(202);
+	});
+
+	it.each([
+		["an empty value", ""],
+		["a padded value", ` ${OVER} `],
+		["a negative value", `-${OVER}`],
+		["a hex value", "0x1900000"],
+		["a value with a unit", `${OVER} bytes`],
+		["a list", `${OVER}, 2`],
+	])("does not read %s as a declared length", (_name, value) => {
+		// `Number("")` is 0 and `Number(" 26214401 ")` is 26214401, so a lenient
+		// parse would read half of these as small bodies and the other half as
+		// large ones — both wrong. They are all "not declared", which costs
+		// nothing: an undeclared body is counted as it arrives.
+		expect(declaredBodyLength(value)).toBeNull();
+	});
+
+	it("refuses a body over the ceiling that declared nothing at all", async () => {
+		// The one that makes the protection more than header-trust. A streamed
+		// request carries no `Content-Length`, so the first gate has nothing to act
+		// on and the count during the read is the only thing standing between an
+		// anonymous caller and unbounded buffering.
+		const response = await send(streamed(MAX_WEBHOOK_BODY_BYTES / (64 * 1024) + 1));
+
+		expect(response.status).toBe(413);
+		expect(((await response.json()) as Envelope).code).toBe("PAYLOAD_TOO_LARGE");
+	});
+
+	it("refuses a body over the ceiling that declared a small one", async () => {
+		// The lie that a header-only guard is built to believe: two bytes declared,
+		// 25 MiB and a chunk sent. One line of client code, and it must gain the
+		// sender nothing.
+		const response = await send(
+			streamed(MAX_WEBHOOK_BODY_BYTES / (64 * 1024) + 1, 64 * 1024, { "Content-Length": "2" }),
+		);
+
+		expect(response.status).toBe(413);
+		expect(((await response.json()) as Envelope).code).toBe("PAYLOAD_TOO_LARGE");
+	});
+
+	it("counts a streamed body behind the rate limiter, not in front of it", async () => {
+		// The counterpart to the declared-length ordering above, and the reason the
+		// two gates are separate. Reading a body is the expensive work, so it stays
+		// metered; only the free header check moved ahead of the meter.
+		const response = await send(streamed(MAX_WEBHOOK_BODY_BYTES / (64 * 1024) + 1));
+
+		expect(response.status).toBe(413);
+		expect(response.headers.get(HEADERS.RATE_LIMIT_REMAINING)).not.toBeNull();
+	});
+
+	it("answers a lie and a declaration identically", async () => {
+		// No oracle: a sender must not be able to tell whether the header was read.
+		// Knowing that is what tells an attacker which of the two attacks is cheap
+		// — declare honestly and pay for the upload, or declare nothing and let the
+		// server discover it. Compared as bytes, so a difference in wording or in
+		// key order counts as a difference.
+		const declared = await send(
+			new Request("https://sign.test/github/webhook", {
+				method: "POST",
+				body: "{}",
+				headers: {
+					"X-GitHub-Event": "push",
+					"Content-Length": OVER,
+					[SIGNATURE_HEADER]: `${SIGNATURE_PREFIX}${"0".repeat(64)}`,
+				},
+			}),
+		);
+		const counted = await send(streamed(MAX_WEBHOOK_BODY_BYTES / (64 * 1024) + 1));
+
+		expect(counted.status).toBe(declared.status);
+		expect(await counted.text()).toBe(await declared.text());
+	});
+
+	it("stays invisible on a deployment that did not opt in", async () => {
+		// The ceiling must not become the enumeration oracle the 404 exists to
+		// avoid. A disabled deployment answers a declared-oversize request exactly
+		// as it answers everything else on this path.
+		const disabled = await send(
+			new Request("https://sign.test/github/webhook", {
+				method: "POST",
+				body: "{}",
+				headers: { "X-GitHub-Event": "push", "Content-Length": OVER },
+			}),
+			{},
+		);
+		const unrouted = await probe("/no-such-route");
+
+		expect(disabled.status).toBe(404);
+		expect(await disabled.text()).toBe(await unrouted.text());
+	});
+
+	it("keeps the webhook secret out of the refusal", async () => {
+		const response = await send(streamed(MAX_WEBHOOK_BODY_BYTES / (64 * 1024) + 1));
+		const seen = (await response.text()) + [...response.headers].flat().join(" ");
+
+		expect(seen).not.toContain(SECRET);
+	});
+});
+
+describe("the bounded read itself", () => {
+	/** A request whose body is exactly `bytes` octets, delivered as a stream. */
+	function body(bytes: number): Request {
+		return new Request("https://x.test/", {
+			method: "POST",
+			body: new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(new Uint8Array(bytes));
+					controller.close();
+				},
+			}),
+			duplex: "half",
+		} as RequestInit);
+	}
+
+	it("returns a body of exactly the limit", async () => {
+		// Inclusive, tested at the octet. The route-level boundary test above can
+		// only afford to assert this through a declared length; this one asserts it
+		// against real bytes.
+		const read = await readBodyWithin(body(1024), 1024);
+
+		expect(read?.byteLength).toBe(1024);
+	});
+
+	it("refuses a body one octet over the limit", async () => {
+		expect(await readBodyWithin(body(1025), 1024)).toBeNull();
+	});
+
+	it("preserves the exact octets", async () => {
+		// The signature is computed over whatever this returns, so a reader that
+		// reordered or dropped a chunk boundary would break verification on any
+		// body large enough to arrive in more than one piece — the failure would
+		// look like a wrong secret.
+		const request = new Request("https://x.test/", {
+			method: "POST",
+			body: new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(new TextEncoder().encode('{"a":'));
+					controller.enqueue(new TextEncoder().encode("1}"));
+					controller.close();
+				},
+			}),
+			duplex: "half",
+		} as RequestInit);
+
+		const read = await readBodyWithin(request, 1024);
+
+		expect(new TextDecoder().decode(read as ArrayBuffer)).toBe('{"a":1}');
+	});
+
+	it("ignores a Content-Length that understates the body", async () => {
+		// Stated as a property of this function rather than of the route: the
+		// header is written by the party whose body is in question, so the counter
+		// must not consult it even to take a shortcut.
+		const request = new Request("https://x.test/", {
+			method: "POST",
+			body: new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(new Uint8Array(4096));
+					controller.close();
+				},
+			}),
+			headers: { "Content-Length": "1" },
+			duplex: "half",
+		} as RequestInit);
+
+		expect(await readBodyWithin(request, 1024)).toBeNull();
+	});
+
+	it("ignores a Content-Length that overstates it", async () => {
+		// The other direction, which matters just as much: refusing on the header
+		// alone would drop a delivery GitHub really did send, and a dropped
+		// delivery is not redelivered.
+		const request = new Request("https://x.test/", {
+			method: "POST",
+			body: new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(new Uint8Array(8));
+					controller.close();
+				},
+			}),
+			headers: { "Content-Length": "999999" },
+			duplex: "half",
+		} as RequestInit);
+
+		expect((await readBodyWithin(request, 1024))?.byteLength).toBe(8);
+	});
+
+	it("handles a request with no body at all", async () => {
+		// A GET reaching this code would have `request.body === null`, and the
+		// branch that covers it must not throw — a fault there would be a 500 on a
+		// path whose whole design is to answer 401s and 404s.
+		const read = await readBodyWithin(new Request("https://x.test/"), 1024);
+
+		expect(read?.byteLength).toBe(0);
+	});
+
+	it.each([
+		["a plain integer", "2048", 2048],
+		["zero", "0", 0],
+		["the ceiling", String(MAX_WEBHOOK_BODY_BYTES), MAX_WEBHOOK_BODY_BYTES],
+	])("reads %s as a declared length", (_name, value, expected) => {
+		expect(declaredBodyLength(value)).toBe(expected);
+	});
+
+	it("reads an absent header as undeclared", () => {
+		expect(declaredBodyLength(undefined)).toBeNull();
+		expect(declaredBodyLength(null)).toBeNull();
+	});
+
+	it("reads a value beyond the safe integer range as undeclared", () => {
+		// Digits, but not a number arithmetic can compare. Reading it as a float
+		// would work by luck here — it is enormous — but the guard should refuse to
+		// answer rather than answer approximately, and the read-side count catches
+		// the body regardless.
+		expect(declaredBodyLength("9".repeat(30))).toBeNull();
 	});
 });
