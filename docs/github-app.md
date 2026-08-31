@@ -99,6 +99,7 @@ answers:
 | `401`  | `AUTH_MISSING`          | No `X-Hub-Signature-256`. The App has no webhook secret set.  |
 | `401`  | `AUTH_INVALID`          | The signature did not verify. The two secrets differ.         |
 | `404`  | `NOT_FOUND`             | `GITHUB_APP_ENABLED` is not `"true"`.                         |
+| `413`  | `PAYLOAD_TOO_LARGE`     | Body over GitHub's 25 MiB cap. It was not read.               |
 | `429`  | `RATE_LIMITED`          | Too many deliveries from this address. Not retried by GitHub. |
 | `500`  | `SERVICE_MISCONFIGURED` | Enabled, but `GITHUB_WEBHOOK_SECRET` is unset.                |
 
@@ -135,6 +136,30 @@ several — it is the only one.
   installation of the App shares a handful of buckets.
 - **The feature gate runs before the limiter**, so a deployment that never opted
   in spends nothing at all on a request to this path.
+- **The body is bounded before it is buffered.** The limiter caps request
+  _count_; the MAC has to run over the whole body, and Workers will accept up to
+  100 MB against a 128 MB isolate memory limit, so the bytes are capped
+  separately at GitHub's own 25 MiB (26214400-byte) payload cap. Above that
+  figure a delivery is not truncated by GitHub, it is [not sent](https://docs.github.com/en/webhooks/webhook-events-and-payloads#payload-cap)
+  — so a larger body did not come from GitHub whatever signature it carries, and
+  there is no signature worth the CPU to check.
+
+  The ceiling is enforced twice, and neither half is redundant. A declared
+  `Content-Length` over the cap is refused on the header alone, ahead of the
+  rate limiter, because that costs one header read and the limiter costs a
+  Durable Object round trip. The read then counts the octets that actually
+  arrive and stops at the first chunk past the ceiling, because the header is
+  written by the party whose body is in question and understating it is one line
+  of client code. Both answer identically, so nothing reveals which one fired.
+
+### Not yet: replay
+
+A correctly signed delivery can be replayed indefinitely — nothing dedupes
+`X-GitHub-Delivery`. That is harmless while the handler acts on nothing, and it
+is a **prerequisite for the first handler that acts**: a `push` handler that
+re-signs on every replay is exactly the second, weaker front door this design is
+built to avoid. Whatever ships first has to bring delivery-id deduplication with
+it.
 
 ## Talking to GitHub
 
@@ -166,7 +191,7 @@ and credentials; a row per acknowledged-and-discarded delivery would be a D1
 write per event nothing acted on. Deliveries are logged at info instead. When a
 handler starts acting on an event, the _action_ is what earns an audit record —
 and that will need a new `AuditAction` value and the migration to widen the
-table's `CHECK` constraint.
+table's `CHECK` constraint, alongside the delivery-id deduplication noted above.
 
 ## Not in the OpenAPI document
 
