@@ -65,7 +65,13 @@ import {
 } from "#utils/github-webhook";
 import { logger } from "#utils/logger";
 import { rateLimitExceeded, retryAfterSeconds } from "#utils/rate-limit";
-import { commitDelivery, isDeliveryId, releaseDelivery, reserveDelivery } from "#utils/webhook-replay";
+import {
+	commitDelivery,
+	DELIVERY_RESERVATION_MS,
+	isDeliveryId,
+	releaseDelivery,
+	reserveDelivery,
+} from "#utils/webhook-replay";
 
 /**
  * Rate-limiter namespace for webhook deliveries.
@@ -593,7 +599,22 @@ export const webhookReplayGuard: WebhookMiddleware = async (c, next) => {
  */
 async function settleDelivery(c: Parameters<WebhookMiddleware>[0], deliveryId: string, commit: boolean): Promise<void> {
 	try {
-		await (commit ? commitDelivery(c.env, deliveryId) : releaseDelivery(c.env, deliveryId));
+		if (!commit) {
+			await releaseDelivery(c.env, deliveryId);
+			return;
+		}
+
+		// The one ledger answer worth a line of its own. The record still exists
+		// afterwards either way — commit writes one when it finds none — so this is
+		// not a failure; it says the handler outran its own reservation, which is
+		// the state that used to leave an irreversible delivery recorded nowhere.
+		if ((await commitDelivery(c.env, deliveryId)) === "committed_without_reservation") {
+			logger.warn("Delivery committed after its reservation had lapsed", {
+				requestId: c.get("requestId"),
+				delivery: deliveryId,
+				reservationMs: DELIVERY_RESERVATION_MS,
+			});
+		}
 	} catch (error) {
 		logger.error("Delivery ledger could not settle a delivery", error, {
 			requestId: c.get("requestId"),
