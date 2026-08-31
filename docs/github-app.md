@@ -4,7 +4,9 @@ An opt-in endpoint that lets a GitHub App deliver events to this service.
 
 **One event is acted on.** A `push` to an allowlisted repository whose grant
 binds a signing key has the unsigned commits at its tip signed with that key,
-and the branch moved to them. Every other event is acknowledged and discarded.
+and the branch moved to them. A deployment that opts into it separately also
+publishes a check run saying what the resulting head's signature turned out to
+be. Every other event is acknowledged and discarded.
 
 Off by default, twice over. A deployment that has not set
 `GITHUB_APP_ENABLED="true"` answers `POST /github/webhook` exactly the way it
@@ -15,27 +17,27 @@ are separate grants, and the key suffix is the opt-in for the second one.**
 
 ## What works today
 
-|                        |                                                                      |
-| ---------------------- | -------------------------------------------------------------------- |
-| `POST /github/webhook` | Verifies `X-Hub-Signature-256` and answers `202`, or `200` on a sign |
-| Authorization          | `<installation, repository>` pairs from an operator allowlist        |
-| Replay protection      | `X-GitHub-Delivery` reserved once atomically, committed on action    |
-| Signing key binding    | One key per grant, from the same allowlist entry, or none            |
-| Delivery semantics     | Two-phase: released when nothing was published, else at-most-once    |
-| `push` auto-signing    | The unsigned run at the tip, signed and force-updated                |
-| Signing budget         | Per `<installation, repository, key>`, one token per signature       |
-| Audit                  | One `push_sign` row per attempt that got as far as trying            |
-| App JWT minting        | RS256, from `GITHUB_APP_PRIVATE_KEY`                                 |
-| Installation tokens    | Minted on demand, cached in KV under a namespaced key                |
+|                        |                                                                          |
+| ---------------------- | ------------------------------------------------------------------------ |
+| `POST /github/webhook` | Verifies `X-Hub-Signature-256` and answers `202`, or `200` on a sign     |
+| Authorization          | `<installation, repository>` pairs from an operator allowlist            |
+| Replay protection      | `X-GitHub-Delivery` reserved once atomically, committed on action        |
+| Signing key binding    | One key per grant, from the same allowlist entry, or none                |
+| Delivery semantics     | Two-phase: released when nothing was published, else at-most-once        |
+| `push` auto-signing    | The unsigned run at the tip, signed and force-updated                    |
+| Signing budget         | Per `<installation, repository, key>`, one token per signature           |
+| Signature check runs   | Opt-in: one converging check run per commit, off `GITHUB_APP_CHECK_RUNS` |
+| Audit                  | One `push_sign` row per attempt that got as far as trying                |
+|                        | One `check_report` row per check run published or attempted              |
+| App JWT minting        | RS256, from `GITHUB_APP_PRIVATE_KEY`                                     |
+| Installation tokens    | Minted on demand, cached in KV under a namespaced key                    |
 
 ## What does not
 
 Named in [#26](https://github.com/kjanat/gpg-signing-service/issues/26) and
-deliberately absent: publishing a "GPG verified" check run, and dispatching
-`@claude`. Each is a handler that acts, and each needs its own answer to the
-question [Two phases](#two-phases-and-where-the-line-is) settles for push
-signing — what, for that action, is the point past which nothing can be taken
-back.
+deliberately absent: dispatching `@claude`. It is a handler that acts, and it
+needs its own answer to the question [Two phases](#two-phases-and-where-the-line-is) settles for push signing — what, for
+that action, is the point past which nothing can be taken back.
 
 Also absent, and more likely to surprise: **an unsigned commit underneath a
 signed one is never signed.** See
@@ -173,6 +175,142 @@ the two head shas, or a failure reason.
 Nothing secret rides along: no signature, no installation token, no key
 material, and no GitHub response body.
 
+## Reporting the signature as a check run
+
+Off by default and switched on separately from the rest of the integration:
+
+```toml
+GITHUB_APP_CHECK_RUNS = "true"
+```
+
+With it on, every `push` this service handles for a repository whose grant binds
+a key ends by publishing one check run — named `GPG signature`, attached to the
+commit the branch actually points at — saying what that commit's signature turned
+out to be.
+
+### Why it needs a flag of its own
+
+It is the one part of this integration that needs a permission the rest does
+not: **`Checks: Read and write`**. That is a permission an installation has to
+_approve_ after it is added to the App, so folding it into `GITHUB_APP_ENABLED`
+would mean every deployment that upgraded started calling an endpoint its
+installation had not granted, and answering `403` on each delivery.
+
+With the flag unset, the reporter makes **no GitHub call at all** and push
+signing behaves exactly as it does without this feature.
+
+### And why it needs no new subscribed event
+
+`push` is enough. A pull request's head branch lives in a repository, pushes to
+it raise `push` there, and a check run is attached to a _commit_ — which is what
+a pull request displays. Subscribing to `pull_request` as well would widen the
+payload surface this service accepts to gain nothing it does not already have.
+
+The consequence, stated plainly: **a pull request from a fork gets no check.**
+Its commits are pushed to the fork, the App is not installed there, and the
+allowlist pairs an installation with a repository. That is the same boundary
+push signing has.
+
+### The five states, and what each one claims
+
+The sha is read back from the ref, never taken from `payload.after`. GitHub's
+`verification.payload` and `verification.signature` for that commit are folded
+back into a commit object and hashed; the result must equal the sha, which is
+what makes the verdict a statement about _this commit_ rather than about bytes
+an API reported. Then the signature is verified here, against the public half of
+the key the allowlist bound.
+
+| State               | Conclusion | What it says                                                                 |
+| ------------------- | ---------- | ---------------------------------------------------------------------------- |
+| `service_key_valid` | `success`  | An OpenPGP signature by the bound key, verified here over the commit's bytes |
+| `invalid_signature` | `failure`  | A signature _naming the bound key_ that does not verify under it             |
+| `other_signer`      | `neutral`  | Signed by somebody else. **No claim** about whether that signature is good   |
+| `unsigned`          | `neutral`  | No signature at all                                                          |
+| `unverifiable`      | `neutral`  | The reported bytes could not be tied to the commit, so nothing was shown     |
+
+`failure` is reserved for the one state that is an accusation. An unsigned
+commit is not a failure here — [an unsigned commit beneath a signed one is never
+signed](#only-the-unsigned-run-at-the-tip), so failing it would be a permanent
+red mark on a state this service declines to fix — and somebody else's signature
+is somebody else's business. A branch protection rule that requires this check
+should be written knowing that only `invalid_signature` fails it.
+
+Two details worth knowing:
+
+- **Attribution is to the key's own ids, primary and subkeys.** An OpenPGP key
+  signs with its signing subkey, whose id is not the primary's, and a
+  GnuPG-generated key almost always has one. Comparing against the allowlist's
+  16 hex digits instead would report this service's own signatures as somebody
+  else's.
+- **A signature is judged as of when it was made.** Verifying at read time would
+  flip every historical commit to `invalid_signature` on the day a key expires —
+  an accusation of forgery about commits this service signed correctly.
+
+`unverifiable` has a real cost, named rather than hidden: a commit whose object
+carries a header this service does not model — a `mergetag`, most realistically
+— will not fold back, and lands there with a perfectly good signature. It is the
+right direction to be wrong in.
+
+GitHub's own `verification` verdict is repeated in the check's summary, labelled
+as GitHub's, and only after its `reason` has been matched against the documented
+set. A value outside that set is shown as `unknown`: the summary is text this
+service publishes under its own name, and a remote API does not get to choose
+it.
+
+### Retry and idempotency: converging, not at-most-once
+
+A check run is **not** protected by the [delivery ledger](#replay-protection), and that is deliberate. Signing rewrites history,
+so it is guarded by a one-way claim. A check run _states what is already true of
+a commit_, so the same report published twice has to converge rather than be
+prevented.
+
+Both halves of a check's address are fixed before anything is written — the
+name is a constant, and the sha was read back from the ref — so the write is a
+**lookup, then update or create**:
+
+1. List this App's check runs named `GPG signature` on that sha.
+2. If one exists, update the earliest. Otherwise create one.
+
+Which makes each of these safe:
+
+| Situation                                      | What happens                                          |
+| ---------------------------------------------- | ----------------------------------------------------- |
+| The delivery is redelivered                    | The ledger answers it first; nothing is written       |
+| A second delivery names the same head          | The existing run is updated                           |
+| A create succeeded and the response was lost   | The next attempt finds that run and updates it        |
+| Another app publishes a run with the same name | Ours is created beside it; theirs is never touched    |
+| The report fails for any reason                | The signing outcome stands; the delivery is unchanged |
+
+**The point after which replay is idempotent rather than suppressed is the
+create.** Everything before it is a read. After it, the run exists, and every
+later report — from a redelivery, a retry, or a fresh event about the same
+commit — lands on that same run.
+
+The residual, since GitHub's Checks API has no conditional create: two reports
+for the _identical_ sha that are both in flight through the lookup can both
+create a run. Nothing available over this API closes that window. What closes it
+afterwards is the ordering rule — the runs are sorted by id and the **earliest**
+is the one updated — so every later report converges on the same one rather than
+alternating between them.
+
+### It cannot change what the signing path did
+
+A reporting failure is recorded and nothing more. It does not touch the
+delivery's retryability, so a `403` from an installation that has not granted
+`Checks: Read and write` cannot make a completed signing push redeliverable —
+and cannot turn a signed branch into a `500`.
+
+### What is recorded
+
+One `audit_logs` row per report, `action = check_report`, `issuer =
+github-app`, `subject` the **authorized** repository and `key_id` the bound key.
+The metadata carries the sha, the state, the conclusion, the check run id and
+whether it was created or updated — or a failure reason.
+
+Nothing secret rides along: no signature, no installation token, no key
+material, and no GitHub response body. The states and reasons are values from
+closed sets in this repository, not text from an API response.
+
 ## Setup
 
 ### 1. Register the App
@@ -181,8 +319,11 @@ Settings → Developer settings → GitHub Apps → New GitHub App.
 
 - **Webhook URL**: `https://<your-deployment>/github/webhook`
 - **Webhook secret**: generate one and keep it; you need it in step 3.
-- **Permissions**: `Contents: Read and write`, if you want push signing. Nothing
-  is required otherwise — grant only what the work you add later actually needs.
+- **Permissions**: `Contents: Read and write`, if you want push signing, and
+  `Checks: Read and write` as well if you want [the signature check run](#reporting-the-signature-as-a-check-run). Nothing is required otherwise —
+  grant only what the work you add later actually needs. Adding `Checks` to an
+  App that is already installed requires the installation to approve the new
+  permission before any of its deliveries can publish one.
 - **Subscribe to events**: `Push`, for the same reason. `ping` is delivered on
   registration regardless, which is enough to check the setup without either.
 
@@ -215,6 +356,11 @@ GITHUB_APP_ID      = "123456"  # from the App's settings page
 # key each of them may cause to sign with. The `=<keyId>` suffix is optional;
 # without it the repository's events are received and may sign nothing.
 GITHUB_APP_ALLOWED_REPOSITORIES = "12345678:kjanat/gpg-signing-service=62E75E54497815DD"
+
+# Publish a `GPG signature` check run on the head of every branch this service
+# handles a push for. Needs `Checks: Read and write` on the App. Off by default;
+# unset, no Checks API call is made at all.
+GITHUB_APP_CHECK_RUNS = "true"
 ```
 
 The installation id is in the URL of the App's "Configure" page for that
@@ -225,8 +371,8 @@ Leaving `GITHUB_APP_ALLOWED_REPOSITORIES` unset is a valid state and grants
 nothing — the `ping` below still answers, so you can check the endpoint before
 you have the installation id to write here.
 
-`GITHUB_APP_ENABLED` accepts the literal `"true"` and nothing else. `"TRUE"`,
-`"1"` and `"yes"` all mean off. A flag guarding an inbound webhook is the wrong
+`GITHUB_APP_ENABLED` and `GITHUB_APP_CHECK_RUNS` both accept the literal
+`"true"` and nothing else. `"TRUE"`, `"1"` and `"yes"` all mean off. A flag guarding an inbound webhook is the wrong
 place to be generous — every near-miss must read as off, because the
 alternative is a deployment that is on by accident.
 
@@ -274,6 +420,11 @@ Advanced tab and the second answer is `200` with `"duplicate": true`.
 | `503`  | `SERVICE_DEGRADED`       | The delivery ledger could not be reached, so replay could not be ruled out.   |
 | `503`  | —                        | The bound key is gone, key storage is down, or the budget could not be read.  |
 | `500`  | `SIGN_ERROR`             | Signing or talking to GitHub failed. See `handled`/`skipped` in the body.     |
+
+A `check` field appears in the body when a check run was published, carrying
+the state it reported. A report that failed changes no status: the answer is
+whatever the signing path decided, and the failure is in the log and the audit
+trail.
 
 `AUTH_SUBJECT_UNTRUSTED` rather than `AUTH_INVALID` for an unauthorized pair,
 and it is the same distinction the OIDC path draws: the credential is right and
@@ -710,16 +861,34 @@ token.
   installation token never reach a log line, an error message or a response
   body; an error from this path carries an installation id and an HTTP status.
   Both new secrets are also in the Sentry scrubber's literal-value list.
+- **Response bodies are never quoted.** A `GitHubApiError` carries the
+  operation and a status and nothing else, because a body from this API can echo
+  back the request that produced it — which carried an installation token. What
+  is parsed out of a response is picked by a schema; a document of an unexpected
+  shape is reported as a count of bad fields, not as the document.
+
+Every Checks API call goes through the same client, so it inherits all of the
+above: the origin is pinned, the `owner/repo` in the path is the operator's
+spelling out of the allowlist, and the token is minted for the installation that
+allowlist paired with it. There is no function on that client that takes a
+repository argument, and that absence is the mechanism.
 
 ## Audit records
 
-There are none, and that is deliberate. `audit_logs` records operations on keys
-and credentials; a row per acknowledged-and-discarded delivery would be a D1
-write per event nothing acted on. Deliveries are logged at info instead, with
-the _authorized_ repository rather than the payload's, so a log line cannot be
-made to name a repository nobody granted. When a handler starts acting on an
-event, the _action_ is what earns an audit record — and that will need a new
-`AuditAction` value and the migration to widen the table's `CHECK` constraint.
+Two actions are recorded, and only the two: `push_sign` for an attempt to sign,
+`check_report` for a check run published or attempted. They are separate rows
+because they are separate acts with different blast radii — one rewrites
+history, one states a verdict about it — and because a delivery can do the
+second without the first, which is exactly what the redelivery following a
+signing push does.
+
+**An acknowledged-and-discarded delivery is not audited**, and that is
+deliberate: `audit_logs` records operations on keys and credentials, and a row
+per event nothing acted on would be a D1 write for nothing. Those are logged at
+info instead, with the _authorized_ repository rather than the payload's, so a
+log line cannot be made to name a repository nobody granted. The _action_ is
+what earns a record — and a new one costs an `AuditAction` value and a migration
+widening the table's `CHECK` constraint, which is what `0005` and `0006` are.
 
 ## Not in the OpenAPI document
 

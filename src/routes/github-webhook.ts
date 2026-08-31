@@ -2,10 +2,18 @@
  * `POST /github/webhook` — the endpoint a GitHub App delivers events to.
  *
  * One event is acted on: `push`, which signs the unsigned commits at the tip of
- * the pushed branch with the key the operator bound to that repository, and
- * moves the branch to them. Everything else is acknowledged and dropped, as the
- * whole route used to be. Publishing a check run and dispatching `@claude` are
- * still named in issue #26 and still absent.
+ * the pushed branch with the key the operator bound to that repository, moves
+ * the branch to them, and — when an operator has switched that on separately —
+ * publishes a check run saying what the resulting head's signature turned out
+ * to be. Everything else is acknowledged and dropped, as the whole route used to
+ * be. Dispatching `@claude` is still named in issue #26 and still absent.
+ *
+ * `push` is the only subscribed event the check needs, and that is worth saying
+ * because a "signature check on pull requests" sounds like it wants
+ * `pull_request`. It does not: a PR's head branch lives in a repository, pushes
+ * to it raise `push` there, and a check run is attached to a *commit* — which is
+ * what a PR displays. Subscribing to more would widen the payload surface this
+ * service accepts to gain nothing it does not already have.
  *
  * By the time an event reaches this file, four gates have already run and this
  * handler re-derives none of what they decided:
@@ -42,9 +50,12 @@
  */
 
 import { createOpenAPIApp } from "#lib/openapi";
+import type { AnyStoredKey } from "#schemas/keys";
 import type { AppContext, RateLimitResult, WebhookAuthorization, WebhookDelivery } from "#types";
 import { createIdentity, HTTP } from "#types";
 import { logAuditEvent } from "#utils/audit";
+import type { CheckReportResult } from "#utils/check-report";
+import { reportSignatureCheck } from "#utils/check-report";
 import { fetchRateLimiter } from "#utils/durable-objects";
 import { scheduleBackgroundTask } from "#utils/execution";
 import { planPush } from "#utils/github-push";
@@ -172,6 +183,118 @@ function auditPush(
 }
 
 /**
+ * Publish the check run for the head of `branch`, and never fail the delivery
+ * over it.
+ *
+ * Two things this deliberately does not do. It does not touch
+ * `webhookRetryable`: a check run is idempotent, so a redelivery that publishes
+ * it again converges on the same run rather than causing a second effect, and
+ * handing the delivery id back would instead make a signing push repeatable
+ * because a *report* failed. And it does not raise: the response has already
+ * been decided by the signing path, and a reporting failure is a thing to
+ * record, not a thing to turn a completed signing into a 500 over.
+ *
+ * The audit row is `check_report`, separate from `push_sign`, because it
+ * records a different act — a verdict published about somebody's commit — and
+ * because one delivery can do it without signing anything. Its metadata is
+ * shas, a state from a closed set, a check run id and a branch. No signature, no
+ * token, no key material, no GitHub response body.
+ */
+async function reportCheck(
+	c: AppContext,
+	client: RepositoryClient,
+	authorization: WebhookAuthorization,
+	keyId: string,
+	key: AnyStoredKey,
+	branch: string,
+): Promise<CheckReportResult> {
+	const requestId = c.get("requestId");
+	// The client is the caller's — the one already bound to the authorized
+	// `<installation, repository>` pair — rather than rebuilt here. Rebuilding it
+	// would be a second place that decides which repository this delivery may
+	// address, and two such places are one too many.
+	const report = await reportSignatureCheck(c.env, client, branch, key, keyId);
+
+	if (report.outcome === "published") {
+		logger.info("Published a commit signature check", {
+			requestId,
+			repository: authorization.repository,
+			keyId,
+			branch,
+			sha: report.sha,
+			state: report.state,
+			conclusion: report.conclusion,
+			checkRunId: report.checkRunId,
+			action: report.action,
+		});
+		await auditCheck(c, authorization, keyId, true, {
+			branch,
+			sha: report.sha,
+			state: report.state,
+			detail: report.finding.detail,
+			conclusion: report.conclusion,
+			checkRunId: report.checkRunId,
+			action: report.action,
+		});
+		return report;
+	}
+
+	if (report.outcome === "failed") {
+		// At error and audited: an installation that has not granted
+		// `checks: write` lands here on every delivery, and the operator needs to
+		// be able to see that without reading the App's own delivery log.
+		logger.error("Could not publish a commit signature check", {
+			requestId,
+			repository: authorization.repository,
+			branch,
+			reason: report.reason,
+		});
+		await auditCheck(c, authorization, keyId, false, { branch, reason: report.reason });
+		return report;
+	}
+
+	// Skipped. `disabled` is every deployment that has not opted in, so it is
+	// debug rather than info — the rest are states an operator may want to see
+	// and are rare enough to log.
+	if (report.reason === "disabled") {
+		return report;
+	}
+
+	logger.info("Published no commit signature check", {
+		requestId,
+		repository: authorization.repository,
+		branch,
+		reason: report.reason,
+	});
+
+	return report;
+}
+
+/** The audit row for one check-run report. See {@link reportCheck}. */
+function auditCheck(
+	c: AppContext,
+	authorization: WebhookAuthorization,
+	keyId: string,
+	success: boolean,
+	metadata: Record<string, unknown>,
+): Promise<void> {
+	return scheduleBackgroundTask(
+		c,
+		c.get("requestId"),
+		logAuditEvent(c.env.AUDIT_DB, {
+			requestId: c.get("requestId"),
+			action: "check_report",
+			issuer: "github-app",
+			subject: authorization.repository ?? "unknown",
+			keyId,
+			success,
+			...(success ? {} : { errorCode: "INTERNAL_ERROR" as const }),
+			metadata: JSON.stringify(metadata),
+		}),
+	);
+}
+
+/**
  * Sign what a push left unsigned.
  *
  * Every exit either publishes something or marks the delivery retryable, and
@@ -278,6 +401,23 @@ async function handlePush(
 		return c.json({ error: "Internal server error", code: "INTERNAL_ERROR" }, HTTP.InternalServerError);
 	}
 
+	// The head as it stands *after* whatever the signing path did or declined to
+	// do, reported as a check run. Deliberately outside every outcome branch
+	// below: the useful thing to publish is the state of the commit the branch
+	// actually points at, and that is worth saying whether this delivery signed
+	// it, found it already signed, or refused to touch it.
+	//
+	// It cannot change any of those outcomes. `reportCheck` swallows its own
+	// failures into an audit row, and nothing in it touches `webhookRetryable`,
+	// so the replay decisions `signPushedCommits` drove are exactly the ones that
+	// stand — see `#utils/check-report` for why an idempotent write does not want
+	// the ledger's protection in the first place.
+	const report = await reportCheck(c, client, grant, decision.keyId, loaded.key, plan.branch);
+	// Named back to the sender when one was published, for the same reason the
+	// delivery id is: "Recent Deliveries" is where an operator looks first, and a
+	// state there saves a trip to the commit.
+	const checked = report.outcome === "published" ? { check: report.state } : {};
+
 	if (result.outcome === "signed") {
 		logger.info("Signed pushed commits", {
 			requestId,
@@ -296,7 +436,12 @@ async function handlePush(
 			head: result.head,
 		});
 		return c.json(
-			{ ...acknowledgement(delivery, authorization, { duplicate: false }), handled: true, signed: result.commits },
+			{
+				...acknowledgement(delivery, authorization, { duplicate: false }),
+				handled: true,
+				signed: result.commits,
+				...checked,
+			},
 			HTTP.OK,
 		);
 	}
@@ -323,7 +468,7 @@ async function handlePush(
 			reason: result.reason,
 		});
 		return c.json(
-			{ ...acknowledgement(delivery, authorization, { duplicate: false }), skipped: result.reason },
+			{ ...acknowledgement(delivery, authorization, { duplicate: false }), skipped: result.reason, ...checked },
 			HTTP.Accepted,
 		);
 	}

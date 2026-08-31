@@ -48,6 +48,13 @@ export const AuditQuerySchema = z
  * a `sign` row is a caller asking for a signature over bytes it supplied, and a
  * `push_sign` row is this service deciding by itself to rewrite somebody's
  * branch, which is a different thing to be able to filter for.
+ *
+ * `check_report` is the other half of that: one row per check run this service
+ * published about a commit's signature. It is separate from `push_sign` because
+ * the two are different acts with different blast radii — one rewrites history
+ * and one states a verdict about it — and because a delivery can do the second
+ * without doing the first, which is exactly what happens on the redelivery that
+ * follows a signing push.
  */
 export const AuditActionSchema = z
 	.enum([
@@ -59,6 +66,7 @@ export const AuditActionSchema = z
 		"subject_create",
 		"subject_revoke",
 		"push_sign",
+		"check_report",
 	])
 	.openapi("AuditAction");
 

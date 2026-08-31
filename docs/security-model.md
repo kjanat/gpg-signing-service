@@ -54,6 +54,20 @@ a delivery cannot name its own subject and have a check bless it. And **the
 commit it acts on is read from the ref rather than taken from `payload.after`**,
 so a forged or stale payload cannot aim a force update at some other commit.
 
+A deployment may additionally opt into publishing a signature check run, behind
+its own literal `GITHUB_APP_CHECK_RUNS="true"` — separate because it needs a
+`Checks: Read and write` permission an installation has to approve, and because
+with it unset no Checks API call is made at all. It publishes an outward
+_statement_ rather than a change, so what matters here is what the statement is
+allowed to claim: `success` requires an OpenPGP signature that names the bound
+key and verifies **here**, over bytes tied back to the commit's own object id
+rather than trusted as GitHub reported them; `failure` is reserved for a
+signature that claims the bound key and does not verify under it; an unsigned
+commit and somebody else's signature are both `neutral`, because this service
+has no standing to fail a commit over either. GitHub's own verdict is repeated
+alongside, labelled as GitHub's and only from a known set of reasons. See
+[reporting the signature as a check run](github-app.md#reporting-the-signature-as-a-check-run).
+
 ## Signing authority
 
 `POST /sign` accepts any non-empty text. It does not prove that the text is a
@@ -313,8 +327,11 @@ acknowledged-and-discarded delivery would be a write per event nothing acted on.
 A `push` that reaches the point of trying to sign does earn a row: `action =
 push_sign`, `issuer = github-app`, `subject` the authorized repository, `key_id`
 the bound key, and metadata carrying the branch, the commit count and the two
-head shas — or the reason it failed. No signature, no installation token, no key
-material and no GitHub response body reaches it. See
+head shas — or the reason it failed. A published or attempted check run earns a
+second, `action = check_report`, carrying the sha, the state, the conclusion and
+the check run id. No signature, no installation token, no key material and no
+GitHub response body reaches either; the states and reasons in the metadata come
+from closed sets in this repository rather than from an API response. See
 [what is recorded](github-app.md#what-is-recorded).
 
 ## What Sentry receives
@@ -495,6 +512,19 @@ Before relying on the service for protected production branches, account for:
   acting, and recovering means pushing again rather than redelivering. Failures
   _before_ that point release the id and are genuine retries. See
   [two phases, and where the line is](github-app.md#two-phases-and-where-the-line-is);
+- **check runs converge rather than being prevented**: a check run is not
+  protected by the delivery ledger, because publishing the same verdict twice
+  has to land on one check rather than be refused. The write is a lookup then an
+  update or a create, so a lost response leads to an update of the same run —
+  but GitHub's Checks API has no conditional create, so two reports for the
+  identical sha that are both in flight through the lookup can both create one.
+  Later reports converge on the earliest. See
+  [retry and idempotency](github-app.md#retry-and-idempotency-converging-not-at-most-once);
+- **a commit carrying a header this service does not model reports
+  `unverifiable`**: the check ties GitHub's reported payload back to the
+  commit's object id before judging it, and a `mergetag` — or anything else
+  unmodelled — will not fold back. A perfectly good signature lands in the state
+  that claims nothing;
 - **an unsigned commit beneath a signed one is never signed**: rewriting a
   commit invalidates its children's signatures, so push signing only ever
   touches the unsigned run at the tip. A history with a signature in the middle

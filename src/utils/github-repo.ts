@@ -31,6 +31,7 @@ import { z } from "@hono/zod-openapi";
 
 import type { Env, WebhookAuthorization } from "#types";
 import { TIME } from "#types";
+import type { ReportedVerification } from "#utils/commit-signature";
 import { fetchWithTimeout } from "#utils/fetch";
 import type { CommitIdentity, CommitOffsets, CommitReconstruction } from "#utils/git-commit";
 import { isoWithOffset, recoverCommitObject } from "#utils/git-commit";
@@ -86,6 +87,43 @@ const RefSchema = z.object({
 	object: z.object({ sha: z.string().min(1) }),
 });
 
+/**
+ * A commit reduced to what GitHub says about its signature.
+ *
+ * Every field of `verification` is optional and defaulted, and the whole object
+ * is too, because the absence of a field and an unsigned commit have to mean
+ * the same thing here — "no signature was reported". A schema failure would
+ * instead turn an unsigned commit, or a field GitHub adds later, into an outage
+ * on a reporting path.
+ */
+const VerificationSchema = z.object({
+	sha: z.string().min(1),
+	verification: z
+		.object({
+			verified: z.boolean().default(false),
+			reason: z.string().nullable().default(null),
+			signature: z.string().nullable().default(null),
+			payload: z.string().nullable().default(null),
+		})
+		.optional(),
+});
+
+/**
+ * A check run, reduced to what deciding "is this one ours" needs.
+ *
+ * `app` is nullable in GitHub's schema, and a run with no app is not this App's
+ * — so a null reads as "somebody else's" rather than as a match.
+ */
+const CheckRunSchema = z.object({
+	id: z.number().int().positive(),
+	name: z.string(),
+	app: z.object({ id: z.number().int() }).nullable().optional(),
+});
+
+const CheckRunListSchema = z.object({
+	check_runs: z.array(CheckRunSchema).default([]),
+});
+
 /** A commit, as this service needs to see one. */
 export interface RepositoryCommit {
 	sha: string;
@@ -132,6 +170,42 @@ export interface RepositoryCommit {
 	 * answer. See `signablePrefix` in `#utils/github-push`.
 	 */
 	signed: boolean;
+}
+
+/**
+ * A completed check run, as this service publishes one.
+ *
+ * Only completed runs: this service reports a conclusion it has already
+ * reached, so there is no in-progress state to model and no half-written run
+ * left behind if a delivery dies.
+ */
+export interface CheckRunInput {
+	/** A constant chosen by this service. Never anything a payload supplied. */
+	name: string;
+	/** The sha read back from the authorized repository's ref. */
+	headSha: string;
+	conclusion: "success" | "failure" | "neutral";
+	title: string;
+	summary: string;
+	completedAt: string;
+}
+
+/**
+ * The fields both endpoints take.
+ *
+ * `head_sha` is not among them, and is added only by the create path: the
+ * update endpoint does not accept it, and a run's commit is not a thing that
+ * can be edited. That asymmetry is the API's, and keeping it here means an
+ * update cannot be the thing that moves a check onto another commit.
+ */
+function checkRunFields(input: CheckRunInput) {
+	return {
+		name: input.name,
+		status: "completed",
+		conclusion: input.conclusion,
+		completed_at: input.completedAt,
+		output: { title: input.title, summary: input.summary },
+	};
 }
 
 /** What a `refs/heads/<name>` lookup found. */
@@ -404,6 +478,77 @@ export class RepositoryClient {
 			offsets,
 			signed,
 		};
+	}
+
+	/**
+	 * What GitHub reports about one commit's signature.
+	 *
+	 * Deliberately not folded into {@link RepositoryClient.getCommit}, which
+	 * reconstructs an object in order to *rewrite* it and skips signed commits
+	 * for exactly that reason. This asks the opposite question — what is on the
+	 * commit already — so it is a separate read with a separate schema, and the
+	 * signing path is unchanged by its existence.
+	 *
+	 * The `sha` that comes back is GitHub's own for the object, and the caller
+	 * compares it against the one it asked for: an abbreviated or otherwise
+	 * indirect reference must not be allowed to resolve to a different commit
+	 * than the one being reported on.
+	 */
+	async getCommitVerification(sha: string): Promise<ReportedVerification> {
+		const response = await this.call("GET", `/git/commits/${encodeURIComponent(sha)}`);
+		const commit = await this.read(response, VerificationSchema, "a commit signature lookup");
+
+		return {
+			sha: commit.sha,
+			signature: commit.verification?.signature ?? null,
+			payload: commit.verification?.payload ?? null,
+			verified: commit.verification?.verified ?? false,
+			reason: commit.verification?.reason ?? null,
+		};
+	}
+
+	/**
+	 * This App's check runs named `name` on `sha`, oldest first.
+	 *
+	 * Filtered to `appId` here rather than trusted from the query: the endpoint
+	 * lists every app's runs, `check_name` is not unique across apps, and a
+	 * client that took the first match would try to update a run belonging to
+	 * somebody else — which GitHub refuses, so the visible failure would be a
+	 * 403 on a path that should have created its own run instead.
+	 *
+	 * Sorted by id, which is monotonic, so "the earliest one" is a stable choice
+	 * that two callers reach independently. That is what makes convergence
+	 * possible without a lock: if a race ever does produce two, every later
+	 * report picks the same one of them.
+	 */
+	async listCheckRuns(sha: string, name: string, appId: number): Promise<{ id: number }[]> {
+		const response = await this.call(
+			"GET",
+			`/commits/${encodeURIComponent(sha)}/check-runs?check_name=${encodeURIComponent(name)}&per_page=100`,
+		);
+		const listed = await this.read(response, CheckRunListSchema, "a check run lookup");
+
+		return listed.check_runs
+			.filter((run) => run.name === name && run.app?.id === appId)
+			.map((run) => ({ id: run.id }))
+			.sort((left, right) => left.id - right.id);
+	}
+
+	/** Create a check run, returning its id. */
+	async createCheckRun(input: CheckRunInput): Promise<number> {
+		const response = await this.call("POST", "/check-runs", { ...checkRunFields(input), head_sha: input.headSha });
+		const created = await this.read(response, CheckRunSchema, "a check run creation");
+
+		return created.id;
+	}
+
+	/** Overwrite an existing check run of ours with the same fields. */
+	async updateCheckRun(id: number, input: CheckRunInput): Promise<void> {
+		const response = await this.call("PATCH", `/check-runs/${encodeURIComponent(String(id))}`, checkRunFields(input));
+
+		if (!response.ok) {
+			throw new GitHubApiError(`GitHub refused a check run update for ${this.repository}`, response.status);
+		}
 	}
 
 	/**
