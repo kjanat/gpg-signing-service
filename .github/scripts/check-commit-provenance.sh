@@ -103,12 +103,18 @@ for commit in ${commits[@]+"${commits[@]}"}; do
 	# A bot as *author* is the other half of the same failure: the squash path
 	# copies the pull request author onto the commit, so a bot-opened PR
 	# carrying a person's work lands attributed to the bot.
-	if [[ "${author_name}" == *'[bot]' ]] && ! allowed "${author_email}"; then
+	#
+	# Folded to lower case here and at every other `[bot]` test below. The
+	# suffix is a convention GitHub renders, not a format it enforces on a
+	# display name, and a name is free text: `Renovate[Bot]` names the same
+	# mechanism as `renovate[bot]`. A case-sensitive test refuses one and
+	# admits the other, which is a guard with a shift key for a bypass.
+	if [[ "${author_name,,}" == *'[bot]' ]] && ! allowed "${author_email}"; then
 		printf '::error::%s is authored by %s <%s>; a bot is the mechanism that opened the pull request, not the author of the change\n' \
 			"${commit}" "${author_name}" "${author_email}"
 		failures=$((failures + 1))
 	fi
-	if [[ "${committer_name}" == *'[bot]' ]] && ! allowed "${committer_email}"; then
+	if [[ "${committer_name,,}" == *'[bot]' ]] && ! allowed "${committer_email}"; then
 		printf '::error::%s is committed by %s <%s>; a bot is the mechanism that opened the pull request, not the committer of the change\n' \
 			"${commit}" "${committer_name}" "${committer_email}"
 		failures=$((failures + 1))
@@ -145,7 +151,7 @@ for commit in ${commits[@]+"${commits[@]}"}; do
 
 		allowed "${trailer_email}" && continue
 
-		if [[ "${trailer_name}" == *'[bot]' ]]; then
+		if [[ "${trailer_name,,}" == *'[bot]' ]]; then
 			printf '::error::%s credits %s <%s> as a co-author; a bot is the mechanism that wrote the commit, not a co-author of the change\n' \
 				"${commit}" "${trailer_name}" "${trailer_email}"
 			failures=$((failures + 1))

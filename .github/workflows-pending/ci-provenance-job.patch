@@ -1,8 +1,8 @@
 diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
-index 295a000..76333b9 100644
+index 295a000..baf3917 100644
 --- a/.github/workflows/ci.yml
 +++ b/.github/workflows/ci.yml
-@@ -52,3 +52,34 @@
+@@ -52,3 +52,39 @@ jobs:
        { run: task c:t },
        { run: task c:l },
      ]
@@ -23,7 +23,12 @@ index 295a000..76333b9 100644
 +    if: github.event_name == 'push' && github.event.deleted == false
 +    runs-on: ubuntu-latest
 +    steps:
-+      - { uses: actions/checkout@v7, with: { fetch-depth: 0 } }
++      # Pinned to a commit, not a tag. This job is the guard: an action whose
++      # tag is repointed runs before the check it is meant to be checked by,
++      # in a job on the default branch. The trailing comment is the readable
++      # version and what Dependabot bumps.
++      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
++        with: { fetch-depth: 0 }
 +      - name: Check the pushed commits name a real author
 +        env:
 +          BEFORE: ${{ github.event.before }}
