@@ -398,23 +398,35 @@ GPG_SIGN_BIN=./client/bin/gpg-sign \
 
 `.github/scripts/test-repair-history.sh` builds the checked-out command the same
 way, so the suite proves the orchestration against this tree rather than against
-whatever release is installed.
+whatever release is installed. `sign-commits.sh` and
+`.github/scripts/test-sign-commits.sh` do the same for `sign-commit`.
 
 #### Landing order
 
-The routine **Sign Commits** workflow still runs
-`.github/scripts/sign-commits.py`, and that is deliberate: it cannot be switched
-to a CLI that no release contains. The order is
+The routine **Sign Commits** run is orchestrated by
+`.github/scripts/sign-commits.sh`, which turns the dispatch inputs into
+`gpg-sign sign-commit` flags and nothing else. It signs through the same CLI
+`repair-history` lives in, so there is one implementation of the signing walk
+rather than one in Go and a second in Python. The order is
 
-1. merge the `repair-history` capability (this is that step);
-2. publish a `gpg-sign` release containing it;
-3. point `.github/workflows/sign-commits.yml` at that released binary;
-4. delete the Python path once nothing invokes it;
+1. merge the `repair-history` capability;
+2. publish a `gpg-sign` release containing it and `sign-commit`;
+3. point `.github/workflows/sign-commits.yml` at `sign-commits.sh`;
+4. delete the Python path once nothing invokes it (this is that step,
+   together with 3);
 5. run the production repair, with `PUSH=true`, from a checkout that has the
    released CLI.
 
-Steps 3 and 4 need a token with the `workflows` permission, which is why they
-are not in the same change as steps 1 and 2.
+Step 3 needs a token with the `workflows` permission, which is why the one-line
+workflow edit is applied by hand rather than in the change that removes the
+script it replaces.
+
+Until step 2 lands, the installed binary is a release that predates
+`sign-commit`. That is not something to discover in the middle of a signing
+run, so `sign-commits.sh` asks the binary for `sign-commit --help` first and
+refuses by name if it has never heard of it — the same probe
+`repair-history.sh` makes. `GPG_SIGN_BIN` points either script at a build of
+this checkout in the meantime.
 
 #### Stopping it happening again
 
