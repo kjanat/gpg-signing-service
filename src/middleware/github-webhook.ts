@@ -438,7 +438,7 @@ export const githubWebhookAuthorize: WebhookMiddleware = async (c, next) => {
 		});
 
 		return unauthorized(c, "Webhook delivery is not authorized for this deployment", "AUTH_SUBJECT_UNTRUSTED", {
-			hint: `The installation and repository this delivery names are not paired in ${ALLOWLIST_VAR}. Entries are comma-separated \`<installationId>:<owner>/<repo>\`.`,
+			hint: `The installation and repository this delivery names are not paired in ${ALLOWLIST_VAR}. Entries are comma-separated \`<installationId>:<owner>/<repo>[=<keyId>]\`.`,
 		});
 	}
 
