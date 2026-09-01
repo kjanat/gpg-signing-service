@@ -24,9 +24,14 @@
  *     `on` is a YAML 1.1 boolean, so the key comes back as `true`;
  *   * the three places the requested tag is spent: the checkout `ref:`, the
  *     `RELEASE_TAG` the validation step is given, and the `tag_name:` the
- *     publisher publishes under.
+ *     publisher publishes under;
+ *   * which checkout is which. The release job has two, and they are not
+ *     interchangeable: one replaces the workspace with the requested tag's tree
+ *     and is identified by having no `path:`, the other lands the tag check
+ *     under its own `path:` from `github.workflow_sha`. Reading `checkout[0]`
+ *     would answer about whichever happened to be written first.
  *
- * That last one is the whole point. Nothing in the release job re-reads the
+ * The tag identity is the whole point. Nothing in the release job re-reads the
  * object after the checkout, so those three expressions being the same
  * requested tag is the property that makes `workflow_dispatch(tag: vX.Y.Z)`
  * safe. A job that validated one tag and published under another would be green
@@ -111,6 +116,11 @@ function canonical(value: unknown): string | null {
 		.trim();
 }
 
+/** A `with:` argument as a plain trimmed string, or null when it is not one. */
+function scalar(value: unknown): string | null {
+	return typeof value === "string" ? value.trim() : null;
+}
+
 function mappingOrNull(value: unknown): Record<string, unknown> | null {
 	if (value === null || value === undefined || typeof value !== "object" || Array.isArray(value)) return null;
 	return value as Record<string, unknown>;
@@ -159,7 +169,12 @@ function main(argv: string[]): number {
 	const steps: unknown = job.steps;
 	if (steps !== undefined && !Array.isArray(steps)) die(`${file}: job ${jobId} has a steps: that is not a sequence`);
 
-	const checkout: { ref: string | null; persistCredentials: unknown }[] = [];
+	const checkout: {
+		index: number;
+		ref: string | null;
+		path: string | null;
+		persistCredentials: unknown;
+	}[] = [];
 	const validator: {
 		index: number;
 		releaseTag: string | null;
@@ -178,7 +193,12 @@ function main(argv: string[]): number {
 		const env = mappingOrNull(step.env);
 
 		if (name === CHECKOUT) {
-			checkout.push({ ref: canonical(withArgs?.ref), persistCredentials: withArgs?.["persist-credentials"] ?? null });
+			checkout.push({
+				index: index + 1,
+				ref: canonical(withArgs?.ref),
+				path: scalar(withArgs?.path),
+				persistCredentials: withArgs?.["persist-credentials"] ?? null,
+			});
 		}
 		if (name === PUBLISHER) {
 			publisher.push({ index: index + 1, uses: step.uses as string, tagName: canonical(withArgs?.tag_name) });
@@ -196,6 +216,9 @@ function main(argv: string[]): number {
 		}
 	}
 
+	const rooted = checkout.filter((step) => step.path === null);
+	const pathed = checkout.filter((step) => step.path !== null);
+
 	// `on` is a YAML 1.1 boolean: a document that spells the key `on:` parses to
 	// the key `true`. A scanner looking for the literal string would be answering
 	// a different question than the runner does.
@@ -211,8 +234,16 @@ function main(argv: string[]): number {
 			permissionsSource,
 			checkout: {
 				count: checkout.length,
-				ref: checkout[0]?.ref ?? null,
-				persistCredentials: checkout[0]?.persistCredentials ?? null,
+				// Which checkout is the release workspace is decided by the absence
+				// of a `path:`, not by position: a `path:`-less checkout is the one
+				// that replaces $GITHUB_WORKSPACE, and $GITHUB_WORKSPACE is where a
+				// `run:` step executes. Two of either kind leaves the question
+				// unanswerable, so it is reported as unanswered rather than guessed.
+				release: rooted.length === 1 ? rooted[0] : null,
+				tooling: pathed.length === 1 ? pathed[0] : null,
+				// Every checkout, not the first: the credential the second one
+				// leaves behind is inherited by exactly the same later steps.
+				persisting: checkout.filter((step) => step.persistCredentials !== false).map((step) => step.index),
 			},
 			validator: {
 				count: validator.length,

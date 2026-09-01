@@ -2,16 +2,26 @@
 # Refuse to publish a release unless the checkout is exactly the commit the
 # named tag already resolves to.
 #
-# Called by .github/workflows/release.yml as its first step after checkout, on
-# both of that workflow's paths:
+# Called by .github/workflows/release.yml before the build, on both of that
+# workflow's paths:
 #
 #   push:              RELEASE_TAG is github.ref_name  — the tag that fired the run
 #   workflow_dispatch: RELEASE_TAG is inputs.tag       — a tag that already exists
 #
-#   usage:  validate-release-tag.sh            # reads RELEASE_TAG from the environment
+#   usage:  .release-tooling/.github/scripts/validate-release-tag.sh
+#   cwd:    the release workspace — the checkout of the tag being published
 #   env:    RELEASE_TAG   the vX.Y.Z tag being published
 #   exit:   0  publish — the tag names this checkout
 #           1  do not publish, and fail the job — the reason is on the annotation
+#
+# THE SCRIPT AND THE OBJECTS COME FROM DIFFERENT PLACES, ON PURPOSE. The
+# workflow checks the requested tag out into $GITHUB_WORKSPACE and this file out
+# of `github.workflow_sha` — the commit that supplied the workflow — into
+# `.release-tooling/`. So the code deciding whether a ref is safe to publish is
+# never code that ref supplied, and a tag cut before this check existed can
+# still be validated by it. Everything below reads the repository in the current
+# working directory, which is the release workspace and not the tooling
+# checkout; nothing here resolves a path relative to the script.
 #
 # The dispatch path is the one this guards. `.github/workflows/release.yml`
 # checks out `ref: ${{ inputs.tag || github.ref }}`, so the operator's string

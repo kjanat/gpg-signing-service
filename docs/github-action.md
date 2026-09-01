@@ -122,19 +122,36 @@ publish step inherits every permission the job was granted.
 
 **It publishes only the commit its tag already names.** The requested tag is
 one expression spent in three places: it selects the checkout `ref`, it is the
-`RELEASE_TAG` that `.github/scripts/validate-release-tag.sh` validates, and it
-is the `tag_name` the release is published under. That script runs before the
-build and refuses unless `<tag>^{commit}` equals `HEAD`, which is what makes the
-manual `workflow_dispatch(tag: vX.Y.Z)` path safe: on that path the tag is an
-operator string and nothing else in the job re-reads the object. The step
-creates, moves and fetches nothing — a tag that is not already in the checkout
-is a refusal.
+`RELEASE_TAG` that `validate-release-tag.sh` validates, and it is the `tag_name`
+the release is published under. That script runs before the build and refuses
+unless `<tag>^{commit}` equals `HEAD`, which is what makes the manual
+`workflow_dispatch(tag: vX.Y.Z)` path safe: on that path the tag is an operator
+string and nothing else in the job re-reads the object. The step creates, moves
+and fetches nothing — a tag that is not already in the checkout is a refusal.
+
+**The tag check does not come from the tag.** A `run:` step executes in
+`$GITHUB_WORKSPACE`, and the checkout above it replaced `$GITHUB_WORKSPACE` with
+the requested tag's tree — so a script named there is a file the published tag
+has to supply, and every tag cut before this workflow landed supplies none. The
+job therefore checks out twice: the requested tag into the workspace, and
+`github.workflow_sha` — the commit this workflow file itself came from — into
+`.release-tooling/`, with the same pinned `actions/checkout` and the same
+`persist-credentials: false`. The validator runs as
+`.release-tooling/.github/scripts/validate-release-tag.sh` and reads the objects
+of the release workspace, which is still the working directory. Two consequences,
+both intended: `workflow_dispatch(tag:)` can publish a tag older than the check,
+and the code deciding whether a ref is safe is never code that ref supplied.
+
+That second checkout is currently staged in `.github/workflows-pending/` and is
+not yet what runs — see the note on activation below. Until a maintainer's
+`git mv` lands it, the live workflow still loads its tag check out of the tag
+being published, and `task test:release-workflow` says so.
 
 A step being present is not the same as a step being effective, so the tag
-check is also held to running: no `if:`, no `continue-on-error:`, ahead of the
-publish step, and executed by the same step that is handed `RELEASE_TAG`. Each
-of those is a shape that parses exactly like a working guard and validates
-nothing.
+check is also held to running: no `if:`, no `continue-on-error:`, after the
+tooling checkout, ahead of the publish step, and executed by the same step that
+is handed `RELEASE_TAG`. Each of those is a shape that parses exactly like a
+working guard and validates nothing.
 
 All of it is asserted rather than reviewed, by `task test:release-workflow`,
 over a real YAML parse rather than a line scan — and over _every_ copy of the
