@@ -50,6 +50,8 @@ tasks:
       - task: test:gnupg-interop
       - task: test:signing-shim
       - task: test:signing-preflight
+      - task: test:workflow-steps
+      - task: test:release-workflow
       - task: test:sign-commits
       - task: test:repair-history
       - task: test:commit-provenance
@@ -98,6 +100,19 @@ tasks:
   test:signing-preflight:
     desc: Test the CI signing preflight, its escape hatch and its failure classes
     cmd: bash .github/scripts/test-signing-preflight.sh
+
+  test:workflow-steps:
+    desc: Test the workflow parser the release, signing and provenance assertions rest on
+    # `deps` because the parser is a bun script and the `yaml` package is one of
+    # this repository's dependencies. Without node_modules it fails closed --
+    # loudly, which is right, but at the cost of a confusing first run.
+    deps: [install:noscripts]
+    cmd: bash .github/scripts/test-workflow-steps.sh
+
+  test:release-workflow:
+    desc: Test that the release job is pinned and publishes only the commit its tag names
+    deps: [install:noscripts]
+    cmd: bash .github/scripts/test-release-workflow.sh
 
   test:sign-commits:
     desc: Test commit re-signing behavior
@@ -166,6 +181,8 @@ tasks:
       - task: test:gnupg-interop
       - task: test:signing-shim
       - task: test:signing-preflight
+      - task: test:workflow-steps
+      - task: test:release-workflow
       - task: test:sign-commits
       - task: test:repair-history
       - task: test:commit-provenance

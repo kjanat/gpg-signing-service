@@ -106,6 +106,25 @@ checksum to exist, compare the binary with a digest obtained through your
 independent release policy, and install it without relying on this action's
 warning-only checksum fallback.
 
+### How the assets you download are built
+
+The job that produces them is `.github/workflows/release.yml`. It holds
+`contents: write`, so every action it runs is resolved by full commit SHA with
+the version as a trailing comment; a tag would be a mutable pointer in a
+repository this project does not control, one repoint away from running inside
+the artifact publisher.
+
+It publishes only the commit its tag already names.
+`.github/scripts/validate-release-tag.sh` runs before the build and refuses
+unless `<tag>^{commit}` equals `HEAD`, which is what makes the manual
+`workflow_dispatch(tag: vX.Y.Z)` path safe: on that path the tag is an operator
+string, it selects the checkout, and it is also published as `tag_name`, so
+nothing else in the job re-reads the object. The step creates, moves and
+fetches nothing — a tag that is not already in the checkout is a refusal.
+
+Both properties are asserted rather than reviewed, by
+`task test:release-workflow`, over a real YAML parse rather than a line scan.
+
 ## Supported assets
 
 The action expects exact asset names:
