@@ -16,6 +16,11 @@
 #     and an anchored `uses:` pattern does not see it — so the pin guard
 #     reported clean while a mutable action ran first in a job holding
 #     `contents: write` and an OIDC token.
+#   * a `default:` belongs to the input it is indented under, and a scan
+#     forward from an input's name does not stop at the end of that input. An
+#     input that has lost its own default reads back a LATER input's, so the
+#     guard keeping a force-pushing repair workflow dry by default reported a
+#     value nothing had set.
 #
 # Both fixtures below are checked against a naive `grep` first, so they are
 # demonstrably the bypass rather than a strawman: the case has to fool the
@@ -385,6 +390,139 @@ status=0
 got="$(workflow_job_field "${workflow}" provenance runs-on 2>/dev/null)" || status=$?
 if ((status == 0)); then
 	printf 'FAIL: job-field answered %q for a key the job does not have\n' "${got}" >&2
+	exit 1
+fi
+
+# --- a dispatch input's own keys ----------------------------------------------
+
+# Three inputs, and the middle one declares no default. This is the fixture the
+# scan these queries replace gets wrong: from `push:` it walks forward past the
+# end of that input and reports `build_from_source`'s default as `push`'s.
+inputs_fixture="on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        type: boolean
+        default: true
+      push:
+        type: boolean
+        required: false
+      build_from_source:
+        type: boolean
+        default: true
+jobs:
+  repair:
+    steps:
+      - uses: actions/checkout@${pinned_sha}"
+fixture "${inputs_fixture}"
+
+# The bypass, against the implementation it replaced: the scan does answer, and
+# the answer belongs to another input.
+inherited="$(awk '/^      push:/ { found = 1 } found && /default:/ { print $2; exit }' "${workflow}")"
+if [[ "${inherited}" != "true" ]]; then
+	printf 'FAIL: the fixture no longer reproduces the inheriting scan (it read %q)\n' "${inherited}" >&2
+	exit 1
+fi
+
+# input_case <description> <input> <field> <expected>, "" meaning "not declared"
+input_case() {
+	local description="$1" input="$2" field="$3" expected="$4" got='' status=0
+	got="$(workflow_input_field "${workflow}" "${input}" "${field}" 2>/dev/null)" || status=$?
+	if [[ -z "${expected}" ]]; then
+		if ((status == 0)); then
+			printf 'FAIL: %s declares no %s, but input-field answered %q for %s\n' \
+				"${input}" "${field}" "${got}" "${description}" >&2
+			exit 1
+		fi
+		return 0
+	fi
+	if ((status != 0)); then
+		printf 'FAIL: input-field could not read %s %s for %s (exit %d)\n' \
+			"${input}" "${field}" "${description}" "${status}" >&2
+		exit 1
+	fi
+	if [[ "${got}" != "${expected}" ]]; then
+		printf 'FAIL: input-field read %s %s as %q for %s, expected %q\n' \
+			"${input}" "${field}" "${got}" "${description}" "${expected}" >&2
+		exit 1
+	fi
+}
+
+input_case 'an input with no default of its own' push default ''
+input_case 'the input above it' dry_run default true
+input_case 'the input below it' build_from_source default true
+input_case 'a key that is declared' push required false
+
+# The absence of a key is a fact about the mapping, which is the query the
+# "this bound must have no default" assertion is built on.
+fields="$(workflow_input_fields "${workflow}" push)"
+if [[ "${fields}" != "type
+required" ]]; then
+	printf 'FAIL: input-fields listed %q for an input declaring type and required\n' "${fields}" >&2
+	exit 1
+fi
+
+# Failing closed: an input that is not there, a workflow with no dispatch form,
+# and a non-scalar value are all non-zero rather than an empty line, because an
+# empty line is what "declares no default" looks like to a caller.
+status=0
+got="$(workflow_input_field "${workflow}" no_such_input default 2>/dev/null)" || status=$?
+if ((status == 0)); then
+	printf 'FAIL: input-field answered %q for an input that does not exist\n' "${got}" >&2
+	exit 1
+fi
+
+status=0
+got="$(workflow_input_fields "${workflow}" no_such_input 2>/dev/null)" || status=$?
+if ((status == 0)); then
+	printf 'FAIL: input-fields answered %q for an input that does not exist\n' "${got}" >&2
+	exit 1
+fi
+
+fixture "on:
+  push:
+    branches: [master]
+jobs:
+  repair:
+    steps:
+      - uses: actions/checkout@${pinned_sha}"
+status=0
+got="$(workflow_input_field "${workflow}" dry_run default 2>/dev/null)" || status=$?
+if ((status == 0)); then
+	printf 'FAIL: input-field answered %q for a workflow with no workflow_dispatch\n' "${got}" >&2
+	exit 1
+fi
+
+fixture "on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        type: boolean
+        default:
+          - true
+jobs:
+  repair:
+    steps:
+      - uses: actions/checkout@${pinned_sha}"
+status=0
+got="$(workflow_input_field "${workflow}" dry_run default 2>/dev/null)" || status=$?
+if ((status == 0)); then
+	printf 'FAIL: input-field answered %q for a default: that is not a scalar\n' "${got}" >&2
+	exit 1
+fi
+
+fixture 'on:
+  workflow_dispatch:
+    inputs:
+      dry_run: [not, a, mapping]
+jobs:
+  repair:
+    steps:
+      - run: true'
+status=0
+got="$(workflow_input_field "${workflow}" dry_run default 2>/dev/null)" || status=$?
+if ((status == 0)); then
+	printf 'FAIL: input-field answered %q for an input that is not a mapping\n' "${got}" >&2
 	exit 1
 fi
 

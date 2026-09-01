@@ -294,17 +294,113 @@ fi
 # attributed to whoever deleted the branch. `github.event.deleted == false` is
 # what keeps that off, and it is one word away from being dropped by anyone
 # tidying the condition.
+#
+# Asserted as a CONJUNCTION, not as two substrings that both appear. Those two
+# checks are satisfied by
+#
+#   github.event_name == 'push' || github.event.deleted == false
+#
+# which contains both terms and runs the job on exactly the deleted-ref push
+# the second term exists to keep it off — and, on every non-push event, on
+# nothing this repository can reason about either. One character turns the gate
+# inside out while every substring the guard looks for is still there.
+#
+# So the expression is taken apart instead. A GitHub expression is whitespace
+# insignificant outside its string literals, so `if:` written on one line, over
+# three folded lines, or with no spaces around its operators reaches this as the
+# same set of terms. Anything the split cannot account for — a disjunction
+# anywhere, a parenthesis, `!` — is REFUSED rather than interpreted: this is not
+# an expression evaluator, and an expression it cannot take apart must not read
+# as a safe one.
+#
+# Extra conjuncts are allowed. `A && B && C` is at least as strict as `A && B`,
+# and a repository narrowing the gate further should not have to edit this.
+
+# gate_is_conjunction <expression> <required-term>...
+gate_is_conjunction() {
+	local expression="$1" term
+	shift
+
+	expression="$(tr '\n' ' ' <<<"${expression}")"
+	expression="${expression#"${expression%%[![:space:]]*}"}"
+	expression="${expression%"${expression##*[![:space:]]}"}"
+	# `${{ ... }}` is optional in a job-level `if:` and means the same thing.
+	# shellcheck disable=SC2016  # `${{` is GitHub expression syntax being
+	# matched as text; expanding it here is the opposite of what is wanted.
+	if [[ "${expression}" == '${{'*'}}' ]]; then
+		expression="${expression#'${{'}"
+		expression="${expression%'}}'}"
+	fi
+
+	case "${expression}" in
+		*'||'* | *'('* | *')'* | *'!'*) return 1 ;;
+	esac
+
+	# Whitespace out, so a term is compared by what it says rather than how it
+	# was laid out. Safe to remove entirely here because no required term
+	# contains a quoted string with a space in it, so no two distinct literals
+	# can be folded into one.
+	local -A present=()
+	local rest="${expression}"
+	while [[ "${rest}" == *'&&'* ]]; do
+		present["$(tr -d '[:space:]' <<<"${rest%%&&*}")"]=1
+		rest="${rest#*&&}"
+	done
+	present["$(tr -d '[:space:]' <<<"${rest}")"]=1
+
+	for term in "$@"; do
+		[[ -n "${present["$(tr -d '[:space:]' <<<"${term}")"]-}" ]] || return 1
+	done
+	return 0
+}
+
+# The mutants, asserted before the real file is judged by this — including the
+# OR that two substring checks accept, which is the finding this closes.
+# gate_case <expected: accepted|refused> <expression>
+gate_case() {
+	local expected="$1" expression="$2" verdict=accepted
+	gate_is_conjunction "${expression}" \
+		"github.event_name == 'push'" 'github.event.deleted == false' || verdict=refused
+	if [[ "${verdict}" != "${expected}" ]]; then
+		printf 'FAIL: the provenance gate check %s %q, expected it %s\n' \
+			"${verdict}" "${expression}" "${expected}" >&2
+		exit 1
+	fi
+}
+
+# Benign spellings of the intended gate. Whitespace, operand order, folding and
+# the optional `${{ }}` are all layout rather than meaning.
+gate_case accepted "github.event_name == 'push' && github.event.deleted == false"
+gate_case accepted "github.event.deleted == false && github.event_name == 'push'"
+gate_case accepted "github.event_name=='push'&&github.event.deleted==false"
+gate_case accepted "github.event_name == 'push'   &&
+  github.event.deleted == false"
+gate_case accepted "\${{ github.event_name == 'push' && github.event.deleted == false }}"
+# A further conjunct only narrows the gate.
+gate_case accepted "github.event_name == 'push' && github.event.deleted == false && github.ref_name == 'master'"
+
+# The finding: both terms appear, and the job runs on the deleted ref anyway.
+gate_case refused "github.event_name == 'push' || github.event.deleted == false"
+# `&&` binds tighter than `||`, so this is `(A && B && C) || D` — a gate that
+# opens on D alone, with both required terms present and untouched inside the
+# part that no longer has to hold. Splitting on `&&` finds A and B here and
+# would accept; refusing a disjunction outright is what catches it, which is
+# why that arm is a refusal rather than a tidiness rule.
+gate_case refused "github.event_name == 'push' && github.event.deleted == false && github.ref_name == 'master' || github.actor == 'dependabot[bot]'"
+gate_case refused "github.event_name == 'push'"
+gate_case refused 'github.event.deleted == false'
+gate_case refused "github.event_name == 'push' && github.event.deleted != true"
+gate_case refused "github.event_name == 'push' && !github.event.deleted"
+gate_case refused "(github.event_name == 'push' || github.event_name == 'schedule') && github.event.deleted == false"
+
 job_condition="$(workflow_job_field "${job_workflow}" provenance if)" || exit 1
-if ! grep -Fq "github.event_name == 'push'" <<<"${job_condition}"; then
-	printf "FAIL: %s does not gate the provenance job on github.event_name == 'push' (if: %s)\n" \
+if ! gate_is_conjunction "${job_condition}" \
+	"github.event_name == 'push'" 'github.event.deleted == false'; then
+	printf 'FAIL: %s does not gate the provenance job on a push that is not a deletion (if: %s)\n' \
 		"${job_name}" "${job_condition}" >&2
-	exit 1
-fi
-if ! grep -Fq 'github.event.deleted == false' <<<"${job_condition}"; then
-	printf 'FAIL: %s runs the provenance job on deleted-ref pushes (if: %s).\n' \
-		"${job_name}" "${job_condition}" >&2
-	printf '      Deleting a branch reports the default branch tip as github.sha, so\n' >&2
-	printf '      before..after spans commits the push never added. Restore:\n' >&2
+	printf '      Both terms have to hold, joined by &&. Deleting a branch reports the\n' >&2
+	printf '      default branch tip as github.sha, so before..after spans commits the\n' >&2
+	printf '      push never added. Restore:\n' >&2
 	printf "        if: github.event_name == 'push' && github.event.deleted == false\n" >&2
 	exit 1
 fi
