@@ -60,7 +60,10 @@ trap 'rm -rf "${fixture_dir}"' EXIT
 matcher_case() {
 	local description="$1" expected="$2" got
 	printf '%s\n' "$3" >"${fixture_dir}/workflow.yml"
-	got="$(names_script "${fixture_dir}/workflow.yml")"
+	# `|| exit 1` rather than a bare call: the matcher answers "" for a
+	# workflow no step of which runs the script, so a parse it could not do
+	# would otherwise read as that same answer.
+	got="$(names_script "${fixture_dir}/workflow.yml")" || exit 1
 	if [[ "${got}" != "${expected}" ]]; then
 		printf 'FAIL: the wiring matcher read %s as %q, expected %q\n' \
 			"${description}" "${got}" "${expected}" >&2
@@ -69,26 +72,68 @@ matcher_case() {
 }
 
 matcher_case 'a step that runs the script' .github/scripts/sign-commits.sh \
-	'      - run: .github/scripts/sign-commits.sh'
+	'jobs:
+  sign:
+    steps:
+      - run: .github/scripts/sign-commits.sh'
 matcher_case 'a step that runs it through an interpreter' .github/scripts/sign-commits.py \
-	'      - run: python3 .github/scripts/sign-commits.py'
+	'jobs:
+  sign:
+    steps:
+      - run: python3 .github/scripts/sign-commits.py'
 matcher_case 'a step that runs it on the last line of a block' .github/scripts/sign-commits.sh \
-	'      - run: |
+	'jobs:
+  sign:
+    steps:
+      - run: |
           export SOMETHING=1
           .github/scripts/sign-commits.sh
       - run: git push'
 matcher_case 'a comment quoting the run line it replaces' '' \
 	'#   -  run: python3 .github/scripts/sign-commits.py
-#   +  run: .github/scripts/sign-commits.sh'
+#   +  run: .github/scripts/sign-commits.sh
+jobs:
+  sign:
+    steps:
+      - run: git push'
 matcher_case 'a step that only prints the path' '' \
-	'      - run: echo .github/scripts/sign-commits.sh'
+	'jobs:
+  sign:
+    steps:
+      - run: echo .github/scripts/sign-commits.sh'
 matcher_case 'a shell comment inside a run block' '' \
-	'      - run: |
+	'jobs:
+  sign:
+    steps:
+      - run: |
           # .github/scripts/sign-commits.sh used to run here
           git push'
 matcher_case 'an env value naming the path' '' \
-	'        env:
-          SCRIPT: .github/scripts/sign-commits.sh'
+	'jobs:
+  sign:
+    steps:
+      - env:
+          SCRIPT: .github/scripts/sign-commits.sh
+        run: git push'
+# The folded pair. YAML joins the lines of a `>` block into one command, so the
+# first of these prints the path and the second runs it — and the two differ by
+# nothing a line scanner can see, which is why this file no longer contains
+# one. The full matrix is .github/scripts/test-workflow-steps.sh; these two are
+# here because this is the workflow whose wiring the difference decides.
+matcher_case 'a folded block where the path is an argument' '' \
+	'jobs:
+  sign:
+    steps:
+      - run: >
+          echo running
+          .github/scripts/sign-commits.sh'
+matcher_case 'a folded block that runs the script' .github/scripts/sign-commits.sh \
+	'jobs:
+  sign:
+    steps:
+      - run: >-
+          .github/scripts/sign-commits.sh
+          --base main'
 
 rm -rf "${fixture_dir}"
 trap - EXIT
@@ -106,7 +151,11 @@ if [[ -f "${pending_workflow}" ]]; then
 	# which is exactly the atomicity the two-file split cannot otherwise
 	# enforce, since the branch that writes one of them cannot write the other.
 	live_names=''
-	[[ -f "${live_workflow}" ]] && live_names="$(names_script "${live_workflow}")"
+	if [[ -f "${live_workflow}" ]]; then
+		# Assigned on its own line rather than after `&&`, which would put the
+		# matcher in a context where a failed parse is not an error.
+		live_names="$(names_script "${live_workflow}")" || exit 1
+	fi
 	if [[ -n "${live_names}" && ! -x "${repo_root}/${live_names}" ]]; then
 		printf 'FAIL: .github/workflows/sign-commits.yml still runs %s, which is not in this tree.\n' \
 			"${live_names}" >&2
@@ -121,7 +170,7 @@ else
 	exit 1
 fi
 
-named="$(names_script "${workflow}")"
+named="$(names_script "${workflow}")" || exit 1
 if [[ -z "${named}" ]]; then
 	printf 'FAIL: %s runs no .github/scripts/sign-commits script at all\n' "${workflow}" >&2
 	exit 1
@@ -140,7 +189,7 @@ fi
 # an action resolved through a tag is a step someone else can repoint into a
 # job with all of that. Asserted rather than reviewed once, because a tag and a
 # SHA look equally fine in a diff.
-mutable="$(workflow_mutable_uses "${workflow}")"
+mutable="$(workflow_mutable_uses "${workflow}" --expect-uses)" || exit 1
 if [[ -n "${mutable}" ]]; then
 	printf 'FAIL: %s resolves an external action through a mutable ref:\n' "${workflow}" >&2
 	printf '        %s\n' "${mutable}" >&2
