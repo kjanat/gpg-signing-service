@@ -1,5 +1,24 @@
 name: Release
 
+# ACTIVATION: this file replaces .github/workflows/release.yml. It is staged
+# here because a GitHub App token has no `workflows` permission, so the bot that
+# wrote it cannot push into .github/workflows/ — the push is rejected outright.
+# Land it with one move, using maintainer credentials, in the same branch:
+#
+#   git mv -f .github/workflows-pending/release.yml .github/workflows/release.yml
+#
+# The only difference from the live file is the trust boundary the tag check is
+# loaded across: a second `actions/checkout` — same pinned SHA, same
+# `persist-credentials: false` — brings `.github/scripts/` from
+# `github.workflow_sha` into `.release-tooling/`, and the validation step runs
+# from there instead of from the tree the requested tag supplied. Triggers,
+# inputs, permissions, the release checkout, the build matrix and the publish
+# step are unchanged.
+#
+# `task test:release-workflow` is RED until this move lands, and that is the
+# point: the live file still loads its own gate out of the tag being published,
+# so `workflow_dispatch(tag: v1.2.0)` cannot run it at all.
+
 on:
   push:
     tags: ["v*.*.*"]
@@ -46,14 +65,41 @@ jobs:
           # credential. The tag check below reads objects that are already here.
           persist-credentials: false
 
+      # The tag check has to come from the commit that supplied THIS FILE, not
+      # from the tag being published. `run:` executes in $GITHUB_WORKSPACE, and
+      # the checkout above replaced the workspace with the tag's tree — so a
+      # script named there is a file the requested tag supplies. Every tag this
+      # repository has cut, v1.2.0 included, predates the validator and supplies
+      # none, which made `workflow_dispatch(tag: v1.2.0)` — the one path that can
+      # publish an already-signed tag — unable to run its own gate.
+      #
+      # It is also the trust boundary. A validator loaded out of the ref it is
+      # deciding on, in a job holding `contents: write`, cannot validate itself.
+      # `github.workflow_sha` is the commit this workflow file came from: on a
+      # dispatch that is the branch dispatched from, on a tag push it is the tag
+      # being published, and on both it is the code a reviewer read.
+      #
+      # A separate `path:` rather than a second checkout at the root: a root
+      # checkout cleans the workspace, which would discard the release tree this
+      # job is about to build. Same pinned SHA, same `persist-credentials: false`.
+      - name: Checkout release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          sparse-checkout: .github/scripts
+          path: .release-tooling
+          persist-credentials: false
+
       # The check that makes the dispatch path safe: `ref:` above is an operator
       # string on that path, and `tag_name:` below is the same string, so
-      # nothing else in this job re-reads the object. Its own suite is
+      # nothing else in this job re-reads the object. The script comes from the
+      # tooling checkout; the objects it reads come from the release workspace,
+      # which is still the working directory. Its own suite is
       # .github/scripts/test-release-workflow.sh (`task test:release-workflow`).
       - name: Validate release tag
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-        run: .github/scripts/validate-release-tag.sh
+        run: .release-tooling/.github/scripts/validate-release-tag.sh
 
       - name: Install toolchain
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0

@@ -142,11 +142,6 @@ of the release workspace, which is still the working directory. Two consequences
 both intended: `workflow_dispatch(tag:)` can publish a tag older than the check,
 and the code deciding whether a ref is safe is never code that ref supplied.
 
-That second checkout is currently staged in `.github/workflows-pending/` and is
-not yet what runs — see the note on activation below. Until a maintainer's
-`git mv` lands it, the live workflow still loads its tag check out of the tag
-being published, and `task test:release-workflow` says so.
-
 A step being present is not the same as a step being effective, so the tag
 check is also held to running: no `if:`, no `continue-on-error:`, after the
 tooling checkout, ahead of the publish step, and executed by the same step that
@@ -155,7 +150,7 @@ working guard and validates nothing.
 
 All of it is asserted rather than reviewed, by `task test:release-workflow`,
 over a real YAML parse rather than a line scan — and over _every_ copy of the
-workflow in the tree, including one staged in `.github/workflows-pending/`
+workflow in the tree, including any staged in `.github/workflows-pending/`
 awaiting a maintainer's `git mv`. Activation is a rename, so while two files
 claim to be the release workflow the suite holds both to the contract and stays
 red until the live one meets it. A hardened copy that has not been activated
