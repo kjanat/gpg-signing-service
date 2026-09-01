@@ -35,6 +35,7 @@ validate_script="${repo_root}/.github/scripts/validate-release-tag.sh"
 # contract derived from the file it judges is a contract the file can move.
 readonly RELEASE_JOB=release
 readonly RELEASE_PERMISSIONS='{"contents":"write"}'
+readonly VALIDATOR_RUN='.github/scripts/validate-release-tag.sh'
 # shellcheck disable=SC2016  # GitHub expressions, literal on purpose: they are the strings being compared
 readonly REQUESTED_TAG='${{ inputs.tag || github.ref_name }}' \
 	REQUESTED_REF='${{ inputs.tag || github.ref }}'
@@ -246,6 +247,49 @@ release_contract_violations() {
 		fi
 	done
 
+	# Present is not the same as effective. `if:` and `continue-on-error:` both
+	# leave a step that parses exactly like one that runs, and the wiring check
+	# above cannot tell the difference: `if: false` skips the tag check outright,
+	# and `continue-on-error: true` turns it into an annotation the publish step
+	# below it ignores.
+	if [[ "$(jq -r '.validator.guarded' <<<"${shape}")" != false ]]; then
+		printf '%s: the tag check carries an if:, so it is conditional on something other than publishing\n' "${label}"
+	fi
+	local advisory
+	advisory="$(jq -r '.validator.advisory' <<<"${shape}")"
+	if [[ "${advisory}" != null && "${advisory}" != false ]]; then
+		printf '%s: the tag check is continue-on-error: %s, so failing it does not stop the publish\n' "${label}" "${advisory}"
+	fi
+
+	# The step given RELEASE_TAG has to be the step that spends it. Otherwise a
+	# decoy step carrying the right expression satisfies the identity assertion
+	# while the script itself reads RELEASE_TAG from a job-level env: nobody
+	# looked at.
+	local validator_run
+	validator_run="$(jq -r '.validator.run // ""' <<<"${shape}")"
+	if [[ "${validator_run}" != "${VALIDATOR_RUN}" ]]; then
+		printf '%s: the step given RELEASE_TAG runs %s, not %s\n' \
+			"${label}" "${validator_run:-<nothing>}" "${VALIDATOR_RUN}"
+	fi
+
+	# Order. `action-gh-release` creates the Release; a step that fails after it
+	# does not take one back. A validated tag is only a precondition if it is
+	# checked first.
+	local validator_index publisher_index
+	validator_index="$(jq -r '.validator.index // -1' <<<"${shape}")"
+	publisher_index="$(jq -r '.publisher.index // -1' <<<"${shape}")"
+	if [[ "${validator_index}" -lt 0 || "${publisher_index}" -lt 0 || "${validator_index}" -ge "${publisher_index}" ]]; then
+		printf '%s: the tag check is step %s and the publish is step %s — the release is created before the tag is validated\n' \
+			"${label}" "${validator_index}" "${publisher_index}"
+	fi
+
+	# The credential the checkout leaves behind. Nothing after it talks to git
+	# over the network, so a write-capable token in .git/config is inherited by
+	# the toolchain install, six `go build`s and the publisher for nothing.
+	if [[ "$(jq -r '.checkout.persistCredentials' <<<"${shape}")" != false ]]; then
+		printf '%s: the checkout does not set persist-credentials: false, so every later step inherits a write-capable token\n' "${label}"
+	fi
+
 	# Both entry points, still there. The dispatch path is what publishes an
 	# already-existing tag; the push path is what a maintainer's `git push origin
 	# v1.2.0` fires. Losing either is a silent change in how releases happen.
@@ -423,6 +467,42 @@ tree_case 'losing the tag-push trigger fails' \
 tree_case 'a dispatch that no longer requires a tag fails' \
 	"$(release_tree '' '/^ +required: true/ { $0 = "        required: false" } { print }')" \
 	'workflow_dispatch no longer requires an existing tag'
+
+# Effectiveness. Each of these leaves a step that PARSES as the tag check and is
+# green on wiring, identity, pins and permissions — and none of them validates
+# anything before the release is created.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a tag check behind an if: fails' \
+	"$(release_tree '' '/^ +- name: Validate release tag/ { print; print "        if: false"; next } { print }')" \
+	'the tag check carries an if:'
+
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'an advisory tag check fails' \
+	"$(release_tree '' '/^ +- name: Validate release tag/ { print; print "        continue-on-error: true"; next } { print }')" \
+	'failing it does not stop the publish'
+
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'RELEASE_TAG on a step other than the one that spends it fails' \
+	"$(release_tree '' '/^ +run: \.github\/scripts\/validate-release-tag\.sh/ { $0 = "        run: echo decoy" } { print }')" \
+	'runs echo decoy, not .github/scripts/validate-release-tag.sh'
+
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'dropping persist-credentials: false fails' \
+	"$(release_tree '' '/^ +persist-credentials: false/ { next } { print }')" \
+	'so every later step inherits a write-capable token'
+
+# The same step, still wired, still given the right expression — moved to the
+# end of the job. `action-gh-release` has already created the Release by the
+# time it refuses.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a tag check that runs after the publish fails' \
+	"$(release_tree '' '/^ +- name: Validate release tag/, /^ +run: \.github\/scripts\/validate-release-tag\.sh/ { next }
+	                    { print }
+	                    END { print "      - name: Validate release tag"
+	                          print "        env:"
+	                          print "          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}"
+	                          print "        run: .github/scripts/validate-release-tag.sh" }')" \
+	'the release is created before the tag is validated'
 
 tree_case 'a tree with no release workflow at all fails' \
 	"$(mktemp -d "${guard_dir}/empty-XXXXXX")" \

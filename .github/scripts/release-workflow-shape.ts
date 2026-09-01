@@ -58,6 +58,26 @@ interface Step {
 	uses?: unknown;
 	with?: unknown;
 	env?: unknown;
+	run?: unknown;
+	if?: unknown;
+	"continue-on-error"?: unknown;
+}
+
+/**
+ * The properties that decide whether a step that is PRESENT actually runs, and
+ * whether its failure stops the job.
+ *
+ * A step carrying `if: false` parses exactly like one that runs, and a step
+ * carrying `continue-on-error: true` fails without failing the job. Both are
+ * invisible to "is there a step that runs the tag check", which is why they are
+ * reported rather than assumed: an advisory or skipped validation is a job that
+ * publishes an unvalidated tag while every structural assertion stays green.
+ */
+function effective(step: Step): { guarded: boolean; advisory: unknown } {
+	return {
+		guarded: Object.hasOwn(step, "if"),
+		advisory: step["continue-on-error"] ?? null,
+	};
 }
 
 /** The `owner/repo` half of a `uses:`, or null when it is not a string. */
@@ -135,9 +155,15 @@ function main(argv: string[]): number {
 	const steps: unknown = job.steps;
 	if (steps !== undefined && !Array.isArray(steps)) die(`${file}: job ${jobId} has a steps: that is not a sequence`);
 
-	const checkout: (string | null)[] = [];
-	const validator: (string | null)[] = [];
-	const publisher: { uses: string; tagName: string | null }[] = [];
+	const checkout: { ref: string | null; persistCredentials: unknown }[] = [];
+	const validator: {
+		index: number;
+		releaseTag: string | null;
+		run: string | null;
+		guarded: boolean;
+		advisory: unknown;
+	}[] = [];
+	const publisher: { index: number; uses: string; tagName: string | null }[] = [];
 
 	for (const [index, raw] of (Array.isArray(steps) ? steps : []).entries()) {
 		const step = mappingOrNull(raw) as Step | null;
@@ -147,14 +173,23 @@ function main(argv: string[]): number {
 		const withArgs = mappingOrNull(step.with);
 		const env = mappingOrNull(step.env);
 
-		if (name === CHECKOUT) checkout.push(canonical(withArgs?.ref));
+		if (name === CHECKOUT) {
+			checkout.push({ ref: canonical(withArgs?.ref), persistCredentials: withArgs?.["persist-credentials"] ?? null });
+		}
 		if (name === PUBLISHER) {
-			publisher.push({ uses: step.uses as string, tagName: canonical(withArgs?.tag_name) });
+			publisher.push({ index: index + 1, uses: step.uses as string, tagName: canonical(withArgs?.tag_name) });
 		}
 		// The validation step is found by the variable it is given rather than by
 		// its name or its `run:`, so the same reading answers for the inline check
 		// this branch replaces and for the extracted script that replaces it.
-		if (env !== null && Object.hasOwn(env, "RELEASE_TAG")) validator.push(canonical(env.RELEASE_TAG));
+		if (env !== null && Object.hasOwn(env, "RELEASE_TAG")) {
+			validator.push({
+				index: index + 1,
+				releaseTag: canonical(env.RELEASE_TAG),
+				run: typeof step.run === "string" ? step.run.trim() : null,
+				...effective(step),
+			});
+		}
 	}
 
 	// `on` is a YAML 1.1 boolean: a document that spells the key `on:` parses to
@@ -169,12 +204,24 @@ function main(argv: string[]): number {
 		`${JSON.stringify({
 			permissions: permissions ?? null,
 			permissionsSource,
-			checkout: { count: checkout.length, ref: checkout[0] ?? null },
-			validator: { count: validator.length, releaseTag: validator[0] ?? null },
+			checkout: {
+				count: checkout.length,
+				ref: checkout[0]?.ref ?? null,
+				persistCredentials: checkout[0]?.persistCredentials ?? null,
+			},
+			validator: {
+				count: validator.length,
+				releaseTag: validator[0]?.releaseTag ?? null,
+				run: validator[0]?.run ?? null,
+				guarded: validator[0]?.guarded ?? null,
+				advisory: validator[0]?.advisory ?? null,
+				index: validator[0]?.index ?? null,
+			},
 			publisher: {
 				count: publisher.length,
 				uses: publisher[0]?.uses ?? null,
 				tagName: publisher[0]?.tagName ?? null,
+				index: publisher[0]?.index ?? null,
 			},
 			push: push?.tags ?? null,
 			dispatchTagRequired: dispatchTag === null ? null : (dispatchTag.required ?? false),
