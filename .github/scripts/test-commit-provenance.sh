@@ -232,8 +232,43 @@ else
 	job_name='.github/workflows/ci.yml'
 fi
 
-if ! grep -Fq 'check-commit-provenance.sh' "${job_source}"; then
-	printf 'FAIL: %s does not call check-commit-provenance.sh\n' "${job_name}" >&2
+# All three assertions below are about the provenance JOB, and a job is a
+# structure rather than a set of lines: its condition may be folded over three
+# lines, its `uses:` key may be quoted, and in the pending form every line of
+# it carries a `+`. So the job is read from a real parse of the workflow this
+# lands as, which for the pending form means applying the patch first.
+#
+# `git apply` outside a repository is a plain patch applier, so a scratch
+# directory holding one copy of ci.yml is enough to build the post-image — and
+# building it is strictly better than reading the patch, because the post-image
+# is what CI will actually run.
+#
+# shellcheck source=.github/scripts/workflow-steps.sh
+source "${repo_root}/.github/scripts/workflow-steps.sh"
+
+if [[ "${job_source}" == "${patch}" ]]; then
+	applied="${tmp_dir}/applied"
+	mkdir -p "${applied}/.github/workflows"
+	cp "${ci_workflow}" "${applied}/.github/workflows/ci.yml"
+	if ! (cd "${applied}" && git apply "${patch}"); then
+		printf 'FAIL: %s does not apply to a copy of .github/workflows/ci.yml\n' \
+			'.github/workflows-pending/ci-provenance-job.patch' >&2
+		exit 1
+	fi
+	job_workflow="${applied}/.github/workflows/ci.yml"
+else
+	job_workflow="${ci_workflow}"
+fi
+
+# A guard nothing calls is not a guard, and `grep -Fq` cannot tell a job that
+# calls it from the comment above the job describing what it calls. The `run:`
+# steps are read instead, so the assertion is that some step's command word is
+# this script.
+guard='.github/scripts/check-commit-provenance.sh'
+guard_step="$(workflow_runs_script "${job_workflow}" --job provenance "${guard}")" || exit 1
+if [[ "${guard_step}" != "${guard}" ]]; then
+	printf 'FAIL: no step in the provenance job in %s runs %s\n' "${job_name}" "${guard}" >&2
+	printf '      A step that names the path without running it is not the wiring.\n' >&2
 	exit 1
 fi
 
@@ -241,25 +276,10 @@ fi
 # runs on the default branch, and checks out the repository before reading it:
 # an action resolved through a tag is a step someone else can repoint into that
 # position. Scoped to the provenance job rather than the whole of ci.yml, which
-# is not this change's to re-pin — the patch form is all added lines, and the
-# applied form is the block between `provenance:` and the next job.
-#
-# shellcheck source=.github/scripts/workflow-steps.sh
-source "${repo_root}/.github/scripts/workflow-steps.sh"
-
-job_block="${tmp_dir}/provenance-job.yml"
-awk '
-	/^\+?  provenance:/ { inside = 1; print; next }
-	inside && /^\+?  [a-z]/ { inside = 0 }
-	inside { print }
-' "${job_source}" >"${job_block}"
-
-if ! grep -q 'uses:' "${job_block}"; then
-	printf 'FAIL: no provenance job block found in %s\n' "${job_name}" >&2
-	exit 1
-fi
-
-mutable="$(workflow_mutable_uses "${job_block}")"
+# is not this change's to re-pin. `--expect-uses` is what keeps the scoping
+# honest: a job that has stopped having any actions in it, or a job name that
+# no longer exists, fails here rather than reporting nothing unpinned.
+mutable="$(workflow_mutable_uses "${job_workflow}" --job provenance --expect-uses)" || exit 1
 if [[ -n "${mutable}" ]]; then
 	printf 'FAIL: the provenance job in %s resolves an external action through a mutable ref:\n' \
 		"${job_name}" >&2
@@ -273,15 +293,16 @@ fi
 # default branch's tip — a range spanning commits the deletion never touched,
 # attributed to whoever deleted the branch. `github.event.deleted == false` is
 # what keeps that off, and it is one word away from being dropped by anyone
-# tidying the condition, so it is checked on the same line that starts the job.
-job_condition="$(grep -E "^\+?[[:space:]]*if:.*github\.event_name == 'push'" "${job_source}" || true)"
-if [[ -z "${job_condition}" ]]; then
-	printf "FAIL: %s does not gate the provenance job on github.event_name == 'push'\n" "${job_name}" >&2
+# tidying the condition.
+job_condition="$(workflow_job_field "${job_workflow}" provenance if)" || exit 1
+if ! grep -Fq "github.event_name == 'push'" <<<"${job_condition}"; then
+	printf "FAIL: %s does not gate the provenance job on github.event_name == 'push' (if: %s)\n" \
+		"${job_name}" "${job_condition}" >&2
 	exit 1
 fi
 if ! grep -Fq 'github.event.deleted == false' <<<"${job_condition}"; then
-	printf 'FAIL: %s runs the provenance job on deleted-ref pushes (%s).\n' \
-		"${job_name}" "$(printf '%s' "${job_condition}" | sed 's/^[+[:space:]]*//')" >&2
+	printf 'FAIL: %s runs the provenance job on deleted-ref pushes (if: %s).\n' \
+		"${job_name}" "${job_condition}" >&2
 	printf '      Deleting a branch reports the default branch tip as github.sha, so\n' >&2
 	printf '      before..after spans commits the push never added. Restore:\n' >&2
 	printf "        if: github.event_name == 'push' && github.event.deleted == false\n" >&2

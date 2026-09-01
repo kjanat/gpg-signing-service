@@ -483,6 +483,38 @@ The rest of `.github/workflows/` still uses tags and is not this change's to
 re-pin. Dependabot's `github-actions` ecosystem bumps a SHA-and-comment pin the
 same way it bumps a tag.
 
+#### How those assertions read a workflow
+
+Both questions the signing, repair and provenance suites decide their verdict
+on — does this workflow still **run** the script the suite is about to exercise,
+and is every external action pinned — are answered by
+`.github/scripts/workflow-steps.ts`, a real YAML parse using the `yaml` package
+this repository already depends on. `.github/scripts/workflow-steps.sh` is the
+shell entry point the suites source, and `task test:workflow-steps` is the
+parser's own adversarial suite. The release suite reads `release.yml` through
+the same parser, so there is one answer to "what does this step run" rather than
+one per suite.
+
+It is a parse rather than a `grep` because two valid workflow spellings defeat
+a line scanner, in the direction that matters:
+
+- a folded `run: >` block joins its lines into **one** command, so a script path
+  on its own source line can be an argument to the command above it. Reading the
+  block line by line calls that "wired" — a false pass on exactly the tree the
+  assertion exists to fail on;
+- `uses` is a mapping key, and a mapping key may be quoted. `"uses":
+  actions/checkout@v7` is the same step to GitHub as the unquoted spelling, and
+  an anchored `uses:` pattern does not see it, so the pin guard reports clean
+  while a mutable action runs first in a job holding `contents: write`.
+
+Every input it cannot interpret is a non-zero exit with a diagnostic, never an
+empty answer: "no step runs the script" and "every action is pinned" are both
+legitimate empty results, so a parser that fell silent would report the safest
+possible verdict on the least intelligible file. The provenance job is read the
+same way in both of its forms — while the job is still a patch, the suite applies
+it to a scratch copy of `ci.yml` and parses the post-image, which is what CI will
+actually run.
+
 ### Upload a PGP key
 
 ```bash

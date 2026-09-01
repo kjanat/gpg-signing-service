@@ -62,7 +62,9 @@ trap 'rm -rf "${fixture_dir}"' EXIT
 matcher_case() {
 	local description="$1" expected="$2" got
 	printf '%s\n' "$3" >"${fixture_dir}/workflow.yml"
-	got="$(workflow_runs_script "${fixture_dir}/workflow.yml" .github/scripts/repair-history.sh)"
+	# `|| exit 1` because "" is a real answer here — no step runs the script —
+	# so a parse that could not happen must not read as that same answer.
+	got="$(workflow_runs_script "${fixture_dir}/workflow.yml" .github/scripts/repair-history.sh)" || exit 1
 	if [[ "${got}" != "${expected}" ]]; then
 		printf 'FAIL: the wiring matcher read %s as %q, expected %q\n' \
 			"${description}" "${got}" "${expected}" >&2
@@ -71,30 +73,67 @@ matcher_case() {
 }
 
 matcher_case 'a step that runs the script' .github/scripts/repair-history.sh \
-	'      - run: .github/scripts/repair-history.sh'
+	'jobs:
+  repair:
+    steps:
+      - run: .github/scripts/repair-history.sh'
 # shellcheck disable=SC2016  # the fixture is YAML the matcher parses, so
 # `${GPG_SIGN_BIN}` is meant to stay unexpanded.
 matcher_case 'a step that runs it on the last line of a block' .github/scripts/repair-history.sh \
-	'      - run: |
+	'jobs:
+  repair:
+    steps:
+      - run: |
           [[ -n "${GPG_SIGN_BIN}" ]] || unset GPG_SIGN_BIN
           .github/scripts/repair-history.sh'
 matcher_case 'a comment describing the step' '' \
-	'      # .github/scripts/repair-history.sh rewrites and signs, then asserts.
+	'jobs:
+  repair:
+    steps:
+      # .github/scripts/repair-history.sh rewrites and signs, then asserts.
       - run: git push'
 matcher_case 'a step that only prints the path' '' \
-	'      - run: echo .github/scripts/repair-history.sh'
+	'jobs:
+  repair:
+    steps:
+      - run: echo .github/scripts/repair-history.sh'
 matcher_case 'a shell comment inside a run block' '' \
-	'      - run: |
+	'jobs:
+  repair:
+    steps:
+      - run: |
           # .github/scripts/repair-history.sh is dispatched from elsewhere
           task client:build'
 matcher_case 'an env value naming the path' '' \
-	'        env:
-          SCRIPT: .github/scripts/repair-history.sh'
+	'jobs:
+  repair:
+    steps:
+      - env:
+          SCRIPT: .github/scripts/repair-history.sh
+        run: git push'
+# The folded pair: YAML joins a `>` block into one command, so the first of
+# these passes the path to `echo` and the second runs it. The full matrix is
+# .github/scripts/test-workflow-steps.sh.
+matcher_case 'a folded block where the path is an argument' '' \
+	'jobs:
+  repair:
+    steps:
+      - run: >
+          echo dispatching
+          .github/scripts/repair-history.sh'
+matcher_case 'a folded block that runs the script' .github/scripts/repair-history.sh \
+	'jobs:
+  repair:
+    steps:
+      - run: >-
+          .github/scripts/repair-history.sh
+          --dry-run'
 
 rm -rf "${fixture_dir}"
 trap - EXIT
 
-if [[ "$(workflow_runs_script "${workflow}" .github/scripts/repair-history.sh)" != .github/scripts/repair-history.sh ]]; then
+repair_step="$(workflow_runs_script "${workflow}" .github/scripts/repair-history.sh)" || exit 1
+if [[ "${repair_step}" != .github/scripts/repair-history.sh ]]; then
 	printf 'FAIL: no step in %s runs .github/scripts/repair-history.sh\n' "${workflow}" >&2
 	printf '      A step that names the path without running it is not the wiring.\n' >&2
 	exit 1
@@ -109,7 +148,7 @@ fi
 # an action resolved through a tag is a step someone else can repoint into a
 # job with all of that. Asserted rather than reviewed once, because a tag and a
 # SHA look equally fine in a diff.
-mutable="$(workflow_mutable_uses "${workflow}")"
+mutable="$(workflow_mutable_uses "${workflow}" --expect-uses)" || exit 1
 if [[ -n "${mutable}" ]]; then
 	printf 'FAIL: %s resolves an external action through a mutable ref:\n' "${workflow}" >&2
 	printf '        %s\n' "${mutable}" >&2
