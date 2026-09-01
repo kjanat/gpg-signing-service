@@ -42,11 +42,15 @@ pass() { printf '  ok: %s\n' "$1"; }
 
 # --- which release workflow ---------------------------------------------------
 #
-# PENDING-first, the way .github/scripts/test-repair-history.sh resolves its
-# own: a GitHub App token has no `workflows` permission, so the pinned file
-# arrives in .github/workflows-pending/ and a human activates it with one
+# PENDING-first: a GitHub App token has no `workflows` permission, so the pinned
+# file arrives in .github/workflows-pending/ and a human activates it with one
 # `git mv`. Once it is moved this follows it and becomes a standing guard on the
 # live file.
+#
+# While both exist the live file is NOT covered, and it is the one that publishes
+# today. .github/scripts/dependabot-activation.sh is the shape that closes this:
+# it treats activation as a rename and refuses the state where a workflow is live
+# and a copy is still pending.
 pending_workflow="${repo_root}/.github/workflows-pending/release.yml"
 live_workflow="${repo_root}/.github/workflows/release.yml"
 
@@ -262,11 +266,17 @@ g tag v1.3.0 "${second}"    # lightweight, to prove the peel is not what matches
 g tag v9.9.9 "${first}"     # a real tag naming a different commit
 g branch v4.0.0 "${second}" # a branch whose name would resolve without refs/tags/
 
+# Read before anything runs against this repository. It is the one object name
+# in the expected set that is not known up front, and reading it after the
+# checks would compare the state to itself: a check that re-pointed
+# refs/tags/v1.2.0 would supply both sides of the comparison meant to catch it.
+annotated_tag="$(g rev-parse refs/tags/v1.2.0)"
+
 # check <name> <expected-status> <RELEASE_TAG> [expected-substring]
 check() {
 	local name="$1" want="$2" tag="$3" needle="${4-}"
 	local out status=0
-	out="$(cd "${work}" && RELEASE_TAG="${tag}" "${validate_script}" 2>&1)" || status=$?
+	out="$(cd "${work}" && "${git_env[@]}" RELEASE_TAG="${tag}" "${validate_script}" 2>&1)" || status=$?
 
 	if [[ "${status}" -ne "${want}" ]]; then
 		fail "${name}: expected exit ${want}, got ${status}" "${out}"
@@ -294,7 +304,7 @@ check 'a branch with a version name is not a tag' 1 v4.0.0 'No tag v4.0.0'
 refs_after="$(g for-each-ref --format='%(refname) %(objectname)')"
 expected_refs="$(
 	printf 'refs/heads/master %s\nrefs/heads/v4.0.0 %s\nrefs/tags/v1.2.0 %s\nrefs/tags/v1.3.0 %s\nrefs/tags/v9.9.9 %s\n' \
-		"${second}" "${second}" "$(g rev-parse refs/tags/v1.2.0)" "${second}" "${first}"
+		"${second}" "${second}" "${annotated_tag}" "${second}" "${first}"
 )"
 if [[ "${refs_after}" != "${expected_refs}" ]]; then
 	fail 'the tag check mutated the repository' "${refs_after}"
