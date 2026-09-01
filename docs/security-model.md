@@ -509,13 +509,40 @@ Worker's policy and reports the difference; the judgement it applies lives in
 `src/utils/hsts.ts` and is unit-tested. `/verify-live` runs it as part of the
 deployment audit.
 
-Two things it looks for beyond a plain mismatch:
+The question it asks is _is the policy in force the Worker's?_, and only a
+header that says so passes. Spelling is not part of the comparison — directive
+order, casing, whitespace and RFC 6797's quoted-string form all describe the
+same policy — but the policy itself is, in both directions:
 
 - a delivered `max-age` shorter than the Worker's, which is a protection window
-  narrower than the source and the tests describe; and
+  narrower than the source and the tests describe;
+- a delivered `max-age` **longer** than the Worker's, which is _stronger_ and
+  still drift: `max-age=63072000` is not this service's policy, and passing it
+  would leave the check blind to the very substitution it exists to detect. A
+  zone response-header transform rule — which Cloudflare's own HSTS
+  documentation recommends for per-subdomain policies — can write any value, not
+  only a weaker one;
+- `includeSubDomains` or `preload` missing, or a directive present that the
+  Worker never writes;
 - `preload` alongside a `max-age` below `31536000`, which
   [the preload list](https://hstspreload.org/) will not accept — the token then
-  declares an intent the policy cannot support, and is inert.
+  declares an intent the policy cannot support, and is inert;
+- a directive that appears twice. RFC 6797 §6.1 allows each one once and
+  requires a user agent to ignore a header that repeats one, so `max-age=300;
+  …; max-age=31536000` puts _no_ policy in force. Read last-wins it would look
+  like a compliant year, which is the worst reading of the worst header; and
+- more than one `Strict-Transport-Security` on the response, which is what an
+  edge that _appends_ its policy rather than replacing the Worker's produces.
+  `fetch` hands those over comma-joined with nothing to say which arrived
+  first, so the probe reports the ambiguity instead of naming an effective
+  policy it cannot actually establish.
+
+The probe covers a JSON response, the OpenAPI document, the Swagger UI page,
+the armoured key, an unauthenticated `POST /sign` and an unrouted path, because
+`securityHeaders` runs on the way out of refusals and the not-found handler too.
+It exits `1` on drift and `2` when a probe could not be judged at all — an
+unreachable host, or a route that stopped answering in the shape the probe
+claims to cover — so a network blip is never read as evidence about the header.
 
 This has been live at least once. As of 2026-09-01 the zone serves
 `max-age=15552000; includeSubDomains; preload` (180 days) on every route of
