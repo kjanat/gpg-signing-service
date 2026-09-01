@@ -130,7 +130,13 @@ operator string and nothing else in the job re-reads the object. The step
 creates, moves and fetches nothing — a tag that is not already in the checkout
 is a refusal.
 
-All three are asserted rather than reviewed, by `task test:release-workflow`,
+A step being present is not the same as a step being effective, so the tag
+check is also held to running: no `if:`, no `continue-on-error:`, ahead of the
+publish step, and executed by the same step that is handed `RELEASE_TAG`. Each
+of those is a shape that parses exactly like a working guard and validates
+nothing.
+
+All of it is asserted rather than reviewed, by `task test:release-workflow`,
 over a real YAML parse rather than a line scan — and over _every_ copy of the
 workflow in the tree, including one staged in `.github/workflows-pending/`
 awaiting a maintainer's `git mv`. Activation is a rename, so while two files
