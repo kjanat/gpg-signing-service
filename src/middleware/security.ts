@@ -3,6 +3,7 @@ import type { MiddlewareHandler } from "hono";
 import type { ErrorCode } from "#schemas/errors";
 import type { Env, RateLimitResult } from "#types";
 import { HEADERS, HTTP, TIME } from "#types";
+import { HSTS_POLICY } from "#utils/hsts";
 import { logger } from "#utils/logger";
 import { rateLimitExceeded, retryAfterSeconds } from "#utils/rate-limit";
 
@@ -79,8 +80,9 @@ export const securityHeaders: MiddlewareHandler<{ Bindings: Env }> = async (c, n
 	c.header("Referrer-Policy", "strict-origin-when-cross-origin");
 	c.header("Content-Security-Policy", DOCS_UI_PATHS.has(c.req.path) ? DOCS_CSP : DEFAULT_CSP);
 	c.header("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
-	// HSTS: enforce HTTPS for 1 year, include subdomains
-	c.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
+	// HSTS: enforce HTTPS for 1 year, include subdomains. What a caller receives
+	// is not necessarily this — see `#utils/hsts` and `task verify:hsts`.
+	c.header("Strict-Transport-Security", HSTS_POLICY);
 
 	// Remove server identification
 	c.res.headers.delete("Server");

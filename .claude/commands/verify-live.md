@@ -19,6 +19,14 @@ against `src/index.ts`, the OpenAPI config, and README.md:
 6. `GET /admin/...` without credentials — expect 401/403 and evidence the
    rate limiter is in front of auth.
 7. Any endpoint the README or docs/ mention that is not covered above.
+8. `task verify:hsts` (pass `-- $GPG_SIGN_URL` for a non-default deployment) —
+   the delivered `Strict-Transport-Security` must match the one the Worker
+   sets. Do not verify this by reading `src/middleware/security.ts`: a
+   Cloudflare zone HSTS setting _replaces_ that header at the edge, so the
+   source is a statement of intent and the live response is the only evidence.
+   A failure here is an operator action in the Cloudflare dashboard, not a code
+   change — see `docs/security-model.md#effective-headers-at-the-edge` and
+   issue #133.
 
 Then:
 

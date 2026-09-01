@@ -284,6 +284,15 @@ tasks:
       DPRINT_CONFIG_DISCOVERY: 0
     cmd: dprint fmt --staged --config "${CONFIG}" --allow-no-files
 
+  verify:hsts:
+    desc: Compare the live Strict-Transport-Security header against the policy the Worker sets
+    aliases: [hsts]
+    deps: [install:noscripts]
+    # Not part of `task t`: this one header is rewritten at the Cloudflare edge,
+    # so the only place its real value exists is a live response, and the test
+    # suite has neither network nor a URL. Takes a base URL, else $GPG_SIGN_URL.
+    cmd: mise exec -- bun scripts/check-live-hsts.ts {{.CLI_ARGS}}
+
   typecheck:
     desc: Typecheck code
     aliases: [ts, type, tsc, tsgo]
