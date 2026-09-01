@@ -35,7 +35,15 @@ validate_script="${repo_root}/.github/scripts/validate-release-tag.sh"
 # contract derived from the file it judges is a contract the file can move.
 readonly RELEASE_JOB=release
 readonly RELEASE_PERMISSIONS='{"contents":"write"}'
-readonly VALIDATOR_RUN='.github/scripts/validate-release-tag.sh'
+# The tag check runs from the TOOLING checkout, not from the tree the requested
+# tag supplies. `run:` executes in $GITHUB_WORKSPACE and the release checkout
+# replaced $GITHUB_WORKSPACE with the tag's tree, so `.github/scripts/...` there
+# names a file the published tag has to carry -- and every tag this repository
+# cut before this branch, v1.2.0 included, carries none. That made the one path
+# that can publish an already-signed tag unable to run its own gate, and it put
+# the code deciding whether a ref is safe inside the ref being decided on.
+readonly TOOLING_PATH='.release-tooling'
+readonly VALIDATOR_RUN='.release-tooling/.github/scripts/validate-release-tag.sh'
 # The job set is part of the contract because every assertion past the pin check
 # is scoped to RELEASE_JOB. A second job is a second publisher -- its own
 # `permissions:`, its own `tag_name:`, its own checkout -- that a reading scoped
@@ -44,7 +52,8 @@ readonly VALIDATOR_RUN='.github/scripts/validate-release-tag.sh'
 readonly RELEASE_JOBS='["release"]'
 # shellcheck disable=SC2016  # GitHub expressions, literal on purpose: they are the strings being compared
 readonly REQUESTED_TAG='${{ inputs.tag || github.ref_name }}' \
-	REQUESTED_REF='${{ inputs.tag || github.ref }}'
+	REQUESTED_REF='${{ inputs.tag || github.ref }}' \
+	TOOLING_REF='${{ github.workflow_sha }}'
 
 failures=0
 
@@ -153,7 +162,7 @@ runs_case() {
 	printf '%s\n' "${source}" >"${file}"
 
 	local got
-	if ! got="$(workflow_runs_script "${file}" .github/scripts/validate-release-tag.sh)"; then
+	if ! got="$(workflow_runs_script "${file}" "${VALIDATOR_RUN}")"; then
 		fail "${name}: the parser could not read the fixture"
 		return
 	fi
@@ -170,8 +179,16 @@ runs_case 'a folded block where the path is an argument is not wiring' '' \
     steps:
       - run: >
           echo validating
-          .github/scripts/validate-release-tag.sh'
-runs_case 'a step that runs the script is wiring' .github/scripts/validate-release-tag.sh \
+          .release-tooling/.github/scripts/validate-release-tag.sh'
+runs_case 'a step that runs the script is wiring' "${VALIDATOR_RUN}" \
+	'jobs:
+  release:
+    steps:
+      - run: .release-tooling/.github/scripts/validate-release-tag.sh'
+# The bootstrap defect itself, as a parser question: the tag check spelled
+# against the workspace is a DIFFERENT command from the one spelled against the
+# tooling checkout, and the wiring check has to tell them apart.
+runs_case 'the tag check run out of the published tag is not the wiring asked for' '' \
 	'jobs:
   release:
     steps:
@@ -202,10 +219,10 @@ release_contract_violations() {
 		done <<<"${out}"
 	fi
 
-	if ! out="$(workflow_runs_script "${file}" --job "${RELEASE_JOB}" .github/scripts/validate-release-tag.sh 2>&1)"; then
+	if ! out="$(workflow_runs_script "${file}" --job "${RELEASE_JOB}" "${VALIDATOR_RUN}" 2>&1)"; then
 		printf '%s: the wiring check could not read it — %s\n' "${label}" "${out//$'\n'/ }"
-	elif [[ "${out}" != .github/scripts/validate-release-tag.sh ]]; then
-		printf '%s: no step in job %s runs .github/scripts/validate-release-tag.sh\n' "${label}" "${RELEASE_JOB}"
+	elif [[ "${out}" != "${VALIDATOR_RUN}" ]]; then
+		printf '%s: no step in job %s runs %s\n' "${label}" "${RELEASE_JOB}" "${VALIDATOR_RUN}"
 	fi
 
 	if ! shape="$(release_shape "${file}" "${RELEASE_JOB}" 2>&1)"; then
@@ -242,15 +259,13 @@ release_contract_violations() {
 	# published under are three readings of ONE expression. A job that validated
 	# v1.2.0 and published v9.9.9 would satisfy every pin and wiring assertion
 	# above this line.
-	local ref release_tag tag_name
-	ref="$(jq -r '.checkout.ref // ""' <<<"${shape}")"
+	local release_tag tag_name
 	release_tag="$(jq -r '.validator.releaseTag // ""' <<<"${shape}")"
 	tag_name="$(jq -r '.publisher.tagName // ""' <<<"${shape}")"
 
 	local kind expected got
-	for kind in checkout validator publisher; do
+	for kind in validator publisher; do
 		case "${kind}" in
-			checkout) expected="${REQUESTED_REF}" got="${ref}" ;;
 			validator) expected="${REQUESTED_TAG}" got="${release_tag}" ;;
 			publisher) expected="${REQUESTED_TAG}" got="${tag_name}" ;;
 		esac
@@ -265,6 +280,61 @@ release_contract_violations() {
 				"${label}" "${kind}" "${got:-<nothing>}" "${expected}"
 		fi
 	done
+
+	# --- the two checkouts, and which is which ---------------------------------
+	#
+	# The release job checks out twice and the two are not interchangeable. One
+	# replaces $GITHUB_WORKSPACE with the requested tag's tree, which is what gets
+	# built and where every `run:` executes; the other lands the tag check under
+	# its own `path:` from the commit that supplied the workflow. Collapse them --
+	# drop the second, or give it no `path:` so it overwrites the first -- and the
+	# gate is loaded out of the ref it is deciding on, which for every tag cut
+	# before this branch means it is not loaded at all.
+	local checkout_count
+	checkout_count="$(jq -r '.checkout.count' <<<"${shape}")"
+	if [[ "${checkout_count}" != 2 ]]; then
+		printf '%s: job %s has %s checkout steps, expected exactly 2 — the release tree and the trusted tooling\n' \
+			"${label}" "${RELEASE_JOB}" "${checkout_count}"
+	fi
+
+	local release_index=-1 tooling_index=-1
+	if [[ "$(jq -r '.checkout.release' <<<"${shape}")" == null ]]; then
+		printf '%s: job %s has no single checkout without a path:, so which checkout is the release workspace — the tree that gets built, and the cwd of every run: — is undecidable\n' \
+			"${label}" "${RELEASE_JOB}"
+	else
+		release_index="$(jq -r '.checkout.release.index' <<<"${shape}")"
+		local ref
+		ref="$(jq -r '.checkout.release.ref // ""' <<<"${shape}")"
+		if [[ "${ref}" != "${REQUESTED_REF}" ]]; then
+			printf '%s: the checkout takes %s, not the requested tag %s\n' \
+				"${label}" "${ref:-<nothing>}" "${REQUESTED_REF}"
+		fi
+	fi
+
+	if [[ "$(jq -r '.checkout.tooling' <<<"${shape}")" == null ]]; then
+		printf '%s: job %s has no single checkout with its own path:, so the tag check can only come from the tree the requested tag supplies\n' \
+			"${label}" "${RELEASE_JOB}"
+	else
+		tooling_index="$(jq -r '.checkout.tooling.index' <<<"${shape}")"
+		local tooling_ref tooling_path
+		tooling_ref="$(jq -r '.checkout.tooling.ref // ""' <<<"${shape}")"
+		tooling_path="$(jq -r '.checkout.tooling.path // ""' <<<"${shape}")"
+		if [[ "${tooling_ref}" != "${TOOLING_REF}" ]]; then
+			printf '%s: the tooling checkout takes %s, not the commit that supplied this workflow %s\n' \
+				"${label}" "${tooling_ref:-<nothing>}" "${TOOLING_REF}"
+		fi
+		if [[ "${tooling_path}" != "${TOOLING_PATH}" ]]; then
+			printf '%s: the tooling checkout lands in %s, not %s, so the validator the wiring check names is not the one that runs\n' \
+				"${label}" "${tooling_path:-<nothing>}" "${TOOLING_PATH}"
+		fi
+	fi
+
+	# A root checkout cleans the workspace it lands in. Tooling first would be
+	# discarded by the release checkout that follows it.
+	if [[ "${release_index}" -lt 0 || "${tooling_index}" -lt 0 || "${release_index}" -ge "${tooling_index}" ]]; then
+		printf '%s: the release checkout is step %s and the tooling checkout is step %s — the release checkout cleans the workspace, so the tooling has to arrive after it\n' \
+			"${label}" "${release_index}" "${tooling_index}"
+	fi
 
 	# Present is not the same as effective. `if:` and `continue-on-error:` both
 	# leave a step that parses exactly like one that runs, and the wiring check
@@ -301,13 +371,23 @@ release_contract_violations() {
 		printf '%s: the tag check is step %s and the publish is step %s — the release is created before the tag is validated\n' \
 			"${label}" "${validator_index}" "${publisher_index}"
 	fi
+	if [[ "${validator_index}" -lt 0 || "${tooling_index}" -lt 0 || "${tooling_index}" -ge "${validator_index}" ]]; then
+		printf '%s: the tag check is step %s and the tooling it runs from arrives at step %s\n' \
+			"${label}" "${validator_index}" "${tooling_index}"
+	fi
 
 	# The credential the checkout leaves behind. Nothing after it talks to git
 	# over the network, so a write-capable token in .git/config is inherited by
 	# the toolchain install, six `go build`s and the publisher for nothing.
-	if [[ "$(jq -r '.checkout.persistCredentials' <<<"${shape}")" != false ]]; then
-		printf '%s: the checkout does not set persist-credentials: false, so every later step inherits a write-capable token\n' "${label}"
-	fi
+	# Every checkout, not the first. Two checkouts are two chances to leave a
+	# write-capable token in a .git/config that the toolchain install, six
+	# `go build`s and the publisher all inherit.
+	local persisting
+	while IFS= read -r persisting; do
+		[[ -n "${persisting}" ]] || continue
+		printf '%s: checkout step %s does not set persist-credentials: false, so every later step inherits a write-capable token\n' \
+			"${label}" "${persisting}"
+	done < <(jq -r '.checkout.persisting[]' <<<"${shape}")
 
 	# Both entry points, still there. The dispatch path is what publishes an
 	# already-existing tag; the push path is what a maintainer's `git push origin
@@ -449,8 +529,52 @@ tree_case 'publishing under a tag other than the one validated fails' \
 
 # shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
 tree_case 'a divergent checkout ref fails' \
-	"$(release_tree '' '/^ +ref: / { $0 = "          ref: master" } { print }')" \
+	"$(release_tree '' '/^ +ref: .*inputs\.tag/ { $0 = "          ref: master" } { print }')" \
 	'the checkout takes master, not the requested tag'
+
+# --- the trust boundary the tag check is loaded across -------------------------
+#
+# `run:` executes in $GITHUB_WORKSPACE, and the release checkout replaced
+# $GITHUB_WORKSPACE with the requested tag's tree. Every one of these mutations
+# puts the tag check back inside the ref it is deciding on: the validator becomes
+# a file the published tag has to supply, and no tag this repository cut before
+# this branch supplies one. Each is green on pins, permissions, tag identity,
+# triggers, `if:`/`continue-on-error:` and ordering.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'no tooling checkout fails' \
+	"$(release_tree '' '/^ +- name: Checkout release tooling/, /^ +persist-credentials: false/ { next } { print }')" \
+	'no single checkout with its own path:'
+
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a tooling checkout taken from anything but the workflow commit fails' \
+	"$(release_tree '' '/^ +ref: .*github\.workflow_sha/ { $0 = "          ref: master" } { print }')" \
+	'the tooling checkout takes master, not the commit that supplied this workflow'
+
+# Without a `path:` the second checkout lands at the root, which cleans the
+# workspace: the release tree the job is about to build is replaced by the
+# workflow commit's, and there is no longer one checkout that is the release.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a tooling checkout that overwrites the release workspace fails' \
+	"$(release_tree '' '/^ +path: \.release-tooling/ { next } { print }')" \
+	'no single checkout without a path:'
+
+# The tooling checkout before the release checkout: the release checkout cleans
+# the workspace and takes the tag check with it.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'tooling checked out before the release tree fails' \
+	"$(release_tree '' 'BEGIN { hold = "" }
+	                    /^ +- name: Checkout release tooling/, /^ +persist-credentials: false/ { hold = hold $0 "\n"; next }
+	                    /^ +- name: Checkout release tag/ { printf "%s\n", hold; hold = "" }
+	                    { print }')" \
+	'the tooling has to arrive after it'
+
+# The defect this boundary exists to fix, written back in: the step still runs a
+# validator, is still handed the right expression, and is still ahead of the
+# publish -- out of the tree the tag supplies.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a tag check run out of the published tag tree fails' \
+	"$(release_tree '' '/^ +run: \.release-tooling\// { $0 = "        run: .github/scripts/validate-release-tag.sh" } { print }')" \
+	'runs .github/scripts/validate-release-tag.sh, not .release-tooling/.github/scripts/validate-release-tag.sh'
 
 # shellcheck disable=SC2016  # awk's $0, and a GitHub expression the mutation must write literally
 tree_case 'validating a different tag than the one built fails' \
@@ -491,8 +615,8 @@ tree_case 'dropping permissions: entirely fails rather than inheriting the defau
 # Wiring and triggers, per copy.
 # shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
 tree_case 'a copy that only names the tag check fails' \
-	"$(release_tree '' '/run: \.github\/scripts\/validate-release-tag\.sh/ { $0 = "        run: echo .github/scripts/validate-release-tag.sh" } { print }')" \
-	'no step in job release runs .github/scripts/validate-release-tag.sh'
+	"$(release_tree '' '/run: \.release-tooling\// { $0 = "        run: echo .release-tooling/.github/scripts/validate-release-tag.sh" } { print }')" \
+	'no step in job release runs .release-tooling/.github/scripts/validate-release-tag.sh'
 
 # shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
 tree_case 'losing the tag-push trigger fails' \
@@ -519,25 +643,35 @@ tree_case 'an advisory tag check fails' \
 
 # shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
 tree_case 'RELEASE_TAG on a step other than the one that spends it fails' \
-	"$(release_tree '' '/^ +run: \.github\/scripts\/validate-release-tag\.sh/ { $0 = "        run: echo decoy" } { print }')" \
-	'runs echo decoy, not .github/scripts/validate-release-tag.sh'
+	"$(release_tree '' '/^ +run: \.release-tooling\// { $0 = "        run: echo decoy" } { print }')" \
+	'runs echo decoy, not .release-tooling/.github/scripts/validate-release-tag.sh'
+
+# Both checkouts, one at a time. The second one is the one a `checkout[0]`
+# reading cannot see, and its credential is inherited by exactly the same later
+# steps as the first one's.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a release checkout that persists credentials fails' \
+	"$(release_tree '' '!dropped && /^ +persist-credentials: false/ { dropped = 1; next } { print }')" \
+	'checkout step 1 does not set persist-credentials: false'
 
 # shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
-tree_case 'dropping persist-credentials: false fails' \
-	"$(release_tree '' '/^ +persist-credentials: false/ { next } { print }')" \
-	'so every later step inherits a write-capable token'
+tree_case 'a tooling checkout that persists credentials fails' \
+	"$(release_tree '' '/^ +- name: Checkout release tooling/ { seen = 1 }
+	                    seen && /^ +persist-credentials: false/ { seen = 0; next }
+	                    { print }')" \
+	'checkout step 2 does not set persist-credentials: false'
 
 # The same step, still wired, still given the right expression — moved to the
 # end of the job. `action-gh-release` has already created the Release by the
 # time it refuses.
 # shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
 tree_case 'a tag check that runs after the publish fails' \
-	"$(release_tree '' '/^ +- name: Validate release tag/, /^ +run: \.github\/scripts\/validate-release-tag\.sh/ { next }
+	"$(release_tree '' '/^ +- name: Validate release tag/, /^ +run: \.release-tooling\// { next }
 	                    { print }
 	                    END { print "      - name: Validate release tag"
 	                          print "        env:"
 	                          print "          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}"
-	                          print "        run: .github/scripts/validate-release-tag.sh" }')" \
+	                          print "        run: .release-tooling/.github/scripts/validate-release-tag.sh" }')" \
 	'the release is created before the tag is validated'
 
 tree_case 'a tree with no release workflow at all fails' \
@@ -654,6 +788,81 @@ if [[ "$(g rev-parse refs/tags/v1.2.0)" == "$(g rev-parse 'refs/tags/v1.2.0^{com
 	fail 'the annotated-tag fixture is not annotated, so the peel is untested'
 else
 	pass 'the passing case peels a real annotated tag object to its commit'
+fi
+
+# --- the bootstrap: a tag cut before the validator existed ----------------------
+#
+# The structural assertions above say the workflow loads the tag check from the
+# tooling checkout rather than from the tag. This is the half that cannot be read
+# off a workflow file: that the arrangement actually validates and publishes a tag
+# whose own tree has never heard of the check.
+#
+# `${work}` is exactly that tag. Its tree is one file; there is no
+# .github/scripts/ in it, the same way v1.0.0 through v1.2.0 of this repository
+# have none. `run:` executes in $GITHUB_WORKSPACE, which after the release
+# checkout IS this tree, so the two invocations below are the two spellings of
+# the tag check the workflow could carry — one loaded out of the ref it is
+# deciding on, one loaded across the boundary.
+if [[ -e "${work}/.github/scripts/validate-release-tag.sh" ]]; then
+	fail 'the release fixture already carries a validator, so the bootstrap case proves nothing'
+else
+	pass 'the tag being published carries no validator of its own'
+fi
+
+# What the workflow did before the tooling checkout. Fail-closed, so not an
+# exploit — but the dispatch path is the only path that can publish an
+# already-signed tag, and on it the gate was unreachable for every tag this
+# repository has.
+bootstrap_status=0
+(
+	cd "${work}" && "${git_env[@]}" RELEASE_TAG=v1.2.0 bash -c '.github/scripts/validate-release-tag.sh'
+) >/dev/null 2>&1 || bootstrap_status=$?
+if [[ "${bootstrap_status}" -eq 0 ]]; then
+	fail 'a tag tree with no validator appeared to validate itself'
+else
+	pass 'a tag check loaded out of the published tag cannot run on a tag cut before it existed'
+fi
+
+# What it does now. The script comes from the workflow commit, checked out under
+# its own path; the objects come from the release workspace, which is still the
+# working directory. Nothing in the script resolves a path relative to itself, so
+# this is the same reading the workflow performs.
+tooling="${work}/.release-tooling/.github/scripts"
+mkdir -p "${tooling}"
+cp "${validate_script}" "${tooling}/validate-release-tag.sh"
+tooling_run="${TOOLING_PATH}/.github/scripts/validate-release-tag.sh"
+
+bootstrap_check() {
+	local name="$1" want="$2" tag="$3" needle="${4-}"
+	local out status=0
+	out="$(cd "${work}" && "${git_env[@]}" RELEASE_TAG="${tag}" "${tooling_run}" 2>&1)" || status=$?
+
+	if [[ "${status}" -ne "${want}" ]]; then
+		fail "${name}: expected exit ${want}, got ${status}" "${out}"
+		return
+	fi
+	if [[ -n "${needle}" && "${out}" != *"${needle}"* ]]; then
+		fail "${name}: output did not mention ${needle}" "${out}"
+		return
+	fi
+	pass "${name}"
+}
+
+bootstrap_check 'a tag with no validator in its tree is validated from the tooling checkout' \
+	0 v1.2.0 "Publishing v1.2.0 at ${second}"
+# And the boundary buys nothing if crossing it also relaxed the check.
+bootstrap_check 'the tooling checkout still refuses a tag naming another commit' \
+	1 v9.9.9 "resolves to ${first}"
+bootstrap_check 'the tooling checkout still refuses a tag that is not in the release workspace' \
+	1 v5.5.5 'No tag v5.5.5'
+
+# The tooling checkout is a separate git dir inside the workspace. If the script
+# had read through it instead of through the release workspace, every answer
+# above would be about the wrong repository.
+if [[ ! -d "${work}/.release-tooling" ]]; then
+	fail 'the tooling fixture is not a distinct path, so nothing about the boundary was exercised'
+else
+	pass 'the tag check read the release workspace while running from a distinct tooling path'
 fi
 
 rm -rf "${work}"
