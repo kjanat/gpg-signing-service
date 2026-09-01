@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Assert the two properties that decide whether a release publishes what it
-# claims: every external action in the release workflow is pinned to an
-# immutable ref, and the tag it publishes under is the commit it built.
+# Assert the properties that decide whether a release publishes what it claims:
+# every external action in the release workflow is pinned to an immutable ref,
+# the job holds exactly one permission, the tag it publishes under is the tag it
+# validated, and that tag is the commit it built.
 #
 #   task test:release-workflow
 #
@@ -20,13 +21,23 @@
 # be quoted, so `"uses": actions/checkout@v7` is the same step to GitHub that an
 # anchored `uses:` pattern does not see; a `#` comment and a folded `run: >`
 # block mislead a line scanner in the other direction. The questions are
-# answered by .github/scripts/workflow-steps.ts, a real parse, and the fixtures
-# under "the shapes a line scanner gets wrong" below prove that is what is
-# answering them.
+# answered by .github/scripts/workflow-steps.ts and
+# .github/scripts/release-workflow-shape.ts, real parses, and the fixtures under
+# "the shapes a line scanner gets wrong" below prove that is what is answering
+# them.
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
 validate_script="${repo_root}/.github/scripts/validate-release-tag.sh"
+
+# The one job in the release workflow, and the exact set of expressions and
+# permissions it is held to. Written out here rather than derived, because a
+# contract derived from the file it judges is a contract the file can move.
+readonly RELEASE_JOB=release
+readonly RELEASE_PERMISSIONS='{"contents":"write"}'
+# shellcheck disable=SC2016  # GitHub expressions, literal on purpose: they are the strings being compared
+readonly REQUESTED_TAG='${{ inputs.tag || github.ref_name }}' \
+	REQUESTED_REF='${{ inputs.tag || github.ref }}'
 
 failures=0
 
@@ -40,35 +51,26 @@ fail() {
 
 pass() { printf '  ok: %s\n' "$1"; }
 
-# --- which release workflow ---------------------------------------------------
-#
-# PENDING-first: a GitHub App token has no `workflows` permission, so the pinned
-# file arrives in .github/workflows-pending/ and a human activates it with one
-# `git mv`. Once it is moved this follows it and becomes a standing guard on the
-# live file.
-#
-# While both exist the live file is NOT covered, and it is the one that publishes
-# today. .github/scripts/dependabot-activation.sh is the shape that closes this:
-# it treats activation as a rename and refuses the state where a workflow is live
-# and a copy is still pending.
-pending_workflow="${repo_root}/.github/workflows-pending/release.yml"
-live_workflow="${repo_root}/.github/workflows/release.yml"
-
-if [[ -f "${pending_workflow}" ]]; then
-	workflow="${pending_workflow}"
-	printf 'note: the pinned release workflow is still pending activation\n'
-	printf '      git mv -f .github/workflows-pending/release.yml .github/workflows/release.yml\n'
-elif [[ -f "${live_workflow}" ]]; then
-	workflow="${live_workflow}"
-else
-	printf 'FAIL: release.yml is in neither .github/workflows/ nor .github/workflows-pending/\n' >&2
-	exit 1
-fi
-
-printf 'asserting on %s\n' "${workflow#"${repo_root}/"}"
-
 # shellcheck source=.github/scripts/workflow-steps.sh
 source "${repo_root}/.github/scripts/workflow-steps.sh"
+
+# The privilege and tag-identity reader. Its interpreter selection mirrors
+# workflow_steps_run in workflow-steps.sh deliberately: a machine with no bun
+# has to fail loudly here rather than quietly reducing every assertion below to
+# "clean".
+release_shape() {
+	local script="${repo_root}/.github/scripts/release-workflow-shape.ts"
+
+	if command -v bun >/dev/null 2>&1; then
+		bun "${script}" "$@"
+	elif command -v mise >/dev/null 2>&1; then
+		mise exec -- bun "${script}" "$@"
+	else
+		printf 'test-release-workflow.sh: bun is not on PATH, so the workflow parser cannot run.\n' >&2
+		printf '                          Install it (see .github/actions/setup-bun) rather than skipping these checks.\n' >&2
+		return 127
+	fi
+}
 
 # --- the shapes a line scanner gets wrong -------------------------------------
 #
@@ -171,66 +173,282 @@ runs_case 'a step that runs the script is wiring' .github/scripts/validate-relea
 rm -rf "${fixture_dir}"
 trap - EXIT
 
-# --- the release workflow itself ----------------------------------------------
+# --- the release security contract --------------------------------------------
+#
+# One function, applied to every copy of the release workflow that exists in a
+# tree. Prints one line per way the file falls short; empty output means it
+# satisfies the contract. It never fails the suite by itself, so the same code
+# can judge the repository and be judged by the fixtures below it.
+release_contract_violations() {
+	local file="$1" label="$2"
+	local out shape
 
-mutable="$(workflow_mutable_uses "${workflow}" --expect-uses)" || exit 1
-if [[ -n "${mutable}" ]]; then
-	while IFS= read -r reference; do
-		fail "${workflow#"${repo_root}/"} resolves ${reference} through a mutable ref" \
-			'Pin it to the full commit SHA, with the version as a trailing comment.'
-	done <<<"${mutable}"
-else
-	pass 'every external action in the release workflow is pinned to a commit SHA'
+	# Every job, not just the release job: a second job in this workflow would
+	# run in the same repository with the same secrets. `--expect-uses` is the
+	# difference between "everything is pinned" and "nothing was looked at".
+	if ! out="$(workflow_mutable_uses "${file}" --expect-uses 2>&1)"; then
+		printf '%s: the pin check could not read it — %s\n' "${label}" "${out//$'\n'/ }"
+	elif [[ -n "${out}" ]]; then
+		local reference
+		while IFS= read -r reference; do
+			printf '%s: resolves %s through a mutable ref, not a full commit SHA\n' "${label}" "${reference}"
+		done <<<"${out}"
+	fi
+
+	if ! out="$(workflow_runs_script "${file}" --job "${RELEASE_JOB}" .github/scripts/validate-release-tag.sh 2>&1)"; then
+		printf '%s: the wiring check could not read it — %s\n' "${label}" "${out//$'\n'/ }"
+	elif [[ "${out}" != .github/scripts/validate-release-tag.sh ]]; then
+		printf '%s: no step in job %s runs .github/scripts/validate-release-tag.sh\n' "${label}" "${RELEASE_JOB}"
+	fi
+
+	if ! shape="$(release_shape "${file}" "${RELEASE_JOB}" 2>&1)"; then
+		printf '%s: its %s job could not be read — %s\n' "${label}" "${RELEASE_JOB}" "${shape//$'\n'/ }"
+		return 0
+	fi
+
+	# Privilege. The job mints the artifacts every consumer installs; anything
+	# past `contents: write` — `id-token:` for an OIDC token, `packages:` for the
+	# registry — is a capability the publish step inherits for free.
+	local permissions granted_by
+	permissions="$(jq -cS '.permissions' <<<"${shape}")"
+	granted_by="$(jq -r '.permissionsSource' <<<"${shape}")"
+	if [[ "${permissions}" != "${RELEASE_PERMISSIONS}" ]]; then
+		printf '%s: job %s runs with %s (from the %s permissions:), not exactly %s\n' \
+			"${label}" "${RELEASE_JOB}" "${permissions}" "${granted_by}" "${RELEASE_PERMISSIONS}"
+	fi
+
+	# Tag identity. Nothing in the job re-reads the object after the checkout, so
+	# the requested tag selecting the checkout, being validated, and being
+	# published under are three readings of ONE expression. A job that validated
+	# v1.2.0 and published v9.9.9 would satisfy every pin and wiring assertion
+	# above this line.
+	local ref release_tag tag_name
+	ref="$(jq -r '.checkout.ref // ""' <<<"${shape}")"
+	release_tag="$(jq -r '.validator.releaseTag // ""' <<<"${shape}")"
+	tag_name="$(jq -r '.publisher.tagName // ""' <<<"${shape}")"
+
+	local kind expected got
+	for kind in checkout validator publisher; do
+		case "${kind}" in
+			checkout) expected="${REQUESTED_REF}" got="${ref}" ;;
+			validator) expected="${REQUESTED_TAG}" got="${release_tag}" ;;
+			publisher) expected="${REQUESTED_TAG}" got="${tag_name}" ;;
+		esac
+		local count
+		count="$(jq -r ".${kind}.count" <<<"${shape}")"
+		if [[ "${count}" != 1 ]]; then
+			printf '%s: job %s has %s %s steps, expected exactly 1\n' "${label}" "${RELEASE_JOB}" "${count}" "${kind}"
+			continue
+		fi
+		if [[ "${got}" != "${expected}" ]]; then
+			printf '%s: the %s takes %s, not the requested tag %s\n' \
+				"${label}" "${kind}" "${got:-<nothing>}" "${expected}"
+		fi
+	done
+
+	# Both entry points, still there. The dispatch path is what publishes an
+	# already-existing tag; the push path is what a maintainer's `git push origin
+	# v1.2.0` fires. Losing either is a silent change in how releases happen.
+	if [[ "$(jq -cS '.push' <<<"${shape}")" != '["v*.*.*"]' ]]; then
+		printf '%s: no longer publishes on a v*.*.* tag push (push: %s)\n' \
+			"${label}" "$(jq -c '.push' <<<"${shape}")"
+	fi
+	if [[ "$(jq -r '.dispatchTagRequired' <<<"${shape}")" != true ]]; then
+		printf '%s: its workflow_dispatch no longer requires an existing tag\n' "${label}"
+	fi
+}
+
+# --- which release workflow ---------------------------------------------------
+#
+# EVERY copy, not the first one found.
+#
+# A GitHub App token has no `workflows` permission, so a hardened file arrives in
+# .github/workflows-pending/ and a human activates it with one `git mv`.
+# Activation is that RENAME — .github/scripts/dependabot-activation.sh already
+# refuses the state where a workflow is live and a copy is still pending, for the
+# reason this function exists: while both files are on disk, only one of them
+# runs, and both look authoritative in review.
+#
+# A guard that picked the pending copy would report the release path clean while
+# the live publisher — the file that runs if anyone pushes v1.2.1 tomorrow —
+# still resolved three external actions through tags. So the contract is applied
+# to both, and coexistence is only survivable while both independently satisfy
+# it. Until the rename lands, this suite is red, and that is the true state of
+# the repository rather than a defect in the assertion.
+release_tree_violations() {
+	local root="$1" found=0 path
+	for path in .github/workflows/release.yml .github/workflows-pending/release.yml; do
+		[[ -f "${root}/${path}" ]] || continue
+		found=$((found + 1))
+		release_contract_violations "${root}/${path}" "${path}"
+	done
+	if [[ "${found}" -eq 0 ]]; then
+		printf 'release.yml is in neither .github/workflows/ nor .github/workflows-pending/\n'
+	fi
+}
+
+# --- the contract, judged ------------------------------------------------------
+#
+# Every case here is a tree of release workflows built from the hardened file, so
+# the clean pair is a positive control: the mutations below it are the only
+# difference between passing and failing, which is what makes each one evidence
+# that the assertion it names is load-bearing.
+guard_dir="$(mktemp -d)"
+trap 'rm -rf "${guard_dir}"' EXIT
+
+# The file every fixture is built from: the hardened copy, wherever it currently
+# lives. Before activation that is the pending one; after the `git mv` it is the
+# live one and the pending one is gone. Anchoring the fixtures to a fixed path
+# would make them all collapse the moment the rename they exist to demand
+# actually happens.
+for hardened_workflow in \
+	"${repo_root}/.github/workflows-pending/release.yml" \
+	"${repo_root}/.github/workflows/release.yml"; do
+	[[ -f "${hardened_workflow}" ]] && break
+done
+if [[ ! -f "${hardened_workflow}" ]]; then
+	printf 'FAIL: no release.yml to build the guard fixtures from\n' >&2
+	exit 1
 fi
 
-wired="$(workflow_runs_script "${workflow}" .github/scripts/validate-release-tag.sh)" || exit 1
-if [[ "${wired}" != .github/scripts/validate-release-tag.sh ]]; then
-	fail 'no step in the release workflow runs .github/scripts/validate-release-tag.sh' \
-		'A step that names the path without running it is not the wiring.'
+# install_copy <from> <to> [awk-program] — a copy of the hardened workflow,
+# optionally rewritten. awk rather than an editor for the YAML, because a
+# mutation is a fixture being constructed, not a workflow being interpreted.
+install_copy() {
+	local from="$1" to="$2" mutation="${3-}"
+	if [[ -z "${mutation}" ]]; then
+		cp "${from}" "${to}"
+	else
+		awk "${mutation}" "${from}" >"${to}"
+	fi
+}
+
+# release_tree [live-mutation] [pending-mutation] — a root holding a live and a
+# pending copy of the hardened workflow, each optionally mutated.
+release_tree() {
+	local live_mutation="${1-}" pending_mutation="${2-}"
+	local root
+	root="$(mktemp -d "${guard_dir}/tree-XXXXXX")"
+	mkdir -p "${root}/.github/workflows" "${root}/.github/workflows-pending"
+
+	install_copy "${hardened_workflow}" "${root}/.github/workflows/release.yml" "${live_mutation}"
+	install_copy "${hardened_workflow}" "${root}/.github/workflows-pending/release.yml" "${pending_mutation}"
+	printf '%s\n' "${root}"
+}
+
+# tree_case <name> <root> <needle> — <needle> empty asserts the tree is clean.
+tree_case() {
+	local name="$1" root="$2" needle="${3-}"
+	local got
+	got="$(release_tree_violations "${root}")"
+
+	if [[ -z "${needle}" ]]; then
+		if [[ -n "${got}" ]]; then
+			fail "${name}" "expected no violations, got:" "${got}"
+		else
+			pass "${name}"
+		fi
+		return
+	fi
+	if [[ "${got}" != *"${needle}"* ]]; then
+		fail "${name}" "expected a violation mentioning: ${needle}" "got: ${got:-<none>}"
+		return
+	fi
+	pass "${name}"
+}
+
+# The positive control. Everything below differs from this by exactly one
+# mutation, so this failing means the fixtures are being built from a workflow
+# that is itself short of the contract and none of the cases under it are
+# evidence of anything.
+tree_case 'the workflow the mutations are built from satisfies the contract on both paths' "$(release_tree)" ''
+
+# The maintainer blocker this file was reopened for. The pending copy is the
+# hardened one, untouched; the live copy — the one that actually publishes —
+# resolves checkout through a tag again, behind a trailing comment that still
+# reads like a pin.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a mutable action in the LIVE copy fails even while the pending copy is clean' \
+	"$(release_tree '{ sub(/actions\/checkout@[0-9a-f]+/, "actions/checkout@v7"); print }')" \
+	'.github/workflows/release.yml: resolves actions/checkout@v7 through a mutable ref'
+
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a mutable action in the PENDING copy fails too' \
+	"$(release_tree '' '{ sub(/actions\/checkout@[0-9a-f]+/, "actions/checkout@v7"); print }')" \
+	'.github/workflows-pending/release.yml: resolves actions/checkout@v7 through a mutable ref'
+
+# Tag identity. Each of these publishes, or builds, or validates something other
+# than the requested tag, and every one of them is green on pins and wiring.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'publishing under a tag other than the one validated fails' \
+	"$(release_tree '' '/^ +tag_name:/ { $0 = "          tag_name: v9.9.9" } { print }')" \
+	'the publisher takes v9.9.9, not the requested tag'
+
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a divergent checkout ref fails' \
+	"$(release_tree '' '/^ +ref: / { $0 = "          ref: master" } { print }')" \
+	'the checkout takes master, not the requested tag'
+
+# shellcheck disable=SC2016  # awk's $0, and a GitHub expression the mutation must write literally
+tree_case 'validating a different tag than the one built fails' \
+	"$(release_tree '' '/^ +RELEASE_TAG:/ { $0 = "          RELEASE_TAG: ${{ github.event.inputs.other }}" } { print }')" \
+	'the validator takes ${{ github.event.inputs.other }}, not the requested tag'
+
+# Privilege.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'extra write permissions fail' \
+	"$(release_tree '' '/^permissions:/ { $0 = "permissions: { contents: write, id-token: write, packages: write }" } { print }')" \
+	'"id-token":"write"'
+
+tree_case 'a job-level permissions: that widens the workflow-level one fails' \
+	"$(release_tree '' '{ print } /^ +runs-on:/ { print "    permissions: { contents: write, packages: write }" }')" \
+	'from the job permissions:'
+
+tree_case 'dropping permissions: entirely fails rather than inheriting the default token' \
+	"$(release_tree '' '/^permissions:/ { next } { print }')" \
+	'runs with null (from the none permissions:)'
+
+# Wiring and triggers, per copy.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a copy that only names the tag check fails' \
+	"$(release_tree '' '/run: \.github\/scripts\/validate-release-tag\.sh/ { $0 = "        run: echo .github/scripts/validate-release-tag.sh" } { print }')" \
+	'no step in job release runs .github/scripts/validate-release-tag.sh'
+
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'losing the tag-push trigger fails' \
+	"$(release_tree '' '/^ +tags: /  { $0 = "    branches: [master]" } { print }')" \
+	'no longer publishes on a v*.*.* tag push'
+
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a dispatch that no longer requires a tag fails' \
+	"$(release_tree '' '/^ +required: true/ { $0 = "        required: false" } { print }')" \
+	'workflow_dispatch no longer requires an existing tag'
+
+tree_case 'a tree with no release workflow at all fails' \
+	"$(mktemp -d "${guard_dir}/empty-XXXXXX")" \
+	'release.yml is in neither'
+
+rm -rf "${guard_dir}"
+trap - EXIT
+
+# --- the repository itself -----------------------------------------------------
+
+tree_violations="$(release_tree_violations "${repo_root}")"
+if [[ -n "${tree_violations}" ]]; then
+	while IFS= read -r violation; do
+		fail "${violation}"
+	done <<<"${tree_violations}"
+	if [[ -f "${repo_root}/.github/workflows/release.yml" && -f "${repo_root}/.github/workflows-pending/release.yml" ]]; then
+		printf '\nnote: two files claim to be the release workflow. Activation is a RENAME,\n' >&2
+		printf '      and the live one is what publishes until it happens:\n' >&2
+		printf '        git mv -f .github/workflows-pending/release.yml .github/workflows/release.yml\n\n' >&2
+	fi
 else
-	pass 'the release job runs the tag check before publishing'
+	pass 'every release workflow in this tree satisfies the release security contract'
 fi
 
 if [[ ! -x "${validate_script}" ]]; then
 	fail "${validate_script#"${repo_root}/"} is not an executable file in this tree"
-fi
-
-# Both entry points, still there. The dispatch path is what publishes an
-# already-existing tag; the push path is what a maintainer's `git push origin
-# v1.2.0` fires. Losing either is a silent change in how releases happen.
-#
-# Read here rather than through workflow-steps.sh because that parser is scoped
-# to a workflow's STEPS by design, and `on:` is not one. It is the same `yaml`
-# package underneath, for the same reason: `on` is a YAML 1.1 boolean, so a
-# document that spells the key `on:` parses to the key `true`, and a scanner
-# looking for the literal string would be answering a different question than
-# the runner does.
-triggers="$(
-	bun --eval '
-		const { parseDocument } = require("yaml");
-		const doc = parseDocument(require("node:fs").readFileSync(process.argv[1], "utf8"));
-		if (doc.errors.length > 0) { process.exit(1); }
-		const root = doc.toJS();
-		const on = root.on ?? root[true];
-		process.stdout.write(JSON.stringify({
-			push: on?.push?.tags ?? null,
-			dispatch: on?.workflow_dispatch?.inputs?.tag ?? null,
-		}));
-	' "${workflow}"
-)" || {
-	printf 'FAIL: could not parse the release workflow triggers\n' >&2
-	exit 1
-}
-
-if [[ "$(jq -r '.push | @json' <<<"${triggers}")" != '["v*.*.*"]' ]]; then
-	fail 'the release workflow no longer publishes on a v*.*.* tag push' "got: ${triggers}"
-else
-	pass 'the tag-push path is preserved'
-fi
-if [[ "$(jq -r '.dispatch.required' <<<"${triggers}")" != true ]]; then
-	fail 'the release workflow dispatch no longer requires an existing tag' "got: ${triggers}"
-else
-	pass 'the guarded workflow_dispatch(tag=...) path is preserved and required'
 fi
 
 # --- the tag check, driven ----------------------------------------------------
