@@ -24,9 +24,13 @@ against `src/index.ts`, the OpenAPI config, and README.md:
    sets. Do not verify this by reading `src/middleware/security.ts`: a
    Cloudflare zone HSTS setting _replaces_ that header at the edge, so the
    source is a statement of intent and the live response is the only evidence.
-   A failure here is an operator action in the Cloudflare dashboard, not a code
-   change — see `docs/security-model.md#effective-headers-at-the-edge` and
-   issue #133.
+   Match means the same policy, not the same spelling: order, casing and the
+   quoted-string form all pass, while a _stronger_ `max-age` is drift like any
+   other value the Worker did not write. Exit `1` is drift and is an operator
+   action in the Cloudflare dashboard, not a code change; exit `2` means a probe
+   could not be judged (unreachable, or a route that no longer answers in the
+   shape the probe covers) and is not evidence either way — see
+   `docs/security-model.md#effective-headers-at-the-edge` and issue #133.
 
 Then:
 
