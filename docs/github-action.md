@@ -108,22 +108,35 @@ warning-only checksum fallback.
 
 ### How the assets you download are built
 
-The job that produces them is `.github/workflows/release.yml`. It holds
-`contents: write`, so every action it runs is resolved by full commit SHA with
-the version as a trailing comment; a tag would be a mutable pointer in a
-repository this project does not control, one repoint away from running inside
-the artifact publisher.
+The job that produces them is the `release` job of
+`.github/workflows/release.yml`, and the contract it is held to has three
+parts.
 
-It publishes only the commit its tag already names.
-`.github/scripts/validate-release-tag.sh` runs before the build and refuses
-unless `<tag>^{commit}` equals `HEAD`, which is what makes the manual
-`workflow_dispatch(tag: vX.Y.Z)` path safe: on that path the tag is an operator
-string, it selects the checkout, and it is also published as `tag_name`, so
-nothing else in the job re-reads the object. The step creates, moves and
-fetches nothing — a tag that is not already in the checkout is a refusal.
+**It runs no code it has not pinned.** Every external action is resolved by
+full commit SHA, with the version as a trailing comment for readability and for
+Dependabot. A tag would be a mutable pointer in a repository this project does
+not control, one repoint away from running inside the artifact publisher.
 
-Both properties are asserted rather than reviewed, by
-`task test:release-workflow`, over a real YAML parse rather than a line scan.
+**It holds exactly `contents: write`.** Not `id-token:`, not `packages:` — a
+publish step inherits every permission the job was granted.
+
+**It publishes only the commit its tag already names.** The requested tag is
+one expression spent in three places: it selects the checkout `ref`, it is the
+`RELEASE_TAG` that `.github/scripts/validate-release-tag.sh` validates, and it
+is the `tag_name` the release is published under. That script runs before the
+build and refuses unless `<tag>^{commit}` equals `HEAD`, which is what makes the
+manual `workflow_dispatch(tag: vX.Y.Z)` path safe: on that path the tag is an
+operator string and nothing else in the job re-reads the object. The step
+creates, moves and fetches nothing — a tag that is not already in the checkout
+is a refusal.
+
+All three are asserted rather than reviewed, by `task test:release-workflow`,
+over a real YAML parse rather than a line scan — and over _every_ copy of the
+workflow in the tree, including one staged in `.github/workflows-pending/`
+awaiting a maintainer's `git mv`. Activation is a rename, so while two files
+claim to be the release workflow the suite holds both to the contract and stays
+red until the live one meets it. A hardened copy that has not been activated
+cannot report the file that actually publishes clean.
 
 ## Supported assets
 
