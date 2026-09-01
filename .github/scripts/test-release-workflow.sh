@@ -59,12 +59,33 @@ readonly VALIDATOR_RUN='.release-tooling/.github/scripts/validate-release-tag.sh
 readonly RELEASE_CHECKOUT_WITH='{"fetch-depth":0,"persist-credentials":false,"ref":"${{ inputs.tag || github.ref }}"}'
 # shellcheck disable=SC2016  # GitHub expressions, literal on purpose
 readonly TOOLING_CHECKOUT_WITH='{"path":".release-tooling","persist-credentials":false,"ref":"${{ github.workflow_sha }}","sparse-checkout":".github/scripts"}'
+# The publisher's ENTIRE argument mapping, for the reason the checkouts' is
+# pinned -- one step later, and one layer closer to the consumer. `tag_name:`
+# says what the release is CALLED; `files:` is the asset set itself, and
+# `action.yml` resolves `version: latest` to an asset from it BY NAME. The
+# `checksums.txt` that action verifies the download against comes out of this
+# same list, so `files:` decides both the artifact and its own verification --
+# and `action.yml` treats a missing checksums.txt as `Write-Warning ...
+# skipping verification`, not as a refusal. `draft:` decides whether any of it
+# is published at all. None of that is visible in `tag_name:`.
+# shellcheck disable=SC2016  # GitHub expressions, literal on purpose
+readonly PUBLISHER_WITH='{"draft":false,"files":"dist/gpg-sign-linux-amd64\ndist/gpg-sign-linux-arm64\ndist/gpg-sign-darwin-amd64\ndist/gpg-sign-darwin-arm64\ndist/gpg-sign-windows-amd64.exe\ndist/gpg-sign-windows-arm64.exe\ndist/checksums.txt","generate_release_notes":true,"prerelease":false,"tag_name":"${{ inputs.tag || github.ref_name }}"}'
 # The job set is part of the contract because every assertion past the pin check
 # is scoped to RELEASE_JOB. A second job is a second publisher -- its own
 # `permissions:`, its own `tag_name:`, its own checkout -- that a reading scoped
 # to one job id is structurally unable to see, and it needs no unpinned action to
 # get there. One job is the cheapest way to say nothing else publishes from here.
 readonly RELEASE_JOBS='["release"]'
+# WHERE the job runs, pinned whole. `runs-on:`, `container:`, `services:` and
+# `defaults:` are not arguments to anything the assertions above read, and each
+# of them decides what every `run:` in this job actually executes under.
+# `container: { image: ... }` puts the shell, `sha256sum`, `chmod` and the build
+# inside an image resolved through a mutable tag in a registry nobody here
+# controls -- the exact objection the `uses:` pin guard exists to make, one line
+# lower and invisible to it. `runs-on: self-hosted` moves the whole publisher
+# onto a machine this repository does not describe. Both leave every pin,
+# permission, expression and `with:` mapping exactly as reviewed.
+readonly RELEASE_ENVIRONMENT='{"container":null,"defaults":{"job":null,"workflow":null},"runsOn":"ubuntu-latest","services":null}'
 # shellcheck disable=SC2016  # GitHub expressions, literal on purpose: they are the strings being compared
 readonly REQUESTED_TAG='${{ inputs.tag || github.ref_name }}' \
 	REQUESTED_REF='${{ inputs.tag || github.ref }}' \
@@ -269,6 +290,14 @@ release_contract_violations() {
 			"${label}" "${RELEASE_JOB}" "${permissions}" "${granted_by}" "${RELEASE_PERMISSIONS}"
 	fi
 
+	# Where it runs, which no pin, permission or argument assertion covers.
+	local environment
+	environment="$(jq -cS '.environment' <<<"${shape}")"
+	if [[ "${environment}" != "${RELEASE_ENVIRONMENT}" ]]; then
+		printf '%s: job %s runs under %s, not exactly %s — the machine, image and shell every run: executes under are not reviewed\n' \
+			"${label}" "${RELEASE_JOB}" "${environment}" "${RELEASE_ENVIRONMENT}"
+	fi
+
 	# Tag identity. Nothing in the job re-reads the object after the checkout, so
 	# the requested tag selecting the checkout, being validated, and being
 	# published under are three readings of ONE expression. A job that validated
@@ -295,6 +324,19 @@ release_contract_violations() {
 				"${label}" "${kind}" "${got:-<nothing>}" "${expected}"
 		fi
 	done
+
+	# The publisher's whole argument set, not the one key named above. Every
+	# mutation the checkouts' pinned set refuses has a twin here: `files:` swapped
+	# to a same-named artifact staged somewhere else publishes a binary the build
+	# did not produce, `dist/checksums.txt` dropped from the list makes
+	# `action.yml` install unverified, and `draft: true` makes the whole release
+	# quietly not exist. All of them leave `tag_name:` exactly as reviewed.
+	local publisher_with
+	publisher_with="$(jq -cS '.publisher.with' <<<"${shape}")"
+	if [[ "${publisher_with}" != "${PUBLISHER_WITH}" ]]; then
+		printf '%s: the publisher takes %s, not exactly %s — an unreviewed argument decides what is inside the release every consumer installs\n' \
+			"${label}" "${publisher_with}" "${PUBLISHER_WITH}"
+	fi
 
 	# --- the two checkouts, and which is which ---------------------------------
 	#
@@ -627,6 +669,43 @@ tree_case 'a release checkout that fetches submodules fails' \
 	"$(release_tree '' '/^ +ref: .*inputs\.tag/ { print "          submodules: recursive" } { print }')" \
 	'the release checkout takes'
 
+# --- what the PUBLISHER is allowed to be told ----------------------------------
+#
+# `tag_name:` is the argument the identity assertion names, and
+# `action-gh-release` takes more than that. Each of these leaves `tag_name:`
+# reading the requested tag and is green on pins, permissions, the job set, the
+# trust boundary, effectiveness and ordering -- while changing what is actually
+# in the release `action.yml` installs from.
+#
+# `files:` is the sharpest, because it is the artifact set. The asset is matched
+# by BASENAME, so a same-named file staged anywhere in the workspace publishes
+# under the reviewed name; and the `checksums.txt` action.yml verifies the
+# download against is an entry in this same list, so the list is both the
+# artifact and its own proof.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'an asset published from a path the build did not write fails' \
+	"$(release_tree '' '/^ +dist\/gpg-sign-linux-amd64$/ { $0 = "            staged/gpg-sign-linux-amd64" } { print }')" \
+	'the publisher takes'
+
+# action.yml: a release with no checksums.txt is `Write-Warning ... skipping
+# verification`, not a refusal. Dropping one line downgrades every consumer to
+# an unverified download without touching a tag, a pin or a permission.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'dropping checksums.txt from the published set fails' \
+	"$(release_tree '' '/^ +dist\/checksums\.txt$/ { next } { print }')" \
+	'the publisher takes'
+
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a release published as a draft fails' \
+	"$(release_tree '' '/^ +draft: false/ { $0 = "          draft: true" } { print }')" \
+	'the publisher takes'
+
+# The publisher's own `repository:`, the twin of the checkout case above.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a publisher given a repository: of its own fails' \
+	"$(release_tree '' '/^ +tag_name:/ { print; print "          repository: attacker/gpg-signing-service"; next } { print }')" \
+	'the publisher takes'
+
 # The defect this boundary exists to fix, written back in: the step still runs a
 # validator, is still handed the right expression, and is still ahead of the
 # publish -- out of the tree the tag supplies.
@@ -649,6 +728,32 @@ tree_case 'extra write permissions fail' \
 tree_case 'a job-level permissions: that widens the workflow-level one fails' \
 	"$(release_tree '' '{ print } /^ +runs-on:/ { print "    permissions: { contents: write, packages: write }" }')" \
 	'from the job permissions:'
+
+# --- where the job runs --------------------------------------------------------
+#
+# None of these touches a pin, a permission, an expression or a `with:` mapping.
+# Each decides what the reviewed steps actually execute under.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a job running inside an unreviewed container image fails' \
+	"$(release_tree '' '{ print } /^ +runs-on:/ { print "    container: { image: attacker/builder:latest }" }')" \
+	'runs under'
+
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a publisher moved to an undescribed runner fails' \
+	"$(release_tree '' '/^ +runs-on:/ { $0 = "    runs-on: self-hosted" } { print }')" \
+	'runs under'
+
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a job-level defaults: that redirects every run: fails' \
+	"$(release_tree '' '{ print } /^ +runs-on:/ { print "    defaults: { run: { working-directory: client } }" }')" \
+	'runs under'
+
+# The workflow level, which a job-scoped reading would miss: `defaults:` merges
+# down into the job rather than being replaced by it.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a workflow-level defaults: fails too' \
+	"$(release_tree '' '/^permissions:/ { print "defaults: { run: { working-directory: client } }" } { print }')" \
+	'runs under'
 
 # The scoped-reading bypass. This second job is pinned to the reviewed SHAs, so
 # the one whole-file assertion passes it; everything that would object to
