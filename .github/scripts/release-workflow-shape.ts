@@ -30,6 +30,11 @@
  *     and is identified by having no `path:`, the other lands the tag check
  *     under its own `path:` from `github.workflow_sha`. Reading `checkout[0]`
  *     would answer about whichever happened to be written first.
+ *   * the WHOLE `with:` mapping of each checkout, not the arguments the contract
+ *     happens to name. `repository:` defaults to `github.repository` and
+ *     `submodules:` defaults to false, and either one added redirects what lands
+ *     in the workspace while `ref:`, `path:` and `persist-credentials:` all stay
+ *     exactly as reviewed.
  *
  * The tag identity is the whole point. Nothing in the release job re-reads the
  * object after the checkout, so those three expressions being the same
@@ -121,6 +126,28 @@ function scalar(value: unknown): string | null {
 	return typeof value === "string" ? value.trim() : null;
 }
 
+/**
+ * EVERY `with:` argument of a step, not the three a caller reads by name.
+ *
+ * `actions/checkout` takes `repository:` (default `github.repository`) and
+ * `submodules:` alongside `ref:` and `path:`, and either one redirects what
+ * lands in the workspace without touching a key anything else here reports. A
+ * contract that names the arguments it objects to can only refuse the ones
+ * somebody thought of; a contract that reports the whole mapping lets the
+ * caller pin the argument set and refuse an addition it has not reviewed.
+ *
+ * String values go through `canonical()` for the same reason `ref:` does — a
+ * respacing inside `${{ }}` is not a change in what runs — and nothing else is
+ * interpreted.
+ */
+function withArguments(args: Record<string, unknown> | null): Record<string, unknown> {
+	const out: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(args ?? {})) {
+		out[key] = typeof value === "string" ? canonical(value) : value;
+	}
+	return out;
+}
+
 function mappingOrNull(value: unknown): Record<string, unknown> | null {
 	if (value === null || value === undefined || typeof value !== "object" || Array.isArray(value)) return null;
 	return value as Record<string, unknown>;
@@ -174,6 +201,7 @@ function main(argv: string[]): number {
 		ref: string | null;
 		path: string | null;
 		persistCredentials: unknown;
+		with: Record<string, unknown>;
 	}[] = [];
 	const validator: {
 		index: number;
@@ -198,6 +226,7 @@ function main(argv: string[]): number {
 				ref: canonical(withArgs?.ref),
 				path: scalar(withArgs?.path),
 				persistCredentials: withArgs?.["persist-credentials"] ?? null,
+				with: withArguments(withArgs),
 			});
 		}
 		if (name === PUBLISHER) {
