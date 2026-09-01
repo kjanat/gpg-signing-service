@@ -4,9 +4,9 @@ go 1.27
 
 require (
 	github.com/ProtonMail/go-crypto v1.4.1
-	github.com/getkin/kin-openapi v0.145.0
+	github.com/getkin/kin-openapi v0.149.0
 	github.com/go-git/go-git/v6 v6.0.0-alpha.5
-	github.com/oapi-codegen/runtime v1.6.0
+	github.com/oapi-codegen/runtime v1.7.0
 	github.com/spf13/cobra v1.10.2
 )
 
@@ -29,7 +29,7 @@ require (
 	github.com/onsi/gomega v1.34.1 // indirect
 	github.com/pjbgf/sha1cd v0.6.0 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
-	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/speakeasy-api/jsonpath v0.6.3 // indirect
 	github.com/speakeasy-api/openapi v1.19.2 // indirect
