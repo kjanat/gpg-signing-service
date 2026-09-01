@@ -64,7 +64,7 @@ export interface HstsAudit {
 	observed: string | null;
 	/** The parse, or `null` when there was nothing to parse. */
 	policy: HstsPolicy | null;
-	/** True only when the observed value is byte-identical to {@link HSTS_POLICY}. */
+	/** True only when the observed value, once trimmed, is identical to {@link HSTS_POLICY}. */
 	matchesIntent: boolean;
 	findings: HstsFinding[];
 }
@@ -101,10 +101,15 @@ export function parseHstsPolicy(header: string | null | undefined): HstsPolicy |
 
 		switch (name) {
 			case "max-age": {
-				// `Number("")` is 0, so a valueless `max-age` would otherwise parse
-				// as the one policy that actively *revokes* HSTS. Guard first.
-				const seconds = Number(value);
-				if (value !== "" && Number.isInteger(seconds) && seconds >= 0) policy.maxAge = seconds;
+				// RFC 6797 §6.1 spells max-age-value as `1*DIGIT`, and a header that
+				// breaks the grammar is one browsers discard whole — no HSTS at all.
+				// `Number` is far more generous than that: it reads `0x1E000000`,
+				// `1e10` and `+31536000` as perfectly good integers, so an audit
+				// built on it would call a policy granting *no* protection stronger
+				// than the intended one and pass. Match the grammar, not `Number`.
+				// This also covers the valueless `max-age`, where `Number("")` is 0
+				// — the one policy that actively revokes HSTS.
+				if (/^\d+$/.test(value)) policy.maxAge = Number(value);
 				break;
 			}
 			case "includesubdomains":
