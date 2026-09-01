@@ -79,8 +79,24 @@ describe("parseHstsPolicy", () => {
 		["negative", "max-age=-1"],
 		["fractional", "max-age=1.5"],
 		["valueless", "max-age"],
+		// Everything below is a shape `Number` reads as a large, valid integer and
+		// RFC 6797 §6.1's `1*DIGIT` does not. Getting these wrong fails in the one
+		// direction that matters: a header no browser honours would be reported as
+		// a policy stronger than intended, and the probe would exit 0 on it.
+		["hexadecimal", "max-age=0x1E000000; includeSubDomains; preload"],
+		["exponent-notation", "max-age=1e10; includeSubDomains; preload"],
+		["sign-prefixed", "max-age=+31536000; includeSubDomains; preload"],
 	])("reports an unusable %s max-age as null rather than zero", (_label, header) => {
 		expect(parseHstsPolicy(header)?.maxAge).toBeNull();
+	});
+
+	it("does not let a grammar-breaking max-age pass the audit as a stronger policy", () => {
+		// `Number("0x1E000000")` is 503316480 — comfortably over the intended year,
+		// so a `Number`-based parse reports no drift at all on a header that in a
+		// real browser grants no HSTS whatsoever.
+		const audit = auditHstsPolicy("max-age=0x1E000000; includeSubDomains; preload");
+		expect(audit.ok).toBe(false);
+		expect(audit.findings.map((f) => f.code)).toEqual(["NO_MAX_AGE", "PRELOAD_BELOW_FLOOR"]);
 	});
 });
 
