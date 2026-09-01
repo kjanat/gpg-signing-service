@@ -20,6 +20,12 @@
  *     one job id, so a SECOND job is a second publisher, with its own
  *     `permissions:` and its own `tag_name:`, that the scoped reading is
  *     structurally unable to see;
+ *   * WHERE the job runs. `runs-on:`, `container:`, `services:` and `defaults:`
+ *     are not steps, are not arguments, and decide the machine, the image and
+ *     the shell every `run:` in the job executes under. `container: { image:
+ *     ... }` is one added line that leaves every pin, permission, argument and
+ *     expression exactly as reviewed while `sha256sum`, `chmod` and the whole
+ *     build run inside an image nobody here controls;
  *   * `on:`, which is not a step and is not even spelled `on` after parsing —
  *     `on` is a YAML 1.1 boolean, so the key comes back as `true`;
  *   * the three places the requested tag is spent: the checkout `ref:`, the
@@ -30,11 +36,15 @@
  *     and is identified by having no `path:`, the other lands the tag check
  *     under its own `path:` from `github.workflow_sha`. Reading `checkout[0]`
  *     would answer about whichever happened to be written first.
- *   * the WHOLE `with:` mapping of each checkout, not the arguments the contract
- *     happens to name. `repository:` defaults to `github.repository` and
- *     `submodules:` defaults to false, and either one added redirects what lands
- *     in the workspace while `ref:`, `path:` and `persist-credentials:` all stay
- *     exactly as reviewed.
+ *   * the WHOLE `with:` mapping of each checkout AND of the publisher, not the
+ *     arguments the contract happens to name. `repository:` defaults to
+ *     `github.repository` and `submodules:` defaults to false, and either one
+ *     added redirects what lands in the workspace while `ref:`, `path:` and
+ *     `persist-credentials:` all stay exactly as reviewed. The publisher is the
+ *     same argument one step later: `files:` IS the asset set, `action.yml`
+ *     installs an asset by name and verifies it against a `checksums.txt` taken
+ *     from that same list, and `draft:` decides whether any of it is published
+ *     at all -- none of which is visible in `tag_name:`.
  *
  * The tag identity is the whole point. Nothing in the release job re-reads the
  * object after the checkout, so those three expressions being the same
@@ -210,7 +220,12 @@ function main(argv: string[]): number {
 		guarded: boolean;
 		advisory: unknown;
 	}[] = [];
-	const publisher: { index: number; uses: string; tagName: string | null }[] = [];
+	const publisher: {
+		index: number;
+		uses: string;
+		tagName: string | null;
+		with: Record<string, unknown>;
+	}[] = [];
 
 	for (const [index, raw] of (Array.isArray(steps) ? steps : []).entries()) {
 		const step = mappingOrNull(raw) as Step | null;
@@ -230,7 +245,12 @@ function main(argv: string[]): number {
 			});
 		}
 		if (name === PUBLISHER) {
-			publisher.push({ index: index + 1, uses: step.uses as string, tagName: canonical(withArgs?.tag_name) });
+			publisher.push({
+				index: index + 1,
+				uses: step.uses as string,
+				tagName: canonical(withArgs?.tag_name),
+				with: withArguments(withArgs),
+			});
 		}
 		// The validation step is found by the variable it is given rather than by
 		// its name or its `run:`, so the same reading answers for the inline check
@@ -261,6 +281,16 @@ function main(argv: string[]): number {
 			jobs: Object.keys(jobs),
 			permissions: permissions ?? null,
 			permissionsSource,
+			// The execution environment, reported whole for the reason the `with:`
+			// mappings are: a contract that names what it objects to can only refuse
+			// what somebody thought of. `defaults:` is reported from BOTH levels
+			// because a job's merges with the workflow's rather than replacing it.
+			environment: {
+				runsOn: job["runs-on"] ?? null,
+				container: job.container ?? null,
+				services: job.services ?? null,
+				defaults: { job: job.defaults ?? null, workflow: root.defaults ?? null },
+			},
 			checkout: {
 				count: checkout.length,
 				// Which checkout is the release workspace is decided by the absence
@@ -287,6 +317,10 @@ function main(argv: string[]): number {
 				uses: publisher[0]?.uses ?? null,
 				tagName: publisher[0]?.tagName ?? null,
 				index: publisher[0]?.index ?? null,
+				// The whole mapping, for the reason the checkouts' is reported:
+				// `tag_name:` says what the release is CALLED, `files:` says what
+				// is in it, and `draft:` says whether it is published at all.
+				with: publisher[0]?.with ?? null,
 			},
 			push: push?.tags ?? null,
 			dispatchTagRequired: dispatchTag === null ? null : (dispatchTag.required ?? false),
