@@ -6,6 +6,8 @@
  *   bun .github/scripts/workflow-steps.ts runs-script   <file> <script>...
  *   bun .github/scripts/workflow-steps.ts mutable-uses  <file> [--job <id>] [--expect-uses]
  *   bun .github/scripts/workflow-steps.ts job-field     <file> <job> <field>
+ *   bun .github/scripts/workflow-steps.ts input-field   <file> <input> <field>
+ *   bun .github/scripts/workflow-steps.ts input-fields  <file> <input>
  *
  * Called through `.github/scripts/workflow-steps.sh`, which is what the shell
  * suites source. Nothing here is a regex over YAML source text, and that is the
@@ -37,7 +39,14 @@
  *     first in a job holding `contents: write` and an OIDC token that mints
  *     real signatures.
  *
- * Neither is a special case to be patched. They are the same defect: a line
+ *   * A `default:` belongs to the input it is indented under, and nothing in a
+ *     line scan makes it stop at the end of that input. `awk '/dry_run:/ { found = 1 }
+ *     found && /default:/ { print; exit }'` reads the NEXT input's default when
+ *     `dry_run` has lost its own — so the guard that keeps a force-pushing
+ *     repair workflow dry by default passed while nothing set the default it
+ *     was reporting.
+ *
+ * None of these is a special case to be patched. They are one defect: a line
  * scanner deciding a question that only a parse can answer. So the answer is a
  * parse, from `yaml` — the version this repository already pins in
  * package.json, and the one `scripts/lint-composite-actions.ts` uses for the
@@ -48,10 +57,10 @@
  * Every path that cannot answer the question exits non-zero with a diagnostic
  * rather than printing nothing: an unreadable file, a YAML error, a `jobs:`
  * that is not a mapping, a requested job that is not there, a `run:` or `uses:`
- * that is not a string. "No output" is a meaningful answer for both queries —
- * `mutable-uses` prints nothing when every action is pinned — so a parser that
- * degraded to silence would report the safest possible result for the least
- * intelligible input.
+ * that is not a string, an input or a field that is not declared. "No output"
+ * is a meaningful answer for some of these queries — `mutable-uses` prints
+ * nothing when every action is pinned — so a parser that degraded to silence
+ * would report the safest possible result for the least intelligible input.
  */
 
 import { readFileSync } from "node:fs";
@@ -84,14 +93,14 @@ function fail(message: string): never {
 }
 
 /**
- * The workflow's jobs, parsed.
+ * The workflow's top level, parsed.
  *
  * `doc.errors` is checked rather than trusting `toJS()` to throw: the `yaml`
  * package recovers from many syntax errors and hands back a partial document,
  * which is precisely the shape that would let a malformed workflow answer
  * "nothing unpinned here".
  */
-function readJobs(file: string): Record<string, Job> {
+function readDocument(file: string): Record<string, unknown> {
 	let source: string;
 	try {
 		source = readFileSync(file, "utf8");
@@ -109,7 +118,11 @@ function readJobs(file: string): Record<string, Job> {
 		fail(`${file} is not a workflow: its top level is not a mapping`);
 	}
 
-	const jobs: unknown = (root as Record<string, unknown>).jobs;
+	return root as Record<string, unknown>;
+}
+
+function readJobs(file: string): Record<string, Job> {
+	const jobs: unknown = readDocument(file).jobs;
 	if (jobs === null || jobs === undefined || typeof jobs !== "object" || Array.isArray(jobs)) {
 		fail(`${file} has no jobs: mapping`);
 	}
@@ -268,10 +281,79 @@ function jobField(file: string, jobId: string, field: string): string {
 	return fail(`${file}: job ${jobId} has a ${field}: that is not a scalar`);
 }
 
+/**
+ * The mapping one `workflow_dispatch` input declares, and nothing outside it.
+ *
+ * This is the whole point of the query. A dispatch input's `default:` is what
+ * an operator gets for leaving the box alone, and reading it by scanning
+ * forward from the input's name finds the next input's default when this one
+ * has none — which is the difference between "dry_run defaults to true" and
+ * "nothing sets dry_run, and the value being reported belongs to another
+ * input". The mapping bounds itself.
+ *
+ * `on:` is the key GitHub reads. Under the YAML 1.1 schema it is also a
+ * spelling of the boolean `true`, so both are looked for rather than assuming
+ * which schema parsed the file.
+ */
+function inputMapping(file: string, name: string): Record<string, unknown> {
+	const root = readDocument(file);
+	const on: unknown = root.on ?? root.true;
+	if (on === null || on === undefined || typeof on !== "object" || Array.isArray(on)) {
+		fail(`${file} has no on: mapping`);
+	}
+
+	const dispatch: unknown = (on as Record<string, unknown>).workflow_dispatch;
+	if (dispatch === null || dispatch === undefined || typeof dispatch !== "object" || Array.isArray(dispatch)) {
+		fail(`${file} has no on.workflow_dispatch: mapping`);
+	}
+
+	const inputs: unknown = (dispatch as Record<string, unknown>).inputs;
+	if (inputs === null || inputs === undefined || typeof inputs !== "object" || Array.isArray(inputs)) {
+		fail(`${file} has no on.workflow_dispatch.inputs: mapping`);
+	}
+
+	const input: unknown = (inputs as Record<string, unknown>)[name];
+	if (input === undefined) {
+		fail(`${file} has no ${name} input (inputs: ${Object.keys(inputs).join(", ") || "none"})`);
+	}
+	if (input === null || typeof input !== "object" || Array.isArray(input)) {
+		fail(`${file}: input ${name} is not a mapping`);
+	}
+
+	return input as Record<string, unknown>;
+}
+
+/**
+ * One scalar key of one dispatch input.
+ *
+ * An absent key is a failure rather than an empty line: "this input declares
+ * no default" and "this input defaults to the empty string" are different
+ * facts, and a caller asserting the value of a default must not read the first
+ * as the second. `input-fields` is the query for whether a key is there at all.
+ */
+function inputField(file: string, name: string, field: string): string {
+	const input = inputMapping(file, name);
+
+	if (!(field in input)) fail(`${file}: input ${name} has no ${field}: of its own`);
+
+	const value: unknown = input[field];
+	if (typeof value === "string") return value;
+	if (typeof value === "number" || typeof value === "boolean") return String(value);
+
+	return fail(`${file}: input ${name} has a ${field}: that is not a scalar`);
+}
+
+/** The keys one dispatch input declares, one per line. */
+function inputFields(file: string, name: string): string[] {
+	return Object.keys(inputMapping(file, name));
+}
+
 function main(argv: string[]): number {
 	const [command, file, ...rest] = argv;
 	if (command === undefined || file === undefined) {
-		process.stderr.write("usage: workflow-steps.ts <runs-script|mutable-uses|job-field> <file> ...\n");
+		process.stderr.write(
+			"usage: workflow-steps.ts <runs-script|mutable-uses|job-field|input-field|input-fields> <file> ...\n",
+		);
 		return 2;
 	}
 
@@ -315,6 +397,18 @@ function main(argv: string[]): number {
 				const [jobId, field] = rest;
 				if (jobId === undefined || field === undefined) fail("job-field needs a job id and a field");
 				process.stdout.write(`${jobField(file, jobId, field)}\n`);
+				return 0;
+			}
+			case "input-field": {
+				const [name, field] = rest;
+				if (name === undefined || field === undefined) fail("input-field needs an input name and a field");
+				process.stdout.write(`${inputField(file, name, field)}\n`);
+				return 0;
+			}
+			case "input-fields": {
+				const [name] = rest;
+				if (name === undefined) fail("input-fields needs an input name");
+				for (const key of inputFields(file, name)) process.stdout.write(`${key}\n`);
 				return 0;
 			}
 			default:

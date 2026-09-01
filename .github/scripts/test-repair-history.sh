@@ -161,8 +161,117 @@ fi
 # rewrites and publishes twenty commits is the thing this whole command exists
 # to clean up after. Both are asserted here because a YAML default is one
 # character away from its opposite and nothing else would notice.
-dry_run_default="$(awk '/^      dry_run:/ { found = 1 } found && /default:/ { print $2; exit }' "${workflow}")"
-push_default="$(awk '/^      push:/ { found = 1 } found && /default:/ { print $2; exit }' "${workflow}")"
+#
+# Read from the input's own mapping, not by scanning forward from its name. The
+# scan this replaces —
+#
+#   awk '/^      dry_run:/ { found = 1 } found && /default:/ { print $2; exit }'
+#
+# — does not stop at the end of the input it started in. An input that has lost
+# its own `default:` inherits the next input's, so the guard reports a value
+# nothing set: delete `push`'s default here and the scan reads
+# `build_from_source`'s `false` and passes, having checked nothing. That is the
+# whole assertion going quiet on the one edit it exists to catch.
+#
+# `workflow_input_field` fails rather than answering when the key is absent, so
+# the two cases below are told apart: a default that is wrong, and a default
+# that is not there.
+# The mutants, asserted before the real file is judged by this. Both are the
+# same edit — an input losing its own `default:` — and the fixture puts a LATER
+# input with the opposite default underneath, which is the shape the scan this
+# replaces would have read. `dispatch_fixture` writes them; nothing here
+# touches the workflow under test.
+dispatch_fixture() {
+	printf '%s\n' "$1" >"${fixture_dir}/dispatch.yml"
+}
+
+# default_case <description> <input> <expected>, where "" means "declares none"
+default_case() {
+	local description="$1" input="$2" expected="$3" got='' status=0
+	got="$(workflow_input_field "${fixture_dir}/dispatch.yml" "${input}" default 2>/dev/null)" || status=$?
+	if [[ -n "${expected}" ]]; then
+		if ((status != 0)); then
+			printf 'FAIL: reading %s default in %s failed (exit %d), expected %q\n' \
+				"${input}" "${description}" "${status}" "${expected}" >&2
+			exit 1
+		fi
+		if [[ "${got}" != "${expected}" ]]; then
+			printf 'FAIL: %s default in %s read as %q, expected %q\n' \
+				"${input}" "${description}" "${got}" "${expected}" >&2
+			exit 1
+		fi
+		return 0
+	fi
+	if ((status == 0)); then
+		printf 'FAIL: %s declares no default in %s, but the query answered %q — that value\n' \
+			"${input}" "${description}" "${got}" >&2
+		printf '      belongs to another input, and a guard reading it would pass on nothing.\n' >&2
+		exit 1
+	fi
+}
+
+mkdir -p "${fixture_dir}"
+trap 'rm -rf "${fixture_dir}"' EXIT
+
+dispatch_fixture 'on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        type: boolean
+        required: false
+      push:
+        type: boolean
+        required: false
+        default: true
+      build_from_source:
+        type: boolean
+        required: false
+        default: true
+jobs:
+  repair:
+    steps:
+      - run: .github/scripts/repair-history.sh'
+default_case 'a workflow where dry_run lost its default' dry_run ''
+default_case 'a workflow where dry_run lost its default' push true
+
+dispatch_fixture 'on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        type: boolean
+        required: false
+        default: true
+      push:
+        type: boolean
+        required: false
+      build_from_source:
+        type: boolean
+        required: false
+        default: false
+jobs:
+  repair:
+    steps:
+      - run: .github/scripts/repair-history.sh'
+default_case 'a workflow where push lost its default' push ''
+default_case 'a workflow where push lost its default' dry_run true
+
+rm -rf "${fixture_dir}"
+trap - EXIT
+
+input_default() {
+	local input="$1" default status=0
+	default="$(workflow_input_field "${workflow}" "${input}" default 2>/dev/null)" || status=$?
+	if ((status != 0)); then
+		printf 'FAIL: %s gives %s no default of its own; an unset boolean input dispatches\n' \
+			"${workflow}" "${input}" >&2
+		printf '      as false, and a scan would have reported a later input default instead.\n' >&2
+		exit 1
+	fi
+	printf '%s' "${default}"
+}
+
+dry_run_default="$(input_default dry_run)"
+push_default="$(input_default push)"
 if [[ "${dry_run_default}" != "true" ]]; then
 	printf 'FAIL: %s does not default dry_run to true (got %q)\n' "${workflow}" "${dry_run_default}" >&2
 	exit 1
@@ -178,23 +287,17 @@ fi
 # `--force-with-lease=refs/heads/<branch>:<expected_tip>`, so a dispatch that
 # could leave it blank would degrade that into an unconditional force push.
 # `required: true` with no `default:` is what forces the operator to re-read the
-# branch immediately before dispatching. Asserted per input, over the block
-# between one input key and the next.
-input_block() {
-	awk -v key="      $2:" '
-		$0 == key { inside = 1; next }
-		inside && /^      [a-z_]+:/ { exit }
-		inside { print }
-	' "$1"
-}
-
+# branch immediately before dispatching. Asserted per input, from that input's
+# own keys — the absence of a default is a fact about which keys the mapping
+# has, which is what `workflow_input_fields` answers.
 for bound in base expected_tip expect_identities; do
-	block="$(input_block "${workflow}" "${bound}")"
-	if ! grep -Fq 'required: true' <<<"${block}"; then
-		printf 'FAIL: %s does not mark %s required\n' "${workflow}" "${bound}" >&2
+	required="$(workflow_input_field "${workflow}" "${bound}" required 2>/dev/null || true)"
+	if [[ "${required}" != "true" ]]; then
+		printf 'FAIL: %s does not mark %s required (got %q)\n' "${workflow}" "${bound}" "${required}" >&2
 		exit 1
 	fi
-	if grep -Fq 'default:' <<<"${block}"; then
+	fields="$(workflow_input_fields "${workflow}" "${bound}")" || exit 1
+	if grep -qx 'default' <<<"${fields}"; then
 		printf 'FAIL: %s gives %s a default; a repair bound must be typed out, not inherited\n' \
 			"${workflow}" "${bound}" >&2
 		exit 1

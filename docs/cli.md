@@ -485,9 +485,10 @@ same way it bumps a tag.
 
 #### How those assertions read a workflow
 
-Both questions the signing, repair and provenance suites decide their verdict
+Every question the signing, repair and provenance suites decide their verdict
 on — does this workflow still **run** the script the suite is about to exercise,
-and is every external action pinned — are answered by
+is every external action pinned, what does a job's `if:` say, and what does one
+dispatch input default to — is answered by
 `.github/scripts/workflow-steps.ts`, a real YAML parse using the `yaml` package
 this repository already depends on. `.github/scripts/workflow-steps.sh` is the
 shell entry point the suites source, and `task test:workflow-steps` is the
@@ -495,8 +496,8 @@ parser's own adversarial suite. The release suite reads `release.yml` through
 the same parser, so there is one answer to "what does this step run" rather than
 one per suite.
 
-It is a parse rather than a `grep` because two valid workflow spellings defeat
-a line scanner, in the direction that matters:
+It is a parse rather than a `grep` because valid workflow spellings defeat a
+line scanner, in the direction that matters:
 
 - a folded `run: >` block joins its lines into **one** command, so a script path
   on its own source line can be an argument to the command above it. Reading the
@@ -505,7 +506,14 @@ a line scanner, in the direction that matters:
 - `uses` is a mapping key, and a mapping key may be quoted. `"uses":
   actions/checkout@v7` is the same step to GitHub as the unquoted spelling, and
   an anchored `uses:` pattern does not see it, so the pin guard reports clean
-  while a mutable action runs first in a job holding `contents: write`.
+  while a mutable action runs first in a job holding `contents: write`;
+- a `default:` belongs to the input it is indented under, and a scan forward
+  from an input's name does not stop at the end of that input. An input that has
+  lost its own default reads back a **later** input's — so the guard keeping the
+  repair workflow dry by default reports a value nothing set. `input-field`
+  reads the mapping the key is in, and fails rather than answering when the key
+  is not there, because "no default" and "defaults to the empty string" are
+  different facts about a dispatch form.
 
 Every input it cannot interpret is a non-zero exit with a diagnostic, never an
 empty answer: "no step runs the script" and "every action is pinned" are both
@@ -514,6 +522,17 @@ possible verdict on the least intelligible file. The provenance job is read the
 same way in both of its forms — while the job is still a patch, the suite applies
 it to a scratch copy of `ci.yml` and parses the post-image, which is what CI will
 actually run.
+
+The job's `if:` is asserted as a conjunction rather than as two substrings that
+both appear. Two containment checks are satisfied by
+`github.event_name == 'push' || github.event.deleted == false`, which contains
+both required terms and runs the job on exactly the deleted-ref push the second
+one exists to keep it off — one character turning the gate inside out with every
+substring still in place. `test-commit-provenance.sh` splits the expression on
+top-level `&&` and compares terms, refusing outright anything it cannot take
+apart that way: a disjunction anywhere, a parenthesis, a `!`. Whitespace,
+operand order, line folding and the optional `${{ }}` are layout and are
+accepted; an extra conjunct only narrows the gate and is accepted too.
 
 ### Upload a PGP key
 
