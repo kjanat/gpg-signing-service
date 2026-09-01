@@ -281,28 +281,101 @@ if [[ "${push_default}" != "false" ]]; then
 	exit 1
 fi
 
-# The bounds that make a repair explicit rather than guessed. `expected_tip` is
-# the one that turns the publish into a claim about which object is being
-# replaced — repair-history.sh spends it on
+# The four fields that make a repair explicit rather than guessed.
+# `expected_tip` is the one that turns the publish into a claim about which
+# object is being replaced — repair-history.sh spends it on
 # `--force-with-lease=refs/heads/<branch>:<expected_tip>`, so a dispatch that
 # could leave it blank would degrade that into an unconditional force push.
-# `required: true` with no `default:` is what forces the operator to re-read the
-# branch immediately before dispatching. Asserted per input, from that input's
-# own keys — the absence of a default is a fact about which keys the mapping
-# has, which is what `workflow_input_fields` answers.
-for bound in base expected_tip expect_identities; do
-	required="$(workflow_input_field "${workflow}" "${bound}" required 2>/dev/null || true)"
-	if [[ "${required}" != "true" ]]; then
-		printf 'FAIL: %s does not mark %s required (got %q)\n' "${workflow}" "${bound}" "${required}" >&2
+# `identity` is here for the mirror reason: it is not a bound on what the
+# repair touches, it is what every rebuilt commit ends up claiming, so a
+# prefilled one turns "written by whom" into a question the operator never had
+# to answer — which is the manufactured provenance this workflow exists to
+# undo. `required: true` with no `default:` is what forces each one to be typed
+# out. Asserted per input, from that input's own keys — the absence of a
+# default is a fact about which keys the mapping has, which is what
+# `workflow_input_fields` answers.
+#
+# A function rather than a loop in line, so that the mutants below are judged
+# by the same code the real file is.
+assert_bounds() {
+	local workflow="$1" bound required fields
+	for bound in base expected_tip identity expect_identities; do
+		required="$(workflow_input_field "${workflow}" "${bound}" required 2>/dev/null || true)"
+		if [[ "${required}" != "true" ]]; then
+			printf 'FAIL: %s does not mark %s required (got %q)\n' "${workflow}" "${bound}" "${required}" >&2
+			return 1
+		fi
+		fields="$(workflow_input_fields "${workflow}" "${bound}")" || return 1
+		if grep -qx 'default' <<<"${fields}"; then
+			printf 'FAIL: %s gives %s a default; a repair bound must be typed out, not inherited\n' \
+				"${workflow}" "${bound}" >&2
+			return 1
+		fi
+	done
+}
+
+# `identity` mutated three ways, asserted before the real file is judged by
+# this. All three are the edit someone makes in good faith — prefilling the
+# field whose value is nearly always the same, or relaxing it because it is
+# prefilled — and each has to be caught on its own: a check that only read
+# `required:` would pass a defaulted input, and one that only read the keys
+# would pass an optional one.
+mkdir -p "${fixture_dir}"
+trap 'rm -rf "${fixture_dir}"' EXIT
+
+# bounds_fixture <the keys the identity input declares>
+bounds_fixture() {
+	printf '%s\n' "on:
+  workflow_dispatch:
+    inputs:
+      base:
+        type: string
+        required: true
+      expected_tip:
+        type: string
+        required: true
+      identity:
+        type: string
+${1}
+      expect_identities:
+        type: string
+        required: true
+jobs:
+  repair:
+    steps:
+      - run: .github/scripts/repair-history.sh" >"${fixture_dir}/bounds.yml"
+}
+
+# bounds_mutant <description> <the keys the identity input declares>
+bounds_mutant() {
+	bounds_fixture "$2"
+	if assert_bounds "${fixture_dir}/bounds.yml" 2>/dev/null; then
+		printf 'FAIL: the bounds assertion accepted %s\n' "$1" >&2
 		exit 1
 	fi
-	fields="$(workflow_input_fields "${workflow}" "${bound}")" || exit 1
-	if grep -qx 'default' <<<"${fields}"; then
-		printf 'FAIL: %s gives %s a default; a repair bound must be typed out, not inherited\n' \
-			"${workflow}" "${bound}" >&2
-		exit 1
-	fi
-done
+}
+
+bounds_mutant 'an identity prefilled with the usual value' \
+	'        required: true
+        default: Kaj Kowalski <info@kajkowalski.nl>'
+bounds_mutant 'an identity prefilled with an empty string' \
+	"        required: true
+        default: ''"
+bounds_mutant 'an identity that is not required at all' \
+	'        required: false'
+
+# ...and the shape that must be accepted, so the three above are failing on the
+# identity keys rather than on the rest of the fixture.
+bounds_fixture '        required: true'
+assert_bounds "${fixture_dir}/bounds.yml" || {
+	printf 'FAIL: the bounds assertion refused four required inputs with no defaults\n' >&2
+	exit 1
+}
+
+rm -rf "${fixture_dir}"
+trap - EXIT
+
+assert_bounds "${workflow}" || exit 1
 
 # And the expected tip has to reach the lease, not just the dispatch form. The
 # script is what spends it; this asserts the two stay wired together.
