@@ -44,6 +44,21 @@ readonly RELEASE_PERMISSIONS='{"contents":"write"}'
 # the code deciding whether a ref is safe inside the ref being decided on.
 readonly TOOLING_PATH='.release-tooling'
 readonly VALIDATOR_RUN='.release-tooling/.github/scripts/validate-release-tag.sh'
+# The ENTIRE argument mapping of each checkout, not the three arguments the
+# assertions below name. `actions/checkout` defaults `repository:` to
+# `github.repository` and `submodules:` to false, and both are absent here --
+# so both are settable in one added line that leaves `ref:`, `path:` and
+# `persist-credentials:` exactly as reviewed. `repository: <fork>` on the
+# release checkout builds and publishes another repository's `client/` under
+# this repository's tag, with the fork's own `v1.2.0` making the tag check
+# agree; `submodules:` lets the published tag's `.gitmodules` supply code to the
+# build. Naming the arguments to object to can only refuse the ones somebody
+# thought of, so the reviewed set is pinned whole and an addition is a violation
+# until it is reviewed and written here.
+# shellcheck disable=SC2016  # GitHub expressions, literal on purpose
+readonly RELEASE_CHECKOUT_WITH='{"fetch-depth":0,"persist-credentials":false,"ref":"${{ inputs.tag || github.ref }}"}'
+# shellcheck disable=SC2016  # GitHub expressions, literal on purpose
+readonly TOOLING_CHECKOUT_WITH='{"path":".release-tooling","persist-credentials":false,"ref":"${{ github.workflow_sha }}","sparse-checkout":".github/scripts"}'
 # The job set is part of the contract because every assertion past the pin check
 # is scoped to RELEASE_JOB. A second job is a second publisher -- its own
 # `permissions:`, its own `tag_name:`, its own checkout -- that a reading scoped
@@ -303,11 +318,16 @@ release_contract_violations() {
 			"${label}" "${RELEASE_JOB}"
 	else
 		release_index="$(jq -r '.checkout.release.index' <<<"${shape}")"
-		local ref
+		local ref release_with
 		ref="$(jq -r '.checkout.release.ref // ""' <<<"${shape}")"
 		if [[ "${ref}" != "${REQUESTED_REF}" ]]; then
 			printf '%s: the checkout takes %s, not the requested tag %s\n' \
 				"${label}" "${ref:-<nothing>}" "${REQUESTED_REF}"
+		fi
+		release_with="$(jq -cS '.checkout.release.with' <<<"${shape}")"
+		if [[ "${release_with}" != "${RELEASE_CHECKOUT_WITH}" ]]; then
+			printf '%s: the release checkout takes %s, not exactly %s — an unreviewed argument decides what lands in the workspace that gets built and published\n' \
+				"${label}" "${release_with}" "${RELEASE_CHECKOUT_WITH}"
 		fi
 	fi
 
@@ -326,6 +346,12 @@ release_contract_violations() {
 		if [[ "${tooling_path}" != "${TOOLING_PATH}" ]]; then
 			printf '%s: the tooling checkout lands in %s, not %s, so the validator the wiring check names is not the one that runs\n' \
 				"${label}" "${tooling_path:-<nothing>}" "${TOOLING_PATH}"
+		fi
+		local tooling_with
+		tooling_with="$(jq -cS '.checkout.tooling.with' <<<"${shape}")"
+		if [[ "${tooling_with}" != "${TOOLING_CHECKOUT_WITH}" ]]; then
+			printf '%s: the tooling checkout takes %s, not exactly %s — an unreviewed argument decides which repository supplies the tag check\n' \
+				"${label}" "${tooling_with}" "${TOOLING_CHECKOUT_WITH}"
 		fi
 	fi
 
@@ -567,6 +593,39 @@ tree_case 'tooling checked out before the release tree fails' \
 	                    /^ +- name: Checkout release tag/ { printf "%s\n", hold; hold = "" }
 	                    { print }')" \
 	'the tooling has to arrive after it'
+
+# --- what the checkouts are allowed to be told ---------------------------------
+#
+# `ref:`, `path:` and `persist-credentials:` are the arguments the assertions
+# above name, and `actions/checkout` takes more than those. Each of these leaves
+# all three exactly as reviewed and is green on pins, permissions, tag identity,
+# triggers, effectiveness, ordering and the trust boundary -- one added line in a
+# `with:` block that reads like housekeeping.
+#
+# `repository:` is the sharpest. It defaults to `github.repository`, so writing
+# it at all is invisible in review, and a fork resolves this repository's commits
+# through the shared fork network. On the release checkout the workspace becomes
+# the fork's tree at the fork's OWN `v1.2.0` -- so `<tag>^{commit}` equals `HEAD`
+# and the tag check agrees -- `client/` is built from it, and
+# `action-gh-release` publishes the result as a Release of THIS repository under
+# the requested tag. On the tooling checkout it is the trust boundary itself: the
+# code deciding whether a ref is safe to publish comes from a repository nobody
+# reviewed, in a job holding contents: write.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a release checkout from another repository fails' \
+	"$(release_tree '' '/^ +ref: .*inputs\.tag/ { print "          repository: attacker/gpg-signing-service" } { print }')" \
+	'the release checkout takes'
+
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a tooling checkout from another repository fails' \
+	"$(release_tree '' '/^ +ref: .*github\.workflow_sha/ { print "          repository: attacker/gpg-signing-service" } { print }')" \
+	'the tooling checkout takes'
+
+# The published tag's own `.gitmodules` deciding what the build compiles.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a release checkout that fetches submodules fails' \
+	"$(release_tree '' '/^ +ref: .*inputs\.tag/ { print "          submodules: recursive" } { print }')" \
+	'the release checkout takes'
 
 # The defect this boundary exists to fix, written back in: the step still runs a
 # validator, is still handed the right expression, and is still ahead of the
