@@ -388,6 +388,15 @@ mis-click away from a routine signing run. It defaults `dry_run` to true and
 `push` to false, and `task test:repair-history` asserts both, because a YAML
 default is one character away from its opposite.
 
+The four fields that say what gets rewritten, against what, and into whose name
+— `base`, `expected_tip`, `expect_identities`, `identity` — are required with
+no default at all, and the same suite asserts that too. `identity` is in that
+list rather than prefilled with the usual answer because it is what every
+rebuilt commit ends up claiming: a repair dispatched without a deliberate
+answer to "written by whom" is the manufactured provenance the command exists
+to undo. `repair-history.sh` refuses a blank one rather than guessing, and
+`gpg-sign repair-history` refuses again underneath it.
+
 #### Which `gpg-sign` runs it
 
 `repair-history` is newer than any published release, so nothing should resolve

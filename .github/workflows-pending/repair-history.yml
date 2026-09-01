@@ -15,11 +15,13 @@ name: Repair History
 # a routine signing run.
 #
 # Everything dangerous here is off unless it is asked for. `dry_run` defaults
-# to true, `push` defaults to false, and the three bounds that decide what gets
-# rewritten and against what — `base`, `expected_tip`, `expect_identities` —
-# are required with no default at all, so an operator types each one out.
-# (`identity` is required too, and is the one field prefilled: it is what the
-# repair writes, not a bound on what it touches.)
+# to true, `push` defaults to false, and the four fields that decide what gets
+# rewritten, against what, and into whose name — `base`, `expected_tip`,
+# `expect_identities`, `identity` — are required with no default at all, so an
+# operator types each one out. `identity` is in that list rather than prefilled
+# because it is what every rebuilt commit ends up claiming: a repair dispatched
+# without a deliberate answer to "written by whom" is the manufactured
+# provenance this workflow exists to undo.
 # .github/scripts/repair-history.sh refuses a blank one rather than guessing,
 # and `gpg-sign repair-history` refuses again underneath it. `expected_tip` is
 # spent on the lease: the publish is one
@@ -39,10 +41,9 @@ on:
         type: string
         required: true
       identity:
-        description: The identity to write into both headers, as "Name <address>"
+        description: The identity to write into both headers, as "Name <address>". Required; there is no default.
         type: string
         required: true
-        default: Kaj Kowalski <info@kajkowalski.nl>
       expect_identities:
         description: Addresses the range is allowed to carry now, comma-separated. Every one must be named.
         type: string
