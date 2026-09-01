@@ -179,7 +179,7 @@ jobs:
 
       - name: Upload the fix
         if: steps.bundle.outputs.has-fix == 'true'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: dependabot-fix
           path: ${{ runner.temp }}/fix.patch
