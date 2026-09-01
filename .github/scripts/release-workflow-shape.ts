@@ -16,6 +16,10 @@
  *
  *   * the permission set the release job actually runs with, which is the job's
  *     own `permissions:` when it has one and the workflow's otherwise;
+ *   * which jobs the workflow has at all — every other answer here is scoped to
+ *     one job id, so a SECOND job is a second publisher, with its own
+ *     `permissions:` and its own `tag_name:`, that the scoped reading is
+ *     structurally unable to see;
  *   * `on:`, which is not a step and is not even spelled `on` after parsing —
  *     `on` is a YAML 1.1 boolean, so the key comes back as `true`;
  *   * the three places the requested tag is spent: the checkout `ref:`, the
@@ -202,6 +206,7 @@ function main(argv: string[]): number {
 
 	process.stdout.write(
 		`${JSON.stringify({
+			jobs: Object.keys(jobs),
 			permissions: permissions ?? null,
 			permissionsSource,
 			checkout: {

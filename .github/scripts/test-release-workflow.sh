@@ -36,6 +36,12 @@ validate_script="${repo_root}/.github/scripts/validate-release-tag.sh"
 readonly RELEASE_JOB=release
 readonly RELEASE_PERMISSIONS='{"contents":"write"}'
 readonly VALIDATOR_RUN='.github/scripts/validate-release-tag.sh'
+# The job set is part of the contract because every assertion past the pin check
+# is scoped to RELEASE_JOB. A second job is a second publisher -- its own
+# `permissions:`, its own `tag_name:`, its own checkout -- that a reading scoped
+# to one job id is structurally unable to see, and it needs no unpinned action to
+# get there. One job is the cheapest way to say nothing else publishes from here.
+readonly RELEASE_JOBS='["release"]'
 # shellcheck disable=SC2016  # GitHub expressions, literal on purpose: they are the strings being compared
 readonly REQUESTED_TAG='${{ inputs.tag || github.ref_name }}' \
 	REQUESTED_REF='${{ inputs.tag || github.ref }}'
@@ -205,6 +211,19 @@ release_contract_violations() {
 	if ! shape="$(release_shape "${file}" "${RELEASE_JOB}" 2>&1)"; then
 		printf '%s: its %s job could not be read — %s\n' "${label}" "${RELEASE_JOB}" "${shape//$'\n'/ }"
 		return 0
+	fi
+
+	# Scope, before anything scoped to RELEASE_JOB runs. `workflow_mutable_uses`
+	# above reads every job; everything from here down reads one. A second job --
+	# pinned to these same reviewed SHAs, so green on the only whole-file check --
+	# carrying `permissions: { contents: write, id-token: write }` and its own
+	# `softprops/action-gh-release` publishes on its own terms, and every
+	# assertion below answers about `release` while it does.
+	local jobs
+	jobs="$(jq -c '.jobs | sort' <<<"${shape}")"
+	if [[ "${jobs}" != "${RELEASE_JOBS}" ]]; then
+		printf '%s: has jobs %s, not exactly %s — anything past %s publishes unasserted\n' \
+			"${label}" "${jobs}" "${RELEASE_JOBS}" "${RELEASE_JOB}"
 	fi
 
 	# Privilege. The job mints the artifacts every consumer installs; anything
@@ -447,6 +466,23 @@ tree_case 'extra write permissions fail' \
 tree_case 'a job-level permissions: that widens the workflow-level one fails' \
 	"$(release_tree '' '{ print } /^ +runs-on:/ { print "    permissions: { contents: write, packages: write }" }')" \
 	'from the job permissions:'
+
+# The scoped-reading bypass. This second job is pinned to the reviewed SHAs, so
+# the one whole-file assertion passes it; everything that would object to
+# `id-token: write` or to publishing v9.9.9 is looking at job `release`.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a second job that publishes on its own terms fails' \
+	"$(release_tree '' '{ print }
+	  END {
+	    print "";
+	    print "  publish-extra:";
+	    print "    runs-on: ubuntu-latest";
+	    print "    permissions: { contents: write, id-token: write, packages: write }";
+	    print "    steps:";
+	    print "      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3";
+	    print "        with: { tag_name: v9.9.9 }";
+	  }')" \
+	'has jobs ["publish-extra","release"], not exactly ["release"]'
 
 tree_case 'dropping permissions: entirely fails rather than inheriting the default token' \
 	"$(release_tree '' '/^permissions:/ { next } { print }')" \
