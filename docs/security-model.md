@@ -484,7 +484,49 @@ caller reading a hint that names a value its fetch layer hid. See
 [Response headers](api.md#response-headers).
 
 Security headers include HSTS, CSP, frame denial, MIME sniffing prevention, and
-a restricted Permissions Policy.
+a restricted Permissions Policy. What the Worker sets is not always what a
+caller receives — see [Effective headers at the edge](#effective-headers-at-the-edge).
+
+## Effective headers at the edge
+
+Cloudflare sits between `securityHeaders` and the caller, and for one header it
+does not pass through: a zone with **HTTP Strict Transport Security** enabled
+under SSL/TLS -> Edge Certificates _replaces_ the Worker's
+`Strict-Transport-Security`. The reply carries exactly one such header, the
+zone's, with nothing to show a substitution happened.
+
+So the middleware constant is a statement of intent, not evidence of the policy
+in force. `middleware.test.ts` proves the Worker emits
+`max-age=31536000; includeSubDomains; preload`, and that proof says nothing
+about the wire. The delivered value can only be read off a live response:
+
+```bash
+task verify:hsts             # or: task verify:hsts -- https://your-deployment
+```
+
+That compares the header every probed route actually returns against the
+Worker's policy and reports the difference; the judgement it applies lives in
+`src/utils/hsts.ts` and is unit-tested. `/verify-live` runs it as part of the
+deployment audit.
+
+Two things it looks for beyond a plain mismatch:
+
+- a delivered `max-age` shorter than the Worker's, which is a protection window
+  narrower than the source and the tests describe; and
+- `preload` alongside a `max-age` below `31536000`, which
+  [the preload list](https://hstspreload.org/) will not accept — the token then
+  declares an intent the policy cannot support, and is inert.
+
+This has been live at least once. As of 2026-09-01 the zone serves
+`max-age=15552000; includeSubDomains; preload` (180 days) on every route of
+this service and on unrelated hosts of the same zone, in place of the Worker's
+year. Correcting it is an operator action in the Cloudflare dashboard, not a
+code change; the repository deliberately keeps the one-year policy rather than
+weakening the source to match a zone setting. See
+[issue #133](https://github.com/kjanat/gpg-signing-service/issues/133).
+
+The same substitution is possible in principle for any header a zone-level
+Cloudflare feature owns. HSTS is the one known to be configured here.
 
 ## Release installer
 
