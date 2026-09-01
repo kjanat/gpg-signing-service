@@ -17,30 +17,48 @@ jobs:
     name: Build and Release
     runs-on: ubuntu-latest
     steps:
+      # PINS: every external action is resolved by full commit SHA, with the
+      # version it was reviewed at as a trailing comment. The comment is what
+      # Dependabot bumps and what a human reads; the SHA is what runs.
+      #
+      # This job holds `contents: write` and publishes the binaries every
+      # consumer of this repository installs — `action.yml` resolves
+      # `version: latest` to an asset from here. An action resolved through a
+      # tag is a pointer in a repository nobody here controls, so a tag moved
+      # upstream is arbitrary code inside the artifact publisher. That is the
+      # same reason the staged signing and provenance workflows are pinned, and
+      # .github/scripts/test-release-workflow.sh asserts it rather than leaving
+      # it to review: a tag and a SHA look equally fine in a diff.
+      #
+      # The pins are written one key per line rather than in the
+      # `{ uses: ..., with: ... }` flow form used elsewhere in this repository,
+      # because inside a flow mapping a `#` comment would swallow the rest of
+      # the line.
       - name: Checkout release tag
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ inputs.tag || github.ref }}
+          # Nothing in this job talks to git over the network after the
+          # checkout, and nothing pushes. Leaving the job's write-capable token
+          # in .git/config for the toolchain install, six `go build`s and the
+          # publish step to inherit buys nothing and hands every one of them a
+          # credential. The tag check below reads objects that are already here.
+          persist-credentials: false
 
+      # The check that makes the dispatch path safe: `ref:` above is an operator
+      # string on that path, and `tag_name:` below is the same string, so
+      # nothing else in this job re-reads the object. Its own suite is
+      # .github/scripts/test-release-workflow.sh (`task test:release-workflow`).
       - name: Validate release tag
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-        run: |
-          set -euo pipefail
-          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Release tag must match vX.Y.Z, got '$RELEASE_TAG'"
-            exit 1
-          fi
-          tag_commit="$(git rev-parse "$RELEASE_TAG^{commit}")"
-          head_commit="$(git rev-parse HEAD)"
-          if [[ "$tag_commit" != "$head_commit" ]]; then
-            echo "::error::Checked out $head_commit, but $RELEASE_TAG resolves to $tag_commit"
-            exit 1
-          fi
-          printf 'Publishing %s at %s\n' "$RELEASE_TAG" "$head_commit"
+        run: .github/scripts/validate-release-tag.sh
 
-      - { uses: jdx/mise-action@v4, with: { working_directory: client } }
+      - name: Install toolchain
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          working_directory: client
 
       - name: Build binaries
         working-directory: client
@@ -61,7 +79,7 @@ jobs:
         run: sha256sum ./* > checksums.txt
 
       - name: Create Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           files: |
