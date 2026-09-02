@@ -36,52 +36,13 @@ jobs:
     name: Build and Release
     runs-on: ubuntu-latest
     steps:
-      # PINS: every external action is resolved by full commit SHA, with the
-      # version it was reviewed at as a trailing comment. The comment is what
-      # Dependabot bumps and what a human reads; the SHA is what runs.
-      #
-      # This job holds `contents: write` and publishes the binaries every
-      # consumer of this repository installs — `action.yml` resolves
-      # `version: latest` to an asset from here. An action resolved through a
-      # tag is a pointer in a repository nobody here controls, so a tag moved
-      # upstream is arbitrary code inside the artifact publisher. That is the
-      # same reason the staged signing and provenance workflows are pinned, and
-      # .github/scripts/test-release-workflow.sh asserts it rather than leaving
-      # it to review: a tag and a SHA look equally fine in a diff.
-      #
-      # The pins are written one key per line rather than in the
-      # `{ uses: ..., with: ... }` flow form used elsewhere in this repository,
-      # because inside a flow mapping a `#` comment would swallow the rest of
-      # the line.
       - name: Checkout release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ inputs.tag || github.ref }}
-          # Nothing in this job talks to git over the network after the
-          # checkout, and nothing pushes. Leaving the job's write-capable token
-          # in .git/config for the toolchain install, six `go build`s and the
-          # publish step to inherit buys nothing and hands every one of them a
-          # credential. The tag check below reads objects that are already here.
           persist-credentials: false
 
-      # The tag check has to come from the commit that supplied THIS FILE, not
-      # from the tag being published. `run:` executes in $GITHUB_WORKSPACE, and
-      # the checkout above replaced the workspace with the tag's tree — so a
-      # script named there is a file the requested tag supplies. Every tag this
-      # repository has cut, v1.2.0 included, predates the validator and supplies
-      # none, which made `workflow_dispatch(tag: v1.2.0)` — the one path that can
-      # publish an already-signed tag — unable to run its own gate.
-      #
-      # It is also the trust boundary. A validator loaded out of the ref it is
-      # deciding on, in a job holding `contents: write`, cannot validate itself.
-      # `github.workflow_sha` is the commit this workflow file came from: on a
-      # dispatch that is the branch dispatched from, on a tag push it is the tag
-      # being published, and on both it is the code a reviewer read.
-      #
-      # A separate `path:` rather than a second checkout at the root: a root
-      # checkout cleans the workspace, which would discard the release tree this
-      # job is about to build. Same pinned SHA, same `persist-credentials: false`.
       - name: Checkout release tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -90,12 +51,6 @@ jobs:
           path: .release-tooling
           persist-credentials: false
 
-      # The check that makes the dispatch path safe: `ref:` above is an operator
-      # string on that path, and `tag_name:` below is the same string, so
-      # nothing else in this job re-reads the object. The script comes from the
-      # tooling checkout; the objects it reads come from the release workspace,
-      # which is still the working directory. Its own suite is
-      # .github/scripts/test-release-workflow.sh (`task test:release-workflow`).
       - name: Validate release tag
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
@@ -139,3 +94,40 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: false
+
+      # softprops updates an existing release when a publish is retried. Its
+      # generated-note path is not convergent: repeated publishers can append
+      # the same GitHub-generated block again. GitHub also attributes each line
+      # to the PR opener, which leaks @claude[bot] into release notes even when
+      # the actual Git commits are Kaj-authored and service-signed. Normalize the
+      # body after every publish so retries converge to exactly one block and the
+      # public changelog reflects the repository owner rather than the agent that
+      # happened to open a PR.
+      - name: Normalize generated release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          release_id="$(gh api "repos/${GH_REPO}/releases/tags/${RELEASE_TAG}" --jq .id)"
+          gh api "repos/${GH_REPO}/releases/tags/${RELEASE_TAG}" --jq .body > current.md
+
+          awk '
+            BEGIN { seen = 0 }
+            /^## What.s Changed$/ {
+              if (seen) exit
+              seen = 1
+            }
+            seen { print }
+            seen && /^\*\*Full Changelog\*\*:/ { exit }
+          ' current.md \
+            | sed 's/by @claude\[bot\] in /by @kjanat in /g' \
+            > normalized.md
+
+          [[ "$(grep -c '^## What.s Changed$' normalized.md)" -eq 1 ]]
+          ! grep -Fq '@claude[bot]' normalized.md
+          grep -Fq '**Full Changelog**:' normalized.md
+
+          gh api --method PATCH "repos/${GH_REPO}/releases/${release_id}" \
+            --raw-field body="$(cat normalized.md)" >/dev/null
