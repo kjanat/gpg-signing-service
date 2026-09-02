@@ -186,15 +186,6 @@ is flag assembly and nothing else — plus the final force push. It is an intern
 example, not a drop-in reusable workflow: it uses repository-local setup
 actions, and it handles PGP signatures only.
 
-That workflow is not live yet. The replacement is staged at
-[`.github/workflows-pending/sign-commits.yml`](../.github/workflows-pending/sign-commits.yml),
-because a GitHub App token cannot write under `.github/workflows/`; the file
-currently at [`.github/workflows/sign-commits.yml`](../.github/workflows/sign-commits.yml)
-still names the Python path this change replaces. Both halves have to land in
-the same merge, and `task test:sign-commits` fails until they do. See
-[Landing order](cli.md#landing-order) for the sequence and the release it
-depends on.
-
 ## X.509
 
 The service can create detached PKCS#7 signatures for Git's

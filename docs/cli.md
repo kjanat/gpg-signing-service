@@ -381,7 +381,7 @@ cannot publish a plan.
 Publishing is opt-in there too: `repair-history.sh` repairs, asserts and stops
 unless it is given `PUSH=true`, and prints the exact push command instead.
 
-The dispatch surface is `.github/workflows-pending/repair-history.yml` — a
+The dispatch surface is `.github/workflows/repair-history.yml` — a
 separate workflow rather than a mode on Sign Commits, for the same reason this
 is a separate command: a `mode:` dropdown would put a provenance rewrite one
 mis-click away from a routine signing run. It defaults `dry_run` to true and
@@ -427,18 +427,16 @@ rather than one in Go and a second in Python. The order is
 
 1. merge the `repair-history` capability;
 2. publish a `gpg-sign` release containing it and `sign-commit`;
-3. point `.github/workflows/sign-commits.yml` at `sign-commits.sh`, drop the
-   `NOT ACTIVE YET` header from the moved file, and drop the paragraph in
-   `docs/integrations.md` that says the workflow is still pending;
-4. delete the Python path once nothing invokes it (this is that step,
-   together with 3);
-5. run the production repair, with `PUSH=true`, from a checkout that has the
+3. point `.github/workflows/sign-commits.yml` at `sign-commits.sh` and delete
+   the Python path once nothing invokes it (done);
+4. run the production repair, with `PUSH=true`, from a checkout that has the
    released CLI — or, until one exists, with the repair workflow's
    `build_from_source` input, which is deliberate, named and off by default.
 
-Step 3 needs a token with the `workflows` permission, which is why the one-line
-workflow edit is applied by hand rather than in the change that removes the
-script it replaces.
+Step 3 needed a token with the `workflows` permission, which is why the
+workflow files were staged under `.github/workflows-pending/` first and moved
+across by hand. Nothing is staged now: every file that guard suites read is the
+file GitHub runs.
 
 Until step 2 lands, the installed binary is a release that predates
 `sign-commit`. That is not something to discover in the middle of a signing
@@ -474,16 +472,14 @@ The job that runs it is gated on `github.event_name == 'push' &&
 github.event.deleted == false`: deleting a branch is a push too, and one whose
 `github.sha` is the default branch's tip, so `before..after` would span commits
 the deletion never touched. `task test:commit-provenance` asserts that
-condition against whichever of the patch or `ci.yml` currently carries the job.
+condition against the `provenance` job in `.github/workflows/ci.yml`.
 
-The CI job that calls it arrives as
-`.github/workflows-pending/ci-provenance-job.patch`, for the same reason the
-Sign Commits replacement does: an App token cannot write under
-`.github/workflows/`. Apply it with `git apply` and delete the patch.
-`task test:commit-provenance` refuses a patch that has stopped applying, and
-once the patch is gone it asserts that `ci.yml` still calls the guard.
+That job arrived as `.github/workflows-pending/ci-provenance-job.patch`,
+because an App token cannot write under `.github/workflows/`. The patch has
+been applied and removed, so the suite now reads `ci.yml` directly and asserts
+that CI still calls the guard.
 
-All three staged files pin their external actions to full commit SHAs with the
+All three workflow files pin their external actions to full commit SHAs with the
 version as a trailing comment, and each of the three suites asserts it. These
 are the jobs that hold `contents: write`, mint OIDC tokens for real signatures,
 and check the provenance of what lands on the default branch; an action
