@@ -1,8 +1,9 @@
 name: Bootstrap v1.2.0 Release
 
-# One-shot migration trigger. Adding this file to the migration branch is the
-# event; it dispatches the already-reviewed release workflow on master for the
-# existing signed v1.2.0 tag. Delete this file after the release is verified.
+# One-shot migration trigger. This file now exists on the migration branch;
+# this update is the event that dispatches the already-reviewed release
+# workflow on master for the existing signed v1.2.0 tag. Delete it after the
+# release is verified.
 on:
   push:
     branches: [refactor/sign-commits-through-gpg-sign]
