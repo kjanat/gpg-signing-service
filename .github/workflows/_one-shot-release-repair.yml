@@ -1,0 +1,67 @@
+name: One-shot signed release workflow repair
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: master
+
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with: { working_directory: client }
+
+      - name: Build checked-out repair CLI
+        run: |
+          mkdir -p client/bin
+          cd client
+          go build -o bin/gpg-sign ./cmd/gpg-sign
+          chmod +x bin/gpg-sign
+
+      - name: Get OIDC token
+        id: oidc
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const token = await core.getIDToken('gpg-signing-service');
+            core.setSecret(token);
+            core.setOutput('token', token);
+
+      - name: Wait for final maintenance tip, repair it, and publish
+        env:
+          GPG_SIGN_TOKEN: ${{ steps.oidc.outputs.token }}
+          GPG_SIGN_URL: ${{ vars.SIGNING_SERVICE_URL }}
+          GPG_SIGN_BIN: ${{ github.workspace }}/client/bin/gpg-sign
+          BASE_REF: 72351125a9576e5b9caf1fdaabe2ab8c1c1a9af6
+          IDENTITY: Kaj Kowalski <info@kajkowalski.nl>
+          EXPECT_IDENTITIES: info@kajkowalski.nl
+          BRANCH: master
+          DRY_RUN: "false"
+          PUSH: "true"
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 90); do
+            git fetch origin master
+            tip="$(git rev-parse origin/master)"
+            if [[ "${tip}" != "${GITHUB_SHA}" ]] && ! git show "${tip}:.github/workflows/_one-shot-release-repair.yml" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+
+          tip="$(git rev-parse origin/master)"
+          [[ "${tip}" != "${GITHUB_SHA}" ]]
+          ! git show "${tip}:.github/workflows/_one-shot-release-repair.yml" >/dev/null 2>&1
+
+          git checkout -B master "${tip}"
+          export EXPECTED_TIP="${tip}"
+          .github/scripts/repair-history.sh
