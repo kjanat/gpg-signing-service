@@ -1,0 +1,44 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 295a000..baf3917 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -52,3 +52,39 @@ jobs:
+       { run: task c:t },
+       { run: task c:l },
+     ]
++
++  # Turns the Aug 30 provenance failure from silent into loud. The REST squash
++  # path builds the merge commit itself and stamps `claude[bot]` / `GitHub` on
++  # it, which no signature check can catch — a manufactured commit signs
++  # perfectly well. This runs over the commits a push actually added, so the
++  # next one is a red build rather than the twentieth.
++  # Tests: .github/scripts/test-commit-provenance.sh (task test:commit-provenance).
++  provenance:
++    name: Commit provenance
++    # Deleting a branch is also a push, and on that event `github.sha` is the
++    # default branch's tip rather than anything the push added. `before..after`
++    # would then span commits the deletion had nothing to do with — history
++    # somebody else's merge wrote — and blame this push for them. There is
++    # nothing to check when a ref goes away, so do not run.
++    if: github.event_name == 'push' && github.event.deleted == false
++    runs-on: ubuntu-latest
++    steps:
++      # Pinned to a commit, not a tag. This job is the guard: an action whose
++      # tag is repointed runs before the check it is meant to be checked by,
++      # in a job on the default branch. The trailing comment is the readable
++      # version and what Dependabot bumps.
++      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
++        with: { fetch-depth: 0 }
++      - name: Check the pushed commits name a real author
++        env:
++          BEFORE: ${{ github.event.before }}
++          AFTER: ${{ github.sha }}
++        run: |
++          # The first push to a branch reports an all-zero "before"; there is
++          # no range to check then, and pre-existing history is repaired once
++          # rather than re-litigated on every push.
++          if [[ "${BEFORE}" =~ ^0+$ ]]; then
++            echo "no previous tip recorded for this push; nothing to compare"
++            exit 0
++          fi
++          .github/scripts/check-commit-provenance.sh "${BEFORE}..${AFTER}"

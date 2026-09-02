@@ -115,15 +115,18 @@ tasks:
     cmd: bash .github/scripts/test-release-workflow.sh
 
   test:sign-commits:
-    desc: Test commit re-signing behavior
+    desc: Test the routine signing run's flag assembly and the CLI it requires
+    deps: [install:noscripts]
     cmd: bash .github/scripts/test-sign-commits.sh
 
   test:repair-history:
     desc: Test the pre-push assertions guarding a history repair
+    deps: [install:noscripts]
     cmd: bash .github/scripts/test-repair-history.sh
 
   test:commit-provenance:
     desc: Test the guard against merge paths that manufacture identity headers
+    deps: [install:noscripts]
     cmd: bash .github/scripts/test-commit-provenance.sh
 
   test:sign-commit-example:
