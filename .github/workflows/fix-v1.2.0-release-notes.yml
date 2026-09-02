@@ -1,0 +1,45 @@
+name: Fix v1.2.0 release notes
+
+on:
+  push:
+    paths:
+      - .github/workflows/fix-v1.2.0-release-notes.yml
+
+permissions: { contents: write }
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Normalize release body
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag=v1.2.0
+          release_id="$(gh api "repos/${GH_REPO}/releases/tags/${tag}" --jq .id)"
+          gh api "repos/${GH_REPO}/releases/tags/${tag}" --jq .body > current.md
+
+          awk '
+            BEGIN { seen = 0 }
+            /^## What.s Changed$/ {
+              if (seen) exit
+              seen = 1
+            }
+            seen { print }
+            seen && /^\*\*Full Changelog\*\*:/ { exit }
+          ' current.md \
+            | sed 's/by @claude\[bot\] in /by @kjanat in /g' \
+            > cleaned.md
+
+          [[ "$(grep -c '^## What.s Changed$' cleaned.md)" -eq 1 ]]
+          ! grep -Fq '@claude[bot]' cleaned.md
+          grep -Fq '**Full Changelog**:' cleaned.md
+
+          body="$(cat cleaned.md)"
+          gh api --method PATCH "repos/${GH_REPO}/releases/${release_id}" --raw-field body="${body}" >/dev/null
+
+          gh api "repos/${GH_REPO}/releases/tags/${tag}" --jq .body > verify.md
+          [[ "$(grep -c '^## What.s Changed$' verify.md)" -eq 1 ]]
+          ! grep -Fq '@claude[bot]' verify.md
