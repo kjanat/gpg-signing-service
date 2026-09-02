@@ -32,6 +32,21 @@ repair_script="${repo_root}/.github/scripts/repair-history.sh"
 pending_workflow="${repo_root}/.github/workflows-pending/repair-history.yml"
 live_workflow="${repo_root}/.github/workflows/repair-history.yml"
 
+# Both at once is the failure PENDING-first resolution invites, and it is the
+# quiet one: every assertion below — the four required, default-free inputs,
+# the `dry_run` and `push` defaults, the pinned actions, the `run:` wiring —
+# would go on being made against the staged copy while GitHub dispatches the
+# live one, and each mutation regression would judge a file nobody runs. The
+# sign-commits and dependabot activations both treat this as an error; so does
+# this one. Activation is a rename, not a copy.
+if [[ -f "${pending_workflow}" && -f "${live_workflow}" ]]; then
+	echo 'FAIL: repair-history.yml is active AND a copy is still staged in .github/workflows-pending/.' >&2
+	echo '      Everything below would be asserted against the staged copy, not the one that runs.' >&2
+	echo '      Finish the activation:' >&2
+	echo '        git rm .github/workflows-pending/repair-history.yml' >&2
+	exit 1
+fi
+
 if [[ -f "${pending_workflow}" ]]; then
 	workflow="${pending_workflow}"
 	printf '  note: the repair workflow is still pending activation (git mv %s .github/workflows/repair-history.yml)\n' \

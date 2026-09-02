@@ -381,7 +381,7 @@ cannot publish a plan.
 Publishing is opt-in there too: `repair-history.sh` repairs, asserts and stops
 unless it is given `PUSH=true`, and prints the exact push command instead.
 
-The dispatch surface is `.github/workflows-pending/repair-history.yml` — a
+The dispatch surface is `.github/workflows/repair-history.yml` — a
 separate workflow rather than a mode on Sign Commits, for the same reason this
 is a separate command: a `mode:` dropdown would put a provenance rewrite one
 mis-click away from a routine signing run. It defaults `dry_run` to true and
@@ -476,14 +476,14 @@ github.event.deleted == false`: deleting a branch is a push too, and one whose
 the deletion never touched. `task test:commit-provenance` asserts that
 condition against whichever of the patch or `ci.yml` currently carries the job.
 
-The CI job that calls it arrives as
-`.github/workflows-pending/ci-provenance-job.patch`, for the same reason the
-Sign Commits replacement does: an App token cannot write under
-`.github/workflows/`. Apply it with `git apply` and delete the patch.
-`task test:commit-provenance` refuses a patch that has stopped applying, and
-once the patch is gone it asserts that `ci.yml` still calls the guard.
+The CI job that calls it is the `provenance` job in
+`.github/workflows/ci.yml`. It arrived as a patch under
+`.github/workflows-pending/`, for the same reason the Sign Commits replacement
+did: an App token cannot write under `.github/workflows/`. While that patch
+exists `task test:commit-provenance` refuses one that has stopped applying;
+now that it is gone, the suite asserts that `ci.yml` still calls the guard.
 
-All three staged files pin their external actions to full commit SHAs with the
+All three files pin their external actions to full commit SHAs with the
 version as a trailing comment, and each of the three suites asserts it. These
 are the jobs that hold `contents: write`, mint OIDC tokens for real signatures,
 and check the provenance of what lands on the default branch; an action
