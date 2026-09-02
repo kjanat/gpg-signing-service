@@ -1,0 +1,92 @@
+name: Repair master provenance now
+
+on:
+  push:
+    paths:
+      - .github/workflows/repair-master-provenance-now.yml
+
+permissions:
+  id-token: write
+  contents: write
+
+concurrency:
+  group: repair-master-provenance-now
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: master
+
+      # This workflow is deleted immediately after its creation. Do not take the
+      # lease until that deletion is the branch tip; that way both temporary
+      # commits are inside the repaired range and the final tree contains no
+      # one-shot workflow.
+      - name: Wait for self-removal and pin current master
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 60); do
+            git fetch origin master
+            if ! git cat-file -e 'origin/master:.github/workflows/repair-master-provenance-now.yml' 2>/dev/null; then
+              git checkout -B master origin/master
+              exit 0
+            fi
+            sleep 2
+          done
+          echo '::error::one-shot repair workflow was not removed from master in time'
+          exit 1
+
+      - uses: ./
+
+      - name: Get OIDC token
+        id: oidc
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const token = await core.getIDToken('gpg-signing-service');
+            core.setSecret(token);
+            core.setOutput('token', token);
+
+      - name: Validate current identities and repair master
+        env:
+          GPG_SIGN_TOKEN: ${{ steps.oidc.outputs.token }}
+          GPG_SIGN_URL: ${{ vars.SIGNING_SERVICE_URL }}
+        run: |
+          set -euo pipefail
+          base=a1cdfe318686cac582fc955243966d04236afb58
+          expected_tip="$(git rev-parse HEAD)"
+
+          # Refuse any identity class we did not already know this damaged range
+          # could contain. Only after that check do we pass the exact observed
+          # addresses to repair-history.
+          mapfile -t identities < <(
+            git log --format='%ae%n%ce' "${base}..${expected_tip}" | sed '/^$/d' | sort -u
+          )
+          printf 'Observed identities before repair:\n'
+          printf '  %s\n' "${identities[@]}"
+
+          for address in "${identities[@]}"; do
+            case "${address}" in
+              info@kajkowalski.nl|noreply@github.com|support@github.com) ;;
+              *+claude\[bot\]@users.noreply.github.com) ;;
+              *+dependabot\[bot\]@users.noreply.github.com) ;;
+              *+github-actions\[bot\]@users.noreply.github.com) ;;
+              *)
+                echo "::error::unexpected identity in repair range: ${address}"
+                exit 1
+                ;;
+            esac
+          done
+
+          EXPECT_IDENTITIES="$(printf '%s\n' "${identities[@]}")" \
+          BASE_REF="${base}" \
+          EXPECTED_TIP="${expected_tip}" \
+          IDENTITY='Kaj Kowalski <info@kajkowalski.nl>' \
+          BRANCH=master \
+          DRY_RUN=false \
+          PUSH=true \
+          .github/scripts/repair-history.sh
