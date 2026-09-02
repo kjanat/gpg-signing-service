@@ -1,0 +1,34 @@
+name: Bootstrap v1.2.0 Release
+
+# One-shot migration trigger. Adding this file to the migration branch is the
+# event; it dispatches the already-reviewed release workflow on master for the
+# existing signed v1.2.0 tag. Delete this file after the release is verified.
+on:
+  push:
+    branches: [refactor/sign-commits-through-gpg-sign]
+    paths: [.github/workflows/bootstrap-v1.2.0.yml]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    if: github.repository == 'kjanat/gpg-signing-service'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch hardened release workflow exactly once
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          if gh release view v1.2.0 --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo 'v1.2.0 already exists; nothing to dispatch'
+            exit 0
+          fi
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/dispatches" \
+            -f ref=master \
+            -f 'inputs[tag]=v1.2.0'
+          echo 'dispatched release.yml on master for signed tag v1.2.0'
