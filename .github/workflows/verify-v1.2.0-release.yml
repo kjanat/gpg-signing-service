@@ -1,0 +1,42 @@
+name: Verify published v1.2.0 release
+
+on:
+  push:
+    branches: [master]
+    paths: [.github/workflows/verify-v1.2.0-release.yml]
+
+permissions: { contents: read }
+
+jobs:
+  verify:
+    name: Verify published v1.2.0 assets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download published assets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          base='https://github.com/kjanat/gpg-signing-service/releases/download/v1.2.0'
+          curl --fail --location --silent --show-error "$base/checksums.txt" --output checksums.txt
+          curl --fail --location --silent --show-error "$base/gpg-sign-linux-amd64" --output gpg-sign-linux-amd64
+          chmod +x gpg-sign-linux-amd64
+
+      - name: Verify published checksum
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          expected="$(awk '$2 == "./gpg-sign-linux-amd64" { print $1 }' checksums.txt)"
+          test -n "$expected"
+          actual="$(sha256sum gpg-sign-linux-amd64 | awk '{ print $1 }')"
+          test "$actual" = "$expected"
+          test "$actual" = '44a9911aa501058bea67bcd3fe0ad8e5fc9dbf5f27c16a1833bb334f51b7e73b'
+
+      - name: Verify published CLI surface
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ./gpg-sign-linux-amd64 --help > help.txt
+          grep -Eq '^[[:space:]]+sign-commit([[:space:]]|$)' help.txt
+          grep -Eq '^[[:space:]]+repair-history([[:space:]]|$)' help.txt
+          ./gpg-sign-linux-amd64 sign-commit --help >/dev/null
+          ./gpg-sign-linux-amd64 repair-history --help >/dev/null
