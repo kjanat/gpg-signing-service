@@ -1,0 +1,27 @@
+name: Verify v1.2.0 Release
+
+on:
+  push:
+    branches: [refactor/sign-commits-through-gpg-sign]
+    paths: [.github/workflows/verify-v1.2.0-release.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify published Linux binary
+        run: |
+          set -Eeuo pipefail
+          base='https://github.com/kjanat/gpg-signing-service/releases/download/v1.2.0'
+          curl --fail --location --retry 3 "${base}/checksums.txt" -o checksums.txt
+          curl --fail --location --retry 3 "${base}/gpg-sign-linux-amd64" -o gpg-sign
+          grep ' gpg-sign-linux-amd64$' checksums.txt > linux-amd64.sha256
+          sha256sum --check linux-amd64.sha256
+          chmod +x gpg-sign
+          ./gpg-sign sign-commit --help >/dev/null
+          ./gpg-sign repair-history --help >/dev/null
+          ./gpg-sign --version
+          echo 'published v1.2.0 contains sign-commit and repair-history'
