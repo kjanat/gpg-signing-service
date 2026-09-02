@@ -381,6 +381,22 @@ cannot publish a plan.
 Publishing is opt-in there too: `repair-history.sh` repairs, asserts and stops
 unless it is given `PUSH=true`, and prints the exact push command instead.
 
+The dispatch surface is `.github/workflows-pending/repair-history.yml` — a
+separate workflow rather than a mode on Sign Commits, for the same reason this
+is a separate command: a `mode:` dropdown would put a provenance rewrite one
+mis-click away from a routine signing run. It defaults `dry_run` to true and
+`push` to false, and `task test:repair-history` asserts both, because a YAML
+default is one character away from its opposite.
+
+The four fields that say what gets rewritten, against what, and into whose name
+— `base`, `expected_tip`, `expect_identities`, `identity` — are required with
+no default at all, and the same suite asserts that too. `identity` is in that
+list rather than prefilled with the usual answer because it is what every
+rebuilt commit ends up claiming: a repair dispatched without a deliberate
+answer to "written by whom" is the manufactured provenance the command exists
+to undo. `repair-history.sh` refuses a blank one rather than guessing, and
+`gpg-sign repair-history` refuses again underneath it.
+
 #### Which `gpg-sign` runs it
 
 `repair-history` is newer than any published release, so nothing should resolve
@@ -398,33 +414,134 @@ GPG_SIGN_BIN=./client/bin/gpg-sign \
 
 `.github/scripts/test-repair-history.sh` builds the checked-out command the same
 way, so the suite proves the orchestration against this tree rather than against
-whatever release is installed.
+whatever release is installed. `sign-commits.sh` and
+`.github/scripts/test-sign-commits.sh` do the same for `sign-commit`.
 
 #### Landing order
 
-The routine **Sign Commits** workflow still runs
-`.github/scripts/sign-commits.py`, and that is deliberate: it cannot be switched
-to a CLI that no release contains. The order is
+The routine **Sign Commits** run is orchestrated by
+`.github/scripts/sign-commits.sh`, which turns the dispatch inputs into
+`gpg-sign sign-commit` flags and nothing else. It signs through the same CLI
+`repair-history` lives in, so there is one implementation of the signing walk
+rather than one in Go and a second in Python. The order is
 
-1. merge the `repair-history` capability (this is that step);
-2. publish a `gpg-sign` release containing it;
-3. point `.github/workflows/sign-commits.yml` at that released binary;
-4. delete the Python path once nothing invokes it;
+1. merge the `repair-history` capability;
+2. publish a `gpg-sign` release containing it and `sign-commit`;
+3. point `.github/workflows/sign-commits.yml` at `sign-commits.sh`, drop the
+   `NOT ACTIVE YET` header from the moved file, and drop the paragraph in
+   `docs/integrations.md` that says the workflow is still pending;
+4. delete the Python path once nothing invokes it (this is that step,
+   together with 3);
 5. run the production repair, with `PUSH=true`, from a checkout that has the
-   released CLI.
+   released CLI — or, until one exists, with the repair workflow's
+   `build_from_source` input, which is deliberate, named and off by default.
 
-Steps 3 and 4 need a token with the `workflows` permission, which is why they
-are not in the same change as steps 1 and 2.
+Step 3 needs a token with the `workflows` permission, which is why the one-line
+workflow edit is applied by hand rather than in the change that removes the
+script it replaces.
+
+Until step 2 lands, the installed binary is a release that predates
+`sign-commit`. That is not something to discover in the middle of a signing
+run, so `sign-commits.sh` asks the binary for `sign-commit --help` first and
+refuses by name if it has never heard of it — the same probe
+`repair-history.sh` makes. `GPG_SIGN_BIN` points either script at a build of
+this checkout in the meantime.
 
 #### Stopping it happening again
 
 `.github/scripts/check-commit-provenance.sh <range>` refuses commits whose
 committer is `GitHub <noreply@github.com>` or whose author or committer name
-ends in `[bot]`. Run it on pushes to the default branch, over the commits the
+ends in `[bot]`, in any case — `Renovate[Bot]` names the same mechanism as
+`renovate[bot]`, and a display name is free text GitHub does not hold to the
+lower-case spelling. Run it on pushes to the default branch, over the commits the
 push added, so a merge that manufactures identities is a red build immediately
 rather than twenty commits later. `PROVENANCE_ALLOW` takes addresses to permit
-anyway, one per line. A `Co-authored-by:` trailer is a message trailer and is
-not affected.
+anyway, one per line.
+
+It reads the message as well as the headers. A `Co-authored-by:` trailer is a
+provenance claim too, and this branch had to be rewritten once because four
+commits carried one that no one typed: correct `Kaj Kowalski` headers over
+`Co-authored-by: Kaj Kowalski <6353477+kjanat@users.noreply.github.com>`, which
+the header-only guard passed without comment. So a trailer whose name ends in
+`[bot]`, or whose address is `noreply@github.com` or any
+`users.noreply.github.com` alias, is refused — case-folded the same way —
+for the same reason the headers are: it credits an account a tool had the id for, not a correspondent. An
+ordinary human co-author at an address they write from is untouched, and
+`PROVENANCE_ALLOW` reaches the trailers too. `Signed-off-by:` is a different
+claim and is not read.
+
+The job that runs it is gated on `github.event_name == 'push' &&
+github.event.deleted == false`: deleting a branch is a push too, and one whose
+`github.sha` is the default branch's tip, so `before..after` would span commits
+the deletion never touched. `task test:commit-provenance` asserts that
+condition against whichever of the patch or `ci.yml` currently carries the job.
+
+The CI job that calls it arrives as
+`.github/workflows-pending/ci-provenance-job.patch`, for the same reason the
+Sign Commits replacement does: an App token cannot write under
+`.github/workflows/`. Apply it with `git apply` and delete the patch.
+`task test:commit-provenance` refuses a patch that has stopped applying, and
+once the patch is gone it asserts that `ci.yml` still calls the guard.
+
+All three staged files pin their external actions to full commit SHAs with the
+version as a trailing comment, and each of the three suites asserts it. These
+are the jobs that hold `contents: write`, mint OIDC tokens for real signatures,
+and check the provenance of what lands on the default branch; an action
+resolved through a tag is a step someone else can repoint into that position.
+The rest of `.github/workflows/` still uses tags and is not this change's to
+re-pin. Dependabot's `github-actions` ecosystem bumps a SHA-and-comment pin the
+same way it bumps a tag.
+
+#### How those assertions read a workflow
+
+Every question the signing, repair and provenance suites decide their verdict
+on — does this workflow still **run** the script the suite is about to exercise,
+is every external action pinned, what does a job's `if:` say, and what does one
+dispatch input default to — is answered by
+`.github/scripts/workflow-steps.ts`, a real YAML parse using the `yaml` package
+this repository already depends on. `.github/scripts/workflow-steps.sh` is the
+shell entry point the suites source, and `task test:workflow-steps` is the
+parser's own adversarial suite. The release suite reads `release.yml` through
+the same parser, so there is one answer to "what does this step run" rather than
+one per suite.
+
+It is a parse rather than a `grep` because valid workflow spellings defeat a
+line scanner, in the direction that matters:
+
+- a folded `run: >` block joins its lines into **one** command, so a script path
+  on its own source line can be an argument to the command above it. Reading the
+  block line by line calls that "wired" — a false pass on exactly the tree the
+  assertion exists to fail on;
+- `uses` is a mapping key, and a mapping key may be quoted. `"uses":
+  actions/checkout@v7` is the same step to GitHub as the unquoted spelling, and
+  an anchored `uses:` pattern does not see it, so the pin guard reports clean
+  while a mutable action runs first in a job holding `contents: write`;
+- a `default:` belongs to the input it is indented under, and a scan forward
+  from an input's name does not stop at the end of that input. An input that has
+  lost its own default reads back a **later** input's — so the guard keeping the
+  repair workflow dry by default reports a value nothing set. `input-field`
+  reads the mapping the key is in, and fails rather than answering when the key
+  is not there, because "no default" and "defaults to the empty string" are
+  different facts about a dispatch form.
+
+Every input it cannot interpret is a non-zero exit with a diagnostic, never an
+empty answer: "no step runs the script" and "every action is pinned" are both
+legitimate empty results, so a parser that fell silent would report the safest
+possible verdict on the least intelligible file. The provenance job is read the
+same way in both of its forms — while the job is still a patch, the suite applies
+it to a scratch copy of `ci.yml` and parses the post-image, which is what CI will
+actually run.
+
+The job's `if:` is asserted as a conjunction rather than as two substrings that
+both appear. Two containment checks are satisfied by
+`github.event_name == 'push' || github.event.deleted == false`, which contains
+both required terms and runs the job on exactly the deleted-ref push the second
+one exists to keep it off — one character turning the gate inside out with every
+substring still in place. `test-commit-provenance.sh` splits the expression on
+top-level `&&` and compares terms, refusing outright anything it cannot take
+apart that way: a disjunction anywhere, a parenthesis, a `!`. Whitespace,
+operand order, line folding and the optional `${{ }}` are layout and are
+accepted; an extra conjunct only narrows the gate and is accepted too.
 
 ### Upload a PGP key
 

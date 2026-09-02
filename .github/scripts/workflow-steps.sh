@@ -7,6 +7,8 @@
 #   workflow_runs_script  <workflow.yml> <script-path>...
 #   workflow_mutable_uses <workflow.yml> [--job <id>] [--expect-uses]
 #   workflow_job_field    <workflow.yml> <job-id> <field>
+#   workflow_input_field  <workflow.yml> <input> <field>
+#   workflow_input_fields <workflow.yml> <input>
 #
 # Every one of these is a thin bridge to .github/scripts/workflow-steps.ts,
 # which does the parsing with the `yaml` package this repository already pins.
@@ -22,6 +24,12 @@
 #   got="$(workflow_runs_script "${workflow}" .github/scripts/x.sh)" || exit 1
 #
 # rather than inside `[[ ... ]]`, which swallows it.
+#
+# The same is true of a dispatch input's keys. `awk` from the input's name to
+# the first `default:` it meets does not stop at the end of that input, so an
+# input that has LOST its default reads back the next one's — a guard reporting
+# a value nothing set. `workflow_input_field` reads the mapping the key is
+# actually in.
 #
 # Sourced rather than duplicated because the suites that need it —
 # test-sign-commits.sh, test-repair-history.sh and test-commit-provenance.sh —
@@ -87,4 +95,20 @@ workflow_mutable_uses() {
 # one string here.
 workflow_job_field() {
 	workflow_steps_run job-field "$@"
+}
+
+# One scalar key of one `workflow_dispatch` input, read from that input's own
+# mapping and nowhere else. Returns non-zero when the input does not declare
+# the key, because "no default" and "defaults to the empty string" are
+# different facts about a dispatch form and a caller asserting a default's
+# value must not read the first as the second.
+workflow_input_field() {
+	workflow_steps_run input-field "$@"
+}
+
+# The keys one `workflow_dispatch` input declares, one per line. This is the
+# query for whether a key is there at all — an assertion that an input must
+# have NO default is about the key's presence, not its value.
+workflow_input_fields() {
+	workflow_steps_run input-fields "$@"
 }

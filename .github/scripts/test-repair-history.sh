@@ -19,6 +19,376 @@ repo_root="$(git rev-parse --show-toplevel)"
 assert_script="${repo_root}/.github/scripts/assert-repaired-range.sh"
 repair_script="${repo_root}/.github/scripts/repair-history.sh"
 
+# --- the wiring ---------------------------------------------------------------
+#
+# A repair nothing can dispatch is a repair that gets run by hand. The workflow
+# arrives the way the other workflow files this repository's bot writes do: in
+# .github/workflows-pending/, because a GitHub App token has no `workflows`
+# permission, activated by a human with one `git mv`.
+#
+# Resolved PENDING-first, and checked before the gpg/jq/go skips below so the
+# wiring is asserted on every machine. Once the file is moved into place this
+# follows it and becomes a standing guard.
+pending_workflow="${repo_root}/.github/workflows-pending/repair-history.yml"
+live_workflow="${repo_root}/.github/workflows/repair-history.yml"
+
+if [[ -f "${pending_workflow}" ]]; then
+	workflow="${pending_workflow}"
+	printf '  note: the repair workflow is still pending activation (git mv %s .github/workflows/repair-history.yml)\n' \
+		'.github/workflows-pending/repair-history.yml'
+elif [[ -f "${live_workflow}" ]]; then
+	workflow="${live_workflow}"
+else
+	echo 'FAIL: repair-history.yml is in neither .github/workflows/ nor .github/workflows-pending/' >&2
+	exit 1
+fi
+
+# What the workflow runs, not what it mentions. `grep -F '<path>'` cannot tell
+# the step that dispatches the repair from a comment describing it or a line
+# that prints the path, and the whole value of this assertion is that it fails
+# when the workflow stops calling the script this suite goes on to exercise.
+# The script's own `run:` block is several lines of setup with the call last,
+# so the block form has to be read as well as the inline one.
+#
+# shellcheck source=.github/scripts/workflow-steps.sh
+source "${repo_root}/.github/scripts/workflow-steps.sh"
+
+# The shapes that must not read as wiring, asserted before the workflow is
+# judged by them.
+fixture_dir="$(mktemp -d)"
+trap 'rm -rf "${fixture_dir}"' EXIT
+
+# matcher_case <description> <expected> <workflow body>
+matcher_case() {
+	local description="$1" expected="$2" got
+	printf '%s\n' "$3" >"${fixture_dir}/workflow.yml"
+	# `|| exit 1` because "" is a real answer here — no step runs the script —
+	# so a parse that could not happen must not read as that same answer.
+	got="$(workflow_runs_script "${fixture_dir}/workflow.yml" .github/scripts/repair-history.sh)" || exit 1
+	if [[ "${got}" != "${expected}" ]]; then
+		printf 'FAIL: the wiring matcher read %s as %q, expected %q\n' \
+			"${description}" "${got}" "${expected}" >&2
+		exit 1
+	fi
+}
+
+matcher_case 'a step that runs the script' .github/scripts/repair-history.sh \
+	'jobs:
+  repair:
+    steps:
+      - run: .github/scripts/repair-history.sh'
+# shellcheck disable=SC2016  # the fixture is YAML the matcher parses, so
+# `${GPG_SIGN_BIN}` is meant to stay unexpanded.
+matcher_case 'a step that runs it on the last line of a block' .github/scripts/repair-history.sh \
+	'jobs:
+  repair:
+    steps:
+      - run: |
+          [[ -n "${GPG_SIGN_BIN}" ]] || unset GPG_SIGN_BIN
+          .github/scripts/repair-history.sh'
+matcher_case 'a comment describing the step' '' \
+	'jobs:
+  repair:
+    steps:
+      # .github/scripts/repair-history.sh rewrites and signs, then asserts.
+      - run: git push'
+matcher_case 'a step that only prints the path' '' \
+	'jobs:
+  repair:
+    steps:
+      - run: echo .github/scripts/repair-history.sh'
+matcher_case 'a shell comment inside a run block' '' \
+	'jobs:
+  repair:
+    steps:
+      - run: |
+          # .github/scripts/repair-history.sh is dispatched from elsewhere
+          task client:build'
+matcher_case 'an env value naming the path' '' \
+	'jobs:
+  repair:
+    steps:
+      - env:
+          SCRIPT: .github/scripts/repair-history.sh
+        run: git push'
+# The folded pair: YAML joins a `>` block into one command, so the first of
+# these passes the path to `echo` and the second runs it. The full matrix is
+# .github/scripts/test-workflow-steps.sh.
+matcher_case 'a folded block where the path is an argument' '' \
+	'jobs:
+  repair:
+    steps:
+      - run: >
+          echo dispatching
+          .github/scripts/repair-history.sh'
+matcher_case 'a folded block that runs the script' .github/scripts/repair-history.sh \
+	'jobs:
+  repair:
+    steps:
+      - run: >-
+          .github/scripts/repair-history.sh
+          --dry-run'
+
+rm -rf "${fixture_dir}"
+trap - EXIT
+
+repair_step="$(workflow_runs_script "${workflow}" .github/scripts/repair-history.sh)" || exit 1
+if [[ "${repair_step}" != .github/scripts/repair-history.sh ]]; then
+	printf 'FAIL: no step in %s runs .github/scripts/repair-history.sh\n' "${workflow}" >&2
+	printf '      A step that names the path without running it is not the wiring.\n' >&2
+	exit 1
+fi
+[[ -x "${repair_script}" ]] || {
+	printf 'FAIL: %s is not an executable file in this tree\n' "${repair_script}" >&2
+	exit 1
+}
+
+# Every external action this job runs, pinned. The steps before the signing
+# one hold `contents: write` and an OIDC token that mints real signatures, so
+# an action resolved through a tag is a step someone else can repoint into a
+# job with all of that. Asserted rather than reviewed once, because a tag and a
+# SHA look equally fine in a diff.
+mutable="$(workflow_mutable_uses "${workflow}" --expect-uses)" || exit 1
+if [[ -n "${mutable}" ]]; then
+	printf 'FAIL: %s resolves an external action through a mutable ref:\n' "${workflow}" >&2
+	printf '        %s\n' "${mutable}" >&2
+	printf '      Pin it to the full commit SHA, with the version as a trailing comment.\n' >&2
+	exit 1
+fi
+
+# The two defaults that decide what an operator gets when they fill in the
+# bounds and press the button. A dispatch that plans is recoverable; one that
+# rewrites and publishes twenty commits is the thing this whole command exists
+# to clean up after. Both are asserted here because a YAML default is one
+# character away from its opposite and nothing else would notice.
+#
+# Read from the input's own mapping, not by scanning forward from its name. The
+# scan this replaces —
+#
+#   awk '/^      dry_run:/ { found = 1 } found && /default:/ { print $2; exit }'
+#
+# — does not stop at the end of the input it started in. An input that has lost
+# its own `default:` inherits the next input's, so the guard reports a value
+# nothing set: delete `push`'s default here and the scan reads
+# `build_from_source`'s `false` and passes, having checked nothing. That is the
+# whole assertion going quiet on the one edit it exists to catch.
+#
+# `workflow_input_field` fails rather than answering when the key is absent, so
+# the two cases below are told apart: a default that is wrong, and a default
+# that is not there.
+# The mutants, asserted before the real file is judged by this. Both are the
+# same edit — an input losing its own `default:` — and the fixture puts a LATER
+# input with the opposite default underneath, which is the shape the scan this
+# replaces would have read. `dispatch_fixture` writes them; nothing here
+# touches the workflow under test.
+dispatch_fixture() {
+	printf '%s\n' "$1" >"${fixture_dir}/dispatch.yml"
+}
+
+# default_case <description> <input> <expected>, where "" means "declares none"
+default_case() {
+	local description="$1" input="$2" expected="$3" got='' status=0
+	got="$(workflow_input_field "${fixture_dir}/dispatch.yml" "${input}" default 2>/dev/null)" || status=$?
+	if [[ -n "${expected}" ]]; then
+		if ((status != 0)); then
+			printf 'FAIL: reading %s default in %s failed (exit %d), expected %q\n' \
+				"${input}" "${description}" "${status}" "${expected}" >&2
+			exit 1
+		fi
+		if [[ "${got}" != "${expected}" ]]; then
+			printf 'FAIL: %s default in %s read as %q, expected %q\n' \
+				"${input}" "${description}" "${got}" "${expected}" >&2
+			exit 1
+		fi
+		return 0
+	fi
+	if ((status == 0)); then
+		printf 'FAIL: %s declares no default in %s, but the query answered %q — that value\n' \
+			"${input}" "${description}" "${got}" >&2
+		printf '      belongs to another input, and a guard reading it would pass on nothing.\n' >&2
+		exit 1
+	fi
+}
+
+mkdir -p "${fixture_dir}"
+trap 'rm -rf "${fixture_dir}"' EXIT
+
+dispatch_fixture 'on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        type: boolean
+        required: false
+      push:
+        type: boolean
+        required: false
+        default: true
+      build_from_source:
+        type: boolean
+        required: false
+        default: true
+jobs:
+  repair:
+    steps:
+      - run: .github/scripts/repair-history.sh'
+default_case 'a workflow where dry_run lost its default' dry_run ''
+default_case 'a workflow where dry_run lost its default' push true
+
+dispatch_fixture 'on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        type: boolean
+        required: false
+        default: true
+      push:
+        type: boolean
+        required: false
+      build_from_source:
+        type: boolean
+        required: false
+        default: false
+jobs:
+  repair:
+    steps:
+      - run: .github/scripts/repair-history.sh'
+default_case 'a workflow where push lost its default' push ''
+default_case 'a workflow where push lost its default' dry_run true
+
+rm -rf "${fixture_dir}"
+trap - EXIT
+
+input_default() {
+	local input="$1" default status=0
+	default="$(workflow_input_field "${workflow}" "${input}" default 2>/dev/null)" || status=$?
+	if ((status != 0)); then
+		printf 'FAIL: %s gives %s no default of its own; an unset boolean input dispatches\n' \
+			"${workflow}" "${input}" >&2
+		printf '      as false, and a scan would have reported a later input default instead.\n' >&2
+		exit 1
+	fi
+	printf '%s' "${default}"
+}
+
+dry_run_default="$(input_default dry_run)"
+push_default="$(input_default push)"
+if [[ "${dry_run_default}" != "true" ]]; then
+	printf 'FAIL: %s does not default dry_run to true (got %q)\n' "${workflow}" "${dry_run_default}" >&2
+	exit 1
+fi
+if [[ "${push_default}" != "false" ]]; then
+	printf 'FAIL: %s does not default push to false (got %q)\n' "${workflow}" "${push_default}" >&2
+	exit 1
+fi
+
+# The four fields that make a repair explicit rather than guessed.
+# `expected_tip` is the one that turns the publish into a claim about which
+# object is being replaced — repair-history.sh spends it on
+# `--force-with-lease=refs/heads/<branch>:<expected_tip>`, so a dispatch that
+# could leave it blank would degrade that into an unconditional force push.
+# `identity` is here for the mirror reason: it is not a bound on what the
+# repair touches, it is what every rebuilt commit ends up claiming, so a
+# prefilled one turns "written by whom" into a question the operator never had
+# to answer — which is the manufactured provenance this workflow exists to
+# undo. `required: true` with no `default:` is what forces each one to be typed
+# out. Asserted per input, from that input's own keys — the absence of a
+# default is a fact about which keys the mapping has, which is what
+# `workflow_input_fields` answers.
+#
+# A function rather than a loop in line, so that the mutants below are judged
+# by the same code the real file is.
+assert_bounds() {
+	local workflow="$1" bound required fields
+	for bound in base expected_tip identity expect_identities; do
+		required="$(workflow_input_field "${workflow}" "${bound}" required 2>/dev/null || true)"
+		if [[ "${required}" != "true" ]]; then
+			printf 'FAIL: %s does not mark %s required (got %q)\n' "${workflow}" "${bound}" "${required}" >&2
+			return 1
+		fi
+		fields="$(workflow_input_fields "${workflow}" "${bound}")" || return 1
+		if grep -qx 'default' <<<"${fields}"; then
+			printf 'FAIL: %s gives %s a default; a repair bound must be typed out, not inherited\n' \
+				"${workflow}" "${bound}" >&2
+			return 1
+		fi
+	done
+}
+
+# `identity` mutated three ways, asserted before the real file is judged by
+# this. All three are the edit someone makes in good faith — prefilling the
+# field whose value is nearly always the same, or relaxing it because it is
+# prefilled — and each has to be caught on its own: a check that only read
+# `required:` would pass a defaulted input, and one that only read the keys
+# would pass an optional one.
+mkdir -p "${fixture_dir}"
+trap 'rm -rf "${fixture_dir}"' EXIT
+
+# bounds_fixture <the keys the identity input declares>
+bounds_fixture() {
+	printf '%s\n' "on:
+  workflow_dispatch:
+    inputs:
+      base:
+        type: string
+        required: true
+      expected_tip:
+        type: string
+        required: true
+      identity:
+        type: string
+${1}
+      expect_identities:
+        type: string
+        required: true
+jobs:
+  repair:
+    steps:
+      - run: .github/scripts/repair-history.sh" >"${fixture_dir}/bounds.yml"
+}
+
+# bounds_mutant <description> <the keys the identity input declares>
+bounds_mutant() {
+	bounds_fixture "$2"
+	if assert_bounds "${fixture_dir}/bounds.yml" 2>/dev/null; then
+		printf 'FAIL: the bounds assertion accepted %s\n' "$1" >&2
+		exit 1
+	fi
+}
+
+bounds_mutant 'an identity prefilled with the usual value' \
+	'        required: true
+        default: Kaj Kowalski <info@kajkowalski.nl>'
+bounds_mutant 'an identity prefilled with an empty string' \
+	"        required: true
+        default: ''"
+bounds_mutant 'an identity that is not required at all' \
+	'        required: false'
+
+# ...and the shape that must be accepted, so the three above are failing on the
+# identity keys rather than on the rest of the fixture.
+bounds_fixture '        required: true'
+assert_bounds "${fixture_dir}/bounds.yml" || {
+	printf 'FAIL: the bounds assertion refused four required inputs with no defaults\n' >&2
+	exit 1
+}
+
+rm -rf "${fixture_dir}"
+trap - EXIT
+
+assert_bounds "${workflow}" || exit 1
+
+# And the expected tip has to reach the lease, not just the dispatch form. The
+# script is what spends it; this asserts the two stay wired together.
+#
+# shellcheck disable=SC2016  # the needle is repair-history.sh's source text,
+# so `${branch}` and `${expected_tip}` are meant to stay unexpanded.
+grep -Fq -- '--force-with-lease="refs/heads/${branch}:${expected_tip}"' "${repair_script}" || {
+	printf 'FAIL: %s no longer leases the push against the expected tip\n' "${repair_script}" >&2
+	exit 1
+}
+
+printf 'repair workflow: wired, dry by default, bounds required\n'
+
 # The fixture must inherit no GIT_* state at all. Worst first: GIT_DIR and
 # GIT_WORK_TREE aim the fixture's commands back at the caller's own repository,
 # so `init` re-inits it and the fixture's commits land there; GIT_INDEX_FILE,
