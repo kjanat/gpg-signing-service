@@ -31,18 +31,31 @@ jobs:
     name: Sign Commits
     runs-on: ubuntu-latest
     steps:
-      - { uses: actions/checkout@v7, with: { fetch-depth: 0 } }
+      # Pinned to commits, not tags. This job holds `contents: write` and an
+      # OIDC token that mints real signatures, and every step below runs after
+      # these: an action whose tag is repointed runs first and with all of it.
+      # A tag is a mutable pointer in someone else's repository; a commit is
+      # not. The trailing comment is the readable version and what Dependabot
+      # bumps — it is a comment, so a step that carries one cannot also be
+      # written in the `{ uses: ..., with: ... }` flow form, where the `#`
+      # would swallow the rest of the line.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0 }
       - { uses: ./ }
 
       - name: Get OIDC Token
         id: oidc
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const token = await core.getIDToken('gpg-signing-service');
             core.setSecret(token);
             core.setOutput('token', token);
 
+      # The signing walk lives in `gpg-sign sign-commit`. The script is flag
+      # assembly and the up-front check that the installed binary has the
+      # command; it moves no ref of its own beyond the local HEAD the CLI
+      # updates, and it publishes nothing.
       - name: Sign Commits
         env:
           GPG_SIGN_TOKEN: ${{ steps.oidc.outputs.token }}
@@ -52,7 +65,7 @@ jobs:
           ALLOW_RESIGN: ${{ inputs.allow_resign }}
           SIGN_OTHERS: ${{ inputs.sign_others }}
           SCAN_LIMIT: ${{ inputs.scan_limit }}
-        run: python3 .github/scripts/sign-commits.py
+        run: .github/scripts/sign-commits.sh
 
       - name: Push Signed Commits
         run: git push origin HEAD --force-with-lease
