@@ -1,24 +1,5 @@
 name: Release
 
-# ACTIVATION: this file replaces .github/workflows/release.yml. It is staged
-# here because a GitHub App token has no `workflows` permission, so the bot that
-# wrote it cannot push into .github/workflows/ — the push is rejected outright.
-# Land it with one move, using maintainer credentials, in the same branch:
-#
-#   git mv -f .github/workflows-pending/release.yml .github/workflows/release.yml
-#
-# The only difference from the live file is the trust boundary the tag check is
-# loaded across: a second `actions/checkout` — same pinned SHA, same
-# `persist-credentials: false` — brings `.github/scripts/` from
-# `github.workflow_sha` into `.release-tooling/`, and the validation step runs
-# from there instead of from the tree the requested tag supplied. Triggers,
-# inputs, permissions, the release checkout, the build matrix and the publish
-# step are unchanged.
-#
-# `task test:release-workflow` is RED until this move lands, and that is the
-# point: the live file still loads its own gate out of the tag being published,
-# so `workflow_dispatch(tag: v1.2.0)` cannot run it at all.
-
 on:
   push:
     tags: ["v*.*.*"]
@@ -107,11 +88,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          NOTES_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          release_id="$(gh api "repos/${GH_REPO}/releases/tags/${RELEASE_TAG}" --jq .id)"
-          gh api "repos/${GH_REPO}/releases/tags/${RELEASE_TAG}" --jq .body > current.md
+          release_id="$(gh api "repos/${GH_REPO}/releases/tags/${NOTES_TAG}" --jq .id)"
+          gh api "repos/${GH_REPO}/releases/tags/${NOTES_TAG}" --jq .body > current.md
 
           awk '
             BEGIN { seen = 0 }
@@ -126,7 +107,7 @@ jobs:
             > normalized.md
 
           [[ "$(grep -c '^## What.s Changed$' normalized.md)" -eq 1 ]]
-          ! grep -Fq '@claude[bot]' normalized.md
+          if grep -Fq '@claude[bot]' normalized.md; then exit 1; fi
           grep -Fq '**Full Changelog**:' normalized.md
 
           gh api --method PATCH "repos/${GH_REPO}/releases/${release_id}" \
