@@ -43,9 +43,23 @@ if [[ -f "${pending_workflow}" ]]; then
 	# The live file is still the tag-mode workflow until the move happens. Say
 	# so rather than assert against it: every assertion below describes the
 	# replacement, and running them against what it replaces would be noise.
-	if ! grep -qF 'claude-agent-harness.sh' "${live_workflow}"; then
-		printf '  note: .github/workflows/claude.yml is still the tag-mode harness\n'
+	#
+	# Unless it is not still the tag-mode one. A live file that already names
+	# the harness means the replacement landed as a COPY rather than the
+	# `git mv -f` above, and from there every assertion below goes on being
+	# made against the staged leftover while GitHub dispatches the live file:
+	# green, and about a file nobody runs. That is exactly what
+	# test-repair-history.sh was doing silently until it was made to fail. A
+	# note cannot catch it — repair-history.yml carried the same "activate it
+	# with git mv" instruction in its own header and was copied anyway.
+	if grep -qF 'claude-agent-harness.sh' "${live_workflow}"; then
+		echo 'FAIL: .github/workflows/claude.yml is already the agent-mode harness AND a copy is still staged.' >&2
+		echo '      Everything below would be asserted against the staged copy, not the one that runs.' >&2
+		echo '      Activation is a rename, not a copy. Finish it:' >&2
+		echo '        git rm .github/workflows-pending/claude.yml' >&2
+		exit 1
 	fi
+	printf '  note: .github/workflows/claude.yml is still the tag-mode harness\n'
 elif [[ -f "${live_workflow}" ]]; then
 	workflow="${live_workflow}"
 else
