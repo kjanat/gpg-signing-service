@@ -1,0 +1,80 @@
+name: Bootstrap v1.2.0 release
+
+on:
+  push:
+    branches: [master]
+    paths: [.github/workflows/bootstrap-v1.2.0.yml]
+
+permissions: { contents: write }
+
+jobs:
+  release:
+    name: Publish reviewed v1.2.0 tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout reviewed release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: v1.2.0
+          persist-credentials: false
+
+      - name: Pin reviewed tag object and target
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse refs/tags/v1.2.0)" = "4671c9e92a379419fd3286e9632715592ced9265"
+          test "$(git rev-parse 'refs/tags/v1.2.0^{commit}')" = "feb987c332d4857f7667518938a2e7f269d8853e"
+          test "$(git rev-parse 'HEAD^{commit}')" = "feb987c332d4857f7667518938a2e7f269d8853e"
+
+      - name: Checkout release tooling from this reviewed workflow commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          sparse-checkout: .github/scripts
+          path: .release-tooling
+          persist-credentials: false
+
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: v1.2.0
+        run: .release-tooling/.github/scripts/validate-release-tag.sh
+
+      - name: Install toolchain
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          working_directory: client
+
+      - name: Build binaries
+        working-directory: client
+        run: |
+          GOOS=linux   GOARCH=amd64 go build -o ../dist/gpg-sign-linux-amd64       ./cmd/gpg-sign
+          GOOS=linux   GOARCH=arm64 go build -o ../dist/gpg-sign-linux-arm64       ./cmd/gpg-sign
+          GOOS=darwin  GOARCH=amd64 go build -o ../dist/gpg-sign-darwin-amd64      ./cmd/gpg-sign
+          GOOS=darwin  GOARCH=arm64 go build -o ../dist/gpg-sign-darwin-arm64      ./cmd/gpg-sign
+          GOOS=windows GOARCH=amd64 go build -o ../dist/gpg-sign-windows-amd64.exe ./cmd/gpg-sign
+          GOOS=windows GOARCH=arm64 go build -o ../dist/gpg-sign-windows-arm64.exe ./cmd/gpg-sign
+
+      - name: Make binaries executable
+        working-directory: dist
+        run: chmod +x gpg-sign-*
+
+      - name: Create checksums
+        working-directory: dist
+        run: sha256sum ./* > checksums.txt
+
+      - name: Publish v1.2.0
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: v1.2.0
+          files: |
+            dist/gpg-sign-linux-amd64
+            dist/gpg-sign-linux-arm64
+            dist/gpg-sign-darwin-amd64
+            dist/gpg-sign-darwin-arm64
+            dist/gpg-sign-windows-amd64.exe
+            dist/gpg-sign-windows-arm64.exe
+            dist/checksums.txt
+          generate_release_notes: true
+          draft: false
+          prerelease: false
