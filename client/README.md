@@ -15,6 +15,11 @@ go install ./cmd/gpg-sign
 ### CLI Usage
 
 ```bash
+# 0. Check which build you have. A binary from `task client:build` reports the
+#    injected version, commit and build time; a `go install`/`go run` build
+#    without those ldflags reports "dev".
+gpg-sign --version
+
 # 1. Set environment variables
 export GPG_SIGN_URL="https://gpg.kajkowalski.nl"
 export GPG_SIGN_TOKEN="<your-oidc-token>"

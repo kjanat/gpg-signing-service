@@ -7,6 +7,14 @@ const (
 	flagHelp      = "--help"
 )
 
+// The --version fixtures: the flag itself, the name Cobra and the release
+// ldflags both spell the version symbol with, and a version to inject.
+const (
+	flagVersion  = "--version"
+	fieldVersion = "version"
+	testVersion  = "1.2.3"
+)
+
 // The environment git reads an identity from, and the name every fixture
 // commit carries.
 const (
