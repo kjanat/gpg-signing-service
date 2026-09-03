@@ -7,12 +7,23 @@ const (
 	flagHelp      = "--help"
 )
 
-// The --version fixtures: the flag itself, the name Cobra and the release
-// ldflags both spell the version symbol with, and a version to inject.
+// The --version fixtures. The three spellings below are the same word in three
+// namespaces that rename independently -- a health response's JSON field, a
+// Cobra flag, and a Go symbol the linker rewrites -- so they are three
+// constants. One shared constant would make renaming any of them silently drag
+// the other two, which is a coupling goconst's counter would have invented
+// rather than a concept.
 const (
-	flagVersion  = "--version"
+	flagVersion = "--version"
+	// fieldVersion is the JSON key in a health response.
 	fieldVersion = "version"
-	testVersion  = "1.2.3"
+	// flagNameVersion is the Cobra flag, without its leading dashes.
+	flagNameVersion = "version"
+	// symbolVersion is the package-main var the release ldflags rewrite.
+	symbolVersion = "version"
+	testVersion   = "1.2.3"
+	// testCommit is a short commit the linker is pretended to have injected.
+	testCommit = "abcdef0"
 )
 
 // The environment git reads an identity from, and the name every fixture
