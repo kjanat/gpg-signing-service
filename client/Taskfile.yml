@@ -39,6 +39,13 @@ tasks:
       - "**/*.go"
       - "go.mod"
       - "go.sum"
+    # Without `generates`, Task's checksum fingerprint tracks the inputs only:
+    # once a build is recorded, a later run reports "up to date" even when
+    # bin/gpg-sign has been deleted, and `task client:build && ./bin/gpg-sign`
+    # then runs whatever binary is (or is not) already there. Naming the output
+    # makes a missing binary count as out of date.
+    generates:
+      - bin/gpg-sign
     vars:
       COMMIT_HASH:
         sh: git rev-parse HEAD
