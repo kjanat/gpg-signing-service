@@ -110,6 +110,7 @@ readonly RELEASE_ENVIRONMENT='{"container":null,"defaults":{"job":null,"workflow
 # validate-release-tag.sh has already proved the tag names this checkout and
 # nothing proves package.json agrees with it -- so the version the binary
 # reports is the tag it was published under, by construction.
+# shellcheck disable=SC2016  # the shell expansion is literal on purpose: it is the string being compared
 readonly BUILD_SYMBOLS='{"version":"${RELEASE_TAG#v}"}'
 # shellcheck disable=SC2016  # GitHub expressions, literal on purpose: they are the strings being compared
 readonly REQUESTED_TAG='${{ inputs.tag || github.ref_name }}' \
