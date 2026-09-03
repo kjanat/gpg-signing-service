@@ -99,6 +99,64 @@ const COMPILER = /(^|[\s;&|])go\s+build(\s|$)/;
  */
 const LDFLAG = /-X\s+main\.([A-Za-z_][A-Za-z0-9_]*)=([^\s"']*)/g;
 
+/**
+ * `-ldflags <argument>`, quoted or bare, as it appears on the compile command.
+ */
+const LDFLAGS_ARGUMENT = /-ldflags[\s=]+(?:"([^"]*)"|'([^']*)'|(\S+))/;
+
+/**
+ * An `-ldflags` argument that is nothing but one shell parameter -- the shape
+ * `-ldflags "${LDFLAGS}"` -- and the assignment that would give it a value.
+ * Resolved because the flags the linker receives are what the artifact's
+ * `--version` is a function of, and a run that composes them into a variable it
+ * then never passes has stopped injecting anything while still spelling the
+ * whole injection out for a reader.
+ */
+const LDFLAGS_INDIRECTION = /^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/;
+
+/**
+ * The `go build` invocations in one `run:`, with line continuations folded so a
+ * command written across several lines is read as the one command it is.
+ *
+ * Reading the command rather than the whole script is the point: `-trimpath`
+ * and every `-X` are only in effect if they are on the invocation. A `run:`
+ * that still mentions them somewhere -- in a comment, or in a variable nothing
+ * passes -- looks identical to one that uses them, and produces binaries that
+ * report the compiled-in defaults.
+ */
+function compileCommands(run: string): string[] {
+	return run
+		.replace(/\\\r?\n\s*/g, " ")
+		.split("\n")
+		.filter((line) => COMPILER.test(line));
+}
+
+/**
+ * The linker flags one compile command actually passes, with a single level of
+ * `VAR="..."` indirection resolved against the run that contains it. An empty
+ * string means the command passes no `-ldflags` at all, which is the original
+ * bug: the binaries are published reporting whatever `version.go` compiled in.
+ */
+function linkerFlags(run: string, command: string): string {
+	const match = LDFLAGS_ARGUMENT.exec(command);
+	if (match === null) {
+		return "";
+	}
+
+	const argument = match[1] ?? match[2] ?? match[3] ?? "";
+	const indirect = LDFLAGS_INDIRECTION.exec(argument);
+	if (indirect === null) {
+		return argument;
+	}
+
+	const folded = run.replace(/\\\r?\n\s*/g, " ");
+	const assignment = new RegExp(`(?:^|[\\s;&|])${indirect[1]}=(?:"([^"]*)"|'([^']*)'|(\\S*))`, "m").exec(folded);
+	if (assignment === null) {
+		return "";
+	}
+	return assignment[1] ?? assignment[2] ?? assignment[3] ?? "";
+}
+
 function die(message: string): never {
 	process.stderr.write(`release-workflow-shape.ts: ${message}\n`);
 	process.exit(1);
@@ -290,9 +348,12 @@ function main(argv: string[]): number {
 		const run = typeof step.run === "string" ? step.run : null;
 		const compiles = run !== null && COMPILER.test(run);
 
-		if (compiles) {
+		// One entry per `go build`, not per step: two invocations in one `run:`
+		// produce two accounts of where the artifacts came from just as surely as
+		// two steps do, and only the first would ever be pinned.
+		for (const command of compiles && run !== null ? compileCommands(run) : []) {
 			const symbols: Record<string, string> = {};
-			for (const [, symbol, value] of run.matchAll(LDFLAG)) {
+			for (const [, symbol, value] of linkerFlags(run, command).matchAll(LDFLAG)) {
 				symbols[symbol] = value;
 			}
 			build.push({
@@ -300,7 +361,7 @@ function main(argv: string[]): number {
 				releaseTag: canonical(env?.RELEASE_TAG),
 				env: withArguments(env),
 				symbols,
-				trimpath: /(^|\s)-trimpath(\s|$)/.test(run),
+				trimpath: /(^|\s)-trimpath(\s|$)/.test(command),
 				...effective(step),
 			});
 		}

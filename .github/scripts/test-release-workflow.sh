@@ -361,7 +361,7 @@ release_contract_violations() {
 	local build_count
 	build_count="$(jq -r '.build.count' <<<"${shape}")"
 	if [[ "${build_count}" != 1 ]]; then
-		printf '%s: job %s has %s steps that run go build, expected exactly 1 — the artifacts are compiled somewhere this contract does not read\n' \
+		printf '%s: job %s has %s go build invocations, expected exactly 1 — the artifacts are compiled somewhere this contract does not read\n' \
 			"${label}" "${RELEASE_JOB}" "${build_count}"
 	else
 		local build_symbols build_tag build_trimpath build_guarded build_advisory
@@ -855,7 +855,40 @@ tree_case 'a second step that compiles the artifacts fails' \
 	                      print "        working-directory: client"
 	                      print "        run: go build -o ../dist/gpg-sign-linux-amd64 ./cmd/gpg-sign"
 	                    } { print }')" \
-	'steps that run go build, expected exactly 1'
+	'go build invocations, expected exactly 1'
+
+# The same outcome from inside the reviewed step: a second invocation in the
+# same `run:` overwrites an artifact the pinned one produced, and only the first
+# invocation is ever the one this contract read.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a second go build in the shipping step fails' \
+	"$(release_tree '' '/^ +done$/ {
+	                      print "          go build -o ../dist/gpg-sign-linux-amd64 ./cmd/gpg-sign"
+	                    } { print }')" \
+	'go build invocations, expected exactly 1'
+
+# The flags have to be on the invocation, not merely in the script. This is the
+# original bug wearing the fix as camouflage: the -ldflags string is composed in
+# full, right above a `go build` that never receives it, so a reader sees the
+# injection and every artifact reports the compiled-in default.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a shipping build that composes ldflags and never passes them fails' \
+	"$(release_tree '' '{ sub(/-ldflags [^ ]+ /, ""); print }')" \
+	'the build injects {}, not exactly'
+
+# Same hole from the other side: the variable is passed, but nothing gives it a
+# value, so the linker is handed an empty string.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a shipping build whose ldflags variable is never assigned fails' \
+	"$(release_tree '' '/^ +LDFLAGS=/ { next } { print }')" \
+	'the build injects {}, not exactly'
+
+# -trimpath in a comment is not -trimpath.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a shipping build whose -trimpath is only mentioned fails' \
+	"$(release_tree '' '/^ +LDFLAGS=/ { print "          # built with -trimpath so the artifacts are reproducible" }
+	                    { sub(/go build -trimpath/, "go build"); print }')" \
+	'does not pass -trimpath'
 
 # Present is not effective, one layer below the tag check: the build is skipped
 # and the publisher uploads whatever is already staged.
