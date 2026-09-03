@@ -252,10 +252,10 @@ func TestHealthCommand(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{
-			"status":    client.StatusHealthy,
-			"version":   "1.0.0",
-			"timestamp": time.Now().Format(time.RFC3339),
-			"checks":    map[string]bool{"keyStorage": true, "database": true},
+			"status":     client.StatusHealthy,
+			fieldVersion: "1.0.0",
+			"timestamp":  time.Now().Format(time.RFC3339),
+			"checks":     map[string]bool{"keyStorage": true, "database": true},
 		}); err != nil {
 			t.Errorf("failed to encode response: %v", err)
 		}
@@ -301,10 +301,10 @@ func TestHealthCommandJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{
-			"status":    client.StatusHealthy,
-			"version":   "1.0.0",
-			"timestamp": time.Now().Format(time.RFC3339),
-			"checks":    map[string]bool{"keyStorage": true, "database": true},
+			"status":     client.StatusHealthy,
+			fieldVersion: "1.0.0",
+			"timestamp":  time.Now().Format(time.RFC3339),
+			"checks":     map[string]bool{"keyStorage": true, "database": true},
 		}); err != nil {
 			t.Errorf("failed to encode response: %v", err)
 		}
