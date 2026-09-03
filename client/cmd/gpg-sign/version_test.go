@@ -269,7 +269,7 @@ func TestVersionStringUsesGoBuildInfo(t *testing.T) {
 			commit:   metadataUnset,
 			built:    metadataUnset,
 			info:     stampedBuildInfo(false),
-			expected: testVersion + " (commit " + stampRevision + ", built " + stampTime + ")",
+			expected: testVersion + " (commit " + stampRevision + ", committed " + stampTime + ")",
 		},
 		{
 			name:     "a bare go build from a checkout reports the revision it came from",
@@ -277,7 +277,7 @@ func TestVersionStringUsesGoBuildInfo(t *testing.T) {
 			commit:   metadataUnset,
 			built:    metadataUnset,
 			info:     stampedBuildInfo(false),
-			expected: devVersion + " (commit " + stampRevision + ", built " + stampTime + ")",
+			expected: devVersion + " (commit " + stampRevision + ", committed " + stampTime + ")",
 		},
 		{
 			name:     "a dirty tree is marked, because the binary is not that commit",
@@ -285,7 +285,7 @@ func TestVersionStringUsesGoBuildInfo(t *testing.T) {
 			commit:   metadataUnset,
 			built:    metadataUnset,
 			info:     stampedBuildInfo(true),
-			expected: devVersion + " (commit " + stampRevision + dirtySuffix + ", built " + stampTime + ")",
+			expected: devVersion + " (commit " + stampRevision + dirtySuffix + ", committed " + stampTime + ")",
 		},
 		{
 			name:     "the linker wins: an injected commit is not overwritten by the stamp",
@@ -350,6 +350,69 @@ func TestVersionStringUsesGoBuildInfo(t *testing.T) {
 
 			if got := versionString(); got != tt.expected {
 				t.Errorf("expected %q, got %q", tt.expected, got)
+			}
+		})
+	}
+}
+
+// TestTimestampLabelNamesWhereItCameFrom is the label contract. There is one
+// rendered timestamp field and two quantities that can fill it: a linker
+// -X main.buildTime, which client/Taskfile.yml fills from `date -u` and which
+// is the moment of compilation, and Go's vcs.time, which is the revision's
+// commit time and is fixed by the commit rather than by the build. The shipping
+// build injects no buildTime, so a downloaded release binary is always the
+// second — and calling both of them "built" would make an install script
+// comparing timestamps across two build paths compare two different things.
+//
+// Asserted on the label, not on a rendered line, so a case cannot pass by
+// matching a substring that happens to contain the other word.
+func TestTimestampLabelNamesWhereItCameFrom(t *testing.T) {
+	const injected = "2026-01-01T00:00:00Z"
+
+	tests := []struct {
+		name      string
+		built     string
+		info      func() (*debug.BuildInfo, bool)
+		timestamp string
+		label     string
+	}{
+		{
+			name:      "a linker-injected build time is the moment of compilation",
+			built:     injected,
+			info:      noBuildInfo,
+			timestamp: injected,
+			label:     labelBuilt,
+		},
+		{
+			name:      "the shipping build: no buildTime injected, so vcs.time is a commit time",
+			built:     metadataUnset,
+			info:      stampedBuildInfo(false),
+			timestamp: stampTime,
+			label:     labelCommitted,
+		},
+		{
+			name:      "the linker still wins, and keeps its own label",
+			built:     injected,
+			info:      stampedBuildInfo(false),
+			timestamp: injected,
+			label:     labelBuilt,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withBuildMetadata(t, testVersion, testCommit, tt.built)
+			withBuildInfo(t, tt.info)
+
+			resolved := resolveBuildMetadata()
+			if resolved.timestamp != tt.timestamp {
+				t.Errorf("expected timestamp %q, got %q", tt.timestamp, resolved.timestamp)
+			}
+			if resolved.timestampLabel != tt.label {
+				t.Errorf("expected the timestamp labelled %q, got %q", tt.label, resolved.timestampLabel)
+			}
+			if want := tt.label + " " + tt.timestamp; !strings.Contains(versionString(), want) {
+				t.Errorf("expected %q in the rendered version, got %q", want, versionString())
 			}
 		})
 	}
@@ -530,7 +593,7 @@ func TestLdflagsTargetDeclaredSymbols(t *testing.T) {
 // every one of them — otherwise the check is a comment that runs.
 func TestLdflagProblemsDetectsDrift(t *testing.T) {
 	const (
-		release   = `LDFLAGS="-s -w -X main.version=${RELEASE_TAG#v}"`
+		release   = `LDFLAGS="-s -w -X main.version=${BUILD_TAG#v}"`
 		developer = `go build -trimpath -o bin/gpg-sign ` +
 			`-ldflags "-s -w -X main.commitHash={{.COMMIT_HASH}} -X main.buildTime={{.BUILD_TIME}} -X main.version={{.VERSION}}"`
 	)
@@ -561,7 +624,7 @@ func TestLdflagProblemsDetectsDrift(t *testing.T) {
 		},
 		{
 			name:     "the shipping build injects a misspelled symbol",
-			content:  `LDFLAGS="-s -w -X main.verison=${RELEASE_TAG#v}"`,
+			content:  `LDFLAGS="-s -w -X main.verison=${BUILD_TAG#v}"`,
 			required: shippingBuild.required,
 			want:     "which no var in package main declares",
 		},

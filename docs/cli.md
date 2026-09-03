@@ -85,16 +85,26 @@ tree had uncommitted or untracked files:
 
 ```console
 $ gpg-sign --version
-gpg-sign version 1.2.0 (commit 4918556d84ffbb5f4045983d6ca8617489600051, built 2026-09-02T01:31:52Z)
+gpg-sign version 1.2.0 (commit 4918556d84ffbb5f4045983d6ca8617489600051, committed 2026-09-02T01:31:52Z)
 ```
 
 A `go install` or `go run` build reports `dev` in place of the version, because
 the version is the one field the toolchain cannot supply. `go run` reports a
 bare `dev`: unlike `go build` and `go install`, it stamps no VCS information.
 
-The second field is labelled `built`, but on a release download it is the
-revision's commit time — that is the only timestamp Go stamps. Only
-`task client:build` injects the moment of compilation.
+The timestamp names which quantity it is, because two different ones can fill
+that one field:
+
+- **`committed`** — the revision's commit time, which is the only timestamp Go
+  stamps (`vcs.time`). Every build made from a checkout reports this unless
+  release ldflags override it, including a downloaded release binary.
+- **`built`** — the moment of compilation, which only a linker-injected
+  `main.buildTime` can supply. `task client:build` fills it from `date -u`; the
+  release workflow deliberately does not, so what a published artifact reports
+  is a function of the tag it was cut from rather than of when the job ran.
+
+A linker-injected value always wins over the stamp, so a build that injects one
+reports `built`.
 
 ## Commands
 
