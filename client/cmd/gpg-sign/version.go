@@ -24,6 +24,23 @@ const (
 	// untracked content. The commit it names is then the commit it was built
 	// NEAR, not the commit it is.
 	dirtySuffix = "+dirty"
+
+	// The two labels the timestamp can carry, because there are two different
+	// quantities available and only one of them is a build time.
+	//
+	// labelBuilt is for a linker-injected main.buildTime: `client/Taskfile.yml`
+	// fills it from `date -u`, so it is the moment of compilation.
+	//
+	// labelCommitted is for Go's vcs.time, which is documented as the
+	// modification time associated with vcs.revision — the revision's commit
+	// time, fixed when the commit was made and unrelated to when anybody
+	// compiled it. The shipping build injects no buildTime, so a downloaded
+	// release binary reports this one; rendering it as "built" would make the
+	// same field mean two different things depending on which path produced the
+	// binary, which is exactly what an install script diffing timestamps would
+	// get wrong.
+	labelBuilt     = "built"
+	labelCommitted = "committed"
 )
 
 // Build metadata the linker may inject. `client/Taskfile.yml` sets all three
@@ -57,8 +74,14 @@ func isSet(value string) bool { return value != "" && value != metadataUnset }
 type buildMetadata struct {
 	version string
 	commit  string
-	built   string
-	dirty   bool
+	// timestamp and timestampLabel travel together because the timestamp alone
+	// does not say what it is: it is a build time when the linker supplied it
+	// and a commit time when the toolchain did. The label is carried rather
+	// than derived at render time so the source cannot be lost between here and
+	// the string.
+	timestamp      string
+	timestampLabel string
+	dirty          bool
 }
 
 // resolveBuildMetadata merges the two sources of truth, linker first.
@@ -70,7 +93,12 @@ type buildMetadata struct {
 // speak it wins outright: a release binary's version is the tag it was cut
 // from, not whatever the module graph guessed.
 func resolveBuildMetadata() buildMetadata {
-	resolved := buildMetadata{version: version, commit: commitHash, built: buildTime}
+	resolved := buildMetadata{
+		version:        version,
+		commit:         commitHash,
+		timestamp:      buildTime,
+		timestampLabel: labelBuilt,
+	}
 
 	info, ok := buildInfo()
 	if !ok || info == nil {
@@ -95,8 +123,11 @@ func resolveBuildMetadata() buildMetadata {
 				resolved.commit = setting.Value
 			}
 		case "vcs.time":
-			if !isSet(resolved.built) {
-				resolved.built = setting.Value
+			// Only when the linker was silent, and never under the "built"
+			// label: this is the commit's timestamp, not the compilation's.
+			if !isSet(resolved.timestamp) {
+				resolved.timestamp = setting.Value
+				resolved.timestampLabel = labelCommitted
 			}
 		case "vcs.modified":
 			// Deliberately not gated on the linker having been silent: a tree
@@ -111,9 +142,10 @@ func resolveBuildMetadata() buildMetadata {
 }
 
 // versionString renders the value Cobra substitutes into its version template.
-// The commit and build time are appended only when one of the two sources
+// The commit and the timestamp are appended only when one of the two sources
 // supplied them, so a build with neither reports "dev" rather than trailing two
-// "unknown"s.
+// "unknown"s. The timestamp names what it is — "built" or "committed" — because
+// the two build paths supply different quantities for that one field.
 func versionString() string {
 	resolved := resolveBuildMetadata()
 
@@ -125,8 +157,8 @@ func versionString() string {
 		}
 		details = append(details, "commit "+commit)
 	}
-	if isSet(resolved.built) {
-		details = append(details, "built "+resolved.built)
+	if isSet(resolved.timestamp) {
+		details = append(details, resolved.timestampLabel+" "+resolved.timestamp)
 	}
 
 	name := resolved.version
