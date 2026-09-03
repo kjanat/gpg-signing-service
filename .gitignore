@@ -48,6 +48,13 @@ redoc-static.html
 # Taskfile
 .task
 
+# Release tooling. `.github/workflows/release.yml` sparse-checks the trusted
+# copy of .github/scripts into this path, inside the workspace, BEFORE the build
+# step runs. `go build` stamps vcs.modified into every binary it produces and
+# counts untracked files as modified, so leaving this path tracked would make
+# every published artifact report `+dirty` on a tree that is exactly the tag.
+.release-tooling/
+
 # Docs
 _*.md
 
