@@ -15,9 +15,14 @@ go install ./cmd/gpg-sign
 ### CLI Usage
 
 ```bash
-# 0. Check which build you have. A binary from `task client:build` reports the
-#    injected version, commit and build time; a `go install`/`go run` build
-#    without those ldflags reports "dev".
+# 0. Check which build you have.
+#    - A binary downloaded from a GitHub Release reports the released version,
+#      plus the commit and build time Go stamped into it:
+#        gpg-sign version 1.2.0 (commit 4918556..., built 2026-09-02T01:31:52Z)
+#    - `task client:build` reports the same three from the local checkout.
+#    - `go install`/`go run` reports "dev", plus the commit and build time when
+#      it was built from a checkout. A tree with uncommitted or untracked files
+#      marks the commit "+dirty", because the binary is not that commit.
 gpg-sign --version
 
 # 1. Set environment variables

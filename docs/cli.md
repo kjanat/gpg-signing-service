@@ -75,7 +75,21 @@ The default URL identifies one deployment; it is not a promise that the
 deployment is public or suitable for your workload.
 
 `--version` is a flag on the root command only — `gpg-sign --version`, not
-`gpg-sign health --version` — and it reports the metadata the build injected.
+`gpg-sign health --version`. It has no short form: Cobra would otherwise take
+`-v` for it by default, and `-v` is reserved here for a future `--verbose`.
+
+What it reports depends on how the binary was produced. A release download names
+the tag it was published under; every build made from a checkout also carries
+the revision and commit time Go stamps into it, with `+dirty` appended when the
+tree had uncommitted or untracked files:
+
+```console
+$ gpg-sign --version
+gpg-sign version 1.2.0 (commit 4918556d84ffbb5f4045983d6ca8617489600051, built 2026-09-02T01:31:52Z)
+```
+
+A `go install` or `go run` build reports `dev` in place of the version, because
+the version is the one field the toolchain cannot supply.
 
 ## Commands
 
