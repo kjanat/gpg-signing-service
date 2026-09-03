@@ -15,6 +15,21 @@ go install ./cmd/gpg-sign
 ### CLI Usage
 
 ```bash
+# 0. Check which build you have. The timestamp names which one it is:
+#    "committed" is the revision's commit time, which Go stamps into every
+#    binary it builds from a checkout; "built" is the moment of compilation,
+#    which only the linker can supply.
+#    - A binary downloaded from a GitHub Release reports the released version
+#      and the revision it was cut from, with that revision's commit time:
+#        gpg-sign version 1.2.0 (commit 4918556..., committed 2026-09-02T01:31:52Z)
+#    - `task client:build` injects the compile time, so it reports "built":
+#        gpg-sign version 1.2.0 (commit 4918556..., built 2026-09-02T02:07:19Z)
+#    - `go install` reports "dev" in place of the version, with the same commit
+#      and "committed" time. A tree with uncommitted or untracked files marks
+#      the commit "+dirty", because the binary is not that commit.
+#    - `go run` reports a bare "dev": it stamps no VCS information at all.
+gpg-sign --version
+
 # 1. Set environment variables
 export GPG_SIGN_URL="https://gpg.kajkowalski.nl"
 export GPG_SIGN_TOKEN="<your-oidc-token>"

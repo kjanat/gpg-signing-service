@@ -28,9 +28,28 @@
  *     build run inside an image nobody here controls;
  *   * `on:`, which is not a step and is not even spelled `on` after parsing —
  *     `on` is a YAML 1.1 boolean, so the key comes back as `true`;
- *   * the three places the requested tag is spent: the checkout `ref:`, the
- *     `RELEASE_TAG` the validation step is given, and the `tag_name:` the
- *     publisher publishes under;
+ *   * the four places the requested tag is spent: the checkout `ref:`, the
+ *     `RELEASE_TAG` the validation step is given, the `BUILD_TAG` the compile
+ *     step stamps into the binaries, and the `tag_name:` the publisher
+ *     publishes under. The build is given its own variable name so that
+ *     `RELEASE_TAG` stays the validator's alone and "exactly one step is handed
+ *     RELEASE_TAG" remains an answerable question;
+ *   * whether the tooling checkout is removed before the compile. `go build`
+ *     stamps `vcs.modified` from the WHOLE workspace, untracked files included,
+ *     so a `.release-tooling/` left lying in it makes every published binary
+ *     report `+dirty` on a tree that is byte-for-byte the tag. `.gitignore`
+ *     fixes that only for tags cut after it, because the workflow checks the
+ *     workspace out at the tag and Go reads the tag's own `.gitignore` --
+ *     deleting the directory is the fix that works for tags that already
+ *     exist;
+ *   * what the BUILD step stamps into the binaries. `--version` on a published
+ *     artifact is a claim about which source the binary came from, and the
+ *     whole claim is one `-ldflags` string in one `run:`. `-X` naming a symbol
+ *     no package declares is not a link error -- the linker drops it in
+ *     silence -- so an injection that stops arriving looks exactly like one
+ *     that arrives. Reported as the symbols the step sets and the expression
+ *     each is set from, so the caller can pin the set AND pin that the version
+ *     is the tag that was validated rather than a literal somebody typed.
  *   * which checkout is which. The release job has two, and they are not
  *     interchangeable: one replaces the workspace with the requested tag's tree
  *     and is identified by having no `path:`, the other lands the tag check
@@ -72,6 +91,87 @@ import { parseDocument } from "yaml";
 /** The actions whose arguments carry the requested tag. */
 const CHECKOUT = "actions/checkout";
 const PUBLISHER = "softprops/action-gh-release";
+
+/**
+ * The compile step is found by what it does, because it has no `uses:` to be
+ * found by and its `name:` is prose. `go build` in a `run:` is the step that
+ * produces the artifacts.
+ */
+const COMPILER = /(^|[\s;&|])go\s+build(\s|$)/;
+
+/**
+ * A `run:` that removes the tooling checkout. Matched on the path rather than
+ * on the exact command so an equivalent spelling still reads as the cleanup,
+ * and required to be a removal rather than any mention of the path so that the
+ * validator invoking a script out of it is not mistaken for deleting it.
+ */
+const TOOLING_CLEANUP = /\brm\s+(?:-\S+\s+)*\.release-tooling\b/;
+
+/**
+ * `-X main.<symbol>=<value>` as the linker reads it. The value stops at a quote
+ * as well as at whitespace: the flag is written inside a double-quoted shell
+ * assignment, so a run to end-of-word would report the closing quote as part of
+ * the expression and no caller could pin the value it is comparing against.
+ */
+const LDFLAG = /-X\s+main\.([A-Za-z_][A-Za-z0-9_]*)=([^\s"']*)/g;
+
+/**
+ * `-ldflags <argument>`, quoted or bare, as it appears on the compile command.
+ */
+const LDFLAGS_ARGUMENT = /-ldflags[\s=]+(?:"([^"]*)"|'([^']*)'|(\S+))/;
+
+/**
+ * An `-ldflags` argument that is nothing but one shell parameter -- the shape
+ * `-ldflags "${LDFLAGS}"` -- and the assignment that would give it a value.
+ * Resolved because the flags the linker receives are what the artifact's
+ * `--version` is a function of, and a run that composes them into a variable it
+ * then never passes has stopped injecting anything while still spelling the
+ * whole injection out for a reader.
+ */
+const LDFLAGS_INDIRECTION = /^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$/;
+
+/**
+ * The `go build` invocations in one `run:`, with line continuations folded so a
+ * command written across several lines is read as the one command it is.
+ *
+ * Reading the command rather than the whole script is the point: `-trimpath`
+ * and every `-X` are only in effect if they are on the invocation. A `run:`
+ * that still mentions them somewhere -- in a comment, or in a variable nothing
+ * passes -- looks identical to one that uses them, and produces binaries that
+ * report the compiled-in defaults.
+ */
+function compileCommands(run: string): string[] {
+	return run
+		.replace(/\\\r?\n\s*/g, " ")
+		.split("\n")
+		.filter((line) => COMPILER.test(line));
+}
+
+/**
+ * The linker flags one compile command actually passes, with a single level of
+ * `VAR="..."` indirection resolved against the run that contains it. An empty
+ * string means the command passes no `-ldflags` at all, which is the original
+ * bug: the binaries are published reporting whatever `version.go` compiled in.
+ */
+function linkerFlags(run: string, command: string): string {
+	const match = LDFLAGS_ARGUMENT.exec(command);
+	if (match === null) {
+		return "";
+	}
+
+	const argument = match[1] ?? match[2] ?? match[3] ?? "";
+	const indirect = LDFLAGS_INDIRECTION.exec(argument);
+	if (indirect === null) {
+		return argument;
+	}
+
+	const folded = run.replace(/\\\r?\n\s*/g, " ");
+	const assignment = new RegExp(`(?:^|[\\s;&|])${indirect[1]}=(?:"([^"]*)"|'([^']*)'|(\\S*))`, "m").exec(folded);
+	if (assignment === null) {
+		return "";
+	}
+	return assignment[1] ?? assignment[2] ?? assignment[3] ?? "";
+}
 
 function die(message: string): never {
 	process.stderr.write(`release-workflow-shape.ts: ${message}\n`);
@@ -220,11 +320,21 @@ function main(argv: string[]): number {
 		guarded: boolean;
 		advisory: unknown;
 	}[] = [];
+	const cleanup: { index: number; run: string; guarded: boolean; advisory: unknown }[] = [];
 	const publisher: {
 		index: number;
 		uses: string;
 		tagName: string | null;
 		with: Record<string, unknown>;
+	}[] = [];
+	const build: {
+		index: number;
+		buildTag: string | null;
+		env: Record<string, unknown>;
+		symbols: Record<string, string>;
+		trimpath: boolean;
+		guarded: boolean;
+		advisory: unknown;
 	}[] = [];
 
 	for (const [index, raw] of (Array.isArray(steps) ? steps : []).entries()) {
@@ -252,9 +362,41 @@ function main(argv: string[]): number {
 				with: withArguments(withArgs),
 			});
 		}
+		const run = typeof step.run === "string" ? step.run : null;
+		const compiles = run !== null && COMPILER.test(run);
+
+		if (run !== null && TOOLING_CLEANUP.test(run)) {
+			cleanup.push({ index: index + 1, run: run.trim(), ...effective(step) });
+		}
+
+		// One entry per `go build`, not per step: two invocations in one `run:`
+		// produce two accounts of where the artifacts came from just as surely as
+		// two steps do, and only the first would ever be pinned.
+		for (const command of compiles && run !== null ? compileCommands(run) : []) {
+			const symbols: Record<string, string> = {};
+			for (const [, symbol, value] of linkerFlags(run, command).matchAll(LDFLAG)) {
+				symbols[symbol] = value;
+			}
+			build.push({
+				index: index + 1,
+				buildTag: canonical(env?.BUILD_TAG),
+				env: withArguments(env),
+				symbols,
+				trimpath: /(^|\s)-trimpath(\s|$)/.test(command),
+				...effective(step),
+			});
+		}
+
 		// The validation step is found by the variable it is given rather than by
 		// its name or its `run:`, so the same reading answers for the inline check
 		// this branch replaces and for the extracted script that replaces it.
+		//
+		// Every step handed RELEASE_TAG counts, with no exemption for what it
+		// otherwise does: the name is the validator's, and the caller asserts
+		// there is exactly one. That is only answerable because the compile step
+		// spends the tag under BUILD_TAG -- a second consumer of RELEASE_TAG is a
+		// decoy that satisfies the identity assertion while the script itself
+		// reads the variable from a job-level env: nobody looked at.
 		if (env !== null && Object.hasOwn(env, "RELEASE_TAG")) {
 			validator.push({
 				index: index + 1,
@@ -311,6 +453,32 @@ function main(argv: string[]): number {
 				guarded: validator[0]?.guarded ?? null,
 				advisory: validator[0]?.advisory ?? null,
 				index: validator[0]?.index ?? null,
+			},
+			// The compile step, reported whole for the reason the `with:` mappings
+			// are. `symbols` is the artifact's own account of where it came from:
+			// an entry that disappears downgrades `--version` to a default in
+			// silence, and an entry that appears is a claim nobody reviewed.
+			// The step that takes the tooling checkout back out of the workspace
+			// before anything reads the tree. Reported as its own shape, with the
+			// same `if:`/`continue-on-error:` reading every other required step
+			// gets: a cleanup that is skipped or advisory leaves the directory in
+			// place exactly as surely as one that was deleted.
+			cleanup: {
+				count: cleanup.length,
+				index: cleanup[0]?.index ?? null,
+				run: cleanup[0]?.run ?? null,
+				guarded: cleanup[0]?.guarded ?? null,
+				advisory: cleanup[0]?.advisory ?? null,
+			},
+			build: {
+				count: build.length,
+				index: build[0]?.index ?? null,
+				buildTag: build[0]?.buildTag ?? null,
+				env: build[0]?.env ?? null,
+				symbols: build[0]?.symbols ?? null,
+				trimpath: build[0]?.trimpath ?? null,
+				guarded: build[0]?.guarded ?? null,
+				advisory: build[0]?.advisory ?? null,
 			},
 			publisher: {
 				count: publisher.length,

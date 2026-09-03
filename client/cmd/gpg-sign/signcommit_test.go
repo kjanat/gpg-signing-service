@@ -141,7 +141,14 @@ func TestSignCommitCommandJSON(t *testing.T) {
 }
 
 // captureStdout runs fn with os.Stdout replaced by a pipe and returns what it
-// wrote.
+// wrote. Shared with version_test.go, which captures `gpg-sign --version`.
+//
+// The restore is registered with t.Cleanup before anything can fail rather than
+// only running on the happy path: os.Stdout is process-wide state, so a panic
+// or a t.Fatal inside fn would otherwise leave every test that runs afterwards
+// writing into a pipe nobody reads, and the failure would surface somewhere
+// unrelated. The read end is drained on a goroutine so output larger than the
+// pipe buffer cannot deadlock, and each end is closed exactly once.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 
@@ -149,7 +156,21 @@ func captureStdout(t *testing.T, fn func()) string {
 	if err != nil {
 		t.Fatalf("could not create a pipe: %v", err)
 	}
+
 	previous := os.Stdout
+	restored := false
+	restore := func() {
+		if restored {
+			return
+		}
+		restored = true
+		os.Stdout = previous
+		_ = writer.Close()
+	}
+	t.Cleanup(func() {
+		restore()
+		_ = reader.Close()
+	})
 	os.Stdout = writer
 
 	done := make(chan string, 1)
@@ -160,12 +181,9 @@ func captureStdout(t *testing.T, fn func()) string {
 	}()
 
 	fn()
+	restore()
 
-	os.Stdout = previous
-	_ = writer.Close()
-	output := <-done
-	_ = reader.Close()
-	return output
+	return <-done
 }
 
 // newSignCommitFixture builds a repository with one signable commit and points

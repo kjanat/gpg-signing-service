@@ -44,6 +44,17 @@ readonly RELEASE_PERMISSIONS='{"contents":"write"}'
 # the code deciding whether a ref is safe inside the ref being decided on.
 readonly TOOLING_PATH='.release-tooling'
 readonly VALIDATOR_RUN='.release-tooling/.github/scripts/validate-release-tag.sh'
+# ...and it has to be taken back out again before anything compiles. `go build`
+# stamps vcs.modified from the whole workspace, UNTRACKED files included, and
+# client/cmd/gpg-sign/version.go renders that as `+dirty` -- so a tooling
+# checkout left lying in the tree makes all six published binaries disown the
+# tag they were cut from, on a workspace that is byte-for-byte that tag.
+# .gitignore cannot fix it for a tag that already exists: the release checkout
+# replaces the workspace with the requested tag's tree, so the .gitignore Go
+# consults is the published tag's own, and every tag cut before this branch
+# carries no entry for the path. Deleting the directory is the fix that works
+# for v1.2.0 and older.
+readonly CLEANUP_RUN='rm -rf .release-tooling'
 # The ENTIRE argument mapping of each checkout, not the three arguments the
 # assertions below name. `actions/checkout` defaults `repository:` to
 # `github.repository` and `submodules:` to false, and both are absent here --
@@ -86,6 +97,37 @@ readonly RELEASE_JOBS='["release"]'
 # onto a machine this repository does not describe. Both leave every pin,
 # permission, expression and `with:` mapping exactly as reviewed.
 readonly RELEASE_ENVIRONMENT='{"container":null,"defaults":{"job":null,"workflow":null},"runsOn":"ubuntu-latest","services":null}'
+# What the shipping build stamps into the six published artifacts, pinned whole.
+#
+# `--version` on a downloaded binary is a claim about which source produced it,
+# and the entire claim is one `-ldflags` string in one `run:`. `-X main.foo=` is
+# not checked by anything at link time: naming a symbol no package declares is
+# dropped in silence and the binary reports the compiled-in default, which is
+# precisely the bug this contract was written after. An injection that stops
+# arriving therefore looks exactly like one that arrives.
+#
+# The set is exactly ONE symbol on purpose. The commit and the build time are
+# not injected here because Go already stamps vcs.revision, vcs.time and
+# vcs.modified into every binary `go build` produces from a checkout, and
+# client/cmd/gpg-sign/version.go reads them; injecting them again would make the
+# artifact depend on a second, unverified source for a fact the toolchain
+# already knows. So a symbol ADDED here is as much a violation as one removed --
+# it means the shipped answer quietly stopped coming from the toolchain.
+#
+# `version` is the one thing build info cannot supply: `Main.Version` is
+# `(devel)` for every build shape this repository has, because client/go.mod
+# carries a `replace` and `go install path@version` refuses a module that does.
+# It is taken from the requested tag rather than from package.json because
+# validate-release-tag.sh has already proved the tag names this checkout and
+# nothing proves package.json agrees with it -- so the version the binary
+# reports is the tag it was published under, by construction.
+#
+# The build spends it as BUILD_TAG rather than as RELEASE_TAG so that the
+# validator remains the only step handed RELEASE_TAG, which is what makes
+# "exactly one step is given RELEASE_TAG, and it is the one that runs the tag
+# check" an answerable assertion rather than a count of two.
+# shellcheck disable=SC2016  # the shell expansion is literal on purpose: it is the string being compared
+readonly BUILD_SYMBOLS='{"version":"${BUILD_TAG#v}"}'
 # shellcheck disable=SC2016  # GitHub expressions, literal on purpose: they are the strings being compared
 readonly REQUESTED_TAG='${{ inputs.tag || github.ref_name }}' \
 	REQUESTED_REF='${{ inputs.tag || github.ref }}' \
@@ -324,6 +366,89 @@ release_contract_violations() {
 				"${label}" "${kind}" "${got:-<nothing>}" "${expected}"
 		fi
 	done
+
+	# --- what the build stamps into the artifacts ------------------------------
+	#
+	# A fourth reading of the same requested tag, one layer below the publisher:
+	# `tag_name:` decides what the release is CALLED and this decides what the
+	# binaries inside it SAY they are. A build handed a different expression --
+	# or a literal -- publishes assets under v1.2.0 that answer `--version` with
+	# something else, and every assertion above stays green while it does.
+	local build_count
+	build_count="$(jq -r '.build.count' <<<"${shape}")"
+	if [[ "${build_count}" != 1 ]]; then
+		printf '%s: job %s has %s go build invocations, expected exactly 1 — the artifacts are compiled somewhere this contract does not read\n' \
+			"${label}" "${RELEASE_JOB}" "${build_count}"
+	else
+		local build_symbols build_tag build_trimpath build_guarded build_advisory
+		build_symbols="$(jq -cS '.build.symbols' <<<"${shape}")"
+		if [[ "${build_symbols}" != "${BUILD_SYMBOLS}" ]]; then
+			printf '%s: the build injects %s, not exactly %s — a dropped symbol reports a compiled-in default and an added one overrides what the toolchain already stamped\n' \
+				"${label}" "${build_symbols}" "${BUILD_SYMBOLS}"
+		fi
+		build_tag="$(jq -r '.build.buildTag // ""' <<<"${shape}")"
+		if [[ "${build_tag}" != "${REQUESTED_TAG}" ]]; then
+			printf '%s: the build takes %s, not the requested tag %s — the version stamped into the assets is not the tag they are published under\n' \
+				"${label}" "${build_tag:-<nothing>}" "${REQUESTED_TAG}"
+		fi
+		# -trimpath is what keeps the six artifacts a function of the source
+		# rather than of the runner's checkout path, which is what makes the
+		# published checksums.txt reproducible by anyone.
+		build_trimpath="$(jq -r '.build.trimpath' <<<"${shape}")"
+		if [[ "${build_trimpath}" != true ]]; then
+			printf '%s: the build does not pass -trimpath, so the published binaries embed the runner filesystem layout\n' "${label}"
+		fi
+		# Present is not effective, for the reason the tag check is checked for
+		# both: `if: false` on the build with `continue-on-error` anywhere near
+		# it publishes whatever is already in dist/.
+		build_guarded="$(jq -r '.build.guarded' <<<"${shape}")"
+		if [[ "${build_guarded}" != false ]]; then
+			printf '%s: the build carries an if:, so what gets published is conditional on something other than releasing\n' "${label}"
+		fi
+		build_advisory="$(jq -r '.build.advisory' <<<"${shape}")"
+		if [[ "${build_advisory}" != null && "${build_advisory}" != false ]]; then
+			printf '%s: the build is continue-on-error: %s, so failing to compile does not stop the publish\n' "${label}" "${build_advisory}"
+		fi
+	fi
+
+	# --- the workspace the build reads -----------------------------------------
+	#
+	# The tooling checkout is a directory the requested tag's tree does not
+	# contain, so leaving it in $GITHUB_WORKSPACE makes `go build` stamp
+	# vcs.modified=true and every artifact report `+dirty`. Ordering is the whole
+	# assertion: after the validator, because the check runs out of that
+	# directory, and before the compile, because that is what reads the tree.
+	local cleanup_count cleanup_run cleanup_index cleanup_guarded cleanup_advisory validator_step
+	cleanup_count="$(jq -r '.cleanup.count' <<<"${shape}")"
+	if [[ "${cleanup_count}" != 1 ]]; then
+		printf '%s: job %s has %s steps removing %s, expected exactly 1 — the build compiles a workspace carrying a directory the tag does not have, and every artifact reports +dirty\n' \
+			"${label}" "${RELEASE_JOB}" "${cleanup_count}" "${TOOLING_PATH}"
+	else
+		cleanup_run="$(jq -r '.cleanup.run // ""' <<<"${shape}")"
+		if [[ "${cleanup_run}" != "${CLEANUP_RUN}" ]]; then
+			printf '%s: the tooling is removed by %s, not %s\n' "${label}" "${cleanup_run:-<nothing>}" "${CLEANUP_RUN}"
+		fi
+		cleanup_guarded="$(jq -r '.cleanup.guarded' <<<"${shape}")"
+		if [[ "${cleanup_guarded}" != false ]]; then
+			printf '%s: the tooling removal carries an if:, so whether the artifacts are stamped +dirty is conditional\n' "${label}"
+		fi
+		cleanup_advisory="$(jq -r '.cleanup.advisory' <<<"${shape}")"
+		if [[ "${cleanup_advisory}" != null && "${cleanup_advisory}" != false ]]; then
+			printf '%s: the tooling removal is continue-on-error: %s, so failing to remove it still publishes\n' "${label}" "${cleanup_advisory}"
+		fi
+		cleanup_index="$(jq -r '.cleanup.index // -1' <<<"${shape}")"
+		validator_step="$(jq -r '.validator.index // -1' <<<"${shape}")"
+		if [[ "${validator_step}" -lt 0 || "${cleanup_index}" -le "${validator_step}" ]]; then
+			printf '%s: the tooling is removed at step %s and the tag check that runs from it is step %s\n' \
+				"${label}" "${cleanup_index}" "${validator_step}"
+		fi
+		local build_index
+		build_index="$(jq -r '.build.index // -1' <<<"${shape}")"
+		if [[ "${build_index}" -lt 0 || "${cleanup_index}" -ge "${build_index}" ]]; then
+			printf '%s: the tooling is removed at step %s and the build reads the workspace at step %s — the artifacts are compiled from a tree Go reads as modified\n' \
+				"${label}" "${cleanup_index}" "${build_index}"
+		fi
+	fi
 
 	# The publisher's whole argument set, not the one key named above. Every
 	# mutation the checkouts' pinned set refuses has a twin here: `files:` swapped
@@ -718,6 +843,174 @@ tree_case 'a tag check run out of the published tag tree fails' \
 tree_case 'validating a different tag than the one built fails' \
 	"$(release_tree '' '/^ +RELEASE_TAG:/ { $0 = "          RELEASE_TAG: ${{ github.event.inputs.other }}" } { print }')" \
 	'the validator takes ${{ github.event.inputs.other }}, not the requested tag'
+
+# --- what the build stamps into the artifacts ----------------------------------
+#
+# The guard's own regression set. Every one of these is a workflow that pins,
+# validates and publishes exactly the reviewed tag, and produces six binaries
+# that lie about what they are -- the failure mode is silent by construction,
+# because `-X` naming a symbol no package declares is dropped by the linker
+# without a diagnostic and the binary answers with its compiled-in default.
+#
+# The reason this is asserted here and not only in Go: client/cmd/gpg-sign's
+# TestLdflagsTargetDeclaredSymbols proves the symbols a build names are symbols
+# that exist, and cannot prove the VALUE is the tag that was validated, because
+# the tag is a workflow expression.
+
+# The original bug, restored: a release built with no -ldflags at all. Every
+# published artifact answers `gpg-sign version dev`.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a shipping build that injects nothing fails' \
+	"$(release_tree '' '/^ +LDFLAGS=/ { $0 = "          LDFLAGS=\"-s -w\"" } { print }')" \
+	'the build injects {}, not exactly'
+
+# The half of the original bug the linker will not report: one character in a
+# symbol name, and the injection stops arriving.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a shipping build that injects a misspelled symbol fails' \
+	"$(release_tree '' '/^ +LDFLAGS=/ { sub(/main\.version=/, "main.verison=") } { print }')" \
+	'the build injects {"verison"'
+
+# A symbol ADDED is a violation for the same reason one removed is: the commit
+# and the build time come from the toolchain's own VCS stamp, and an -X here
+# overrides a fact nothing had to be told.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a shipping build that also injects the commit fails' \
+	"$(release_tree '' '/^ +LDFLAGS=/ { sub(/.$/, " -X main.commitHash=${GITHUB_SHA}\"") } { print }')" \
+	'"commitHash"'
+
+# The version that is not the tag. Pins, permissions, tag identity and the
+# publisher are all exactly as reviewed; the assets published under v1.2.0
+# report 9.9.9.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a shipping build that injects a literal version fails' \
+	"$(release_tree '' '/^ +LDFLAGS=/ { sub(/\$\{BUILD_TAG#v\}/, "9.9.9") } { print }')" \
+	'the build injects {"version":"9.9.9"}'
+
+# The tag reaching the build has to be the tag that was validated, which is a
+# separate question from the tag being spelled somewhere in the step.
+# shellcheck disable=SC2016  # awk's $0, and a GitHub expression the mutation must write literally
+tree_case 'a build handed a tag other than the validated one fails' \
+	"$(release_tree '' '/^ +BUILD_TAG:/ { $0 = "          BUILD_TAG: ${{ github.event.inputs.other }}" } { print }')" \
+	'the build takes ${{ github.event.inputs.other }}, not the requested tag'
+
+# RELEASE_TAG is the validator's name and nothing else's. A build that spends it
+# under that name is not wrong about the tag -- it is the same expression -- but
+# it makes "the step given RELEASE_TAG is the step that runs the tag check"
+# unanswerable, which is the assertion standing between a real gate and a decoy
+# step carrying the right variable while the script reads a job-level env:.
+# shellcheck disable=SC2016  # awk's $0, and a GitHub expression the mutation must write literally
+tree_case 'a build that spends the validator variable name fails' \
+	"$(release_tree '' '/^ +BUILD_TAG:/ { $0 = "          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}" }
+	                    /^ +LDFLAGS=/ { sub(/BUILD_TAG/, "RELEASE_TAG") }
+	                    { print }')" \
+	'has 2 validator steps, expected exactly 1'
+
+# The tooling checkout left in the workspace. Every pin, permission, argument,
+# tag identity and ldflag is exactly as reviewed; the six artifacts published
+# under v1.2.0 report a commit they disown, because `go build` counts an
+# untracked directory as a modification and version.go renders that as +dirty.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a shipping build that compiles with the tooling still in the tree fails' \
+	"$(release_tree '' '/^ +- name: Drop release tooling before build/, /^ +run: rm -rf \.release-tooling/ { next } { print }')" \
+	'has 0 steps removing .release-tooling'
+
+# Present but too late is the same workspace at the moment that matters.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a tooling removal that runs after the build fails' \
+	"$(release_tree '' '/^ +- name: Drop release tooling before build/, /^ +run: rm -rf \.release-tooling/ { next }
+	                    /^ +- name: Make binaries executable/ {
+	                      print "      - name: Drop release tooling before build"
+	                      print "        run: rm -rf .release-tooling"
+	                      print ""
+	                    }
+	                    { print }')" \
+	'the artifacts are compiled from a tree Go reads as modified'
+
+# Too early is the tag check with nothing to run.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a tooling removal that runs before the tag check fails' \
+	"$(release_tree '' '/^ +- name: Drop release tooling before build/, /^ +run: rm -rf \.release-tooling/ { next }
+	                    /^ +- name: Validate release tag/ {
+	                      print "      - name: Drop release tooling before build"
+	                      print "        run: rm -rf .release-tooling"
+	                      print ""
+	                    }
+	                    { print }')" \
+	'the tag check that runs from it is step'
+
+# Effectiveness, for the reason the tag check is checked for both: a removal
+# that is skipped leaves the directory exactly where one that was deleted does.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a tooling removal behind an if: fails' \
+	"$(release_tree '' '/^ +- name: Drop release tooling before build/ { print; print "        if: false"; next } { print }')" \
+	'the tooling removal carries an if:'
+
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'an advisory tooling removal fails' \
+	"$(release_tree '' '/^ +- name: Drop release tooling before build/ { print; print "        continue-on-error: true"; next } { print }')" \
+	'failing to remove it still publishes'
+
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a shipping build without -trimpath fails' \
+	"$(release_tree '' '{ sub(/go build -trimpath/, "go build"); print }')" \
+	'does not pass -trimpath'
+
+# Compiling somewhere this contract does not read is the same outcome as not
+# injecting: the artifacts come from a step nobody asserted anything about.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a second step that compiles the artifacts fails' \
+	"$(release_tree '' '/^ +- name: Make binaries executable/ {
+	                      print "      - name: Rebuild"
+	                      print "        working-directory: client"
+	                      print "        run: go build -o ../dist/gpg-sign-linux-amd64 ./cmd/gpg-sign"
+	                    } { print }')" \
+	'go build invocations, expected exactly 1'
+
+# The same outcome from inside the reviewed step: a second invocation in the
+# same `run:` overwrites an artifact the pinned one produced, and only the first
+# invocation is ever the one this contract read.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a second go build in the shipping step fails' \
+	"$(release_tree '' '/^ +done$/ {
+	                      print "          go build -o ../dist/gpg-sign-linux-amd64 ./cmd/gpg-sign"
+	                    } { print }')" \
+	'go build invocations, expected exactly 1'
+
+# The flags have to be on the invocation, not merely in the script. This is the
+# original bug wearing the fix as camouflage: the -ldflags string is composed in
+# full, right above a `go build` that never receives it, so a reader sees the
+# injection and every artifact reports the compiled-in default.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a shipping build that composes ldflags and never passes them fails' \
+	"$(release_tree '' '{ sub(/-ldflags [^ ]+ /, ""); print }')" \
+	'the build injects {}, not exactly'
+
+# Same hole from the other side: the variable is passed, but nothing gives it a
+# value, so the linker is handed an empty string.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a shipping build whose ldflags variable is never assigned fails' \
+	"$(release_tree '' '/^ +LDFLAGS=/ { next } { print }')" \
+	'the build injects {}, not exactly'
+
+# -trimpath in a comment is not -trimpath.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a shipping build whose -trimpath is only mentioned fails' \
+	"$(release_tree '' '/^ +LDFLAGS=/ { print "          # built with -trimpath so the artifacts are reproducible" }
+	                    { sub(/go build -trimpath/, "go build"); print }')" \
+	'does not pass -trimpath'
+
+# Present is not effective, one layer below the tag check: the build is skipped
+# and the publisher uploads whatever is already staged.
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'a shipping build behind an if: fails' \
+	"$(release_tree '' '/^ +- name: Build binaries/ { print; print "        if: false"; next } { print }')" \
+	'the build carries an if:'
+
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'an advisory shipping build fails' \
+	"$(release_tree '' '/^ +- name: Build binaries/ { print; print "        continue-on-error: true"; next } { print }')" \
+	'the build is continue-on-error: true'
 
 # Privilege.
 # shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter

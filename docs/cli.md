@@ -69,9 +69,42 @@ Flags override environment variables. The service URL otherwise defaults to
 | `GPG_SIGN_ADMIN_TOKEN` | `--admin-token` | Admin bearer for `/admin/*`          |
 | —                      | `--timeout`     | Request timeout; default `30s`       |
 | —                      | `--json`        | JSON output where supported          |
+| —                      | `--version`     | Print the build version and exit     |
 
 The default URL identifies one deployment; it is not a promise that the
 deployment is public or suitable for your workload.
+
+`--version` is a flag on the root command only — `gpg-sign --version`, not
+`gpg-sign health --version`. It has no short form: Cobra would otherwise take
+`-v` for it by default, and `-v` is reserved here for a future `--verbose`.
+
+What it reports depends on how the binary was produced. A release download names
+the tag it was published under; every build made from a checkout also carries
+the revision and commit time Go stamps into it, with `+dirty` appended when the
+tree had uncommitted or untracked files:
+
+```console
+$ gpg-sign --version
+gpg-sign version 1.2.0 (commit 4918556d84ffbb5f4045983d6ca8617489600051, committed 2026-09-02T01:31:52Z)
+```
+
+A `go install` or `go run` build reports `dev` in place of the version, because
+the version is the one field the toolchain cannot supply. `go run` reports a
+bare `dev`: unlike `go build` and `go install`, it stamps no VCS information.
+
+The timestamp names which quantity it is, because two different ones can fill
+that one field:
+
+- **`committed`** — the revision's commit time, which is the only timestamp Go
+  stamps (`vcs.time`). Every build made from a checkout reports this unless
+  release ldflags override it, including a downloaded release binary.
+- **`built`** — the moment of compilation, which only a linker-injected
+  `main.buildTime` can supply. `task client:build` fills it from `date -u`; the
+  release workflow deliberately does not, so what a published artifact reports
+  is a function of the tag it was cut from rather than of when the job ran.
+
+A linker-injected value always wins over the stamp, so a build that injects one
+reports `built`.
 
 ## Commands
 
