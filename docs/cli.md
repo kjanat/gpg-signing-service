@@ -69,9 +69,13 @@ Flags override environment variables. The service URL otherwise defaults to
 | `GPG_SIGN_ADMIN_TOKEN` | `--admin-token` | Admin bearer for `/admin/*`          |
 | —                      | `--timeout`     | Request timeout; default `30s`       |
 | —                      | `--json`        | JSON output where supported          |
+| —                      | `--version`     | Print the build version and exit     |
 
 The default URL identifies one deployment; it is not a promise that the
 deployment is public or suitable for your workload.
+
+`--version` is a flag on the root command only — `gpg-sign --version`, not
+`gpg-sign health --version` — and it reports the metadata the build injected.
 
 ## Commands
 
