@@ -28,9 +28,20 @@
  *     build run inside an image nobody here controls;
  *   * `on:`, which is not a step and is not even spelled `on` after parsing —
  *     `on` is a YAML 1.1 boolean, so the key comes back as `true`;
- *   * the three places the requested tag is spent: the checkout `ref:`, the
- *     `RELEASE_TAG` the validation step is given, and the `tag_name:` the
- *     publisher publishes under;
+ *   * the four places the requested tag is spent: the checkout `ref:`, the
+ *     `RELEASE_TAG` the validation step is given, the `BUILD_TAG` the compile
+ *     step stamps into the binaries, and the `tag_name:` the publisher
+ *     publishes under. The build is given its own variable name so that
+ *     `RELEASE_TAG` stays the validator's alone and "exactly one step is handed
+ *     RELEASE_TAG" remains an answerable question;
+ *   * whether the tooling checkout is removed before the compile. `go build`
+ *     stamps `vcs.modified` from the WHOLE workspace, untracked files included,
+ *     so a `.release-tooling/` left lying in it makes every published binary
+ *     report `+dirty` on a tree that is byte-for-byte the tag. `.gitignore`
+ *     fixes that only for tags cut after it, because the workflow checks the
+ *     workspace out at the tag and Go reads the tag's own `.gitignore` --
+ *     deleting the directory is the fix that works for tags that already
+ *     exist;
  *   * what the BUILD step stamps into the binaries. `--version` on a published
  *     artifact is a claim about which source the binary came from, and the
  *     whole claim is one `-ldflags` string in one `run:`. `-X` naming a symbol
@@ -84,12 +95,17 @@ const PUBLISHER = "softprops/action-gh-release";
 /**
  * The compile step is found by what it does, because it has no `uses:` to be
  * found by and its `name:` is prose. `go build` in a `run:` is the step that
- * produces the artifacts, and it is also why this step has to be told apart
- * from the tag check at all: both are handed the requested tag through `env:`,
- * so a reading that identified the validator by that variable alone would see
- * two validators the moment the build began stamping the tag it publishes.
+ * produces the artifacts.
  */
 const COMPILER = /(^|[\s;&|])go\s+build(\s|$)/;
+
+/**
+ * A `run:` that removes the tooling checkout. Matched on the path rather than
+ * on the exact command so an equivalent spelling still reads as the cleanup,
+ * and required to be a removal rather than any mention of the path so that the
+ * validator invoking a script out of it is not mistaken for deleting it.
+ */
+const TOOLING_CLEANUP = /\brm\s+(?:-\S+\s+)*\.release-tooling\b/;
 
 /**
  * `-X main.<symbol>=<value>` as the linker reads it. The value stops at a quote
@@ -304,6 +320,7 @@ function main(argv: string[]): number {
 		guarded: boolean;
 		advisory: unknown;
 	}[] = [];
+	const cleanup: { index: number; run: string; guarded: boolean; advisory: unknown }[] = [];
 	const publisher: {
 		index: number;
 		uses: string;
@@ -312,7 +329,7 @@ function main(argv: string[]): number {
 	}[] = [];
 	const build: {
 		index: number;
-		releaseTag: string | null;
+		buildTag: string | null;
 		env: Record<string, unknown>;
 		symbols: Record<string, string>;
 		trimpath: boolean;
@@ -348,6 +365,10 @@ function main(argv: string[]): number {
 		const run = typeof step.run === "string" ? step.run : null;
 		const compiles = run !== null && COMPILER.test(run);
 
+		if (run !== null && TOOLING_CLEANUP.test(run)) {
+			cleanup.push({ index: index + 1, run: run.trim(), ...effective(step) });
+		}
+
 		// One entry per `go build`, not per step: two invocations in one `run:`
 		// produce two accounts of where the artifacts came from just as surely as
 		// two steps do, and only the first would ever be pinned.
@@ -358,7 +379,7 @@ function main(argv: string[]): number {
 			}
 			build.push({
 				index: index + 1,
-				releaseTag: canonical(env?.RELEASE_TAG),
+				buildTag: canonical(env?.BUILD_TAG),
 				env: withArguments(env),
 				symbols,
 				trimpath: /(^|\s)-trimpath(\s|$)/.test(command),
@@ -368,12 +389,15 @@ function main(argv: string[]): number {
 
 		// The validation step is found by the variable it is given rather than by
 		// its name or its `run:`, so the same reading answers for the inline check
-		// this branch replaces and for the extracted script that replaces it. The
-		// compile step is excluded because it is handed the same variable for a
-		// different purpose -- stamping the tag into the binary rather than
-		// deciding whether the tag may be published -- and counting it as a second
-		// validator would make the identity assertions unanswerable.
-		if (env !== null && Object.hasOwn(env, "RELEASE_TAG") && !compiles) {
+		// this branch replaces and for the extracted script that replaces it.
+		//
+		// Every step handed RELEASE_TAG counts, with no exemption for what it
+		// otherwise does: the name is the validator's, and the caller asserts
+		// there is exactly one. That is only answerable because the compile step
+		// spends the tag under BUILD_TAG -- a second consumer of RELEASE_TAG is a
+		// decoy that satisfies the identity assertion while the script itself
+		// reads the variable from a job-level env: nobody looked at.
+		if (env !== null && Object.hasOwn(env, "RELEASE_TAG")) {
 			validator.push({
 				index: index + 1,
 				releaseTag: canonical(env.RELEASE_TAG),
@@ -434,10 +458,22 @@ function main(argv: string[]): number {
 			// are. `symbols` is the artifact's own account of where it came from:
 			// an entry that disappears downgrades `--version` to a default in
 			// silence, and an entry that appears is a claim nobody reviewed.
+			// The step that takes the tooling checkout back out of the workspace
+			// before anything reads the tree. Reported as its own shape, with the
+			// same `if:`/`continue-on-error:` reading every other required step
+			// gets: a cleanup that is skipped or advisory leaves the directory in
+			// place exactly as surely as one that was deleted.
+			cleanup: {
+				count: cleanup.length,
+				index: cleanup[0]?.index ?? null,
+				run: cleanup[0]?.run ?? null,
+				guarded: cleanup[0]?.guarded ?? null,
+				advisory: cleanup[0]?.advisory ?? null,
+			},
 			build: {
 				count: build.length,
 				index: build[0]?.index ?? null,
-				releaseTag: build[0]?.releaseTag ?? null,
+				buildTag: build[0]?.buildTag ?? null,
 				env: build[0]?.env ?? null,
 				symbols: build[0]?.symbols ?? null,
 				trimpath: build[0]?.trimpath ?? null,
