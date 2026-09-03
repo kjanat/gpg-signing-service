@@ -31,6 +31,14 @@
  *   * the three places the requested tag is spent: the checkout `ref:`, the
  *     `RELEASE_TAG` the validation step is given, and the `tag_name:` the
  *     publisher publishes under;
+ *   * what the BUILD step stamps into the binaries. `--version` on a published
+ *     artifact is a claim about which source the binary came from, and the
+ *     whole claim is one `-ldflags` string in one `run:`. `-X` naming a symbol
+ *     no package declares is not a link error -- the linker drops it in
+ *     silence -- so an injection that stops arriving looks exactly like one
+ *     that arrives. Reported as the symbols the step sets and the expression
+ *     each is set from, so the caller can pin the set AND pin that the version
+ *     is the tag that was validated rather than a literal somebody typed.
  *   * which checkout is which. The release job has two, and they are not
  *     interchangeable: one replaces the workspace with the requested tag's tree
  *     and is identified by having no `path:`, the other lands the tag check
@@ -72,6 +80,24 @@ import { parseDocument } from "yaml";
 /** The actions whose arguments carry the requested tag. */
 const CHECKOUT = "actions/checkout";
 const PUBLISHER = "softprops/action-gh-release";
+
+/**
+ * The compile step is found by what it does, because it has no `uses:` to be
+ * found by and its `name:` is prose. `go build` in a `run:` is the step that
+ * produces the artifacts, and it is also why this step has to be told apart
+ * from the tag check at all: both are handed the requested tag through `env:`,
+ * so a reading that identified the validator by that variable alone would see
+ * two validators the moment the build began stamping the tag it publishes.
+ */
+const COMPILER = /(^|[\s;&|])go\s+build(\s|$)/;
+
+/**
+ * `-X main.<symbol>=<value>` as the linker reads it. The value stops at a quote
+ * as well as at whitespace: the flag is written inside a double-quoted shell
+ * assignment, so a run to end-of-word would report the closing quote as part of
+ * the expression and no caller could pin the value it is comparing against.
+ */
+const LDFLAG = /-X\s+main\.([A-Za-z_][A-Za-z0-9_]*)=([^\s"']*)/g;
 
 function die(message: string): never {
 	process.stderr.write(`release-workflow-shape.ts: ${message}\n`);
@@ -226,6 +252,15 @@ function main(argv: string[]): number {
 		tagName: string | null;
 		with: Record<string, unknown>;
 	}[] = [];
+	const build: {
+		index: number;
+		releaseTag: string | null;
+		env: Record<string, unknown>;
+		symbols: Record<string, string>;
+		trimpath: boolean;
+		guarded: boolean;
+		advisory: unknown;
+	}[] = [];
 
 	for (const [index, raw] of (Array.isArray(steps) ? steps : []).entries()) {
 		const step = mappingOrNull(raw) as Step | null;
@@ -252,10 +287,32 @@ function main(argv: string[]): number {
 				with: withArguments(withArgs),
 			});
 		}
+		const run = typeof step.run === "string" ? step.run : null;
+		const compiles = run !== null && COMPILER.test(run);
+
+		if (compiles) {
+			const symbols: Record<string, string> = {};
+			for (const [, symbol, value] of run.matchAll(LDFLAG)) {
+				symbols[symbol] = value;
+			}
+			build.push({
+				index: index + 1,
+				releaseTag: canonical(env?.RELEASE_TAG),
+				env: withArguments(env),
+				symbols,
+				trimpath: /(^|\s)-trimpath(\s|$)/.test(run),
+				...effective(step),
+			});
+		}
+
 		// The validation step is found by the variable it is given rather than by
 		// its name or its `run:`, so the same reading answers for the inline check
-		// this branch replaces and for the extracted script that replaces it.
-		if (env !== null && Object.hasOwn(env, "RELEASE_TAG")) {
+		// this branch replaces and for the extracted script that replaces it. The
+		// compile step is excluded because it is handed the same variable for a
+		// different purpose -- stamping the tag into the binary rather than
+		// deciding whether the tag may be published -- and counting it as a second
+		// validator would make the identity assertions unanswerable.
+		if (env !== null && Object.hasOwn(env, "RELEASE_TAG") && !compiles) {
 			validator.push({
 				index: index + 1,
 				releaseTag: canonical(env.RELEASE_TAG),
@@ -311,6 +368,20 @@ function main(argv: string[]): number {
 				guarded: validator[0]?.guarded ?? null,
 				advisory: validator[0]?.advisory ?? null,
 				index: validator[0]?.index ?? null,
+			},
+			// The compile step, reported whole for the reason the `with:` mappings
+			// are. `symbols` is the artifact's own account of where it came from:
+			// an entry that disappears downgrades `--version` to a default in
+			// silence, and an entry that appears is a claim nobody reviewed.
+			build: {
+				count: build.length,
+				index: build[0]?.index ?? null,
+				releaseTag: build[0]?.releaseTag ?? null,
+				env: build[0]?.env ?? null,
+				symbols: build[0]?.symbols ?? null,
+				trimpath: build[0]?.trimpath ?? null,
+				guarded: build[0]?.guarded ?? null,
+				advisory: build[0]?.advisory ?? null,
 			},
 			publisher: {
 				count: publisher.length,
