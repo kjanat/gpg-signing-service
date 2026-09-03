@@ -89,7 +89,12 @@ gpg-sign version 1.2.0 (commit 4918556d84ffbb5f4045983d6ca8617489600051, built 2
 ```
 
 A `go install` or `go run` build reports `dev` in place of the version, because
-the version is the one field the toolchain cannot supply.
+the version is the one field the toolchain cannot supply. `go run` reports a
+bare `dev`: unlike `go build` and `go install`, it stamps no VCS information.
+
+The second field is labelled `built`, but on a release download it is the
+revision's commit time — that is the only timestamp Go stamps. Only
+`task client:build` injects the moment of compilation.
 
 ## Commands
 
