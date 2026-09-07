@@ -142,8 +142,13 @@ ESCAPED_KEY=$(sed ':a;N;$!ba;s/\n/\\n/g' <"${PRIVATE_KEY_FILE}")
 	echo "  2. Upload key to service:"
 	# shellcheck disable=SC1003
 	echo '     curl -X POST https://your-worker.workers.dev/admin/keys \'
-	# shellcheck disable=SC1003
-	echo '       -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \'
+	# `$ADMIN_TOKEN`, not a YOUR_... placeholder, matching API.md and
+	# DEVELOPER_GUIDE.md: gitleaks' curl-auth-header rule reads a literal bearer
+	# value next to `curl` as a credential, and naming the variable is both the
+	# friendlier instruction and one less thing to allowlist (#146).
+	# SC2016: `$ADMIN_TOKEN` is meant to reach the operator's terminal unexpanded.
+	# shellcheck disable=SC1003,SC2016
+	echo '       -H "Authorization: Bearer $ADMIN_TOKEN" \'
 	# shellcheck disable=SC1003
 	echo '       -H "Content-Type: application/json" \'
 	echo "       -d '{\"armoredPrivateKey\": \"${ESCAPED_KEY}\", \"keyId\": \"${KEY_ID}\"}'"

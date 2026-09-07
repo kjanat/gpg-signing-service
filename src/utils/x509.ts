@@ -19,6 +19,7 @@ import {
 import type { StoredX509Key } from "#schemas/keys";
 import type { KeyFingerprint } from "#types";
 import { createKeyFingerprint } from "#types";
+import { PKCS8_ENCRYPTED_BEGIN } from "#utils/armor";
 
 /** Result of validating an uploaded X.509 key pair */
 export interface X509KeyInfo {
@@ -33,7 +34,7 @@ export interface X509KeyInfo {
  * PrivateKeyInfo AlgorithmIdentifier.
  */
 function importX509PrivateKey(privateKeyPem: string, passphrase: string): Promise<CryptoKey> {
-	if (privateKeyPem.includes("-----BEGIN ENCRYPTED PRIVATE KEY-----")) {
+	if (privateKeyPem.includes(PKCS8_ENCRYPTED_BEGIN)) {
 		return importEncryptedPkcs8PemOrThrow(privateKeyPem, passphrase);
 	}
 	return importPkcs8PemOrThrow(privateKeyPem);

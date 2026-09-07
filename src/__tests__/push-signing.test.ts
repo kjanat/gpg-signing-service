@@ -48,6 +48,7 @@ import type { RepositoryCommit } from "#utils/github-repo";
 import { patchAuthorOffset, RepositoryClient } from "#utils/github-repo";
 import { SIGNATURE_PREFIX } from "#utils/github-webhook";
 import { signPushedCommits } from "#utils/push-signing";
+import { PKCS8_PRIVATE_BEGIN, PKCS8_PRIVATE_END } from "./helpers/armor";
 import {
 	FIXTURE_OBJECT,
 	FIXTURE_SHA,
@@ -1025,7 +1026,7 @@ async function generateAppKey(): Promise<string> {
 	}
 	const base64 = btoa(binary).replace(/(.{64})/g, "$1\n");
 
-	return `-----BEGIN PRIVATE KEY-----\n${base64}\n-----END PRIVATE KEY-----\n`;
+	return `${PKCS8_PRIVATE_BEGIN}\n${base64}\n${PKCS8_PRIVATE_END}\n`;
 }
 
 /** Everything a delivery needs to reach the acting handler. */

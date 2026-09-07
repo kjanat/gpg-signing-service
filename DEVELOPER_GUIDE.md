@@ -137,7 +137,7 @@ curl -X POST https://gpg.kajkowalski.nl/admin/keys \
   -H "Content-Type: application/json" \
   -d '{
     "keyId": "signing-key-prod",
-    "armoredPrivateKey": "-----BEGIN PGP PRIVATE KEY BLOCK-----\n..."
+    "armoredPrivateKey": "<the ASCII-armored private key, one JSON string, newlines escaped>"
   }'
 ```
 

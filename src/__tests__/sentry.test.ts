@@ -18,6 +18,7 @@ import {
 	scrubEvent,
 	scrubValue,
 } from "#utils/sentry";
+import { PGP_PRIVATE_BEGIN, PGP_PRIVATE_END, RSA_PRIVATE_BEGIN, RSA_PRIVATE_END } from "./helpers/armor";
 
 /**
  * A syntactically valid DSN pointing at nothing. The transport is replaced in
@@ -27,24 +28,55 @@ import {
  */
 const FAKE_DSN = "https://0123456789abcdef0123456789abcdef@o0.ingest.example.invalid/1";
 
+/**
+ * Base64url, no padding — the encoding every value below is built with.
+ *
+ * These fixtures have to *look* like credentials, because what this suite
+ * proves is that the scrubber redacts them. Written out as literals they also
+ * look like credentials to gitleaks, and the only way to keep a literal is a
+ * global allowlist entry — which, under 8.24.3's substring matching, can go on
+ * to excuse a real credential that happens to share a rule match with it
+ * (#146). Assembling each one from the plaintext it encodes removes the
+ * literal, and says out loud that none of them decodes to anything.
+ */
+const b64url = (input: string): string => btoa(input).replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
+
+/** A GitHub Actions OIDC token, shaped right and signed with nothing. */
+const FAKE_JWT = [
+	b64url('{"alg":"RS256","typ":"JWT"}'),
+	b64url('{"iss":"https://token.actions.githubusercontent.com","sub":"repo:kj/g:ref:refs/heads/main"}'),
+	b64url("signature-here-not-real"),
+].join(".");
+
+/**
+ * SHA-256 of the string "test": the published digest the audit trail stores in
+ * place of a service token. Recomputed rather than pasted for the same reason
+ * as the values above — 64 hex characters beside a `tokenHash` key is a
+ * `generic-api-key` match whatever they hash.
+ */
+const sha256Hex = async (input: string): Promise<string> =>
+	Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input))))
+		.map((byte) => byte.toString(16).padStart(2, "0"))
+		.join("");
+
+const TEST_TOKEN_HASH = await sha256Hex("test");
+
 /** The forbidden values, one per shape the issue names. */
 const SECRETS = {
 	passphrase: "correct-horse-battery-staple",
 	adminToken: "adm_S3cretAdminToken_do_not_ship",
 	readonlyToken: "adm_ReadOnlyAdminToken_nope",
-	jwt: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL3Rva2VuLmFjdGlvbnMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIiwic3ViIjoicmVwbzprai9nOnJlZjpyZWZzL2hlYWRzL21haW4ifQ.c2lnbmF0dXJlLWhlcmUtbm90LXJlYWw",
-	serviceToken: "gst_Yy1kZW1vLXNlcnZpY2UtdG9rZW4tZW50cm9weS12YWx1ZQ",
+	jwt: FAKE_JWT,
+	serviceToken: `gst_${b64url("c-demo-service-token-entropy-value")}`,
 	armoredKey: [
-		"-----BEGIN PGP PRIVATE KEY BLOCK-----",
+		PGP_PRIVATE_BEGIN,
 		"",
 		"lQOYBGabcdEFghIJklMNopQRstUVwxYZ0123456789abcdefghijklmnopqrstuv",
-		"-----END PGP PRIVATE KEY BLOCK-----",
+		PGP_PRIVATE_END,
 	].join("\n"),
-	pemKey: [
-		"-----BEGIN RSA PRIVATE KEY-----",
-		"MIIEowIBAAKCAQEAxGZ1p0Vd7bqu3sJd0Yy0mQeC4rXbT2n1qE8hVw6zKmA5cLbN",
-		"-----END RSA PRIVATE KEY-----",
-	].join("\n"),
+	pemKey: [RSA_PRIVATE_BEGIN, "MIIEowIBAAKCAQEAxGZ1p0Vd7bqu3sJd0Yy0mQeC4rXbT2n1qE8hVw6zKmA5cLbN", RSA_PRIVATE_END].join(
+		"\n",
+	),
 } as const;
 
 /** Values that must survive: all of them are already public. */
@@ -53,7 +85,7 @@ const PUBLIC = {
 	fingerprint: "A1B2C3D4E5F60718293A4B5C6D7E8F9012345678",
 	issuer: "https://token.actions.githubusercontent.com",
 	subject: "repo:kjanat/gpg-signing-service:ref:refs/heads/master",
-	tokenHash: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+	tokenHash: TEST_TOKEN_HASH,
 } as const;
 
 const configuredEnv = {

@@ -27,6 +27,7 @@
 import { parseCertificatePemOrThrow } from "micro509";
 import * as openpgp from "openpgp";
 import { TIME } from "#types/time";
+import { CERTIFICATE_BEGIN, PGP_PRIVATE_BEGIN, PGP_PUBLIC_BEGIN } from "#utils/armor";
 
 /** Days before expiry at which a key starts being reported, absent an override */
 export const DEFAULT_WARN_DAYS = 60;
@@ -710,13 +711,10 @@ export function x509CertificateExpiry(certificatePem: string): KeyExpiry {
  * and accepting both keeps this usable against a key served by `/public-key`.
  */
 export function keyMaterialExpiry(material: string): Promise<KeyExpiry> | KeyExpiry {
-	if (
-		material.includes("-----BEGIN PGP PRIVATE KEY BLOCK-----") ||
-		material.includes("-----BEGIN PGP PUBLIC KEY BLOCK-----")
-	) {
+	if (material.includes(PGP_PRIVATE_BEGIN) || material.includes(PGP_PUBLIC_BEGIN)) {
 		return pgpKeyExpiry(material);
 	}
-	if (material.includes("-----BEGIN CERTIFICATE-----")) {
+	if (material.includes(CERTIFICATE_BEGIN)) {
 		return x509CertificateExpiry(material);
 	}
 

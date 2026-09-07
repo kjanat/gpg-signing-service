@@ -46,6 +46,7 @@ import { GITHUB_API_ORIGIN, GitHubAppError } from "#utils/github-app";
 import { RepositoryClient } from "#utils/github-repo";
 import { SIGNATURE_PREFIX } from "#utils/github-webhook";
 import { DELIVERY_RESERVATION_MS, DELIVERY_RETENTION_MS } from "#utils/webhook-replay";
+import { PKCS8_PRIVATE_BEGIN, PKCS8_PRIVATE_END } from "./helpers/armor";
 
 const SECRET = "test-webhook-secret";
 const INSTALLATION = 12_345_678;
@@ -715,7 +716,7 @@ async function generateAppKey(): Promise<string> {
 		binary += String.fromCharCode(byte);
 	}
 
-	return `-----BEGIN PRIVATE KEY-----\n${btoa(binary).replace(/(.{64})/g, "$1\n")}\n-----END PRIVATE KEY-----\n`;
+	return `${PKCS8_PRIVATE_BEGIN}\n${btoa(binary).replace(/(.{64})/g, "$1\n")}\n${PKCS8_PRIVATE_END}\n`;
 }
 
 /** Everything a delivery needs to reach the acting handler. */

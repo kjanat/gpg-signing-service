@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createArmoredPrivateKey, createIdentity, createKeyFingerprint, createKeyId } from "#types/branded";
 import { LIMITS } from "#utils/constants";
+import { PGP_PRIVATE_BEGIN, PGP_PRIVATE_END } from "./helpers/armor";
 
 describe("Branded Types", () => {
 	describe("createKeyId", () => {
@@ -114,7 +115,7 @@ describe("Branded Types", () => {
 
 	describe("createArmoredPrivateKey", () => {
 		// Realistic Ed25519 key for happy path tests
-		const validKey = `-----BEGIN PGP PRIVATE KEY BLOCK-----
+		const validKey = `${PGP_PRIVATE_BEGIN}
 
 lIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw
 d6i3vJf+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA
@@ -125,7 +126,7 @@ CQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p
 KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
 7Bfg==
 =oEGo
------END PGP PRIVATE KEY BLOCK-----`;
+${PGP_PRIVATE_END}`;
 
 		// Happy paths
 		it("should create valid ArmoredPrivateKey from complete PGP key", () => {
@@ -134,7 +135,7 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
 		});
 
 		it("should accept keys with varying content between headers and footers", () => {
-			const key = `-----BEGIN PGP PRIVATE KEY BLOCK-----
+			const key = `${PGP_PRIVATE_BEGIN}
 Version: OpenPGP v2.0.0
 Comment: Some comment here
 
@@ -147,14 +148,14 @@ CQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p
 KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
 7Bfg==
 =oEGo
------END PGP PRIVATE KEY BLOCK-----`;
+${PGP_PRIVATE_END}`;
 			const result = createArmoredPrivateKey(key);
 			expect(result).toBe(key);
 		});
 
 		// Line 49: missing header validation
 		it("should reject key missing BEGIN PGP PRIVATE KEY BLOCK header", () => {
-			const invalidKey = validKey.replace("-----BEGIN PGP PRIVATE KEY BLOCK-----", "-----BEGIN INVALID-----");
+			const invalidKey = validKey.replace(PGP_PRIVATE_BEGIN, "-----BEGIN INVALID-----");
 			expect(() => createArmoredPrivateKey(invalidKey)).toThrow("Invalid ArmoredPrivateKey: missing PGP header");
 		});
 
@@ -163,40 +164,40 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
 		});
 
 		it("should reject key with only header", () => {
-			const keyHeaderOnly = "-----BEGIN PGP PRIVATE KEY BLOCK-----";
+			const keyHeaderOnly = PGP_PRIVATE_BEGIN;
 			expect(() => createArmoredPrivateKey(keyHeaderOnly)).toThrow("Invalid ArmoredPrivateKey: missing PGP footer");
 		});
 
 		// Line 52: missing footer validation
 		it("should reject key missing END PGP PRIVATE KEY BLOCK footer", () => {
-			const invalidKey = validKey.replace("-----END PGP PRIVATE KEY BLOCK-----", "");
+			const invalidKey = validKey.replace(PGP_PRIVATE_END, "");
 			expect(() => createArmoredPrivateKey(invalidKey)).toThrow("Invalid ArmoredPrivateKey: missing PGP footer");
 		});
 
 		it("should reject key with only footer", () => {
-			const keyFooterOnly = "-----END PGP PRIVATE KEY BLOCK-----";
+			const keyFooterOnly = PGP_PRIVATE_END;
 			expect(() => createArmoredPrivateKey(keyFooterOnly)).toThrow("Invalid ArmoredPrivateKey: missing PGP header");
 		});
 
 		it("should reject key with mismatched footer (typo)", () => {
-			const invalidKey = validKey.replace("-----END PGP PRIVATE KEY BLOCK-----", "-----END INVALID BLOCK-----");
+			const invalidKey = validKey.replace(PGP_PRIVATE_END, "-----END INVALID BLOCK-----");
 			expect(() => createArmoredPrivateKey(invalidKey)).toThrow("Invalid ArmoredPrivateKey: missing PGP footer");
 		});
 
 		// Line 58: size validation
 		it("should reject key below minimum size", () => {
-			const tooSmallKey = `-----BEGIN PGP PRIVATE KEY BLOCK-----
+			const tooSmallKey = `${PGP_PRIVATE_BEGIN}
 SHORT
------END PGP PRIVATE KEY BLOCK-----`;
+${PGP_PRIVATE_END}`;
 			expect(() => createArmoredPrivateKey(tooSmallKey)).toThrow(
 				`Invalid ArmoredPrivateKey length: ${tooSmallKey.length}`,
 			);
 		});
 
 		it("should reject key above maximum size", () => {
-			const tooLargeKey = `-----BEGIN PGP PRIVATE KEY BLOCK-----
+			const tooLargeKey = `${PGP_PRIVATE_BEGIN}
 ${new Array(LIMITS.MAX_KEY_SIZE + 1000).fill("X").join("")}
------END PGP PRIVATE KEY BLOCK-----`;
+${PGP_PRIVATE_END}`;
 			expect(() => createArmoredPrivateKey(tooLargeKey)).toThrow(
 				`Invalid ArmoredPrivateKey length: ${tooLargeKey.length}`,
 			);
@@ -209,9 +210,9 @@ ${new Array(LIMITS.MAX_KEY_SIZE + 1000).fill("X").join("")}
 			// Need: 350 - 37 - 1 - 35 - 1 = 276 chars of content
 			const contentSize = LIMITS.MIN_KEY_SIZE - 37 - 1 - 35 - 1;
 			const padding = new Array(contentSize).fill("X").join("");
-			const keyAtMin = `-----BEGIN PGP PRIVATE KEY BLOCK-----
+			const keyAtMin = `${PGP_PRIVATE_BEGIN}
 ${padding}
------END PGP PRIVATE KEY BLOCK-----`;
+${PGP_PRIVATE_END}`;
 			const result = createArmoredPrivateKey(keyAtMin);
 			expect(result).toBe(keyAtMin);
 			expect(keyAtMin.length).toBeGreaterThanOrEqual(LIMITS.MIN_KEY_SIZE);
@@ -219,13 +220,12 @@ ${padding}
 
 		it("should accept key at maximum size boundary", () => {
 			// Create a key that is exactly at the maximum size
-			const headerFooterSize =
-				"-----BEGIN PGP PRIVATE KEY BLOCK-----".length + "-----END PGP PRIVATE KEY BLOCK-----".length + 2; // +2 for newlines
+			const headerFooterSize = PGP_PRIVATE_BEGIN.length + PGP_PRIVATE_END.length + 2; // +2 for newlines
 			const contentSize = LIMITS.MAX_KEY_SIZE - headerFooterSize;
 			const padding = new Array(contentSize).fill("X").join("");
-			const keyAtMax = `-----BEGIN PGP PRIVATE KEY BLOCK-----
+			const keyAtMax = `${PGP_PRIVATE_BEGIN}
 ${padding}
------END PGP PRIVATE KEY BLOCK-----`;
+${PGP_PRIVATE_END}`;
 			const result = createArmoredPrivateKey(keyAtMax);
 			expect(result).toBe(keyAtMax);
 		});
@@ -316,7 +316,7 @@ ${padding}
 		});
 
 		it("should maintain type distinction for ArmoredPrivateKey", () => {
-			const validKey = `-----BEGIN PGP PRIVATE KEY BLOCK-----
+			const validKey = `${PGP_PRIVATE_BEGIN}
 
 lIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw
 d6i3vJf+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA
@@ -327,7 +327,7 @@ CQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p
 KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
 7Bfg==
 =oEGo
------END PGP PRIVATE KEY BLOCK-----`;
+${PGP_PRIVATE_END}`;
 			const key = createArmoredPrivateKey(validKey);
 			expect(typeof key).toBe("string");
 		});
@@ -367,7 +367,7 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
 		});
 
 		it("should provide meaningful error messages for createArmoredPrivateKey - footer", () => {
-			const invalidKey = `-----BEGIN PGP PRIVATE KEY BLOCK-----
+			const invalidKey = `${PGP_PRIVATE_BEGIN}
 content here without footer`;
 			try {
 				createArmoredPrivateKey(invalidKey);
@@ -378,9 +378,9 @@ content here without footer`;
 		});
 
 		it("should provide meaningful error messages for createArmoredPrivateKey - size", () => {
-			const tinyKey = `-----BEGIN PGP PRIVATE KEY BLOCK-----
+			const tinyKey = `${PGP_PRIVATE_BEGIN}
 X
------END PGP PRIVATE KEY BLOCK-----`;
+${PGP_PRIVATE_END}`;
 			try {
 				createArmoredPrivateKey(tinyKey);
 			} catch (e) {
@@ -422,11 +422,11 @@ X
 			// Create key with valid size and newlines
 			const contentSize = LIMITS.MIN_KEY_SIZE - 37 - 1 - 35 - 1;
 			const padding = new Array(contentSize).fill("X").join("");
-			const keyWithNewlines = `-----BEGIN PGP PRIVATE KEY BLOCK-----
+			const keyWithNewlines = `${PGP_PRIVATE_BEGIN}
 
 ${padding}
 
------END PGP PRIVATE KEY BLOCK-----`;
+${PGP_PRIVATE_END}`;
 			const result = createArmoredPrivateKey(keyWithNewlines);
 			expect(result).toBe(keyWithNewlines);
 			expect(result.includes("\n")).toBe(true);

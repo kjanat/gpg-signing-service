@@ -53,7 +53,7 @@ curl -X POST https://gpg.kajkowalski.nl/admin/keys \
   -H "Content-Type: application/json" \
   -d '{
     "keyId": "signing-key-v1",
-    "armoredPrivateKey": "-----BEGIN PGP PRIVATE KEY BLOCK-----\n..."
+    "armoredPrivateKey": "<the ASCII-armored private key, one JSON string, newlines escaped>"
   }'
 ```
 
@@ -346,9 +346,16 @@ Upload a new signing key.
 ```json
 {
   "keyId": "signing-key-v1",
-  "armoredPrivateKey": "-----BEGIN PGP PRIVATE KEY BLOCK-----\nVersion: OpenPGP.js v6.0.0\n...\n-----END PGP PRIVATE KEY BLOCK-----"
+  "armoredPrivateKey": "<the ASCII-armored private key, one JSON string, newlines escaped>"
 }
 ```
+
+`armoredPrivateKey` is the whole armored block: the `BEGIN PGP PRIVATE KEY
+BLOCK` header line, the OpenPGP headers and base64 body, the checksum, and the
+matching `END` line — each line separated by an escaped `\n`. The marker lines
+are described rather than printed because a literal armor header in a tracked
+file is a `private-key` detector match, and excusing it would mean an allowlist
+entry capable of swallowing a real key committed beside it (#146).
 
 **Response** (201 Created):
 

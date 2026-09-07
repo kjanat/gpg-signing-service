@@ -557,7 +557,11 @@ Settings → Developer settings → GitHub Apps → New GitHub App.
 ### 2. Get the private key
 
 "Generate a private key" downloads a `.pem`. It is **PKCS#1** — the file opens
-with `-----BEGIN RSA PRIVATE KEY-----`.
+with a `BEGIN RSA PRIVATE KEY` armor line (that phrase between five dashes on
+each side; spelled out here it would open a `private-key` match that swallows
+everything down to the next armor line in this file, and a real key pasted into
+this document would land inside it rather than being reported — see
+`src/utils/armor.ts`).
 
 WebCrypto imports only PKCS#8, so this service converts the file for you and
 either form is accepted. If you would rather convert it yourself:
