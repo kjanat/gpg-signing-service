@@ -64,6 +64,7 @@ tasks:
       - task: test:typegen-pin
       - task: test:tool-pins
       - task: test:composite-actions
+      - task: test:gitleaks-contract
 
   test:sentry:
     desc: Run the Sentry boundary suite alone — the inner loop of the mutation set
@@ -172,6 +173,11 @@ tasks:
     deps: [install:noscripts]
     cmd: bash scripts/test-composite-action-lint.sh
 
+  test:gitleaks-contract:
+    desc: Test that the secret-scanning allowlist cannot swallow a real credential
+    aliases: [tgl, gitleaks]
+    cmd: bash scripts/test-gitleaks-contract.sh
+
   test:coverage:
     desc: Run tests with coverage
     aliases: [tc]
@@ -198,6 +204,7 @@ tasks:
       - task: test:typegen-pin
       - task: test:tool-pins
       - task: test:composite-actions
+      - task: test:gitleaks-contract
 
   test:watch:
     desc: Run tests in watch mode

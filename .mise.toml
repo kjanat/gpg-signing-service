@@ -11,6 +11,13 @@
 #   * tombi     rewrites TOML -- .dprint.jsonc shells out to it for *.toml
 #   * golangci-lint  rewrites Go -- .dprint.jsonc shells out to `golangci-lint fmt`
 #
+# gitleaks is the one reader that is pinned anyway, because for it the version
+# *is* the contract: gitleaks-action@v3 defaults GITLEAKS_VERSION to 8.24.3, and
+# 8.24.3 silently ignores the `[[allowlists]]` form and `condition = "AND"` that
+# newer releases honour. .gitleaks.toml is written for the semantics of the
+# version CI actually runs, so scripts/test-gitleaks-contract.sh has to read it
+# with that same version rather than with whatever resolved today (#145).
+#
 # wrangler is deliberately the same version bun.lock resolves, not merely some
 # fixed one: `wrangler types` stamps its own workerd into the generated header,
 # so two channels at two versions are two producers again. The two channels
@@ -23,6 +30,7 @@
 actionlint         = "latest"
 biome              = "2.5.11"
 cargo-binstall     = "latest"
+gitleaks           = "8.24.3"
 golangci-lint      = "2.13.2"
 lefthook           = "latest"
 shellcheck         = "latest"
