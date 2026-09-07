@@ -373,12 +373,24 @@ elif [[ ${shipped_count} != "${bare_count}" ]]; then
 	fail "the allowlist changes the result on live files (${bare_count} without it, ${shipped_count} with); fix the fixture's representation instead of excusing it"
 fi
 
+# Every line inside the array that carries a `'''` delimiter has to be a
+# complete, anchored entry on its own. Selecting the recognisable shape and
+# ignoring the rest -- which is what `grep -oE "^  '''.*''',"` did -- makes the
+# check opt-in by formatting: an entry indented four spaces, or a multi-line
+# `'''` literal, was simply not looked at. Both are TOML the parser accepts and
+# `dprint check` passes a multi-line one, so an unanchored head-of-span entry
+# could ship with this case green. Anything that is not exactly one anchored
+# entry per line is reported rather than skipped.
 new_case 'every allowlist regex is anchored to a whole match'
 awk '/^regexes/,/^\]/' "${repo_root}/.gitleaks.toml" \
-	| grep -oE "^  '''.*'''," \
+	| grep -F "'''" \
 	| while IFS= read -r line; do
+		# `grep -o` prints one match per line, so this counts delimiters rather
+		# than delimiter-carrying lines: exactly two, or a second entry is riding
+		# along behind the anchored one this pattern matched.
+		delims="$(printf '%s' "${line}" | grep -oF "'''" | grep -c . || true)"
 		case "${line}" in
-			"  '''\\A"*"\\z''',") ;;
+			*"'''\\A"*"\\z''',") [[ ${delims} == 2 ]] || printf '%s\n' "${line:0:80}" ;;
 			*) printf '%s\n' "${line:0:80}" ;;
 		esac
 	done >"${tmp_dir}/unanchored"
@@ -388,7 +400,7 @@ $(cat "${tmp_dir}/unanchored")"
 fi
 
 new_case 'the allowlist is not empty, so the anchor check has something to check'
-grep -qE "^  '''.*'''," "${repo_root}/.gitleaks.toml" \
+grep -qE "^[[:space:]]*'''.*'''," "${repo_root}/.gitleaks.toml" \
 	|| fail 'no allowlist entries found; either the format changed or the anchor case above is vacuous'
 
 # =============================================================================
