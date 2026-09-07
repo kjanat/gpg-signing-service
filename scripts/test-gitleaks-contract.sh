@@ -38,8 +38,14 @@
 #      can only skip a finding whose *entire* match is the historical text named.
 #      Section 4 shows that anchor is load-bearing by rebuilding the #146 bypass
 #      against the pinned scanner and watching it flip.
+#   C. A plant counts as caught only when the planted material is *inside* a
+#      reported finding. The same span that made A necessary cuts the other way
+#      too: put a literal header more than 64 characters above a key and the
+#      match ends on the key's own BEGIN line, so gitleaks reports one finding
+#      and the key is in none of them. `count > 0` calls that caught, which is
+#      why every assertion here names a needle and reads the report for it.
 #
-# Section 5 then plants freshly generated key material beside every fixture
+# Section 6 then plants freshly generated key material beside every fixture
 # class that survives, including the exact adjacency from the #146 review.
 #
 # Every assertion runs against a scratch repository built from the working tree,
@@ -94,9 +100,14 @@ printf 'gitleaks: %s\n' "${scanner_version}"
 # into `0 findings`, as the first version of this file did, lets a broken config
 # read as a clean repository -- the one wrong answer a secret-scanning gate must
 # never give.
+#
+# A third argument names the report, so a caller can read *what* was found and
+# not merely how much. `scan` is always called from a command substitution, so
+# it cannot hand the path back in a variable -- the subshell's assignment dies
+# with it -- but the file it writes outlives the subshell perfectly well.
 scan() {
-	local root="$1" config="$2" report log rc
-	report="$(mktemp -p "${tmp_dir}")"
+	local root="$1" config="$2" report="${3:-}" log rc
+	[[ -n ${report} ]] || report="$(mktemp -p "${tmp_dir}")"
 	log="$(mktemp -p "${tmp_dir}")"
 	rm -f "${report}"
 	rc=0
@@ -131,15 +142,44 @@ expect_clean() {
 	esac
 }
 
+# Is this needle inside a reported finding?
+#
+# A finding is not the same as *this* finding, and the difference is the whole
+# reason this file exists. `private-key` runs from an armor header to the next
+# `KEY-----` at least 64 characters later, so a literal header sitting more than
+# 64 characters *above* a planted key ends its span on the key's own BEGIN line:
+# gitleaks reports one finding, the key body is inside none of them, and a
+# `count > 0` assertion calls that caught. Section 4 measures exactly that, and
+# the case after it runs this assertion against the result and requires it to
+# say no.
+#
+# gitleaks writes one `"Match"` and one `"Secret"` per finding, each on its own
+# line with the newlines escaped, so a fixed-string search over those two fields
+# asks the right question and cannot be answered by a file path or a rule id.
+# Read into a variable first: `grep ... | grep -q` exits the reader on its first
+# match, which SIGPIPEs the writer, which `pipefail` then reports as a failure.
+reported_in() {
+	local fields
+	fields="$(grep -E '^[[:space:]]*"(Match|Secret)":' "$1" || true)"
+	grep -qF -- "$2" <<<"${fields}"
+}
+
+report_seq=0
+
 expect_caught() {
-	local label="$1" root="$2" config result
-	config="${3:-"${root}/.gitleaks.toml"}"
+	local label="$1" root="$2" needle="$3" config result report
+	config="${4:-"${root}/.gitleaks.toml"}"
 	new_case "${label}"
-	result="$(scan "${root}" "${config}")"
+	report_seq=$((report_seq + 1))
+	report="${tmp_dir}/caught-${report_seq}.json"
+	result="$(scan "${root}" "${config}" "${report}")"
 	case "${result}" in
 		error) fail 'the scanner did not run, so nothing was checked' ;;
 		0) fail 'the planted secret was not reported' ;;
-		*) ;;
+		*)
+			reported_in "${report}" "${needle}" \
+				|| fail "${result} finding(s) were reported and the planted secret is in none of them; the scanner saw something adjacent, not the secret"
+			;;
 	esac
 }
 
@@ -186,14 +226,66 @@ printf 'title = "bare"\n[extend]\nuseDefault = true\n' >"${bare_config}"
 # Generated per run rather than committed. A gate that ships a realistic secret
 # in its own source is a gate that trips the scanner it is testing.
 
+# `head -c N /dev/urandom | base64 | tr -dc CLASS | head -c N` asks for N
+# characters and returns however many happen to survive the filter, which is
+# always fewer and sometimes far fewer: over 300 runs the AWS id reached its full
+# 16-character suffix 19 times. `aws-access-token` matches `AKIA` plus exactly
+# 16, so in the other 94% it could not fire at all and the case named for it
+# passed on `generic-api-key` picking up the assignment beside it instead -- a
+# green case measuring a different rule.
+#
+# Draw until the requested length exists. `head` is upstream of `tr` here, so
+# neither end of the pipe is closed early and `pipefail` has no SIGPIPE to trip
+# on; 256 bytes yields ~36 characters of `A-Z0-9`, so this almost never loops.
+rand_alnum() {
+	local n="$1" class="$2" out=""
+	while [[ ${#out} -lt ${n} ]]; do
+		out+="$(LC_ALL=C head -c 256 /dev/urandom | LC_ALL=C tr -dc "${class}" || true)"
+	done
+	printf '%s' "${out:0:n}"
+}
+
 probe_pem="${tmp_dir}/probe.pem"
 openssl genrsa -traditional -out "${probe_pem}" 2048 2>/dev/null \
 	|| openssl genrsa -out "${probe_pem}" 2048 2>/dev/null
 probe_pem_body="$(sed -n '2p' "${probe_pem}")"
 probe_b64="$(head -c 48 /dev/urandom | base64 | tr -d '\n')"
-probe_aws_id="AKIA$(head -c 16 /dev/urandom | base64 | tr -dc 'A-Z0-9' | head -c 16)"
+probe_aws_id="AKIA$(rand_alnum 16 'A-Z0-9')"
 probe_aws_key="$(head -c 40 /dev/urandom | base64 | head -c 40)"
-probe_pat="ghp_$(head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 36)"
+probe_pat="ghp_$(rand_alnum 36 'A-Za-z0-9')"
+
+# -- and the probes have to trip the rules they are named for -----------------
+#
+# A probe one character short of its rule is not a weaker test, it is a test of
+# something else. These two are length-exact rules, so the shape is checkable
+# without a scan; the case below then confirms the id really does reach
+# `aws-access-token` and not some neighbouring generic match.
+
+new_case 'the generated AWS id has the exact shape aws-access-token requires'
+[[ ${probe_aws_id} =~ ^AKIA[A-Z0-9]{16}$ ]] \
+	|| fail "the AWS probe generated ${#probe_aws_id} characters ('${probe_aws_id}'); the rule needs AKIA plus exactly 16"
+
+new_case 'the generated GitHub token has the exact shape its rule requires'
+[[ ${probe_pat} =~ ^ghp_[A-Za-z0-9]{36}$ ]] \
+	|| fail "the PAT probe generated ${#probe_pat} characters; the rule needs ghp_ plus exactly 36"
+
+aws_only="${tmp_dir}/aws-only"
+mkdir -p "${aws_only}"
+printf '%s\n' "${probe_aws_id}" >"${aws_only}/id.txt"
+commit_scratch "${aws_only}"
+
+new_case 'the generated AWS id trips aws-access-token on its own'
+aws_report="${tmp_dir}/aws.json"
+aws_count="$(scan "${aws_only}" "${bare_config}" "${aws_report}")"
+if [[ ${aws_count} == "error" ]]; then
+	fail 'the scanner did not run'
+elif [[ ${aws_count} == "0" ]]; then
+	fail "aws-access-token did not fire on '${probe_aws_id}' with nothing else on the line, so the plant that names it is exercising some other rule"
+elif ! grep -q '"RuleID": "aws-access-token"' "${aws_report}"; then
+	fail "the id was reported as $(sed -nE 's/.*"RuleID": "([^"]*)".*/\1/p' "${aws_report}" | head -n1) rather than aws-access-token"
+elif ! reported_in "${aws_report}" "${probe_aws_id}"; then
+	fail 'aws-access-token fired, but the id itself is in no finding'
+fi
 
 # This file is itself scanned by the thing it tests, so it must not contain an
 # armor line -- a header sitting next to a body, or even next to a footer, is a
@@ -275,10 +367,38 @@ done
 # than printed (API.md, DEVELOPER_GUIDE.md, docs/github-app.md).
 new_case 'no tracked file spells out a private-key armor header'
 literal_header="$(printf -- '-{5}BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY( BLOCK)?-{5}')"
-offenders="$(git -C "${repo_root}" grep -lE -e "${literal_header}" -- . || true)"
+# `-i`, because the rule carries `(?i)`. The same marker in lower case opens the
+# very same swallowing span, and a case-sensitive sweep walks straight past it --
+# a structural check named for the detector has to match the case the detector
+# matches. The corpus has no lower-case header to notice that with, so the two
+# cases below build one at run time and measure both halves. (Spelling one out
+# here, even in a comment, is what this very case exists to forbid: the first
+# draft of this comment made the tracked tree dirty and three cases went red.)
+offenders="$(git -C "${repo_root}" grep -lEi -e "${literal_header}" -- . || true)"
 if [[ -n ${offenders} ]]; then
 	fail "these files open a private-key match that can swallow a real key below it; build the marker instead (src/utils/armor.ts):
 ${offenders}"
+fi
+
+lowercase="${tmp_dir}/lowercase-header"
+mkdir -p "${lowercase}"
+{
+	armor BEGIN 'RSA PRIVATE KEY' | LC_ALL=C tr '[:upper:]' '[:lower:]'
+	printf '\n%s\n' "${probe_pem_body}"
+	armor END 'RSA PRIVATE KEY' | LC_ALL=C tr '[:upper:]' '[:lower:]'
+	printf '\n'
+} >"${lowercase}/k.txt"
+commit_scratch "${lowercase}"
+
+expect_caught 'a lowercase armor header is a private-key finding all the same' \
+	"${lowercase}" "${probe_pem_body}" "${bare_config}"
+
+new_case 'mutant: the sweep pattern without -i walks past that same header'
+if grep -qE -e "${literal_header}" "${lowercase}/k.txt"; then
+	fail 'the pattern matched a lowercase header case-sensitively, so -i is not what is doing the work here and this case proves nothing'
+fi
+if ! grep -qEi -e "${literal_header}" "${lowercase}/k.txt"; then
+	fail 'the sweep pattern does not match a lowercase header even with -i, so the tracked-file sweep above cannot see one'
 fi
 
 new_case 'the global allowlist uses the singular [allowlist] table'
@@ -314,7 +434,7 @@ fi
 
 semantics="${tmp_dir}/semantics"
 mkdir -p "${semantics}"
-probe_marker="GATEPROBE-$(head -c 12 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 12)"
+probe_marker="GATEPROBE-$(rand_alnum 12 'A-Za-z0-9')"
 printf 'value = %s\n' "${probe_marker}" >"${semantics}/probe.txt"
 commit_scratch "${semantics}"
 
@@ -431,7 +551,77 @@ unanchored_count="$(scan "${bypass}" "${tmp_dir}/unanchored.toml")"
 [[ ${unanchored_count} == "0" ]] \
 	|| fail "expected the unanchored entry to swallow the key (got ${unanchored_count}); if the scanner stopped matching allowlist regexes as substrings, the anchoring rule can be revisited"
 
-expect_caught 'the same entry, anchored, reports the key' "${bypass}" "${tmp_dir}/anchored.toml"
+expect_caught 'the same entry, anchored, reports the key' \
+	"${bypass}" "${probe_pem_body}" "${tmp_dir}/anchored.toml"
+
+# --- the other half of the span, which no allowlist reaches -------------------
+#
+# Above, the header and the key are adjacent, so the span has to run *through*
+# the key to find its next `KEY-----` and the key is inside the match. Push them
+# apart -- one comment line is enough, the minimum span is 64 characters -- and
+# the span stops at the planted key's own BEGIN instead. gitleaks still reports
+# exactly one finding, and the key body is inside none of them.
+#
+# No configuration is in play here: this is the bare `useDefault` config, so it
+# is a property of the rule rather than of anything this repository writes. It
+# is why `expect_caught` takes a needle, and it is a second, independent reason
+# why no tracked file may spell an armor header out -- the allowlist could be
+# perfect and this would still hide a key.
+
+separated="${tmp_dir}/separated"
+mkdir -p "${separated}/src/__tests__"
+{
+	printf 'const header = "%s\\n";\n' "${pgp_begin}"
+	printf '// a comment line long enough to put more than 64 characters between the two\n'
+	printf 'const deployKey = %s' "${backtick}"
+	cat "${probe_pem}"
+	printf '%s;\n' "${backtick}"
+} >"${separated}/src/__tests__/fixture.test.ts"
+commit_scratch "${separated}"
+
+new_case 'mutant: a literal header far above a key reports a finding that is not the key'
+separated_report="${tmp_dir}/separated.json"
+separated_count="$(scan "${separated}" "${bare_config}" "${separated_report}")"
+if [[ ${separated_count} == "error" ]]; then
+	fail 'the scanner did not run'
+elif [[ ${separated_count} == "0" ]]; then
+	fail 'nothing at all was reported; the span mechanics have changed and section 4 needs re-measuring'
+elif reported_in "${separated_report}" "${probe_pem_body}"; then
+	fail "gitleaks ${scanner_version} now reports the key itself across a gap; the needle check is no longer load-bearing here and this case should be revisited"
+fi
+
+# The regression for the assertion rather than for the config. That corpus is
+# precisely the shape a count-only `expect_caught` called caught -- one finding,
+# no key -- so run the real assertion against it and require it to say no. If it
+# ever stops saying no, the needle check has decayed back into a count and every
+# plant in section 6 is decorative. The probe's own failure is expected, so it
+# is discounted rather than counted.
+guard_failures="${failures}"
+expect_caught '(probe: a finding that is not the planted key -- expected to fail)' \
+	"${separated}" "${probe_pem_body}" "${bare_config}" 2>/dev/null
+guard_rejected=$((failures > guard_failures ? 1 : 0))
+failures="${guard_failures}"
+
+new_case 'expect_caught rejects a finding that does not contain the planted secret'
+[[ ${guard_rejected} == 1 ]] \
+	|| fail 'a finding with none of the planted secret in it was accepted as a catch; expect_caught is counting again (#146 review)'
+
+# ...and the same file with the marker assembled instead of spelled out, which
+# is what the tree actually does. No literal header, so no span for the key to
+# hide inside: the key is its own finding and is reported as itself.
+built="${tmp_dir}/built"
+mkdir -p "${built}/src/__tests__"
+{
+	printf 'const header = armorMarker("BEGIN", "PGP PRIVATE KEY BLOCK");\n'
+	printf '// a comment line long enough to put more than 64 characters between the two\n'
+	printf 'const deployKey = %s' "${backtick}"
+	cat "${probe_pem}"
+	printf '%s;\n' "${backtick}"
+} >"${built}/src/__tests__/fixture.test.ts"
+commit_scratch "${built}"
+
+expect_caught 'the same file with the marker built at run time reports the key itself' \
+	"${built}" "${probe_pem_body}" "${bare_config}"
 
 # =============================================================================
 # 5. The scanner's own failures are not clean results
@@ -452,13 +642,18 @@ expect_error 'a config that does not exist is an error, not a clean scan' \
 # classes that survives in the tree. A blanket path exclusion passes the first
 # group; the #146 allowlist passed the second.
 
+# The fourth argument is the needle: the piece of the planted material that has
+# to turn up inside a finding. It defaults to the key body because most of these
+# plant a PEM, but a plant whose payload is a token has to name that token --
+# otherwise `generic-api-key` matching the assignment next to it answers for the
+# rule the case is named after.
 plant() {
-	local label="$1" rel="$2" payload="$3" root
+	local label="$1" rel="$2" payload="$3" needle="${4:-${probe_pem_body}}" root
 	root="$(scratch_root "plant-$(printf '%s' "${label}" | tr -c 'a-zA-Z0-9' '-')")"
 	mkdir -p "$(dirname "${root}/${rel}")"
 	printf '%s\n' "${payload}" >>"${root}/${rel}"
 	commit_scratch "${root}"
-	expect_caught "planted: ${label}" "${root}"
+	expect_caught "planted: ${label}" "${root}" "${needle}"
 }
 
 # -- by location --------------------------------------------------------------
@@ -479,10 +674,12 @@ plant 'RSA private key in a path no allowlist ever named' 'docs/planted.md' \
 	"$(cat "${probe_pem}")"
 
 plant 'AWS credentials in a test file' 'src/__tests__/planted.test.ts' \
-	"const id = \"${probe_aws_id}\"; const secret = \"${probe_aws_key}\";"
+	"const id = \"${probe_aws_id}\"; const secret = \"${probe_aws_key}\";" \
+	"${probe_aws_id}"
 
 plant 'a GitHub token in a test file' 'src/__tests__/planted.test.ts' \
-	"const token = \"${probe_pat}\";"
+	"const token = \"${probe_pat}\";" \
+	"${probe_pat}"
 
 # -- adjacency: a real key next to each fixture class that survives -------------
 #
@@ -547,10 +744,12 @@ plant 'a real key beside the Go CLI armor helper' 'client/cmd/gpg-sign/armor_tes
 	"$(sed 's|^|// |' "${probe_pem}")"
 
 plant 'a real bearer token beside the documented placeholder' 'README.md' \
-	"curl -H \"Authorization: Bearer ${probe_pat}\" https://example.invalid/admin/keys"
+	"curl -H \"Authorization: Bearer ${probe_pat}\" https://example.invalid/admin/keys" \
+	"${probe_pat}"
 
 plant 'a real bearer token beside the generate-key.sh instructions' 'scripts/generate-key.sh' \
-	"# curl -H \"Authorization: Bearer ${probe_pat}\" https://example.invalid/admin/keys"
+	"# curl -H \"Authorization: Bearer ${probe_pat}\" https://example.invalid/admin/keys" \
+	"${probe_pat}"
 
 # -- mimicry ------------------------------------------------------------------
 #
@@ -564,12 +763,14 @@ plant 'key material behind the armor-header-as-string-literal shape' \
 
 plant 'key material behind the placeholder-body shape' \
 	'src/__tests__/planted.test.ts' \
-	"$(printf 'const k = "%s\\n%s\\n%s";' "${pgp_begin}" "${probe_b64}" "${pgp_end}")"
+	"$(printf 'const k = "%s\\n%s\\n%s";' "${pgp_begin}" "${probe_b64}" "${pgp_end}")" \
+	"${probe_b64}"
 
 plant 'a PGP key that is not the historical Ed25519 fixture' \
 	'src/__tests__/planted.test.ts' \
 	"$(printf 'const k = %s%s\n\n%s%s\n=abcd\n%s%s;' \
-		"${backtick}" "${pgp_begin}" "${probe_b64}" "${probe_b64}" "${pgp_end}" "${backtick}")"
+		"${backtick}" "${pgp_begin}" "${probe_b64}" "${probe_b64}" "${pgp_end}" "${backtick}")" \
+	"${probe_b64}"
 
 # -- the one file that cannot be planted in -----------------------------------
 #
