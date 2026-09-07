@@ -1,35 +1,123 @@
-# Gitleaks configuration for GPG Signing Service
+# Gitleaks configuration for GPG Signing Service.
+#
+# ## The one rule this file has to obey
+#
+# Nothing here may be able to suppress a finding it was not written for.
+#
+# gitleaks tests an allowlist regex against the finding with `MatchString`,
+# which is a *substring* test, and the default `private-key` rule is
+#
+#   -{5}BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY( BLOCK)?-{5}[\s\S-]{64,}?KEY( BLOCK)?-{4}
+#
+# so one match can span from a fixture's armor header all the way to some later
+# `KEY-{5}`, swallowing whatever sits in between. An allowlist entry that
+# matches only the *head* of such a span excuses the entire span -- real key
+# bytes included. That is fail-open, and it is how the first attempt at this
+# file (#146) hid a freshly generated RSA private key committed next to a test
+# fixture while CI stayed green.
+#
+# Two things keep that from being possible now:
+#
+#   1. **The tracked tree needs no suppression at all.** Every armor marker in
+#      a test, script or document is assembled at run time
+#      (`src/__tests__/helpers/armor.ts`, `armor()` in `scripts/key-size.py`),
+#      or described rather than printed (API.md, DEVELOPER_GUIDE.md), so the
+#      detector never fires on a fixture and there is nothing to excuse. The
+#      contract gate proves this: it scans the corpus with this config and with
+#      a bare `useDefault` config and requires the two to agree, so any entry
+#      below that ever starts reaching live code fails the build.
+#
+#   2. **Every entry is fully anchored.** `\A...\z` means gitleaks skips a
+#      finding only when the *entire* rule match is byte-for-byte the historical
+#      text named. A real key added inside such a span changes the span; a real
+#      key added after it forms its own match. Neither is excused. The gate
+#      asserts the anchors, so an unanchored entry cannot be added by accident.
+#
+# ## Version contract (issue #145)
+#
+# `gitleaks/gitleaks-action@v3` defaults `GITLEAKS_VERSION` to **8.24.3**, and
+# 8.24.3 *silently ignores* the `[[allowlists]]` array-of-tables form that newer
+# releases document -- it honours only the singular `[allowlist]` table. It also
+# ignores `condition = "AND"`, so a `paths` + `regexes` allowlist degrades there
+# into a blanket path exclusion. This file therefore uses the singular table and
+# `regexes` only: no `paths`, no `commits`, no `condition`. `.mise.toml` pins
+# the scanner to 8.24.3 and both workflows pass `GITLEAKS_VERSION: "8.24.3"`
+# explicitly, so nothing here depends on an upstream default;
+# `scripts/test-gitleaks-contract.sh` asserts all three agree.
+#
+# ## The historical corpus
+#
+# The entries below exist only because `gitleaks-action` scans
+# `git log -p -U0 --full-history --all`, which reaches every pre-fix commit --
+# and the tags and abandoned branches that survived the #111 rewrite. They pin,
+# byte for byte, the fixture spans those commits contain. None is reachable from
+# the current tree. They are content-keyed rather than SHA-keyed so a future
+# history rewrite cannot stale them out the way it staled `.gitleaksignore`, and
+# the armor markers inside them are written `-{5}` rather than spelled out so
+# this file does not become a finding of the rule it configures.
+#
+# Where a match starts and stops is itself version-dependent -- 8.30.1 ends a
+# `private-key` span at the armor footer where 8.24.3 runs past it to the next
+# `KEY-----` -- so the list carries both sets of boundaries. Verified clean, tree
+# and full `--all` history, under 8.24.3, 8.25.0, 8.28.0 and 8.30.1. A scanner
+# whose spans match neither reports the fixtures again, which is failing closed.
+#
+# Adding one is not a routine act. If a scan reports something new: classify it,
+# and if it is a fixture, change the fixture's representation the way the ones
+# above were changed. An entry here is only correct for text that is already
+# immutable.
 title = "gitleaks config"
 
 [extend]
 useDefault = true
 
-# Allowlist for test files and documentation with PGP examples
-[[allowlists]]
-description = "Test fixtures and examples with PGP keys"
-paths       = [
-  '''src/__tests__/.*\.test\.ts$''',
-  '''scripts/.*''',
-  '''API\.md$''',
-  '''README\.md$''',
-  '''examples/.*''',
+[allowlist]
+description = "Fixture spans that exist only in pre-fix history (#145, #146)"
+regexTarget = "match"
+regexes     = [
+  '''\A-{5}BEGIN ENCRYPTED PRIVATE KEY-{5}\\nAAAA\\n-{5}END ENCRYPTED PRIVATE KEY-{5}"\],\n\t\t\["a certificate", "-{5}BEGIN CERTIFICATE-{5}\\nAAAA\\n-{5}END CERTIFICATE-{5}"\],\n\t\]\)\("refuses %s as a misconfiguration", \(_name, pem\) => \{\n\t\ttry \{\n\t\t\ttoPkcs8Pem\(pem\);\n\t\t\texpect\.unreachable\("expected a throw"\);\n\t\t\} catch \(error\) \{\n\t\t\texpect\(error\)\.toBeInstanceOf\(GitHubAppError\);\n\t\t\texpect\(\(error as GitHubAppError\)\.misconfigured\)\.toBe\(true\);\n\t\t\}\n\t\}\);\n\n\tit\("encodes a short DER length as well as a long one", \(\) => \{\n\t\t// A 2048-bit key puts every length in DER's long form, so the short form —\n\t\t// contents under 128 bytes — is not reached by any real input\. A length\n\t\t// encoder that only handles its expected inputs is how a later reuse\n\t\t// produces silently malformed DER, so the branch is exercised directly\.\n\t\t//\n\t\t// Nothing here parses the body: `toPkcs8Pem` copies the key material\n\t\t// through untouched and only adds a header, which is exactly what makes a\n\t\t// synthetic body a valid probe of the wrapping\.\n\t\tconst tiny = new Uint8Array\(8\)\.fill\(0x2a\);\n\t\tconst wrapped = fromPem\(toPkcs8Pem\(toPem\("RSA PRIVATE KEY", tiny\)\)\);\n\n\t\t// SEQUENCE, then a single-byte length: 3 \(version\) \+ 15 \(algorithm\) \+ 2 \+ 8\.\n\t\texpect\(wrapped\[0\]\)\.toBe\(0x30\);\n\t\texpect\(wrapped\[1\]\)\.toBe\(28\);\n\t\texpect\(wrapped\.slice\(-8\)\)\.toEqual\(tiny\);\n\t\}\);\n\n\tit\("refuses a PKCS#1 header whose body is not base64", \(\) => \{\n\t\texpect\(\(\) => toPkcs8Pem\("-{5}BEGIN RSA PRIVATE KEY-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}", "-{5}BEGIN INVALID-{5}"\);\n\t\t\texpect\(\(\) => createArmoredPrivateKey\(invalidKey\)\)\.toThrow\("Invalid ArmoredPrivateKey: missing PGP header"\);\n\t\t\}\);\n\n\t\tit\("should reject completely empty key", \(\) => \{\n\t\t\texpect\(\(\) => createArmoredPrivateKey\(""\)\)\.toThrow\("Invalid ArmoredPrivateKey: missing PGP header"\);\n\t\t\}\);\n\n\t\tit\("should reject key with only header", \(\) => \{\n\t\t\tconst keyHeaderOnly = "-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}", keyId: "5C0BE7E5700F0BB1" \}\),\n\t\},\n\t\{\n\t\tmethod: "POST",\n\t\ttemplate: "/admin/keys/x509",\n\t\tpath: \(\) => "/admin/keys/x509",\n\t\tbody: \(\) =>\n\t\t\tJSON\.stringify\(\{\n\t\t\t\tkeyId: "5C0BE7E5700F0BB2",\n\t\t\t\tprivateKeyPem: "-{5}BEGIN PRIVATE KEY-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}",\n        "-{5}BEGIN INVALID-{5}",\n      \);\n      expect\(\(\) => createArmoredPrivateKey\(invalidKey\)\)\.toThrow\(\n        "Invalid ArmoredPrivateKey: missing PGP header",\n      \);\n    \}\);\n\n    it\("should reject completely empty key", \(\) => \{\n      expect\(\(\) => createArmoredPrivateKey\(""\)\)\.toThrow\(\n        "Invalid ArmoredPrivateKey: missing PGP header",\n      \);\n    \}\);\n\n    it\("should reject key with only header", \(\) => \{\n      const keyHeaderOnly = "-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}",\n\t\t"",\n\t\t"lQOYBGabcdEFghIJklMNopQRstUVwxYZ0123456789abcdefghijklmnopqrstuv",\n\t\t"-{5}END PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}",\n\t\t\t\t"",\n\t\t\t\t"!!!not-base64!!!",\n\t\t\t\t"@@@also-not-base64@@@",\n\t\t\t\t"-{5}END PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}"\);\n\t\texpect\(result\.keyId\)\.toBe\("A1B2C3D4E5F67890"\);\n\t\texpect\(result\.fingerprint\)\.toBe\("0123456789ABCDEF0123456789ABCDEF01234567"\);\n\t\texpect\(result\.algorithm\)\.toBe\("RSA"\);\n\t\texpect\(result\.createdAt\)\.toBeTruthy\(\);\n\t\}\);\n\n\tit\("should set createdAt to current time", \(\) => \{\n\t\tconst validPrivateKey = `-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}"\.length \+ "-{5}END PGP PRIVATE KEY BLOCK-{5}"\.length \+ 2; // \+2 for newlines\n\t\t\tconst contentSize = LIMITS\.MAX_KEY_SIZE - headerFooterSize;\n\t\t\tconst padding = new Array\(contentSize\)\.fill\("X"\)\.join\(""\);\n\t\t\tconst keyAtMax = `-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\\n"\n    armor_footer = "-{5}END PGP PRIVATE KEY BLOCK-{5}\\n"\n    total_chars = \(\n        len\(armor_header\) \+ base64_chars \+ lines \+ len\(armor_footer\) \+ 200\n    \)  # \+200 for Version/Comment headers\n\n    print\(f"\{key_type\}:"\)\n    print\(f"  Binary size \(approx\): \{int\(estimated_pgp_binary\)\} bytes"\)\n    print\(f"  Base64 encoded: \{int\(base64_chars\)\} characters"\)\n    print\(f"  Armored lines \(64 chars/line\): ~\{lines\} lines of base64"\)\n    print\(f"  Total armored lines: ~\{total_lines\} lines \(including headers\)"\)\n    print\(f"  Total armored size: ~\{int\(total_chars\)\} characters\\n"\)\n\nprint\("\\n### EdDSA KEYS \(PGP format\) ###\\n"\)\n\nfor key_type, data in eddsa_key_data\.items\(\):\n    # PGP EdDSA keys are much smaller\n    # Rough estimate for PGP packet including metadata\n    estimated_pgp_binary = \(\n        data\["private_key_bytes"\] \* 2\.5\n    \)  # very rough estimate with PGP overhead\n\n    base64_chars = calculate_base64_length\(estimated_pgp_binary\)\n    lines = math\.ceil\(base64_chars / 64\)\n    total_lines = lines \+ 8\n\n    armor_header = "-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\\nVersion: OpenPGP\.js v6\.0\.0\\n\.\.\.\\n-{5}END PGP PRIVATE KEY BLOCK-{5}"\n\}\n```\n\n\*\*Response\*\* \(201 Created\):\n\n```json\n\{\n  "success": true,\n  "keyId": "signing-key-v1",\n  "fingerprint": "1234567890ABCDEF1234567890ABCDEF12345678",\n  "algorithm": "rsa4096",\n  "userId": "Signing Service <signer@example\.com>"\n\}\n```\n\n\*\*Error\*\* \(400 - Validation\):\n\n```json\n\{ "error": "Missing armoredPrivateKey or keyId", "code": "INVALID_REQUEST" \}\n```\n\n\*\*Error\*\* \(500 - Processing\):\n\n```json\n\{\n  "error": "Invalid key format",\n  "code": "KEY_UPLOAD_ERROR",\n  "requestId": "550e8400-e29b-41d4-a716-446655440000"\n\}\n```\n\n---\n\n#### GET /admin/keys\n\nList all stored signing keys \(metadata only, no private key exposure\)\.\n\n\*\*Authentication\*\*: Bearer Token\n\n\*\*Response\*\* \(200 OK\):\n\n```json\n\{\n  "keys": \[\n    \{\n      "keyId": "signing-key-v1",\n      "fingerprint": "1234567890ABCDEF1234567890ABCDEF12345678",\n      "algorithm": "rsa4096",\n      "createdAt": "2024-01-15T10:30:45\.123Z"\n    \},\n    \{\n      "keyId": "signing-key-v2",\n      "fingerprint": "ABCDEF1234567890ABCDEF1234567890ABCDEF12",\n      "algorithm": "ed25519",\n      "createdAt": "2024-01-10T14:20:30\.456Z"\n    \}\n  \]\n\}\n```\n\n---\n\n#### GET /admin/keys/\{keyId\}/public\n\nGet the public key component of a stored private key\.\n\n\*\*Authentication\*\*: Bearer Token\n\n\*\*Path Parameters\*\*:\n\n- `keyId`: The key identifier\n\n\*\*Response\*\* \(200 OK\):\n\n```text\nContent-Type: application/pgp-keys\n\n-{5}BEGIN PGP PUBLIC KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\\nXX\\n=XX\\n-{5}END PGP PRIVATE KEY BLOCK-{5}";\n      expect\(\(\) => ArmoredPrivateKeySchema\.parse\(shortKey\)\)\.toThrow\(\n        "Private key too short - minimum 100 characters",\n      \);\n    \}\);\n\n    it\("should reject key > 10,000 chars", \(\) => \{\n      const header = "-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\\nXX\\n=XX\\n-{5}END PGP PRIVATE KEY BLOCK-{5}";\n\t\t\texpect\(\(\) => ArmoredPrivateKeySchema\.parse\(shortKey\)\)\.toThrow\("Private key too short - minimum 100 characters"\);\n\t\t\}\);\n\n\t\tit\("should reject key > 10,000 chars", \(\) => \{\n\t\t\tconst header = "-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\\n\\n";\n      const footer = "\\n=ABCD\\n-{5}END PGP PRIVATE KEY BLOCK-{5}";\n      const base64Lines = Math\.ceil\(\(350 - header\.length - footer\.length\) / 65\); // 64 chars \+ newline\n      const data = Array\(base64Lines\)\.fill\("A"\.repeat\(64\)\)\.join\("\\n"\);\n\n      const key = header \+ data \+ footer;\n      // Adjust to exactly 350\n      const adjusted = `\$\{\n        key\.slice\(\n          0,\n          350 - 35,\n        \)\n      \}\\n=ABCD\\n-{5}END PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\\n\\n";\n\t\t\tconst footer = "\\n=ABCD\\n-{5}END PGP PRIVATE KEY BLOCK-{5}";\n\t\t\tconst base64Lines = Math\.ceil\(\(350 - header\.length - footer\.length\) / 65\); // 64 chars \+ newline\n\t\t\tconst data = Array\(base64Lines\)\.fill\("A"\.repeat\(64\)\)\.join\("\\n"\);\n\n\t\t\tconst key = header \+ data \+ footer;\n\t\t\t// Adjust to exactly 350\n\t\t\tconst adjusted = `\$\{key\.slice\(0, 350 - 35\)\}\\n=ABCD\\n-{5}END PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\n    <<<\.\.\.INSERT YOUR GPG KEY HERE\.\.\.>>>\n    -{5}END PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\nComment: Automated signing key\n\nlIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw\nd6i3vJf\+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA\nWHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd\+P\+7SjzApULQ2S2FqIEtv\nd2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw\+\niJkEExYKAEEWIQQRTd3LSMIzSP5K\+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL\n=oEGo\n-{5}END PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\nSHORT\n-{5}END PGP PRIVATE KEY BLOCK-{5}`;\n      expect\(\(\) => createArmoredPrivateKey\(tooSmallKey\)\)\.toThrow\(\n        `Invalid ArmoredPrivateKey length: \$\{tooSmallKey\.length\}`,\n      \);\n    \}\);\n\n    it\("should reject key above maximum size", \(\) => \{\n      const tooLargeKey = `-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\nVersion: OpenPGP v2\.0\.0\nComment: Some comment here\n\nlIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw\nd6i3vJf\+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA\nWHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd\+P\+7SjzApULQ2S2FqIEtv\nd2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw\+\niJkEExYKAEEWIQQRTd3LSMIzSP5K\+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL\nCQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p\nKIr\+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb\+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy\n7Bfg==\n=oEGo\n-{5}END PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\n\$\{padding\}\n-{5}END PGP PRIVATE KEY BLOCK-{5}`;\n      const result = createArmoredPrivateKey\(keyAtMax\);\n      expect\(result\)\.toBe\(keyAtMax\);\n    \}\);\n\n    it\("should accept valid key with realistic size", \(\) => \{\n      const result = createArmoredPrivateKey\(validKey\);\n      expect\(result\)\.toBe\(validKey\);\n      expect\(validKey\.length\)\.toBeGreaterThanOrEqual\(LIMITS\.MIN_KEY_SIZE\);\n      expect\(validKey\.length\)\.toBeLessThanOrEqual\(LIMITS\.MAX_KEY_SIZE\);\n    \}\);\n\n    it\("should preserve exact key content without modification", \(\) => \{\n      const result = createArmoredPrivateKey\(validKey\);\n      expect\(result\)\.toBe\(validKey\);\n    \}\);\n  \}\);\n\n  describe\("createIdentity", \(\) => \{\n    // Happy paths\n    it\("should create identity from issuer and subject", \(\) => \{\n      const result = createIdentity\("https://github\.com", "123456"\);\n      expect\(result\)\.toBe\("https://github\.com:123456"\);\n    \}\);\n\n    it\("should handle issuer with special characters", \(\) => \{\n      const issuer = "https://github\.com/oauth";\n      const subject = "user@example\.com";\n      const result = createIdentity\(issuer, subject\);\n      expect\(result\)\.toBe\(`\$\{issuer\}:\$\{subject\}`\);\n    \}\);\n\n    it\("should handle numeric subject", \(\) => \{\n      const result = createIdentity\("issuer", "999"\);\n      expect\(result\)\.toBe\("issuer:999"\);\n    \}\);\n\n    it\("should handle empty subject", \(\) => \{\n      const result = createIdentity\("issuer", ""\);\n      expect\(result\)\.toBe\("issuer:"\);\n    \}\);\n\n    it\("should handle empty issuer", \(\) => \{\n      const result = createIdentity\("", "subject"\);\n      expect\(result\)\.toBe\(":subject"\);\n    \}\);\n\n    it\("should handle both empty issuer and subject", \(\) => \{\n      const result = createIdentity\("", ""\);\n      expect\(result\)\.toBe\(":"\);\n    \}\);\n\n    it\("should not validate format, just concatenate", \(\) => \{\n      // Identity creation is simple concatenation, no validation\n      const result = createIdentity\(\n        "invalid issuer format",\n        "invalid:subject:format",\n      \);\n      expect\(result\)\.toBe\("invalid issuer format:invalid:subject:format"\);\n    \}\);\n\n    it\("should handle issuer with colons", \(\) => \{\n      const issuer = "https://example\.com:8080";\n      const subject = "user";\n      const result = createIdentity\(issuer, subject\);\n      expect\(result\)\.toBe\(`\$\{issuer\}:\$\{subject\}`\);\n    \}\);\n\n    it\("should handle very long issuer and subject", \(\) => \{\n      const issuer = "a"\.repeat\(1000\);\n      const subject = "b"\.repeat\(1000\);\n      const result = createIdentity\(issuer, subject\);\n      expect\(result\)\.toBe\(`\$\{issuer\}:\$\{subject\}`\);\n    \}\);\n\n    it\("should handle whitespace in identifiers", \(\) => \{\n      const result = createIdentity\(\n        "issuer with spaces",\n        "subject with spaces",\n      \);\n      expect\(result\)\.toBe\("issuer with spaces:subject with spaces"\);\n    \}\);\n  \}\);\n\n  describe\("Type Branding", \(\) => \{\n    it\("should maintain type distinction for KeyId", \(\) => \{\n      const keyId = createKeyId\("A1B2C3D4E5F60718"\);\n      // Verify it's a string at runtime but typed as KeyId\n      expect\(typeof keyId\)\.toBe\("string"\);\n    \}\);\n\n    it\("should maintain type distinction for KeyFingerprint", \(\) => \{\n      const fingerprint = createKeyFingerprint\(\n        "A1B2C3D4E5F607189A1B2C3D4E5F607189A1B2C3",\n      \);\n      expect\(typeof fingerprint\)\.toBe\("string"\);\n    \}\);\n\n    it\("should maintain type distinction for ArmoredPrivateKey", \(\) => \{\n      const validKey = `-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\n\$\{padding\}\n-{5}END PGP PRIVATE KEY BLOCK-{5}`;\n      const result = createArmoredPrivateKey\(keyAtMin\);\n      expect\(result\)\.toBe\(keyAtMin\);\n      expect\(keyAtMin\.length\)\.toBeGreaterThanOrEqual\(LIMITS\.MIN_KEY_SIZE\);\n    \}\);\n\n    it\("should accept key at maximum size boundary", \(\) => \{\n      // Create a key that is exactly at the maximum size\n      const headerFooterSize = "-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\n\n\n=abcd\n-{5}END PGP PRIVATE KEY BLOCK-{5}`;\n\n      // Will fail on length first \(too short\), then structure\n      expect\(\(\) => ArmoredPrivateKeySchema\.parse\(noData\)\)\.toThrow\(\);\n    \}\);\n\n    it\("should reject without checksum line", \(\) => \{\n      const noChecksum = `-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\n\nlIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw\nd6i3vJf\+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA\nWHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd\+P\+7SjzApULQ2S2FqIEtv\nd2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw\+\niJkEExYKAEEWIQQRTd3LSMIzSP5K\+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL\nCQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p\nKIr\+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb\+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy\n7Bfg==\n=oEGo\n-{5}END PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\n\nlIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw\nd6i3vJf\+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA\nWHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd\+P\+7SjzApULQ2S2FqIEtv\nd2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw\+\niJkEExYKAEEWIQQRTd3LSMIzSP5K\+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL\nCQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p\nKIr\+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb\+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy\n7Bfg==\n=oEGo\n\n-{5}END PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\n\nlIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw\nd6i3vJf\+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA\nWHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd\+P\+7SjzApULQ2S2FqIEtv\nd2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw\+\niJkEExYKAEEWIQQRTd3LSMIzSP5K\+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL\nCQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p\nKIr\+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb\+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy\n7Bfg==\n=oEGo`;\n\n      expect\(\(\) => ArmoredPrivateKeySchema\.parse\(noEndMarker\)\)\.toThrow\(\n        "Must be a valid PGP armored private key with BEGIN/END markers",\n      \);\n    \}\);\n\n    it\("should reject when all lines after header are empty \(no lastLine\)", \(\) => \{\n      const allEmpty = `-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\n\nlIYEaR3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw\nd6i3vJf\+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA\nWHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd\+P\+7SjzApULQ2S2FqIEtv\nd2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw\+\niJYEExYKAD4WIQSAbTobn5V9ZzGVC8pi515USXgV3QUCaR3PygIbAwUJA8JnAAUL\nCQgHAgYVCgkICwIEFgIDAQIeAQIXgAAKCRBi515USXgV3UGkAQDdih4x/\+9oQZ6\+\n0T0Etx1oIerz9Uh8CD0aRP/XzC1wPQD/Ug7bAb9n5RFDqb2Vlq2KK\+uza5vDlDHq\nrxgkrugpagY=\n=gskf\n-{5}END PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\ncontent here without footer`;\n      try \{\n        createArmoredPrivateKey\(invalidKey\);\n      \} catch \(e\) \{\n        const message = String\(\(e as Error\)\.message\);\n        expect\(message\)\.toContain\("Invalid ArmoredPrivateKey"\);\n      \}\n    \}\);\n\n    it\("should provide meaningful error messages for createArmoredPrivateKey - size", \(\) => \{\n      const tinyKey = `-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\ndata data data\n=abcd`;\n\n      expect\(\(\) => ArmoredPrivateKeySchema\.parse\(noEnd\)\)\.toThrow\(\n        "Must be a valid PGP armored private key with BEGIN/END markers",\n      \);\n    \}\);\n\n    it\("should reject with wrong key type \(PUBLIC\)", \(\) => \{\n      const publicKey = `-{5}BEGIN PGP PUBLIC KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\ndata\n=XX\n-{5}END PGP PRIVATE KEY BLOCK-{5}`;\n\n      expect\(\(\) => ArmoredPrivateKeySchema\.parse\(tooShort\)\)\.toThrow\(\);\n    \}\);\n\n    it\("should accept key with Version header", \(\) => \{\n      const keyWithVersion = `-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY-{5}\\ntest\\n-{5}END PGP PRIVATE KEY-{5}",\n      "ABCD1234",\n      "1234567890ABCDEF",\n      "RSA",\n    \);\n\n    expect\(result\.armoredPrivateKey\)\.toContain\("-{5}BEGIN PGP PRIVATE KEY-{5}\z''',
+  '''\A-{5}BEGIN PRIVATE KEY-{5}\\n\$\{btoa\(binary\)\.replace\(/\(\.\{64\}\)/g, "\$1\\n"\)\}\\n-{5}END PRIVATE KEY-{5}\z''',
+  '''\A-{5}BEGIN RSA PRIVATE KEY-{5}",\n\t\t"MIIEowIBAAKCAQEAxGZ1p0Vd7bqu3sJd0Yy0mQeC4rXbT2n1qE8hVw6zKmA5cLbN",\n\t\t"-{5}END RSA PRIVATE KEY-{5}\z''',
+  '''\AKEY-{5}",\n\t\t"MIIEowIBAAKCAQEAxGZ1p0Vd7bqu3sJd0Yy0mQeC4rXbT2n1qE8hVw6zKmA5cLbN"\z''',
+  '''\Acurl -X POST https://your-worker\.workers\.dev/admin/keys \\'\n\t# shellcheck disable=SC1003\n\techo '       -H "Authorization: Bearer YOUR_ADMIN_TOKEN"\z''',
+  '''\Acurl -X POST https://your-worker\.workers\.dev/admin/keys \\'\necho '       -H "Authorization: Bearer YOUR_ADMIN_TOKEN"\z''',
+  '''\Acurl -X POST https://your-worker\.workers\.dev/admin/keys \\\n  -H "Authorization: Bearer YOUR_ADMIN_TOKEN"\z''',
+  '''\AeyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9\.eyJpc3MiOiJodHRwczovL3Rva2VuLmFjdGlvbnMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIiwic3ViIjoicmVwbzprai9nOnJlZjpyZWZzL2hlYWRzL21haW4ifQ\.c2lnbmF0dXJlLWhlcmUtbm90LXJlYWw"\z''',
+  '''\AserviceToken: "gst_Yy1kZW1vLXNlcnZpY2UtdG9rZW4tZW50cm9weS12YWx1ZQ"\z''',
+  '''\AtokenHash: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"\z''',
+  '''\AvalidPrivateKey,\n\t\t\t"A1B2C3D4E5F67890"\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\n\nlIYEaR3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw\nd6i3vJf\+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA\nWHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd\+P\+7SjzApULQ2S2FqIEtv\nwalski \(Automated signing\) <info@kajkowalski\.nl>\niJYEExYKAD4WIQSAbTobn5V9ZzGVC8pi515USXgV3QUCaR3PygIbAwUJA8JnAAUL\nCQgHAgYVCgkICwIEFgIDAQIeAQIXgAAKCRBi515USXgV3UGkAQDdih4x/\+9oQZ6\+\n0T0Etx1oIerz9Uh8CD0aRP/XzC1wPQD/Ug7bAb9n5RFDqb2Vlq2KK\+uza5vDlDHq\nrxgkrugpagY=\n=gskf\n-{5}END PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\n\nlIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw\nd6i3vJf\+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA\nWHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd\+P\+7SjzApULQ2S2FqIEtv\nwalski \(Automated signing\) <info@kajkowalski\.nl>\niJkEExYKAEEWIQQRTd3LSMIzSP5K\+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL\nCQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p\nKIr\+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb\+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy\n7Bfg==\n=oEGo\n-{5}END PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\nVersion: OpenPGP v2\.0\.0\nComment: Some comment here\n\nlIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw\nd6i3vJf\+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA\nWHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd\+P\+7SjzApULQ2S2FqIEtv\nwalski \(Automated signing\) <info@kajkowalski\.nl>\niJkEExYKAEEWIQQRTd3LSMIzSP5K\+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL\nCQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p\nKIr\+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb\+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy\n7Bfg==\n=oEGo\n-{5}END PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\nComment: Automated signing key\n\nlIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw\nd6i3vJf\+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA\nWHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd\+P\+7SjzApULQ2S2FqIEtv\nwalski \(Automated signing\) <info@kajkowalski\.nl>\niJkEExYKAEEWIQQRTd3LSMIzSP5K\+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL\n=oEGo\n-{5}END PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\n\nlIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw\nd6i3vJf\+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA\nWHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd\+P\+7SjzApULQ2S2FqIEtv\nwalski \(Automated signing\) <info@kajkowalski\.nl>\niJkEExYKAEEWIQQRTd3LSMIzSP5K\+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL\nCQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p\nKIr\+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb\+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy\n7Bfg==\n=oEGo`;\n\n      expect\(\(\) => ArmoredPrivateKeySchema\.parse\(noEndMarker\)\)\.toThrow\(\n        "Must be a valid PGP armored private key with BEGIN/END markers",\n      \);\n    \}\);\n\n    it\("should reject when all lines after header are empty \(no lastLine\)", \(\) => \{\n      const allEmpty = `-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\z''',
+  '''\A-{5}BEGIN PGP PRIVATE KEY BLOCK-{5}\n\nlIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw\nd6i3vJf\+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA\nWHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd\+P\+7SjzApULQ2S2FqIEtv\nwalski \(Automated signing\) <info@kajkowalski\.nl>\niJkEExYKAEEWIQQRTd3LSMIzSP5K\+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL\nCQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p\nKIr\+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb\+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy\n7Bfg==\n=oEGo\n\n-{5}END PGP PRIVATE KEY BLOCK-{5}\z''',
 ]
-
-# Skip specific commits that introduced test fixtures
-[[allowlists]]
-description = "Commits introducing test fixtures"
-commits     = [
-  "21e000ed60165c243ec387af3f14cff0169d1f4e",      # scripts/key-size.py PGP test fixture
-  "4b6fe507bc8c2ec1e65d69969f00bd897e1577b9",      # scripts/generate-key.sh example curl
-  "0deeb13eee38f309dbf5137192a616ef52b9993d",      # API.md documentation example
-]
-
-[[allowlists]]
-description = "PGP armor headers in scripts are markers, not key material"
-regexes     = ['''-----BEGIN PGP''']
-paths       = ['''scripts/.*''']
-
-[[allowlists]]
-description = "Placeholder auth tokens in example scripts"
-regexes     = ['''Authorization: Bearer \*+''']
-paths       = ['''scripts/generate-key\.sh''']

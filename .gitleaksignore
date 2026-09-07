@@ -1,53 +1,21 @@
-# Squashed merge commit (v1.0.0) - all test fixtures
-750224378d0013ef01b6f397f53525f4507438ff:README.md:private-key:100
-750224378d0013ef01b6f397f53525f4507438ff:API.md:private-key:303
-750224378d0013ef01b6f397f53525f4507438ff:scripts/key-size.py:private-key:67
-750224378d0013ef01b6f397f53525f4507438ff:scripts/key-size.py:test-fixture-pgp:67
-750224378d0013ef01b6f397f53525f4507438ff:scripts/key-size.py:test-fixture-pgp:93
-750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/branch-coverage.test.ts:private-key:361
-750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/branch-coverage.test.ts:private-key:441
-750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/schemas.test.ts:private-key:21
-750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/schemas.test.ts:private-key:170
-750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/schemas.test.ts:private-key:189
-750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/schemas.test.ts:private-key:220
-750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/schemas.test.ts:private-key:240
-750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/schemas.test.ts:private-key:262
-750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/schemas.test.ts:private-key:287
-750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/schemas.test.ts:private-key:307
-750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/schemas.test.ts:private-key:327
-750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/schemas.test.ts:private-key:354
-750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/signing.test.ts:private-key:248
-750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/signing.test.ts:private-key:278
-750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/branded.test.ts:private-key:139
-750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/branded.test.ts:private-key:159
-750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/branded.test.ts:private-key:180
-750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/branded.test.ts:private-key:231
-750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/branded.test.ts:private-key:255
-750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/branded.test.ts:private-key:270
-750224378d0013ef01b6f397f53525f4507438ff:src/__tests__/branded.test.ts:private-key:422
-
-# Legacy pre-merge commits (can be removed)
-0deeb13eee38f309dbf5137192a616ef52b9993d:API.md:private-key:303
-0deeb13eee38f309dbf5137192a616ef52b9993d:scripts/generate-key.sh:curl-auth-header:137
-4b6fe507bc8c2ec1e65d69969f00bd897e1577b9:scripts/generate-key.sh:curl-auth-header:139
-21e000ed60165c243ec387af3f14cff0169d1f4e:scripts/key-size.py:private-key:67
-21e000ed60165c243ec387af3f14cff0169d1f4e:scripts/key-size.py:test-fixture-pgp:67
-21e000ed60165c243ec387af3f14cff0169d1f4e:scripts/key-size.py:test-fixture-pgp:93
-
-# Malformed-input fixture: a bare PGP armor header with no key material, posted
-# to POST /admin/keys so the scope suite can prove the read-only credential is
-# refused before the handler parses anything. Nothing to rotate.
-bce1f4a2a9c28ed9e6594704fb415fe508ee501b:src/__tests__/admin-scope.test.ts:private-key:181
-
-# The RSA key `generateAppKey` mints in src/__tests__/check-report.test.ts so the
-# endpoint suite can have a GitHub App sign its own JWT. Generated per run by
-# crypto.subtle.generateKey, PEM-armored only to be handed straight back to the
-# same process, and never written anywhere. Nothing to rotate.
-bb4060b91ed772e61ebee9a3feba488ebfd26223:src/__tests__/check-report.test.ts:private-key:792
-
-# The same per-run RSA key, minted by `generateAppKey` in
-# src/__tests__/comment-dispatch.test.ts so the endpoint suite can have a GitHub
-# App sign its own JWT. crypto.subtle.generateKey per run, PEM-armored only to
-# be handed straight back to the same process, never written anywhere. Nothing
-# to rotate.
-42b77c68516915a90718def6e6d0524fdc78f74a:src/__tests__/comment-dispatch.test.ts:private-key:589
+# Intentionally empty.
+#
+# Fingerprints here are keyed by `<sha>:<file>:<rule>:<line>`, so the #111
+# history rewrite invalidated every one of them at once and left the scheduled
+# Security workflow red (#145) -- and the action scans `--all`, which reaches
+# tags and abandoned branches whose SHAs no rewrite of master can ever restate.
+# The commit-less form gitleaks also accepts, `<file>:<rule>:<line>`, survives a
+# rewrite but is still positional: it would suppress a real credential that
+# later lands on that line, in that file, under that rule. Neither belongs here.
+#
+# There is nothing left for it to hold anyway. No tracked file spells out an
+# armor header -- every marker is assembled at run time (`src/utils/armor.ts`,
+# `client/**/armor_test.go`, `armor()` in `scripts/key-size.py`) or described
+# rather than printed (`API.md`, `DEVELOPER_GUIDE.md`, `docs/github-app.md`) --
+# so the detector does not fire on a fixture and there is nothing to excuse.
+# `scripts/test-gitleaks-contract.sh` proves it, by scanning the tree with
+# `.gitleaks.toml` and with a bare `useDefault` config and requiring the two to
+# agree.
+#
+# If a scan reports something new, classify it, and change the fixture's
+# representation rather than suppressing it. Do not add a fingerprint here.
