@@ -48,6 +48,7 @@ import { GITHUB_API_ORIGIN } from "#utils/github-app";
 import type { CheckRunInput, RepositoryClient } from "#utils/github-repo";
 import { RepositoryClient as RepositoryClientClass } from "#utils/github-repo";
 import { SIGNATURE_PREFIX } from "#utils/github-webhook";
+import { PKCS8_PRIVATE_BEGIN, PKCS8_PRIVATE_END } from "./helpers/armor";
 
 const SECRET = "test-webhook-secret";
 const INSTALLATION = 4242;
@@ -819,7 +820,7 @@ async function generateAppKey(): Promise<string> {
 		binary += String.fromCharCode(byte);
 	}
 
-	return `-----BEGIN PRIVATE KEY-----\n${btoa(binary).replace(/(.{64})/g, "$1\n")}\n-----END PRIVATE KEY-----\n`;
+	return `${PKCS8_PRIVATE_BEGIN}\n${btoa(binary).replace(/(.{64})/g, "$1\n")}\n${PKCS8_PRIVATE_END}\n`;
 }
 
 async function hmac(body: string): Promise<string> {

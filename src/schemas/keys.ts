@@ -1,5 +1,6 @@
 import { z } from "@hono/zod-openapi";
 import { createArmoredPrivateKey, createKeyFingerprint, createKeyId } from "#types";
+import { PGP_PRIVATE_BEGIN, PGP_PRIVATE_END } from "#utils/armor";
 import { LIMITS } from "#utils/constants";
 
 /**
@@ -40,8 +41,8 @@ export const ArmoredPrivateKeySchema = z
 	.refine(
 		(val) => {
 			// Match standard PGP private key block headers
-			const headerPattern = /^-----BEGIN PGP PRIVATE KEY BLOCK-----/m;
-			const footerPattern = /-----END PGP PRIVATE KEY BLOCK-----$/m;
+			const headerPattern = new RegExp(`^${PGP_PRIVATE_BEGIN}`, "m");
+			const footerPattern = new RegExp(`${PGP_PRIVATE_END}$`, "m");
 
 			return headerPattern.test(val) && footerPattern.test(val);
 		},
@@ -58,13 +59,13 @@ export const ArmoredPrivateKeySchema = z
 			if (lines.length < 5) return false;
 
 			// First line must be header
-			if (!lines[0]?.startsWith("-----BEGIN PGP PRIVATE KEY BLOCK-----")) {
+			if (!lines[0]?.startsWith(PGP_PRIVATE_BEGIN)) {
 				return false;
 			}
 
 			// Last line must be footer (trim to handle trailing newline)
 			const lastLine = lines[lines.length - 1]?.trim() || lines[lines.length - 2]?.trim();
-			if (!lastLine?.startsWith("-----END PGP PRIVATE KEY BLOCK-----")) {
+			if (!lastLine?.startsWith(PGP_PRIVATE_END)) {
 				return false;
 			}
 

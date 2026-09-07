@@ -36,6 +36,14 @@ import {
 } from "#utils/github-app";
 import { verifyWebhookSignature } from "#utils/github-webhook";
 import { collectEnvSecrets, scrubValue } from "#utils/sentry";
+import {
+	PKCS8_ENCRYPTED_BEGIN,
+	PKCS8_ENCRYPTED_END,
+	PKCS8_PRIVATE_BEGIN,
+	PKCS8_PRIVATE_END,
+	RSA_PRIVATE_BEGIN,
+	RSA_PRIVATE_END,
+} from "./helpers/armor";
 
 const APP_ID = "123456";
 
@@ -289,7 +297,7 @@ describe("private key handling", () => {
 
 	it.each([
 		["a value with no PEM block", "not a key at all"],
-		["an encrypted PKCS#8 block", "-----BEGIN ENCRYPTED PRIVATE KEY-----\nAAAA\n-----END ENCRYPTED PRIVATE KEY-----"],
+		["an encrypted PKCS#8 block", `${PKCS8_ENCRYPTED_BEGIN}\nAAAA\n${PKCS8_ENCRYPTED_END}`],
 		["a certificate", "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----"],
 	])("refuses %s as a misconfiguration", (_name, pem) => {
 		try {
@@ -320,9 +328,7 @@ describe("private key handling", () => {
 	});
 
 	it("refuses a PKCS#1 header whose body is not base64", () => {
-		expect(() => toPkcs8Pem("-----BEGIN RSA PRIVATE KEY-----\n!!!!\n-----END RSA PRIVATE KEY-----")).toThrow(
-			/not valid base64/,
-		);
+		expect(() => toPkcs8Pem(`${RSA_PRIVATE_BEGIN}\n!!!!\n${RSA_PRIVATE_END}`)).toThrow(/not valid base64/);
 	});
 });
 
@@ -363,7 +369,7 @@ describe("the App JWT", () => {
 	it("reports an unimportable key without quoting it", async () => {
 		// A failing key import is the single most likely place for a library to
 		// quote the input it choked on straight back into a message.
-		const nonsense = `-----BEGIN PRIVATE KEY-----\n${btoa("this is not a key")}\n-----END PRIVATE KEY-----`;
+		const nonsense = `${PKCS8_PRIVATE_BEGIN}\n${btoa("this is not a key")}\n${PKCS8_PRIVATE_END}`;
 
 		try {
 			await mintAppJwt(configured({ GITHUB_APP_PRIVATE_KEY: nonsense }));

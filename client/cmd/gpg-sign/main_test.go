@@ -535,7 +535,8 @@ func TestAdminUploadCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create temp file error: %v", err)
 	}
-	if _, err := tmpFile.Write([]byte("-----BEGIN PGP PRIVATE KEY-----\ntest\n-----END PGP PRIVATE KEY-----")); err != nil {
+	armored := armorMarker("BEGIN", "PGP PRIVATE KEY") + "\ntest\n" + armorMarker("END", "PGP PRIVATE KEY")
+	if _, err := tmpFile.Write([]byte(armored)); err != nil {
 		t.Fatalf("write temp file error: %v", err)
 	}
 	if err := tmpFile.Close(); err != nil {

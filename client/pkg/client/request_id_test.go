@@ -210,7 +210,7 @@ func TestNonSignErrorsKeepTheRequestID(t *testing.T) {
 			status: http.StatusBadRequest,
 			body:   `{"error":"Invalid key","code":"INVALID_REQUEST"}`,
 			call: func(c *Client) error {
-				_, err := c.UploadKey(context.Background(), "AAAA", "-----BEGIN PGP PRIVATE KEY BLOCK-----")
+				_, err := c.UploadKey(context.Background(), "AAAA", armorMarker("BEGIN", "PGP PRIVATE KEY BLOCK"))
 				return err
 			},
 		},

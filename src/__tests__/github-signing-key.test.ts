@@ -43,6 +43,7 @@ import type { Env, WebhookAuthorization } from "#types";
 import { authorizeDelivery, parseRepositoryAllowlist } from "#utils/github-authorization";
 import { loadSigningKey, requireSigningKey } from "#utils/github-signing-key";
 import { SIGNATURE_HEADER, SIGNATURE_PREFIX } from "#utils/github-webhook";
+import { PGP_PRIVATE_BEGIN } from "./helpers/armor";
 import { captureLogEntries, logLine } from "./helpers/log-capture";
 
 const SECRET = "test-webhook-secret";
@@ -456,7 +457,7 @@ describe("loadSigningKey", () => {
 
 	it("carries no key material out of a refusal", async () => {
 		const stub = keyStorageStub(() => {
-			throw new Error(`storage failed while holding -----BEGIN PGP PRIVATE KEY BLOCK----- for ${env.KEY_PASSPHRASE}`);
+			throw new Error(`storage failed while holding ${PGP_PRIVATE_BEGIN} for ${env.KEY_PASSPHRASE}`);
 		});
 
 		const decision = await loadSigningKey(stub, authorizationFor(GRANT, REPOSITORY));

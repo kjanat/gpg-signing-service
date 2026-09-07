@@ -17,6 +17,7 @@ import * as openpgp from "openpgp";
 import { beforeAll, describe, expect, it } from "vitest";
 import app from "#gpg-signing-service";
 import { openApiConfig, WWW_AUTHENTICATE_INSUFFICIENT_SCOPE } from "#lib/openapi";
+import { PGP_PRIVATE_BEGIN, PKCS8_PRIVATE_BEGIN, PKCS8_PRIVATE_END } from "./helpers/armor";
 
 const READONLY = "test-readonly-admin-token";
 const FULL = "test-admin-token";
@@ -177,8 +178,7 @@ const MUTATIONS: AdminOperation[] = [
 		method: "POST",
 		template: "/admin/keys",
 		path: () => "/admin/keys",
-		body: () =>
-			JSON.stringify({ armoredPrivateKey: "-----BEGIN PGP PRIVATE KEY BLOCK-----", keyId: "5C0BE7E5700F0BB1" }),
+		body: () => JSON.stringify({ armoredPrivateKey: PGP_PRIVATE_BEGIN, keyId: "5C0BE7E5700F0BB1" }),
 	},
 	{
 		method: "POST",
@@ -187,7 +187,7 @@ const MUTATIONS: AdminOperation[] = [
 		body: () =>
 			JSON.stringify({
 				keyId: "5C0BE7E5700F0BB2",
-				privateKeyPem: "-----BEGIN PRIVATE KEY-----\nnot-real\n-----END PRIVATE KEY-----",
+				privateKeyPem: `${PKCS8_PRIVATE_BEGIN}\nnot-real\n${PKCS8_PRIVATE_END}`,
 				certificatePem: "-----BEGIN CERTIFICATE-----\nnot-real\n-----END CERTIFICATE-----",
 			}),
 	},

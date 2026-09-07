@@ -5,6 +5,22 @@
 import math
 
 
+def armor(boundary: str, label: str) -> str:
+    """Build an armor marker without writing one down.
+
+    Spelling an armor header out in tracked source starts a gitleaks
+    ``private-key`` match, whose regex then runs to the next ``KEY-----`` at
+    least 64 characters later -- so this arithmetic-only script would open a
+    span that swallows any real key committed below it, and that an allowlist
+    entry could then be used to excuse wholesale (#146). Only the marker's
+    *length* matters here, so assemble it. See src/utils/armor.ts.
+    """
+    return f"{'-' * 5}{boundary} {label}{'-' * 5}\n"
+
+
+PGP_PRIVATE = "PGP PRIVATE KEY BLOCK"
+
+
 # Base64 encoding formula: ceil(n/3) * 4 for padded output
 def calculate_base64_length(binary_bytes: float) -> int:
     """Calculate base64 encoded length from binary bytes"""
@@ -64,8 +80,8 @@ for key_type, data in rsa_key_data.items():
     total_lines = lines + 8
 
     # Total characters including newlines and armor headers
-    armor_header = "-----BEGIN PGP PRIVATE KEY BLOCK-----\n"
-    armor_footer = "-----END PGP PRIVATE KEY BLOCK-----\n"
+    armor_header = armor("BEGIN", PGP_PRIVATE)
+    armor_footer = armor("END", PGP_PRIVATE)
     total_chars = (
         len(armor_header) + base64_chars + lines + len(armor_footer) + 200
     )  # +200 for Version/Comment headers
@@ -90,8 +106,8 @@ for key_type, data in eddsa_key_data.items():
     lines = math.ceil(base64_chars / 64)
     total_lines = lines + 8
 
-    armor_header = "-----BEGIN PGP PRIVATE KEY BLOCK-----\n"
-    armor_footer = "-----END PGP PRIVATE KEY BLOCK-----\n"
+    armor_header = armor("BEGIN", PGP_PRIVATE)
+    armor_footer = armor("END", PGP_PRIVATE)
     total_chars = len(armor_header) + base64_chars + lines + len(armor_footer) + 200
 
     print(f"{key_type}:")

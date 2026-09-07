@@ -28,6 +28,7 @@ import { bindingMailSender, mailConfig, runKeyExpiryMonitor } from "#utils/key-e
 import { logger } from "#utils/logger";
 import { insertOIDCSubject } from "#utils/oidc-subjects";
 import { insertServiceToken } from "#utils/service-tokens";
+import { PGP_PRIVATE_BEGIN } from "./helpers/armor";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DAY_SECONDS = 24 * 60 * 60;
@@ -670,7 +671,7 @@ describe("runKeyExpiryMonitor: every actionable class sends an email", () => {
 	});
 
 	it("emails when the stored material is not a key at all", async () => {
-		await storeKey(PRODUCTION_KEY_ID, "-----BEGIN PGP PRIVATE KEY BLOCK-----\nnot a key\n-----END…");
+		await storeKey(PRODUCTION_KEY_ID, `${PGP_PRIVATE_BEGIN}\nnot a key\n-----END…`);
 		const mail = recordingSender();
 
 		const result = await runKeyExpiryMonitor(monitorEnv(), { sendMail: mail.send });

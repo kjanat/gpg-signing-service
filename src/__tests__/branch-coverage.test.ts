@@ -10,6 +10,7 @@ import app from "#gpg-signing-service";
 import { logAuditEvent } from "#utils/audit";
 import { serviceDegraded, serviceMisconfigured } from "#utils/errors";
 import * as signingUtils from "#utils/signing";
+import { PGP_PRIVATE_BEGIN, PGP_PRIVATE_END } from "./helpers/armor";
 
 const parseJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
 
@@ -463,7 +464,7 @@ describe("Branch Coverage Helpers", () => {
 			// Mock openpgp to throw error despite valid schema
 			vi.mocked(openpgp.readPrivateKey).mockRejectedValueOnce(new Error("Internal PGP Error"));
 
-			const validLookingKey = `-----BEGIN PGP PRIVATE KEY BLOCK-----
+			const validLookingKey = `${PGP_PRIVATE_BEGIN}
 
 lIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw
 d6i3vJf+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA
@@ -474,7 +475,7 @@ CQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p
 KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
 7Bfg==
 =oEGo
------END PGP PRIVATE KEY BLOCK-----`;
+${PGP_PRIVATE_END}`;
 
 			const ctx = createExecutionContext();
 			const res = await app.fetch(
@@ -541,7 +542,7 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
 		it("handles signing errors", async () => {
 			vi.mocked(signingUtils.signCommitData).mockRejectedValue(new Error("Signing failed"));
 
-			const validPrivateKey = `-----BEGIN PGP PRIVATE KEY BLOCK-----
+			const validPrivateKey = `${PGP_PRIVATE_BEGIN}
 
 lIYEaR3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw
 d6i3vJf+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA
@@ -552,7 +553,7 @@ CQgHAgYVCgkICwIEFgIDAQIeAQIXgAAKCRBi515USXgV3UGkAQDdih4x/+9oQZ6+
 0T0Etx1oIerz9Uh8CD0aRP/XzC1wPQD/Ug7bAb9n5RFDqb2Vlq2KK+uza5vDlDHq
 rxgkrugpagY=
 =gskf
------END PGP PRIVATE KEY BLOCK-----`;
+${PGP_PRIVATE_END}`;
 
 			const customEnv = {
 				...env,

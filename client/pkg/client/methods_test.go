@@ -238,7 +238,7 @@ func TestUploadKey(t *testing.T) {
 		{
 			name:         "successful upload",
 			keyID:        testKeyID,
-			privateKey:   "-----BEGIN PGP PRIVATE KEY-----\ntest\n-----END PGP PRIVATE KEY-----",
+			privateKey:   armorMarker("BEGIN", "PGP PRIVATE KEY") + "\ntest\n" + armorMarker("END", "PGP PRIVATE KEY"),
 			serverStatus: 201,
 			wantErr:      false,
 			validateResp: func(t *testing.T, info *KeyInfo) {
@@ -566,7 +566,7 @@ func BenchmarkPublicKey(b *testing.B) {
 func TestAdminMethodsSurfaceUnauthorized(t *testing.T) {
 	calls := map[string]func(context.Context, *Client) error{
 		testOpUploadKey: func(ctx context.Context, c *Client) error {
-			_, err := c.UploadKey(ctx, testKeyID, "-----BEGIN PGP PRIVATE KEY BLOCK-----")
+			_, err := c.UploadKey(ctx, testKeyID, armorMarker("BEGIN", "PGP PRIVATE KEY BLOCK"))
 			return err
 		},
 		testOpListKeys: func(ctx context.Context, c *Client) error {
