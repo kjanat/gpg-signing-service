@@ -63,16 +63,16 @@
     "**/worker-configuration.d.ts"
   ],
   "plugins": [
-    "https://plugins.dprint.dev/kjanat/shfmt-1.0.0.wasm",
-    "https://plugins.dprint.dev/markdown-0.22.1.wasm",
-    "https://plugins.dprint.dev/dockerfile-0.4.1.wasm",
-    "https://plugins.dprint.dev/biome-0.13.6.wasm",
-    "https://plugins.dprint.dev/ruff-0.8.3.wasm",
-    "https://plugins.dprint.dev/jupyter-0.3.1.wasm",
-    "https://plugins.dprint.dev/g-plane/malva-v0.16.0.wasm",
-    "https://plugins.dprint.dev/g-plane/markup_fmt-v0.27.3.wasm",
-    "https://plugins.dprint.dev/g-plane/pretty_yaml-v0.6.0.wasm",
-    "https://plugins.dprint.dev/exec-0.7.3.json@a7898d5f1897e77bff474cec3d948c3ec3a7f455e32de2cc60c8adb9a5dd24aa",
-    "https://plugins.dprint.dev/prettier-0.72.0.json@6e7af2cb2182a5a11358d3adde9ae0ef3b94b7d2e5dcfdd252e3f7c3916541fe"
+    "https://plugins.dprint.dev/kjanat/shfmt-1.1.0.wasm",
+    "npm:@dprint/markdown@0.23.3",
+    "npm:@dprint/dockerfile@0.6.0",
+    "npm:@dprint/biome@0.13.10",
+    "npm:@dprint/ruff@0.8.6",
+    "npm:@dprint/jupyter@0.3.1",
+    "npm:dprint-plugin-malva@0.16.0",
+    "npm:dprint-plugin-markup@0.27.3",
+    "npm:dprint-plugin-yaml@0.6.0",
+    "npm:@dprint/exec@0.7.3/plugin.json@704701df449dd7e942a71144773778ac529d68c2e4657bfc236d393b898b9a67",
+    "npm:@dprint/prettier@0.70.0/plugin.json@97c0dccf54ed5b7343e7a3f6418e77bd80afcd2b74beed3a632689d47e392ddc"
   ]
 }
