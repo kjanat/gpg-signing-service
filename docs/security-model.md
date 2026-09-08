@@ -125,6 +125,25 @@ Object:
 Use encrypted key inputs and control both the Cloudflare account and repository
 deployment credentials. There is no private-key export endpoint.
 
+No private key belongs in this repository, encrypted or otherwise. Test suites
+generate the keys they need at run time, shape fixtures come from
+`src/__tests__/helpers/private-key-fixture.ts` and carry no key material, and
+`task test:key-material` decodes every base64 run in every tracked file and
+fails on an OpenPGP secret-key packet or on the public material of a retired
+signing key. It does that by reading bytes rather than armor headers, because
+this repository composes its armor markers at run time and a header-matching
+scanner therefore cannot see a key committed without one.
+
+Every tracked file means every one; the check has no exclusions and its own test
+suite fails if one is added. `.gitleaks.toml` is the file that makes this matter,
+because gitleaks' default allowlist drops every path ending `gitleaks.toml` and
+so never reads the repository's own config. Its historical allowlist has to match
+findings that already happened by their exact text, which it does without
+spelling long literal runs out: each is written one `\xNN` per character, the
+same expression to the scanner and not a base64 run to anything else.
+`scripts/test-gitleaks-contract.sh` proves the two forms accept the same strings
+by scanning with each of them.
+
 ## Key expiry monitoring
 
 A Cron Trigger inside this same Worker checks, weekly, every key the deployment

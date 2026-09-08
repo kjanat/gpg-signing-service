@@ -797,6 +797,253 @@ case "${unscannable_count}" in
 esac
 
 # =============================================================================
+# 7. The allowlist describes its findings without spelling them out
+# =============================================================================
+#
+# An exact-match entry cannot stop naming what it matches; that is what exact
+# means. It can stop naming it in a form something decodes. Every long literal
+# run in this config is written one `\xNN` per character, which parses to the
+# same RE2 literal and leaves no base64 run behind -- so `scripts/key-material.py`
+# reads the config like any other tracked file instead of being told to skip it,
+# which is what it used to be told (#147).
+#
+# That matters here more than anywhere else in the tree: gitleaks' own default
+# allowlist drops every path ending `gitleaks.toml`, measured at the end of
+# section 6. The config is the one file the scanner will not look at, so it is
+# the one file that must not be carrying anything worth looking for.
+#
+# The equivalence is proved against the scanner rather than asserted, on a key
+# generated during this run, using the real span gitleaks reports for it.
+
+quote="$(printf "'''")"
+allowlist_regex="${repo_root}/scripts/allowlist-regex.py"
+
+new_case 'no allowlist entry spells out a long literal run'
+if ! python3 "${allowlist_regex}" --check "${repo_root}/.gitleaks.toml" >"${tmp_dir}/runs" 2>&1; then
+	fail "$(head -n1 "${tmp_dir}/runs")"
+fi
+
+# A `+` in the probe would be read as a quantifier rather than as a literal --
+# which is correct, and would split one 64-character run into several short ones.
+# The probe is drawn from the alphanumeric half of the alphabet so that what it
+# measures is the threshold and not the draw.
+new_case 'mutant: the run check reports an entry that does spell one out'
+printf 'title = "spelled"\n[allowlist]\nregexTarget = "match"\nregexes = [\n  %s\\A%s\\z%s,\n]\n' \
+	"${quote}" "$(rand_alnum 64 'A-Za-z0-9')" "${quote}" >"${tmp_dir}/spelled.toml"
+if python3 "${allowlist_regex}" --check "${tmp_dir}/spelled.toml" >/dev/null 2>&1; then
+	fail 'a 64-character base64 literal in an entry was not reported, so the check above passes vacuously'
+fi
+
+new_case 'mutant: an entry the run check cannot read is an error, not a pass'
+printf 'title = "multiline"\n[allowlist]\nregexes = [\n  %s\\Aone\n  two\\z%s,\n]\n' \
+	"${quote}" "${quote}" >"${tmp_dir}/multiline.toml"
+if python3 "${allowlist_regex}" --check "${tmp_dir}/multiline.toml" >/dev/null 2>&1; then
+	fail 'an entry split across lines was skipped silently, so an unreadable allowlist reads as a clean one'
+fi
+
+# --- the two forms, against the scanner --------------------------------------
+#
+# A real finding first: plant the probe key, scan with no allowlist, and take the
+# span gitleaks reports. Describing a span invented here rather than one the
+# scanner produced would test the entry against the wrong string.
+
+equiv="$(scratch_root 'equivalence')"
+mkdir -p "${equiv}/src/__tests__"
+printf 'const key = %s%s%s;\n' "${backtick}" "$(cat "${probe_pem}")" "${backtick}" \
+	>"${equiv}/src/__tests__/equivalence.test.ts"
+commit_scratch "${equiv}"
+
+equiv_report="${tmp_dir}/equivalence.json"
+equiv_count="$(scan "${equiv}" "${bare_config}" "${equiv_report}")"
+
+new_case 'the equivalence probe produces exactly one finding to describe'
+if [[ ${equiv_count} != "1" ]]; then
+	fail "expected one finding to build an entry from, got ${equiv_count}"
+fi
+
+# `Match` is JSON, so the span comes back through a JSON reader rather than a
+# regex over the report: it carries newlines and quotes, and one of the two
+# things being compared is precisely how such characters are escaped.
+span="${tmp_dir}/span"
+python3 -c 'import json,sys; sys.stdout.write(json.load(open(sys.argv[1]))[0]["Match"])' \
+	"${equiv_report}" >"${span}" 2>/dev/null || printf '' >"${span}"
+
+# Built from the span independently of each other, so that a byte form which has
+# quietly stopped being exact -- a wildcard where a byte should be -- shows up as
+# a difference rather than as two matching halves of the same mistake.
+plain_entry="$(python3 "${allowlist_regex}" --plain <"${span}")"
+bytes_entry="$(python3 "${allowlist_regex}" --literal <"${span}")"
+
+new_case 'the byte form decodes back to the plain form exactly'
+if [[ -z ${plain_entry} || -z ${bytes_entry} ]]; then
+	fail 'no entry could be built from the reported span'
+elif [[ ${plain_entry} == "${bytes_entry}" ]]; then
+	fail 'the byte form is identical to the plain form, so this section is comparing an entry with itself'
+elif [[ "$(printf '%s' "${bytes_entry}" | python3 "${allowlist_regex}" --decode)" != "${plain_entry}" ]]; then
+	fail 'the byte form does not decode back to the entry it replaced, so it is a different expression and not a different spelling of one'
+fi
+
+# One config per form. `\` is not special in a TOML multi-line literal string, so
+# both go in exactly as written.
+entry_config() {
+	printf 'title = "equivalence"\n[extend]\nuseDefault = true\n[allowlist]\nregexTarget = "match"\nregexes = [\n  %s%s%s,\n]\n' \
+		"${quote}" "$1" "${quote}" >"$2"
+}
+plain_config="${tmp_dir}/entry-plain.toml"
+bytes_config="${tmp_dir}/entry-bytes.toml"
+entry_config "${plain_entry}" "${plain_config}"
+entry_config "${bytes_entry}" "${bytes_config}"
+
+# Asked of the two configs with the same check the shipped config answers, rather
+# than by grepping for a slice of the key: a run in an entry is broken up by the
+# escaping an entry needs -- `\+` for every plus -- so a substring of the key is
+# not reliably a substring of the entry that matches it, and a case built on one
+# passes or fails on where the pluses landed.
+# What makes a prefix or a suffix extension unmatchable, given that gitleaks
+# tests an entry against a finding with a substring match. Section 3 asserts this
+# of every entry in the shipped config; asserted here of both generated forms,
+# because an encoding that dropped an anchor would be a different language in the
+# one direction the counting cases below cannot reach.
+new_case 'both forms are anchored at both ends'
+for form in "${plain_entry}" "${bytes_entry}"; do
+	if [[ ${form} != '\A'* || ${form} != *'\z' ]]; then
+		fail "an entry is not \\A...\\z anchored, so it is matched as a substring and excuses every longer span it sits inside"
+	fi
+done
+
+new_case 'only the plain form spells the key out'
+if python3 "${allowlist_regex}" --check "${plain_config}" >/dev/null 2>&1; then
+	fail 'the plain form contains no long literal run, so the comparison below is not about key material'
+elif ! python3 "${allowlist_regex}" --check "${bytes_config}" >/dev/null 2>&1; then
+	fail 'the byte form still spells a long run out'
+fi
+
+# `compare <label> <root> <want>` -- the two forms must agree, and the caller says
+# what they must agree on. `reported` is measured against the count with no
+# allowlist at all rather than against zero: an entry that suppresses one of two
+# findings has still reached something it was not written for, and "some findings
+# remain" would call that a pass.
+compare() {
+	local label="$1" root="$2" want="$3" bare plain bytes
+	bare="$(scan "${root}" "${bare_config}")"
+	plain="$(scan "${root}" "${plain_config}")"
+	bytes="$(scan "${root}" "${bytes_config}")"
+	new_case "${label}"
+	if [[ ${bare} == "error" || ${plain} == "error" || ${bytes} == "error" ]]; then
+		fail 'the scanner did not run'
+	elif [[ ${bare} == "0" ]]; then
+		fail 'nothing is reported here without an allowlist either, so this case cannot tell an exact entry from a loose one'
+	elif [[ ${plain} != "${bytes}" ]]; then
+		fail "the two forms disagree: plain left ${plain} finding(s), bytes left ${bytes} -- they are not the same language"
+	elif [[ ${want} == "suppressed" && ${plain} != "0" ]]; then
+		fail "both forms left ${plain} of ${bare} finding(s); the entry does not describe the span the scanner reported"
+	elif [[ ${want} == "reported" && ${plain} != "${bare}" ]]; then
+		fail "both forms suppressed $((bare - plain)) of ${bare} finding(s) here; the entry reaches something it was not written for"
+	fi
+}
+
+compare 'both forms suppress the finding they describe' "${equiv}" suppressed
+
+# --- and neither reaches anything else ---------------------------------------
+#
+# The four ways an entry gets too wide. Each rebuilds the file so gitleaks
+# reports a *different* span; an entry that still suppresses it was never exact.
+
+variant() {
+	local name="$1" body="$2" root
+	root="$(scratch_root "equivalence-${name}")"
+	mkdir -p "${root}/src/__tests__"
+	printf '%s\n' "${body}" >"${root}/src/__tests__/equivalence.test.ts"
+	commit_scratch "${root}"
+	printf '%s\n' "${root}"
+}
+
+# A variant that did not move the span is not a variant. gitleaks starts a
+# private-key match at the armor header and ends it at the footer, so text placed
+# outside those two lines changes the file and not the finding -- and an entry
+# that still suppresses it has been proved nothing about. Each `reported` case
+# below therefore says first that the span it is about really did change.
+span_of() {
+	local root="$1" report
+	report="$(mktemp -p "${tmp_dir}")"
+	scan "${root}" "${bare_config}" "${report}" >/dev/null
+	python3 -c 'import json,sys
+try:
+    print(json.load(open(sys.argv[1]))[0]["Match"], end="")
+except Exception:
+    pass' "${report}"
+}
+original_span="$(cat "${span}")"
+
+moved() {
+	local label="$1" root="$2"
+	new_case "${label}"
+	if [[ "$(span_of "${root}")" == "${original_span}" ]]; then
+		fail 'the reported span is unchanged, so the case that follows it cannot distinguish an exact entry from a loose one'
+	fi
+}
+
+# A single byte of the key body changed, everything else identical.
+mutated_pem="${tmp_dir}/mutated.pem"
+python3 - "${probe_pem}" "${mutated_pem}" <<'MUTATE'
+import sys
+
+lines = open(sys.argv[1]).read().split("\n")
+body = 1 + (len(lines) - 3) // 2  # a line in the middle of the key, not a marker
+line = lines[body]
+if not line:
+    raise SystemExit("the probe key has no body line to change")
+lines[body] = ("B" if line[0] == "A" else "A") + line[1:]
+open(sys.argv[2], "w").write("\n".join(lines))
+MUTATE
+
+mutation_root="$(variant 'mutation' "$(printf 'const key = %s%s%s;' "${backtick}" "$(cat "${mutated_pem}")" "${backtick}")")"
+moved 'a one-byte mutation moves the span' "${mutation_root}"
+compare 'neither form suppresses a one-byte mutation' "${mutation_root}" reported
+
+# The described text as a strict prefix of a longer span: an extra body line
+# before the footer. This is the shape #146 turned on -- an entry matched as a
+# substring excuses every span it sits inside, and `\A...\z` is what stops it.
+extended_pem="${tmp_dir}/extended.pem"
+python3 - "${probe_pem}" "${extended_pem}" <<'EXTEND'
+import sys
+
+lines = open(sys.argv[1]).read().rstrip("\n").split("\n")
+lines.insert(len(lines) - 1, lines[1])  # one more body line, before the footer
+open(sys.argv[2], "w").write("\n".join(lines) + "\n")
+EXTEND
+
+extended_root="$(variant 'extension' "$(printf 'const key = %s%s%s;' "${backtick}" "$(cat "${extended_pem}")" "${backtick}")")"
+moved 'an extra body line moves the span' "${extended_root}"
+compare 'neither form suppresses a span that strictly contains the described one' \
+	"${extended_root}" reported
+
+# The described span with a whole second key against it: the #146 review case.
+# Counting findings is the wrong question here -- the entry does describe the
+# first key, so suppressing that one is correct -- and #146 failed on the right
+# one, which is whether the *planted* key still turns up in a finding. Both
+# configs are asked that, and asked to agree on the total.
+adjacency_root="$(variant 'adjacency' "$(printf 'const key = %s%s%s;\nconst planted = %s%s%s;' \
+	"${backtick}" "$(cat "${probe_pem}")" "${backtick}" \
+	"${backtick}" "$(cat "${mutated_pem}")" "${backtick}")")"
+planted_body="$(sed -n '2p' "${mutated_pem}")"
+
+new_case 'neither form hides the key planted against the span it describes'
+adjacency_plain="${tmp_dir}/adjacency-plain.json"
+adjacency_bytes="${tmp_dir}/adjacency-bytes.json"
+adjacency_plain_count="$(scan "${adjacency_root}" "${plain_config}" "${adjacency_plain}")"
+adjacency_bytes_count="$(scan "${adjacency_root}" "${bytes_config}" "${adjacency_bytes}")"
+if [[ ${adjacency_plain_count} == "error" || ${adjacency_bytes_count} == "error" ]]; then
+	fail 'the scanner did not run'
+elif [[ ${adjacency_plain_count} != "${adjacency_bytes_count}" ]]; then
+	fail "the two forms disagree: plain left ${adjacency_plain_count} finding(s), bytes left ${adjacency_bytes_count}"
+elif ! reported_in "${adjacency_plain}" "${planted_body}"; then
+	fail 'the plain form hid the planted key, which is the #146 bypass'
+elif ! reported_in "${adjacency_bytes}" "${planted_body}"; then
+	fail 'the byte form hid the planted key, which is the #146 bypass'
+fi
+
+# =============================================================================
 
 if [[ ${failures} -gt 0 ]]; then
 	printf '\n%d case(s) failed\n' "${failures}" >&2

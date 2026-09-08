@@ -12,7 +12,8 @@ import {
 	parseAndValidateKey,
 	signCommitData,
 } from "#utils/signing";
-import { PGP_PRIVATE_BEGIN, PGP_PRIVATE_END } from "./helpers/armor";
+import { PGP_PRIVATE_BEGIN } from "./helpers/armor";
+import { VALID_ARMORED_PRIVATE_KEY } from "./helpers/private-key-fixture";
 
 vi.mock("openpgp", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("openpgp")>();
@@ -333,24 +334,11 @@ describe("signCommitData", () => {
 });
 
 describe("createStoredKey", () => {
-	// Hoisted, and deliberately not named `...PrivateKey`. gitleaks'
-	// `generic-api-key` rule fires on an identifier containing "key" followed by
-	// a separator and a high-entropy value, and `validPrivateKey,` sitting on the
-	// line above the fixture key id was exactly that shape. The alternative was
-	// an allowlist entry for the key id, and a global allowlist entry is
-	// suppression that can reach material it was never written for (#146).
-	const armoredEd25519Fixture = `${PGP_PRIVATE_BEGIN}
-
-lIYEaR3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw
-d6i3vJf+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA
-WHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd+P+7SjzApULQ2S2FqIEtv
-d2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw+
-iJYEExYKAD4WIQSAbTobn5V9ZzGVC8pi515USXgV3QUCaR3PygIbAwUJA8JnAAUL
-CQgHAgYVCgkICwIEFgIDAQIeAQIXgAAKCRBi515USXgV3UGkAQDdih4x/+9oQZ6+
-0T0Etx1oIerz9Uh8CD0aRP/XzC1wPQD/Ug7bAb9n5RFDqb2Vlq2KK+uza5vDlDHq
-rxgkrugpagY=
-=gskf
-${PGP_PRIVATE_END}`;
+	// `createStoredKey` brands strings; it never parses one. The fixture only has
+	// to be an armored block of a plausible size, which is all the shared helper
+	// builds -- see it for why the block that used to sit here, a copy of the
+	// deployment's own encrypted signing key, is gone (#147).
+	const armoredEd25519Fixture = VALID_ARMORED_PRIVATE_KEY;
 
 	it("should create StoredKey with branded types", () => {
 		const result = createStoredKey(

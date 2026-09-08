@@ -70,9 +70,15 @@ bash scripts/generate-key.sh \
   "strong-passphrase"
 ```
 
-Record the generated 16-character hexadecimal key ID and keep
-`.keys/private-key.asc` out of source control and backups that lack equivalent
-protection.
+Record the generated 16-character hexadecimal key ID. Keep
+`.keys/private-key.asc` out of source control and out of any backup that lacks
+equivalent protection, and keep it separate from its passphrase: a
+passphrase-encrypted export is still private-key material, and once it has been
+published the passphrase is the only thing left. Back the export up offline; put
+the passphrase somewhere that is not the same place, alongside `KEY_PASSPHRASE`
+rather than alongside the key. `.gitignore` covers `.keys/`, and
+`task test:key-material` fails the build if a key packet reaches a tracked file
+by any other route.
 
 ## 4. Configure variables
 
@@ -491,7 +497,8 @@ automates either, and `ADMIN_READONLY_TOKEN` must never be set equal to
   pin `keyIds`; a prefix authorizes every workflow and ref beneath it.
 - Configure a non-empty `ALLOWED_ORIGINS` when browser access is required.
 - Define private-key backup and restoration procedures; no export endpoint
-  exists.
+  exists. Store the encrypted backup offline and its passphrase separately, so
+  that neither store on its own is a usable key.
 - Define audit retention and monitoring; no cleanup or alert policy is built in.
 - Walk the [key rotation procedure](#key-rotation) end to end once, on a key
   nothing depends on, before you need it on one that everything does. Rotate the

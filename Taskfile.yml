@@ -65,6 +65,7 @@ tasks:
       - task: test:tool-pins
       - task: test:composite-actions
       - task: test:gitleaks-contract
+      - task: test:key-material
 
   test:sentry:
     desc: Run the Sentry boundary suite alone — the inner loop of the mutation set
@@ -178,6 +179,11 @@ tasks:
     aliases: [tgl, gitleaks]
     cmd: bash scripts/test-gitleaks-contract.sh
 
+  test:key-material:
+    desc: Test that no tracked file carries a private key or a retired signing key
+    aliases: [tkm, keys]
+    cmd: bash scripts/test-key-material.sh
+
   test:coverage:
     desc: Run tests with coverage
     aliases: [tc]
@@ -205,6 +211,7 @@ tasks:
       - task: test:tool-pins
       - task: test:composite-actions
       - task: test:gitleaks-contract
+      - task: test:key-material
 
   test:watch:
     desc: Run tests in watch mode

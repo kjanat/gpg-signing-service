@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createArmoredPrivateKey, createIdentity, createKeyFingerprint, createKeyId } from "#types/branded";
 import { LIMITS } from "#utils/constants";
 import { PGP_PRIVATE_BEGIN, PGP_PRIVATE_END } from "./helpers/armor";
+import { armoredPrivateKeyFixture, VALID_ARMORED_PRIVATE_KEY } from "./helpers/private-key-fixture";
 
 describe("Branded Types", () => {
 	describe("createKeyId", () => {
@@ -114,19 +115,9 @@ describe("Branded Types", () => {
 	});
 
 	describe("createArmoredPrivateKey", () => {
-		// Realistic Ed25519 key for happy path tests
-		const validKey = `${PGP_PRIVATE_BEGIN}
-
-lIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw
-d6i3vJf+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA
-WHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd+P+7SjzApULQ2S2FqIEtv
-d2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw+
-iJkEExYKAEEWIQQRTd3LSMIzSP5K+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL
-CQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p
-KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
-7Bfg==
-=oEGo
-${PGP_PRIVATE_END}`;
+		// Realistically sized for an Ed25519 block, and carrying no key:
+		// `createArmoredPrivateKey` checks markers and a length, nothing else.
+		const validKey = VALID_ARMORED_PRIVATE_KEY;
 
 		// Happy paths
 		it("should create valid ArmoredPrivateKey from complete PGP key", () => {
@@ -135,20 +126,7 @@ ${PGP_PRIVATE_END}`;
 		});
 
 		it("should accept keys with varying content between headers and footers", () => {
-			const key = `${PGP_PRIVATE_BEGIN}
-Version: OpenPGP v2.0.0
-Comment: Some comment here
-
-lIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw
-d6i3vJf+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA
-WHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd+P+7SjzApULQ2S2FqIEtv
-d2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw+
-iJkEExYKAEEWIQQRTd3LSMIzSP5K+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL
-CQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p
-KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
-7Bfg==
-=oEGo
-${PGP_PRIVATE_END}`;
+			const key = armoredPrivateKeyFixture({ headers: ["Version: OpenPGP v2.0.0", "Comment: Some comment here"] });
 			const result = createArmoredPrivateKey(key);
 			expect(result).toBe(key);
 		});
@@ -316,18 +294,7 @@ ${PGP_PRIVATE_END}`;
 		});
 
 		it("should maintain type distinction for ArmoredPrivateKey", () => {
-			const validKey = `${PGP_PRIVATE_BEGIN}
-
-lIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw
-d6i3vJf+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA
-WHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd+P+7SjzApULQ2S2FqIEtv
-d2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw+
-iJkEExYKAEEWIQQRTd3LSMIzSP5K+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL
-CQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p
-KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
-7Bfg==
-=oEGo
-${PGP_PRIVATE_END}`;
+			const validKey = VALID_ARMORED_PRIVATE_KEY;
 			const key = createArmoredPrivateKey(validKey);
 			expect(typeof key).toBe("string");
 		});

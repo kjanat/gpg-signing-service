@@ -10,7 +10,7 @@ import app from "#gpg-signing-service";
 import { logAuditEvent } from "#utils/audit";
 import { serviceDegraded, serviceMisconfigured } from "#utils/errors";
 import * as signingUtils from "#utils/signing";
-import { PGP_PRIVATE_BEGIN, PGP_PRIVATE_END } from "./helpers/armor";
+import { VALID_ARMORED_PRIVATE_KEY } from "./helpers/private-key-fixture";
 
 const parseJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
 
@@ -464,18 +464,9 @@ describe("Branch Coverage Helpers", () => {
 			// Mock openpgp to throw error despite valid schema
 			vi.mocked(openpgp.readPrivateKey).mockRejectedValueOnce(new Error("Internal PGP Error"));
 
-			const validLookingKey = `${PGP_PRIVATE_BEGIN}
-
-lIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw
-d6i3vJf+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA
-WHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd+P+7SjzApULQ2S2FqIEtv
-d2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw+
-iJkEExYKAEEWIQQRTd3LSMIzSP5K+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL
-CQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p
-KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
-7Bfg==
-=oEGo
-${PGP_PRIVATE_END}`;
+			// Only has to clear the schema: `readPrivateKey` is mocked into rejecting
+			// before it parses what it was handed, so no key material is needed.
+			const validLookingKey = VALID_ARMORED_PRIVATE_KEY;
 
 			const ctx = createExecutionContext();
 			const res = await app.fetch(
@@ -542,18 +533,9 @@ ${PGP_PRIVATE_END}`;
 		it("handles signing errors", async () => {
 			vi.mocked(signingUtils.signCommitData).mockRejectedValue(new Error("Signing failed"));
 
-			const validPrivateKey = `${PGP_PRIVATE_BEGIN}
-
-lIYEaR3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw
-d6i3vJf+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA
-WHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd+P+7SjzApULQ2S2FqIEtv
-d2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw+
-iJYEExYKAD4WIQSAbTobn5V9ZzGVC8pi515USXgV3QUCaR3PygIbAwUJA8JnAAUL
-CQgHAgYVCgkICwIEFgIDAQIeAQIXgAAKCRBi515USXgV3UGkAQDdih4x/+9oQZ6+
-0T0Etx1oIerz9Uh8CD0aRP/XzC1wPQD/Ug7bAb9n5RFDqb2Vlq2KK+uza5vDlDHq
-rxgkrugpagY=
-=gskf
-${PGP_PRIVATE_END}`;
+			// `signCommitData` is mocked into rejecting above, so the stored key only
+			// has to be shaped like one.
+			const validPrivateKey = VALID_ARMORED_PRIVATE_KEY;
 
 			const customEnv = {
 				...env,
