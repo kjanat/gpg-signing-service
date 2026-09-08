@@ -5,6 +5,7 @@ import { HEADERS } from "#types";
 // Tests for development mode logging
 describe("Logger - Development Mode", () => {
 	let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+	let devLogger: typeof import("#utils/logger").logger;
 
 	beforeEach(async () => {
 		// Set development mode before importing
@@ -12,6 +13,7 @@ describe("Logger - Development Mode", () => {
 		// Clear module cache to reload with new environment
 		vi.resetModules();
 		consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		({ logger: devLogger } = await import("#utils/logger"));
 	});
 
 	afterEach(() => {
@@ -22,7 +24,6 @@ describe("Logger - Development Mode", () => {
 
 	it("should log debug messages in development mode", async () => {
 		// Line 28, 37-38: debug console.log output in development
-		const { logger: devLogger } = await import("#utils/logger");
 		const message = "Debug message";
 		const context = { userId: "dev-user" };
 
@@ -33,8 +34,6 @@ describe("Logger - Development Mode", () => {
 
 	it("should log debug without context in development mode", async () => {
 		// Line 28, 37-38: debug without context in development
-		const { logger: devLogger } = await import("#utils/logger");
-
 		devLogger.debug("Debug only");
 
 		expect(consoleLogSpy).toHaveBeenCalledWith("[DEBUG]", "Debug only", "");
@@ -42,7 +41,6 @@ describe("Logger - Development Mode", () => {
 
 	it("should log info in development formatted output", async () => {
 		// Line 28: info formatted for development mode
-		const { logger: devLogger } = await import("#utils/logger");
 		const message = "Info in dev";
 		const context = { action: "test" };
 
@@ -53,8 +51,6 @@ describe("Logger - Development Mode", () => {
 
 	it("should log warn in development formatted output", async () => {
 		// Line 28: warn formatted for development mode
-		const { logger: devLogger } = await import("#utils/logger");
-
 		devLogger.warn("Warning in dev", { severity: "low" });
 
 		expect(consoleLogSpy).toHaveBeenCalledWith("[WARN]", "Warning in dev", {
@@ -64,7 +60,6 @@ describe("Logger - Development Mode", () => {
 
 	it("should log error with stack trace in development mode", async () => {
 		// Line 28, 55: error with stack trace in development mode
-		const { logger: devLogger } = await import("#utils/logger");
 		const message = "Dev error";
 		const error = new Error("Test error");
 
@@ -84,7 +79,6 @@ describe("Logger - Development Mode", () => {
 
 	it("should include error stack only in development mode", async () => {
 		// Line 55: conditional stack trace based on isDevelopment
-		const { logger: devLogger } = await import("#utils/logger");
 		const error = new TypeError("Type issue");
 
 		devLogger.error("Type error", error);
@@ -98,8 +92,6 @@ describe("Logger - Development Mode", () => {
 
 	it("should format all log levels with prefix in development", async () => {
 		// Line 28: all levels formatted with uppercase prefix
-		const { logger: devLogger } = await import("#utils/logger");
-
 		devLogger.info("info msg");
 		devLogger.warn("warn msg");
 		devLogger.error("error msg");
@@ -112,8 +104,6 @@ describe("Logger - Development Mode", () => {
 
 	it("should not include context in JSON format in development", async () => {
 		// Line 28, 31: development mode uses console.log directly, NOT JSON.stringify
-		const { logger: devLogger } = await import("#utils/logger");
-
 		devLogger.info("Test", { key: "value" });
 
 		expect(consoleLogSpy).toHaveBeenCalled();
