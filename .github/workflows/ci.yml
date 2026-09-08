@@ -5,12 +5,12 @@ jobs:
   verify-api:
     name: Verify API Generation
     runs-on: ubuntu-latest
-    steps: [uses: actions/checkout@v7, uses: ./.github/actions/check-api-changes]
+    steps: [uses: actions/checkout@v7, { uses: ./.github/actions/check-api-changes, with: { mise-version: "${{ vars.MISE_VERSION }}" } }]
 
   format:
     name: Format check
     runs-on: ubuntu-latest
-    steps: [uses: actions/checkout@v7, uses: ./.github/actions/check-formatting]
+    steps: [uses: actions/checkout@v7, { uses: ./.github/actions/check-formatting, with: { mise-version: "${{ vars.MISE_VERSION }}" } }]
 
   typecheck:
     name: Typecheck
