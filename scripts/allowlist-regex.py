@@ -9,20 +9,30 @@ the one file gitleaks structurally cannot scan (its default allowlist skips ever
 path ending `gitleaks.toml`, measured in test-gitleaks-contract.sh).
 
 An exact-match regex cannot stop naming the bytes it matches; that is what makes
-it exact. What it can stop doing is naming them in a form anything decodes. A
-literal run of base64 written per character as `\\xNN` is the same regular
-language -- `\\x6c` and `l` parse to the same RE2 literal, which
+it exact. What it can stop doing is naming them in the form the tooling around
+them reads. A literal run of base64 written per character as `\\xNN` is the same
+regular language -- `\\x6c` and `l` parse to the same RE2 literal, which
 `scripts/test-gitleaks-contract.sh` proves against the scanner rather than
-asserting -- while `\\` between every character means no base64 run survives for
-`scripts/key-material.py` to decode. The gate can then read the config with no
-exclusions, which is the point: the file that holds the historical ciphertext was
-the file the gate excused.
+asserting -- and it is not a base64 run, so nothing that reads base64 reads it by
+accident.
 
-This is a representation change and not a secrecy one. The bytes are still
-recoverable from the config by anyone who wants them, exactly as an exact-match
-regex requires. What ends the exposure is the operator rotating the key (#147);
-what this ends is the tree carrying key material in a form tools accept, and the
-gate having a named hole in it.
+`scripts/key-material.py` is not fooled by it and is not meant to be. It undoes
+`\\xNN` like it undoes `\\n` and `\\+`, decodes what comes out, and permits the
+result only where two things hold at once: the escapes are inside one complete
+`\\A...\\z` entry of a `regexes = [` array, and the key they spell is one it
+already knows as retired. A freshly generated key written this way is reported
+wherever it is put, including inside a perfectly formed entry in this very
+config. So the form below is not what makes the gate pass -- being the
+already-published historical corpus, described exactly, is. The form is what
+keeps those bytes from also being a base64 run that every other tool in the
+repository would pick up.
+
+This is therefore a representation change and not a secrecy one. `--decode`
+below reverses it, and the bytes are recoverable from the config by anyone who
+wants them, exactly as an exact-match regex requires. What ends the exposure is
+the operator rotating the key (#147); what this ends is the tree carrying key
+material in a live, directly readable form, and the gate having a named hole in
+it.
 
 Usage:
     allowlist-regex.py --plain            text on stdin -> an entry, runs spelled
@@ -43,11 +53,15 @@ from pathlib import Path
 
 # How long a literal base64 run may be before it has to be written as bytes.
 #
-# Well under the 40 `scripts/key-material.py` needs before it will decode a run,
-# so a config that passes this check cannot be carrying a packet the detector
-# would have to be told to ignore. Well above the incidental: `=oEGo`, `abcd`,
-# a hex digest, an `A1B2C3D4E5F67890` key id -- the short literals that make an
-# entry readable stay readable.
+# Just above the 20 characters `scripts/key-material.py` needs before it will
+# decode a run at all -- which is the arithmetic floor for a whole key packet,
+# not a taste judgement -- so this check and that one meet with nothing between
+# them. The detector's permitted case covers escaped runs only; a run spelled out
+# in plain base64 inside an entry is reported there like key material anywhere
+# else, and this check is what says so first, with a message that names the fix.
+# Well above the incidental, too: `=oEGo`, `abcd`, a hex digest, an
+# `A1B2C3D4E5F67890` key id -- the short literals that make an entry readable
+# stay readable.
 MAX_LITERAL_RUN = 24
 
 # Characters that are a base64 alphabet member *and* an RE2 literal on their own.

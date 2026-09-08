@@ -128,21 +128,45 @@ deployment credentials. There is no private-key export endpoint.
 No private key belongs in this repository, encrypted or otherwise. Test suites
 generate the keys they need at run time, shape fixtures come from
 `src/__tests__/helpers/private-key-fixture.ts` and carry no key material, and
-`task test:key-material` decodes every base64 run in every tracked file and
-fails on an OpenPGP secret-key packet or on the public material of a retired
-signing key. It does that by reading bytes rather than armor headers, because
-this repository composes its armor markers at run time and a header-matching
-scanner therefore cannot see a key committed without one.
+`task test:key-material` fails on an OpenPGP secret-key packet, or on the public
+material of a retired signing key, in any tracked file. It reads bytes rather
+than armor headers, because this repository composes its armor markers at run
+time and a header-matching scanner therefore cannot see a key committed without
+one — and it reads them through every representation a key arrives in: base64 at
+any wrapping width, the file's own bytes for an export written without `--armor`,
+and a copy with `\n`, `\+` and `\xNN` escapes undone.
 
 Every tracked file means every one; the check has no exclusions and its own test
 suite fails if one is added. `.gitleaks.toml` is the file that makes this matter,
 because gitleaks' default allowlist drops every path ending `gitleaks.toml` and
 so never reads the repository's own config. Its historical allowlist has to match
-findings that already happened by their exact text, which it does without
-spelling long literal runs out: each is written one `\xNN` per character, the
-same expression to the scanner and not a base64 run to anything else.
+findings that already happened by their exact text, so it necessarily describes
+every byte of them; what it avoids is describing them as base64, writing each
+long literal run one `\xNN` per character instead — the same expression to the
+scanner, and not a run to anything that reads base64.
 `scripts/test-gitleaks-contract.sh` proves the two forms accept the same strings
 by scanning with each of them.
+
+That escaping is not what makes the config pass the key-material gate, which
+undoes it and decodes the result like any other text. The gate permits what it
+finds there on two properties of the text, neither of which is a filename: the
+escapes sit inside one complete `\A…\z` whole-match entry of a `regexes = [`
+array, and the key they spell is one already recorded as retired. A freshly
+generated key written the same way, in an equally well-formed entry, is reported
+— the suite plants one on every run — so the shape is not a route for anything
+new, and the key that replaces the current one after rotation cannot be written
+there either.
+
+Be precise about what that leaves. No tracked file carries live, directly
+readable key material in any form: not raw packet bytes, not base64, not a
+folded or regex-escaped string. What the historical allowlist still holds is an
+exact description of bytes that are already in published history, in a matcher
+representation that `scripts/allowlist-regex.py --decode` reverses on purpose;
+an exact-match entry cannot stop describing what it matches. Removing the
+representation would not remove the exposure, because the commits it names are
+public. Only rotating the key does that, which is why
+[#147](https://github.com/kjanat/gpg-signing-service/issues/147) stays open until
+the operator has replaced it.
 
 ## Key expiry monitoring
 

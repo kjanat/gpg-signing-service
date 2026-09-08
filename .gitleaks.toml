@@ -76,14 +76,28 @@
 # Every literal run of 24 characters or more is therefore written one `\xNN` per
 # character. To the scanner that is the same expression -- `\x6c` and `l` parse
 # to the same RE2 literal, so the accepted language is unchanged and the spans
-# below still match exactly what they always did. To anything that decodes
-# base64 it is no longer a run at all, so `scripts/key-material.py` reads this
-# file like any other tracked file, with no exclusions anywhere.
+# below still match exactly what they always did. To anything that reads base64
+# it is not a run at all.
 #
-# This is a representation, not a secrecy measure: an exact-match entry cannot
-# stop containing what it matches, and the pre-#147 ciphertext is published
-# history either way. What ends that exposure is rotating the key. What this
-# ends is a tracked file carrying key material in a form tools accept, and a
+# `scripts/key-material.py` is the exception, and deliberately so: it undoes
+# these escapes and decodes what comes out, because a gate that could be walked
+# past by spelling a key `\xNN` at a time would be a gate with a hole shaped like
+# this file. What it finds here it permits, and only here, on two properties of
+# the text rather than on this file's name:
+#
+#   * the escapes sit inside one complete `\A...\z` entry of this array, and
+#   * the key they spell is one it already knows as a retired signing key.
+#
+# A freshly generated key written exactly this way, in an entry well formed in
+# every other respect, is reported -- the gate's own suite plants one each run to
+# prove it. So nothing new can be added here in this form, and after the #147
+# rotation the replacement key cannot be written here either.
+#
+# This is a representation, not a secrecy measure. An exact-match entry cannot
+# stop describing what it matches; `allowlist-regex.py --decode` reverses the
+# escaping and prints the bytes, and the pre-#147 ciphertext is published history
+# either way. What ends that exposure is rotating the key. What this ends is a
+# tracked file carrying key material in a live, directly readable form, and a
 # gate with a named hole in it.
 #
 # `scripts/allowlist-regex.py` writes and checks the form:
