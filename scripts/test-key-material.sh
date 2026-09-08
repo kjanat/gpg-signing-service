@@ -119,16 +119,34 @@ tree_result="$(cd "${repo_root}" && git ls-files | xargs python3 "${detector}" >
 [[ ${tree_result} == "clean" ]] \
 	|| fail "a tracked file carries an OpenPGP key packet: $(first_finding)"
 
-# The retired set and the deployment have to name the same key, or the guard is
-# watching for something the service stopped using years ago. wrangler.toml is
-# the source of truth for what is live; when the operator cuts over to the
-# replacement key, this case is what says the retired set was updated too.
-new_case 'the retired set names the key wrangler.toml deploys'
+# The exposed key stays named however the deployment moves. Its digest is what
+# the `retired` rule is keyed on, so losing it is losing the rule -- and #147 is
+# not closed by rotating away from the key, it is closed by rotating away from it
+# *and* still recognising it if it ever comes back as a fixture.
+exposed_key_id='62E75E54497815DD'
+exposed_identity='8fa75e7da087baa229d21bbed9acf069abf7b86341b622515a5a3597bbdf211e'
+
+new_case 'the key exposed by #147 stays in the retired set'
+if ! grep -q -- "${exposed_identity}" "${detector}"; then
+	fail "scripts/key-material.py no longer carries the identity digest of ${exposed_key_id}; the retired rule now recognises nothing and a re-committed copy of the exposed key would pass"
+fi
+
+# The other half, and the half that inverts at the cutover. Before #147's
+# rotation the deployed key *is* the exposed one, and the gate has to keep saying
+# so. After it, `KEY_ID` names a key that has never been exposed -- and writing
+# that key into the detector would be the wrong repair for a red build, because
+# the `retired` rule fires on public packets too and the live public key belongs
+# in `docs/`. So the assertion flips on what wrangler.toml says, and neither side
+# of the flip asks the operator to name a live key here.
+new_case 'the deployed key is retired exactly while it is the exposed one'
 deployed_key_id="$(sed -nE 's/^KEY_ID[[:space:]]*=[[:space:]]*"([0-9A-Fa-f]{16})".*/\1/p' "${repo_root}/wrangler.toml" | head -n1)"
 if [[ -z ${deployed_key_id} ]]; then
 	fail 'no KEY_ID found in wrangler.toml, so this case cannot check anything'
-elif ! grep -qi -- "${deployed_key_id}" "${detector}"; then
-	fail "wrangler.toml deploys ${deployed_key_id}, which scripts/key-material.py does not name; after a rotation, add the retired key's identity digest to RETIRED_IDENTITIES"
+elif [[ ${deployed_key_id} == "${exposed_key_id}" ]]; then
+	grep -qi -- "${deployed_key_id}" "${detector}" \
+		|| fail "wrangler.toml still deploys the exposed key ${deployed_key_id} and scripts/key-material.py has stopped naming it; #147 is open until the rotation happens, and until then the detector has to know which key that is"
+elif grep -qi -- "${deployed_key_id}" "${detector}"; then
+	fail "wrangler.toml deploys ${deployed_key_id} and scripts/key-material.py names it; the rotation moved the deployment to a key the detector treats as retired, which means the live public key can never be published -- remove it and leave only ${exposed_key_id}"
 fi
 
 # =============================================================================
@@ -173,6 +191,59 @@ printf "regexes = ['''\\\\A%s\\\\z''']\n" \
 	"$(tr '\n' '\001' <"${secret_body}" | sed 's/\x01/\\n/g; s/+/\\+/g')" >"${escaped}/config.toml"
 [[ "$(detect "${escaped}/config.toml")" == "found" ]] \
 	|| fail 'a regex-escaped private key was not reported, so escaping is a way to smuggle one past this gate'
+
+# Armor wraps its body at 64 columns and every fixture shape in the corpus kept
+# that width, so the detector used to require a run of 40 before it would join
+# lines -- and the width a block is wrapped at is chosen by whoever committed it.
+# Rewrapping the same key narrower walked straight past. There is no per-line
+# width now, so these widths are a sample and not a boundary: 32 and 39 are the
+# two the review reproduced, 8 is well under anything a tool emits.
+rewrapped="${tmp_dir}/rewrapped"
+mkdir -p "${rewrapped}"
+for width in 8 32 39 64; do
+	new_case "mutant: the same key rewrapped to ${width} columns is reported"
+	python3 - "${secret_body}" "${rewrapped}/fixture-${width}.test.ts" "${width}" <<'PY'
+import sys
+
+body, out, width = sys.argv[1], sys.argv[2], int(sys.argv[3])
+flat = "".join(open(body).read().split())
+lines = [flat[index : index + width] for index in range(0, len(flat), width)]
+with open(out, "w") as handle:
+    handle.write("export const fixture = [\n")
+    handle.writelines(f'\t"{line}",\n' for line in lines)
+    handle.write('].join("");\n')
+PY
+	[[ "$(detect "${rewrapped}/fixture-${width}.test.ts")" == "found" ]] \
+		|| fail "a private key wrapped at ${width} columns was not reported; the detector has a minimum line width again, and that width is a bypass anyone can pick"
+done
+
+# Encodings that are not the armor alphabet. Each one is a way of writing the
+# same packet bytes down that a base64-only reader walks past, and none of them
+# needs anything cleverer than a text editor.
+encoded="${tmp_dir}/encoded"
+mkdir -p "${encoded}"
+python3 - "${secret_body}" "${encoded}" <<'PY'
+import base64
+import sys
+
+body, out = sys.argv[1], sys.argv[2]
+raw = base64.b64decode("".join(open(body).read().split()))
+written = {
+    "urlsafe": base64.urlsafe_b64encode(raw).decode(),
+    "hex": raw.hex(),
+    "hex-upper": raw.hex().upper(),
+    "hex-spaced": " ".join(raw.hex()[at : at + 2] for at in range(0, len(raw) * 2, 2)),
+    "byte-escapes": "".join(f"\\x{octet:02x}" for octet in raw),
+}
+for name, text in written.items():
+    with open(f"{out}/{name}.test.ts", "w") as handle:
+        handle.write(f'export const fixture = "{text}";\n')
+PY
+for form in urlsafe hex hex-upper hex-spaced byte-escapes; do
+	new_case "mutant: the same key written as ${form} is reported"
+	[[ "$(detect "${encoded}/${form}.test.ts")" == "found" ]] \
+		|| fail "a private key written as ${form} was not reported; the detector reads one alphabet and the others are a way around it"
+done
 
 # The form `gpg` writes by default. No armor header, and no base64 either --
 # a keyring is packet bytes, so a detector that only decodes base64 runs walks
@@ -250,15 +321,83 @@ fi
 # the one file the scanner will not read. Two gates skipping the same file is not
 # defence in depth.
 #
-# The entries now write their long literal runs one `\xNN` per character, which
-# accepts the same strings -- proved against the scanner in the contract suite --
-# and is not a base64 run, so the config passes on its merits. What follows holds
-# that shut from both sides: the file is scanned, and no mechanism exists to stop
-# scanning it.
+# The entries write their long literal runs one `\xNN` per character, which
+# accepts the same strings -- proved against the scanner in the contract suite.
+# The detector undoes that escaping like any other, so what keeps the config
+# clean is not the file it is but two properties of the text: the escapes sit
+# inside one complete `\A...\z` entry of a `regexes = [` array, and the key they
+# spell is one `RETIRED_IDENTITIES` already names. Section 4 is every way of
+# failing one of those two.
 
-new_case '.gitleaks.toml is scanned like any other tracked file and is clean'
+new_case '.gitleaks.toml is read like any other file and passes on that rule'
 [[ "$(detect "${repo_root}/.gitleaks.toml")" == "clean" ]] \
-	|| fail "the shipped config carries key material: $(first_finding)"
+	|| fail "the shipped config carries key material the permitted case does not cover: $(first_finding)"
+
+# The case that decides whether the permitted shape is a rule or a loophole. A
+# key generated during this run, escaped exactly the way the historical entries
+# are, inside an entry that is well formed in every structural respect -- and it
+# is reported, because it is not a retired key. Nothing new can be written here.
+new_case 'mutant: a fresh key inside a well-formed anchored entry is still caught'
+smuggled="${tmp_dir}/smuggled"
+mkdir -p "${smuggled}"
+entry="$(python3 "${repo_root}/scripts/allowlist-regex.py" --literal <"${secret_body}")"
+python3 - "${repo_root}/.gitleaks.toml" "${smuggled}/.gitleaks.toml" "${entry}" <<'PY'
+import sys
+
+config, out, entry = sys.argv[1], sys.argv[2], sys.argv[3]
+text = open(config, encoding="utf-8").read().rstrip("\n")
+assert text.endswith("]"), "the allowlist array is not the last thing in the config"
+open(out, "w", encoding="utf-8").write(f"{text[:-1]}  '''{entry}''',\n]\n")
+PY
+[[ "$(detect "${smuggled}/.gitleaks.toml")" == "found" ]] \
+	|| fail 'a freshly generated key, escaped and wrapped in a well-formed anchored entry, was not reported; the entry shape is a way to write any key into any file'
+
+new_case 'mutant: the same fresh escaped key in an ordinary source file is caught'
+printf 'export const historical = "%s";\n' "${entry}" >"${smuggled}/fixture.test.ts"
+[[ "$(detect "${smuggled}/fixture.test.ts")" == "found" ]] \
+	|| fail 'a key written one \xNN per character in a TypeScript file was not reported; byte escapes are a general smuggling route past this gate'
+
+# The config's own entries, failing each structural condition in turn. These
+# plant nothing: the material is what the tree already carries, moved to a shape
+# the permitted case does not cover.
+new_case 'mutant: the config entries with their \z anchor stripped are caught'
+sed 's/\\z'"'''"'/'"'''"'/g' "${repo_root}/.gitleaks.toml" >"${smuggled}/unanchored.toml"
+[[ "$(detect "${smuggled}/unanchored.toml")" == "found" ]] \
+	|| fail 'entries that lost their whole-match anchor were still treated as permitted; an unanchored entry excuses every longer span it sits inside, which is the #146 bypass'
+
+new_case 'mutant: the config entries outside a regexes array are caught'
+sed -E 's/^regexes[[:space:]]*=[[:space:]]*\[/notregexes = 1/' \
+	"${repo_root}/.gitleaks.toml" >"${smuggled}/noarray.toml"
+[[ "$(detect "${smuggled}/noarray.toml")" == "found" ]] \
+	|| fail 'escaped key material outside an allowlist array was treated as permitted, so any file can carry it by writing three quotes around it'
+
+# The third condition, which the two above cannot reach. `--decode` is shipped
+# and reverses the escaping, so the historical bytes are recoverable from the
+# config -- that is what an exact-match regex over published history costs, and
+# the config comment says so. What must not follow is that the *plain* form is
+# permitted too: an entry is allowed to describe those bytes, not to carry them
+# in a form a tool will read. The decoded copy lives in the run's temporary
+# directory and goes with it.
+new_case 'mutant: the same entries decoded back to plain base64 are caught'
+python3 "${repo_root}/scripts/allowlist-regex.py" --decode \
+	<"${repo_root}/.gitleaks.toml" >"${smuggled}/decoded.toml"
+[[ "$(detect "${smuggled}/decoded.toml")" == "found" ]] \
+	|| fail 'the historical entries written back as plain base64 were treated as permitted; the permitted case covers a representation, and it has widened to the material itself'
+
+new_case 'mutant: one entry lifted out of the array into a plain value is caught'
+python3 - "${repo_root}/.gitleaks.toml" "${smuggled}/loose.toml" <<'PY'
+import sys
+
+config, out = sys.argv[1], sys.argv[2]
+lines = open(config, encoding="utf-8").read().split("\n")
+carrying = [line for line in lines if "\\x6c\\x49\\x59\\x45" in line]
+assert carrying, "no escaped key-material entry found to move"
+open(out, "w", encoding="utf-8").write(
+    "note = \"" + carrying[0].strip().rstrip(",").strip("'") + "\"\n"
+)
+PY
+[[ "$(detect "${smuggled}/loose.toml")" == "found" ]] \
+	|| fail 'a historical entry copied into an ordinary TOML value was not reported; the permitted case is keyed on something other than the entry it is written for'
 
 new_case 'mutant: a real secret packet in .gitleaks.toml is caught, as anywhere else'
 planted_config="${tmp_dir}/planted-config"
