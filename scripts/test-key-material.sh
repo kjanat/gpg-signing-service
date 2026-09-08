@@ -103,7 +103,9 @@ gpg --batch --quiet --armor --export >"${probe_public}"
 
 # The armored body without its markers, which is what a fixture holds once
 # `src/utils/armor.ts` has stopped anyone from writing the markers down.
-body_of() { sed '1d;$d' "$1" | sed '/^$/d;/^[A-Za-z]*:/d'; }
+# The CRC24 line starts with '=' and is not part of the base64 payload.
+# Leaving it attached breaks decoding when that payload needs no padding.
+body_of() { sed '1d;$d' "$1" | sed '/^$/d;/^[A-Za-z]*:/d;/^=/d'; }
 
 secret_body="${tmp_dir}/secret-body"
 public_body="${tmp_dir}/public-body"
