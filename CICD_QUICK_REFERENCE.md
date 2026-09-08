@@ -55,7 +55,7 @@ LEGEND: ✅ Implemented | ⚠️ Partial | ❌ Missing | 🔄 In Progress
 | **API Generation**   | ✅     | Runs pre-commit                     | -        |
 | **Type Checking**    | ✅     | Runs pre-push                       | -        |
 | **Coverage Test**    | ✅     | Runs pre-push                       | -        |
-| **Hook Performance** | ⚠️      | ~30-60s per commit (could optimize) | Low      |
+| **Hook Performance** | ⚠️     | ~30-60s per commit (could optimize) | Low      |
 
 ### Deployment & Infrastructure
 
@@ -68,8 +68,8 @@ LEGEND: ✅ Implemented | ⚠️ Partial | ❌ Missing | 🔄 In Progress
 | **Durable Objects Binding**     | ✅     | KEY_STORAGE, RATE_LIMITER        | -            |
 | **KV Namespace Binding**        | ✅     | JWKS_CACHE for caching           | -            |
 | **Custom Domain**               | ✅     | gpg.kajkowalski.nl configured    | -            |
-| **Environment Variables**       | ⚠️      | Documented but no versioning     | Medium       |
-| **Secrets Management**          | ⚠️      | Manual via wrangler secret put   | Medium       |
+| **Environment Variables**       | ⚠️     | Documented but no versioning     | Medium       |
+| **Secrets Management**          | ⚠️     | Manual via wrangler secret put   | Medium       |
 | **Multi-environment Promotion** | ❌     | No staging/canary/prod flow      | **CRITICAL** |
 | **Pre-deployment Validation**   | ❌     | No compatibility checks          | **CRITICAL** |
 | **Health Check Post-Deploy**    | ❌     | No automated health verification | **CRITICAL** |
@@ -79,14 +79,14 @@ LEGEND: ✅ Implemented | ⚠️ Partial | ❌ Missing | 🔄 In Progress
 | Component                      | Status | Details                             | Priority     |
 | ------------------------------ | ------ | ----------------------------------- | ------------ |
 | **Deployment Automation**      | ✅     | task deploy with confirmation       | -            |
-| **Database Migrations**        | ⚠️      | Single migration (0001_initial.sql) | Medium       |
+| **Database Migrations**        | ⚠️     | Single migration (0001_initial.sql) | Medium       |
 | **Deployment Approvals**       | ❌     | No approval workflow                | High         |
 | **Pre-deploy Smoke Tests**     | ❌     | Not configured                      | **CRITICAL** |
 | **Health Checks Post-deploy**  | ❌     | Not configured                      | **CRITICAL** |
 | **Automated Rollback**         | ❌     | No rollback mechanism               | **CRITICAL** |
 | **Canary Deployments**         | ❌     | No gradual rollout                  | High         |
 | **Blue-Green Deployments**     | ❌     | Not configured                      | High         |
-| **Deployment Status Tracking** | ⚠️      | Basic via GitHub Actions            | Medium       |
+| **Deployment Status Tracking** | ⚠️     | Basic via GitHub Actions            | Medium       |
 
 ### Production Monitoring & Observability
 
@@ -98,7 +98,7 @@ LEGEND: ✅ Implemented | ⚠️ Partial | ❌ Missing | 🔄 In Progress
 | **APM Integration**        | ❌     | No Datadog/New Relic/Honeycomb   | **CRITICAL** |
 | **Error Tracking**         | ❌     | No Sentry/Rollbar                | **CRITICAL** |
 | **Performance Monitoring** | ❌     | No baseline metrics              | High         |
-| **Log Aggregation**        | ⚠️      | Local Workers logs only          | Medium       |
+| **Log Aggregation**        | ⚠️     | Local Workers logs only          | Medium       |
 | **Alerting**               | ❌     | No alert rules                   | **CRITICAL** |
 | **Dashboards**             | ❌     | No monitoring dashboards         | High         |
 | **SLO/Error Budget**       | ❌     | Not tracked                      | Medium       |
@@ -115,7 +115,7 @@ LEGEND: ✅ Implemented | ⚠️ Partial | ❌ Missing | 🔄 In Progress
 | **API Code Generation**       | ✅     | task generate:api           | -        |
 | **GPG Key Generation**        | ✅     | task generate:key script    | -        |
 | **Database Setup**            | ✅     | task db:create, db:migrate  | -        |
-| **Environment Documentation** | ⚠️      | Documented but scattered    | Low      |
+| **Environment Documentation** | ⚠️     | Documented but scattered    | Low      |
 | **Onboarding Guide**          | ✅     | DEVELOPER_GUIDE.md present  | -        |
 
 ---

@@ -903,15 +903,15 @@ src/__tests__/ (16 files, 226+ tests)
 
 ### C. Risk Matrix
 
-| Risk                         | Probability | Impact   | Testing Status         |
-| ---------------------------- | ----------- | -------- | ---------------------- |
+| Risk                         | Probability | Impact   | Testing Status          |
+| ---------------------------- | ----------- | -------- | ----------------------- |
 | Timing attack on admin token | MEDIUM      | HIGH     | **NOT TESTED** ⚠️       |
 | SSRF in JWKS fetch           | LOW         | HIGH     | **PARTIALLY TESTED** ⚠️ |
 | Silent audit log failures    | MEDIUM      | MEDIUM   | **NOT TESTED** ⚠️       |
 | Malformed error responses    | LOW         | LOW      | **NOT TESTED** ⚠️       |
-| Rate limiting bypass         | LOW         | HIGH     | **TESTED** ✅          |
-| Invalid signature generation | LOW         | HIGH     | **TESTED** ✅          |
-| Token validation bypass      | LOW         | CRITICAL | **TESTED** ✅          |
+| Rate limiting bypass         | LOW         | HIGH     | **TESTED** ✅           |
+| Invalid signature generation | LOW         | HIGH     | **TESTED** ✅           |
+| Token validation bypass      | LOW         | CRITICAL | **TESTED** ✅           |
 
 ---
 

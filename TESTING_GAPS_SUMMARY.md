@@ -109,10 +109,10 @@
 | File                            | Coverage | Statements | Status       |
 | ------------------------------- | -------- | ---------- | ------------ |
 | **CRITICAL GAPS**               |          |            |              |
-| utils/database.ts               | 0%       | 0/25 ⚠️     | Never tested |
-| utils/errors.ts                 | 0%       | 0/13 ⚠️     | Never tested |
-| utils/logger.ts                 | 47.6%    | 10/21 ⚠️    | Partial      |
-| types/branded.ts                | 71.4%    | 10/14 ⚠️    | Partial      |
+| utils/database.ts               | 0%       | 0/25 ⚠️    | Never tested |
+| utils/errors.ts                 | 0%       | 0/13 ⚠️    | Never tested |
+| utils/logger.ts                 | 47.6%    | 10/21 ⚠️   | Partial      |
+| types/branded.ts                | 71.4%    | 10/14 ⚠️   | Partial      |
 | **EXCELLENT**                   |          |            |              |
 | index.ts                        | 100%     | 44/44 ✅   | Complete     |
 | durable-objects/key-storage.ts  | 100%     | 35/35 ✅   | Complete     |
@@ -128,21 +128,21 @@
 
 ### Security Testing
 
-| Item                   | Status                    | Notes                           |
-| ---------------------- | ------------------------- | ------------------------------- |
-| OIDC validation        | ✅ Tested                 | 26 tests                        |
-| Rate limiting          | ✅ Tested                 | 41 tests                        |
+| Item                   | Status                     | Notes                           |
+| ---------------------- | -------------------------- | ------------------------------- |
+| OIDC validation        | ✅ Tested                  | 26 tests                        |
+| Rate limiting          | ✅ Tested                  | 41 tests                        |
 | Admin token comparison | ⚠️ **Untested for timing** | NO timing tests                 |
 | SSRF prevention        | ⚠️ **Partially tested**    | NO protocol/IP validation tests |
-| Input validation       | ✅ Tested                 | 109 schema tests                |
+| Input validation       | ✅ Tested                  | 109 schema tests                |
 
 ### Functionality Testing
 
-| Module              | Tests | Coverage    |
-| ------------------- | ----- | ----------- |
-| Routes (sign/admin) | 26    | 100% ✅     |
-| Middleware          | 73    | 100% ✅     |
-| Durable Objects     | 49    | 100% ✅     |
+| Module              | Tests | Coverage     |
+| ------------------- | ----- | ------------ |
+| Routes (sign/admin) | 26    | 100% ✅      |
+| Middleware          | 73    | 100% ✅      |
+| Durable Objects     | 49    | 100% ✅      |
 | Database utilities  | 0     | **0% ⚠️**    |
 | Error handling      | 0     | **0% ⚠️**    |
 | Logging             | ~5    | **47.6% ⚠️** |
@@ -150,23 +150,23 @@
 
 ### Integration Testing
 
-| Component     | Tests | Status        |
-| ------------- | ----- | ------------- |
-| E2E API flow  | 41    | ✅ Complete   |
-| OIDC + JWKS   | 26    | ✅ Complete   |
-| Rate limiting | 41    | ✅ Complete   |
-| Key storage   | 35    | ✅ Complete   |
-| Audit logging | 12    | ✅ Complete   |
+| Component     | Tests | Status         |
+| ------------- | ----- | -------------- |
+| E2E API flow  | 41    | ✅ Complete    |
+| OIDC + JWKS   | 26    | ✅ Complete    |
+| Rate limiting | 41    | ✅ Complete    |
+| Key storage   | 35    | ✅ Complete    |
+| Audit logging | 12    | ✅ Complete    |
 | **CLI tool**  | **0** | **⚠️ Missing** |
 
 ### Go Client (Separate - 88.9% coverage)
 
-| Component       | Coverage | Status        |
-| --------------- | -------- | ------------- |
-| Client creation | 100%     | ✅            |
-| Retry logic     | 100%     | ✅            |
-| Error handling  | 100%     | ✅            |
-| All API methods | 100%     | ✅            |
+| Component       | Coverage | Status         |
+| --------------- | -------- | -------------- |
+| Client creation | 100%     | ✅             |
+| Retry logic     | 100%     | ✅             |
+| Error handling  | 100%     | ✅             |
+| All API methods | 100%     | ✅             |
 | **CLI tool**    | **0%**   | **⚠️ Missing** |
 
 ---
