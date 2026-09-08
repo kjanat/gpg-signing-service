@@ -116,7 +116,7 @@ jobs:
           ref: ${{ needs.authorize.outputs.head-sha }}
           path: pr
           persist-credentials: false
-      - { uses: jdx/mise-action@v4 }
+      - { uses: jdx/mise-action@v4, with: { version: "${{ vars.MISE_VERSION }}" } }
       - { uses: kjanat/install-dprint@v2 }
       - { uses: ./.github/actions/setup-bun, id: bun, with: { skip-install: true } }
 
@@ -224,7 +224,7 @@ jobs:
 
       - name: Download the fix
         if: steps.gate.outputs.eligible == 'true'
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with: { name: dependabot-fix, path: "${{ runner.temp }}/fix" }
 
       # Signing is set up from the default-branch checkout, and #107's

@@ -33,8 +33,7 @@ jobs:
           persist-credentials: false
 
       - name: Validate release tag
-        env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        env: { RELEASE_TAG: "${{ inputs.tag || github.ref_name }}" }
         run: .release-tooling/.github/scripts/validate-release-tag.sh
 
       - name: Drop release tooling before build
@@ -42,13 +41,11 @@ jobs:
 
       - name: Install toolchain
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
-        with:
-          working_directory: client
+        with: { working_directory: client, version: "${{ vars.MISE_VERSION }}" }
 
       - name: Build binaries
         working-directory: client
-        env:
-          BUILD_TAG: ${{ inputs.tag || github.ref_name }}
+        env: { BUILD_TAG: "${{ inputs.tag || github.ref_name }}" }
         run: |
           LDFLAGS="-s -w -X main.version=${BUILD_TAG#v}"
 

@@ -23,7 +23,7 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"
           PR_HEAD_REPO: "${{ github.event.pull_request.head.repo.full_name }}"
         run: bash .github/scripts/claude-review-gate.sh
-      - { uses: jdx/mise-action@v4 }
+      - { uses: jdx/mise-action@v4, with: { version: "${{ vars.MISE_VERSION }}" } }
       - { uses: kjanat/install-dprint@v2 }
       - { uses: ./.github/actions/setup-bun, id: bun }
       - { run: runner install }
