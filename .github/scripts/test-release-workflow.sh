@@ -839,9 +839,10 @@ tree_case 'a tag check run out of the published tag tree fails' \
 	"$(release_tree '' '/^ +run: \.release-tooling\// { $0 = "        run: .github/scripts/validate-release-tag.sh" } { print }')" \
 	'runs .github/scripts/validate-release-tag.sh, not .release-tooling/.github/scripts/validate-release-tag.sh'
 
-# shellcheck disable=SC2016  # awk's $0, and a GitHub expression the mutation must write literally
+# Change the scalar in place so both block and inline env mappings are mutated.
+# shellcheck disable=SC2016  # a GitHub expression the mutation must write literally
 tree_case 'validating a different tag than the one built fails' \
-	"$(release_tree '' '/^ +RELEASE_TAG:/ { $0 = "          RELEASE_TAG: ${{ github.event.inputs.other }}" } { print }')" \
+	"$(release_tree '' '/RELEASE_TAG:/ { sub(/\$\{\{[^}]*\}\}/, "${{ github.event.inputs.other }}") } { print }')" \
 	'the validator takes ${{ github.event.inputs.other }}, not the requested tag'
 
 # --- what the build stamps into the artifacts ----------------------------------
@@ -889,9 +890,9 @@ tree_case 'a shipping build that injects a literal version fails' \
 
 # The tag reaching the build has to be the tag that was validated, which is a
 # separate question from the tag being spelled somewhere in the step.
-# shellcheck disable=SC2016  # awk's $0, and a GitHub expression the mutation must write literally
+# shellcheck disable=SC2016  # a GitHub expression the mutation must write literally
 tree_case 'a build handed a tag other than the validated one fails' \
-	"$(release_tree '' '/^ +BUILD_TAG:/ { $0 = "          BUILD_TAG: ${{ github.event.inputs.other }}" } { print }')" \
+	"$(release_tree '' '/BUILD_TAG:/ { sub(/\$\{\{[^}]*\}\}/, "${{ github.event.inputs.other }}") } { print }')" \
 	'the build takes ${{ github.event.inputs.other }}, not the requested tag'
 
 # RELEASE_TAG is the validator's name and nothing else's. A build that spends it
@@ -899,9 +900,9 @@ tree_case 'a build handed a tag other than the validated one fails' \
 # it makes "the step given RELEASE_TAG is the step that runs the tag check"
 # unanswerable, which is the assertion standing between a real gate and a decoy
 # step carrying the right variable while the script reads a job-level env:.
-# shellcheck disable=SC2016  # awk's $0, and a GitHub expression the mutation must write literally
+# shellcheck disable=SC2016  # the shell expansion in the fixture must remain literal
 tree_case 'a build that spends the validator variable name fails' \
-	"$(release_tree '' '/^ +BUILD_TAG:/ { $0 = "          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}" }
+	"$(release_tree '' '/BUILD_TAG:/ { sub(/BUILD_TAG:/, "RELEASE_TAG:") }
 	                    /^ +LDFLAGS=/ { sub(/BUILD_TAG/, "RELEASE_TAG") }
 	                    { print }')" \
 	'has 2 validator steps, expected exactly 1'
