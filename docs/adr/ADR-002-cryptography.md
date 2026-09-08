@@ -114,6 +114,9 @@ Use **openpgp.js v6** as the cryptographic library with passphrase-encrypted pri
 - Store in `.keys/` directory (NOT `~/.gnupg`, isolated from user keyring)
 - Export with passphrase encryption: `gpg --armor --export-secret-keys`
 - Import to service via admin API
+- Keep the encrypted export offline and separate from its passphrase; an
+  encrypted export is private-key material and never belongs in the repository,
+  in a test fixture, or in CI output
 
 ### Passphrase Handling
 

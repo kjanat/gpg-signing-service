@@ -19,21 +19,12 @@ import {
 	TimestampSchema,
 } from "#schemas";
 import { PGP_PRIVATE_BEGIN, PGP_PRIVATE_END } from "./helpers/armor";
+import { armoredPrivateKeyFixture, VALID_ARMORED_PRIVATE_KEY } from "./helpers/private-key-fixture";
 
 describe("Schema Validation - Edge Cases", () => {
-	// Realistic Ed25519 key (smallest valid key ~400-500 chars)
-	const validKey = `${PGP_PRIVATE_BEGIN}
-
-lIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw
-d6i3vJf+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA
-WHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd+P+7SjzApULQ2S2FqIEtv
-d2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw+
-iJkEExYKAEEWIQQRTd3LSMIzSP5K+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL
-CQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p
-KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
-7Bfg==
-=oEGo
-${PGP_PRIVATE_END}`;
+	// Realistically sized for an Ed25519 block, and carrying no key: every case
+	// below reads its shape, never its contents. See the helper for why (#147).
+	const validKey = VALID_ARMORED_PRIVATE_KEY;
 
 	describe("KeyIdSchema", () => {
 		// Happy path
@@ -251,32 +242,14 @@ ${PGP_PRIVATE_END}`;
 		});
 
 		it("should accept key with Version header", () => {
-			const keyWithVersion = `${PGP_PRIVATE_BEGIN}
-Version: OpenPGP.js v5.0.0
-
-lIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw
-d6i3vJf+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA
-WHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd+P+7SjzApULQ2S2FqIEtv
-d2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw+
-iJkEExYKAEEWIQQRTd3LSMIzSP5K+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL
-=oEGo
-${PGP_PRIVATE_END}`;
+			const keyWithVersion = armoredPrivateKeyFixture({ headers: ["Version: OpenPGP.js v5.0.0"] });
 
 			const result = ArmoredPrivateKeySchema.parse(keyWithVersion);
 			expect(result).toBeTruthy();
 		});
 
 		it("should accept key with Comment header", () => {
-			const keyWithComment = `${PGP_PRIVATE_BEGIN}
-Comment: Automated signing key
-
-lIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw
-d6i3vJf+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA
-WHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd+P+7SjzApULQ2S2FqIEtv
-d2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw+
-iJkEExYKAEEWIQQRTd3LSMIzSP5K+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL
-=oEGo
-${PGP_PRIVATE_END}`;
+			const keyWithComment = armoredPrivateKeyFixture({ headers: ["Comment: Automated signing key"] });
 
 			const result = ArmoredPrivateKeySchema.parse(keyWithComment);
 			expect(result).toBeTruthy();
@@ -286,19 +259,7 @@ ${PGP_PRIVATE_END}`;
 
 		// Edge cases for line validation
 		it("should reject when first line is empty (lines[0] undefined)", () => {
-			const emptyFirstLine = `
-${PGP_PRIVATE_BEGIN}
-
-lIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw
-d6i3vJf+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA
-WHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd+P+7SjzApULQ2S2FqIEtv
-d2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw+
-iJkEExYKAEEWIQQRTd3LSMIzSP5K+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL
-CQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p
-KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
-7Bfg==
-=oEGo
-${PGP_PRIVATE_END}`;
+			const emptyFirstLine = `\n${validKey}`;
 
 			// Actually fails on checksum validation, not BEGIN/END check
 			expect(() => ArmoredPrivateKeySchema.parse(emptyFirstLine)).toThrow(
@@ -307,17 +268,7 @@ ${PGP_PRIVATE_END}`;
 		});
 
 		it("should reject when last line missing END marker (lastLine undefined)", () => {
-			const noEndMarker = `${PGP_PRIVATE_BEGIN}
-
-lIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw
-d6i3vJf+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA
-WHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd+P+7SjzApULQ2S2FqIEtv
-d2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw+
-iJkEExYKAEEWIQQRTd3LSMIzSP5K+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL
-CQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p
-KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
-7Bfg==
-=oEGo`;
+			const noEndMarker = validKey.replace(`\n${PGP_PRIVATE_END}`, "");
 
 			expect(() => ArmoredPrivateKeySchema.parse(noEndMarker)).toThrow(
 				"Must be a valid PGP armored private key with BEGIN/END markers",
@@ -334,19 +285,7 @@ KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
 		});
 
 		it("should handle key where second-to-last line is empty", () => {
-			const validKeyWithEmptySecondLast = `${PGP_PRIVATE_BEGIN}
-
-lIYEZx3PyhYJKwYBBAHaRw8BAQdA4098Byyni0yyLGaDLgEajIgJTXkk7FpK0MQw
-d6i3vJf+BwMCZ4XgIvvkVqb/kUozsyjzvltTYkQFFFlDeKnOEZKjJWkUzQYtAKXA
-WHH4p4fZpbw9E3Rd9tkbP2veyo3dTkWJgYnOTJJJFRd+P+7SjzApULQ2S2FqIEtv
-d2Fsc2tpIChBdXRvbWF0ZWQgc2lnbmluZykgPGluZm9Aa2Fqa293YWxza2kubmw+
-iJkEExYKAEEWIQQRTd3LSMIzSP5K+yAQMfcIqJ5LFQUCZ3PyhwIbAwUJA8JnAAUL
-CQgHAgIiAgYVCgkICwIEFgIDAQIeBwIXgAAKCRAQMfcIqJ5LFZoMAP9X7cPxCi2p
-KIr+J8gAkl0Ny1G8TnlMq0M9xN3Vx1qb+QD/elKMaKzX3u8d9zvIykjW8K/WKWwy
-7Bfg==
-=oEGo
-
-${PGP_PRIVATE_END}`;
+			const validKeyWithEmptySecondLast = validKey.replace(`\n${PGP_PRIVATE_END}`, `\n\n${PGP_PRIVATE_END}`);
 
 			// Should succeed because it falls back to lines[length-2] which contains footer
 			const result = ArmoredPrivateKeySchema.parse(validKeyWithEmptySecondLast);
