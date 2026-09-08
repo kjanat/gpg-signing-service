@@ -801,11 +801,17 @@ esac
 # =============================================================================
 #
 # An exact-match entry cannot stop naming what it matches; that is what exact
-# means. It can stop naming it in a form something decodes. Every long literal
-# run in this config is written one `\xNN` per character, which parses to the
-# same RE2 literal and leaves no base64 run behind -- so `scripts/key-material.py`
-# reads the config like any other tracked file instead of being told to skip it,
-# which is what it used to be told (#147).
+# means. It can stop naming it as base64. Every long literal run in this config
+# is written one `\xNN` per character, which parses to the same RE2 literal and
+# leaves no run behind for the rest of the tooling to pick up.
+#
+# What this section owns is that the two spellings are the same expression --
+# proved against the scanner, on a key generated during this run, using the real
+# span gitleaks reports for it. What it does not own is whether the config is
+# carrying key material: `scripts/key-material.py` undoes these escapes and
+# decodes them, and `scripts/test-key-material.sh` is where the config is read
+# like any other tracked file and where a fresh key in a well-formed entry is
+# planted to prove the escaping is not a way in.
 #
 # That matters here more than anywhere else in the tree: gitleaks' own default
 # allowlist drops every path ending `gitleaks.toml`, measured at the end of

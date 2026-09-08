@@ -23,9 +23,10 @@
  * key-shaped in a tracked file, indistinguishable at a glance from the thing
  * that caused #147, and a fresh target for the entropy rules `#utils/armor`
  * already explains. Generating it means the source carries no high-entropy run
- * at all — `scripts/key-material.py`, via `task test:key-material`, enforces
- * that for the whole corpus — and the scanner has nothing to excuse, which is
- * #146's property A.
+ * at all, and the scanner has nothing to excuse, which is #146's property A.
+ * `scripts/key-material.py`, via `task test:key-material`, holds the narrower
+ * line for the whole corpus: no tracked file may carry an OpenPGP key packet,
+ * in base64 at any width, in raw bytes, or behind `\n`, `\+` or `\xNN` escapes.
  *
  * The generator is a Lehmer sequence rather than `crypto.getRandomValues`, so a
  * fixture is identical on every run and a failure reproduces from its seed.
