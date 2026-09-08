@@ -14,7 +14,9 @@ header, and `src/utils/armor.ts` explains at length why this repository composes
 those headers at run time instead of writing them -- so the material that matters
 most here is precisely the material gitleaks is blindest to. This reads the
 bytes instead: any base64 run in a tracked file is decoded and checked for an
-OpenPGP packet header, header line or no header line.
+OpenPGP packet header, header line or no header line -- and the file's own bytes
+are walked the same way, because `gpg --export-secret-keys` without `--armor`
+writes packet bytes with no base64 anywhere for a base64 reader to find.
 
 Two rules, and they fail for different reasons:
 
@@ -253,6 +255,42 @@ def decode(run: str) -> list[bytes]:
     return out
 
 
+# Packet first-bytes that could open a key packet, so an unarmored file is
+# walked with a membership test rather than a parse at every offset.
+KEY_STARTS = frozenset(
+    byte
+    for byte in range(0x80, 0x100)
+    if (start := packet_header(bytes([byte, 0, 0, 0, 0, 0]))) is not None
+    and start[0] in KEY_TAGS
+)
+
+
+def raw_packets(text: str) -> list[tuple[int, bytes]]:
+    """`(line number, bytes)` at every offset in `text` that opens a key packet.
+
+    A key exported without `--armor` is packet bytes and nothing else: no armor
+    header for gitleaks, and no base64 run for the passes above. `candidates`
+    would walk straight past a committed `secring.gpg`, so the file's own bytes
+    are read as well. Measured over the tracked tree this reports nothing that is
+    not a packet -- a random byte has to be one of sixteen, then carry a version,
+    an algorithm and a length that all parse.
+    """
+    raw = text.encode("latin-1")
+    found: list[tuple[int, bytes]] = []
+    for offset, byte in enumerate(raw):
+        if byte not in KEY_STARTS:
+            continue
+        found.append((raw.count(b"\n", 0, offset) + 1, raw[offset:]))
+    return found
+
+
+def packets(text: str) -> list[tuple[int, bytes]]:
+    """`(line number, bytes)` for every reading of `text` that may be a packet."""
+    found = [(line, raw) for line, run in candidates(text) for raw in decode(run)]
+    found.extend(raw_packets(text))
+    return found
+
+
 def contents(path: Path) -> str | None:
     """Every byte of `path` as text, or `None` if it could not be read at all.
 
@@ -274,35 +312,34 @@ def scan(path: Path, root: Path, retired: dict[str, str]) -> list[Finding]:
     name = str(path.relative_to(root)) if path.is_relative_to(root) else str(path)
     findings: list[Finding] = []
     seen: set[tuple[int, str]] = set()
-    for line, run in candidates(text):
-        for raw in decode(run):
-            result = identify(raw)
-            if result is None:
-                continue
-            tag, digest = result
-            if tag in SECRET_TAGS and (line, "secret") not in seen:
-                seen.add((line, "secret"))
-                findings.append(
-                    Finding(
-                        name,
-                        line,
-                        "secret",
-                        "an OpenPGP secret-key packet is in a tracked file; "
-                        "generate keys at run time instead "
-                        "(src/__tests__/helpers/private-key-fixture.ts)",
-                    )
+    for line, raw in packets(text):
+        result = identify(raw)
+        if result is None:
+            continue
+        tag, digest = result
+        if tag in SECRET_TAGS and (line, "secret") not in seen:
+            seen.add((line, "secret"))
+            findings.append(
+                Finding(
+                    name,
+                    line,
+                    "secret",
+                    "an OpenPGP secret-key packet is in a tracked file; "
+                    "generate keys at run time instead "
+                    "(src/__tests__/helpers/private-key-fixture.ts)",
                 )
-            if digest in retired and (line, "retired") not in seen:
-                seen.add((line, "retired"))
-                findings.append(
-                    Finding(
-                        name,
-                        line,
-                        "retired",
-                        f"key material belonging to retired signing key "
-                        f"{retired[digest]} is in a tracked file",
-                    )
+            )
+        if digest in retired and (line, "retired") not in seen:
+            seen.add((line, "retired"))
+            findings.append(
+                Finding(
+                    name,
+                    line,
+                    "retired",
+                    f"key material belonging to retired signing key "
+                    f"{retired[digest]} is in a tracked file",
                 )
+            )
     return findings
 
 
@@ -311,11 +348,10 @@ def identities(path: Path) -> list[str]:
     if text is None:
         return []
     out: list[str] = []
-    for _, run in candidates(text):
-        for raw in decode(run):
-            result = identify(raw)
-            if result is not None and result[1] not in out:
-                out.append(result[1])
+    for _, raw in packets(text):
+        result = identify(raw)
+        if result is not None and result[1] not in out:
+            out.append(result[1])
     return out
 
 

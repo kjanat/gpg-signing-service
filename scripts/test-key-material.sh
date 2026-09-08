@@ -174,6 +174,17 @@ printf "regexes = ['''\\\\A%s\\\\z''']\n" \
 [[ "$(detect "${escaped}/config.toml")" == "found" ]] \
 	|| fail 'a regex-escaped private key was not reported, so escaping is a way to smuggle one past this gate'
 
+# The form `gpg` writes by default. No armor header, and no base64 either --
+# a keyring is packet bytes, so a detector that only decodes base64 runs walks
+# past a committed `secring.gpg` entirely.
+new_case 'mutant: a key exported without --armor is reported'
+unarmored="${tmp_dir}/unarmored"
+mkdir -p "${unarmored}"
+gpg --batch --quiet --pinentry-mode loopback --passphrase "${probe_pass}" \
+	--export-secret-keys >"${unarmored}/secring.gpg"
+[[ "$(detect "${unarmored}/secring.gpg")" == "found" ]] \
+	|| fail 'an unarmored secret-key export was not reported; the detector is reading base64 only, so the default export format is a way past it'
+
 # =============================================================================
 # 3. The rule is about secrets, not about keys
 # =============================================================================

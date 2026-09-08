@@ -23,9 +23,9 @@
  * key-shaped in a tracked file, indistinguishable at a glance from the thing
  * that caused #147, and a fresh target for the entropy rules `#utils/armor`
  * already explains. Generating it means the source carries no high-entropy run
- * at all — `src/__tests__/no-tracked-key-material.test.ts` enforces that for the
- * whole corpus — and the scanner has nothing to excuse, which is #146's
- * property A.
+ * at all — `scripts/key-material.py`, via `task test:key-material`, enforces
+ * that for the whole corpus — and the scanner has nothing to excuse, which is
+ * #146's property A.
  *
  * The generator is a Lehmer sequence rather than `crypto.getRandomValues`, so a
  * fixture is identical on every run and a failure reproduces from its seed.
