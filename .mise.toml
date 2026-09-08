@@ -35,9 +35,9 @@ golangci-lint      = "2.13.2"
 lefthook           = "latest"
 shellcheck         = "latest"
 task               = "latest"
-tombi              = "1.5.0"
+tombi              = "1.5.2"
 uv                 = "latest"
-wrangler           = "4.123.0"
+wrangler           = "4.129.1"
 
 [settings]
 idiomatic_version_file_enable_tools = ["go"]
