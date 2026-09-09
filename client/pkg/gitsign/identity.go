@@ -164,6 +164,9 @@ func messageBody(payload []byte) ([]byte, error) {
 	return message, nil
 }
 
+// treePrefix starts the tree line, the one header git requires to come first.
+var treePrefix = []byte("tree ")
+
 // treeHeader returns the SHA on the commit's tree line.
 func treeHeader(payload []byte) (string, error) {
 	head, err := headerBlock(payload)
@@ -223,10 +226,16 @@ func readIdents(payload []byte) (author, committer ident, err error) {
 // replaceIdents rewrites the author and committer headers to claim target,
 // keeping each one's own timestamp and offset exactly as git recorded them.
 //
-// Like replaceParents, this edits header lines in place rather than mutating a
-// decoded commit and re-encoding it: every byte outside the two identity
-// halves — the tree line, the parents, unknown headers, the message — has to
-// come out of the repair unchanged.
+// This edits the two header lines in place rather than mutating a decoded
+// commit and re-encoding it. Not because go-git would lose the rest —
+// unsignedObject reparents through the struct encoder precisely because the
+// pinned fork replays what it did not change — but because the halves being
+// replaced are ones the decoder does not keep apart. go-git parses an ident
+// into a name, an address and a time; it has no field for the bytes that
+// separated them, so an ident it cannot spell back exactly is one this repair
+// must not accept in the first place. readIdents refuses those, and what
+// survives is written back from its own parsed halves with the timestamp and
+// offset carried across verbatim.
 func replaceIdents(payload []byte, target Identity) ([]byte, error) {
 	author, committer, err := readIdents(payload)
 	if err != nil {
