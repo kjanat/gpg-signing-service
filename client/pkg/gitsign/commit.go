@@ -168,86 +168,44 @@ func committerEmail(raw []byte) (string, error) {
 // given parents in place of the originals. The result is the payload a
 // signature is computed over.
 //
-// The signature headers are stripped by go-git, but the parents are moved here
-// rather than by mutating ParentHashes and re-encoding. EncodeWithoutSignature
-// only reproduces the source bytes while the decoded fields still match the
-// object it came from; any mutation sends it down the struct encoder, which
-// can write back no more than the decode captured.
+// Both edits are go-git's own: EncodeWithoutSignature drops every signature
+// spelling, and the parents move by mutating ParentHashes ahead of it. That is
+// only a faithful rewrite because go.mod builds go-git from the fork carrying
+// go-git/go-git#2328, which decodes a commit's headers wherever they sit and
+// replays the bytes it did not change. Released go-git does neither: it reads
+// the author and committer from their canonical slots alone, so any header
+// interposed before or between them re-encodes as "author  <> 0 +0000", and it
+// normalizes what it did decode — an ident with no space before the date loses
+// the leading digit of its timestamp, a missing timezone gains one, an
+// explicit "encoding UTF-8" disappears, and unknown headers change places
+// around "encoding".
 //
-// The encoder half of that is settled. go.mod builds go-git from the fork
-// carrying go-git/go-git#2328, which is the dependency source this repository
-// supports, and there an ident with no space before the date, a missing
-// timezone, a zero-padded timestamp, an explicit "encoding UTF-8" and an
-// unknown header ahead of "encoding" all come back out of the struct path
-// unchanged. TestPinnedStructEncoderKeepsEveryShapeVerbatim drives that
-// encoder directly, so the pin cannot fall out of the build quietly.
-//
-// The decoder is what keeps the byte path. go-git reads the author and
-// committer from their canonical slots alone — straight after the parents, and
-// straight after each other — and the fork does not change that. A header
-// interposed before or between them (gpgsig, mergetag, encoding, an unknown
-// one) leaves both idents empty, so a re-encode writes "author  <> 0 +0000"
-// over a name and date git itself reads back correctly. Moving the parent
-// lines by hand keeps every byte git wrote that this run did not deliberately
-// change; TestUnsignedObjectKeepsWhatTheStructPathLoses pins the class.
+// Nothing about that difference is visible at compile time, so the pin is held
+// down by tests instead: TestUnsignedObjectChangesOnlyParents drives every
+// shape git writes and this package has been caught mangling, and
+// TestUnsignedObjectNeedsThePinnedFork spells out the damage released go-git
+// does to the ones it gets wrong.
 func unsignedObject(raw []byte, parents []string) ([]byte, error) {
 	commit, err := decodeCommit(raw)
 	if err != nil {
 		return nil, err
 	}
 
-	stripped, err := encodeObject(commit.EncodeWithoutSignature)
-	if err != nil {
-		return nil, err
-	}
-	return replaceParents(stripped, parents), nil
-}
-
-// parentPrefix and treePrefix start the two header lines whose order git
-// requires: tree first, then every parent, then author and committer.
-var (
-	parentPrefix = []byte("parent ")
-	treePrefix   = []byte("tree ")
-)
-
-// replaceParents swaps a commit payload's parent lines for the given ones and
-// leaves every other byte alone.
-//
-// Only header lines are considered: the payload is cut at the blank line that
-// closes the header block, and a mergetag's continuation lines are indented by
-// one space, so nothing inside one can be mistaken for a parent.
-func replaceParents(payload []byte, parents []string) []byte {
-	head, message, _ := bytes.Cut(payload, headerSeparator)
-	lines := bytes.Split(head, []byte("\n"))
-
-	kept := make([][]byte, 0, len(lines))
-	insert, afterTree := -1, 0
-	for _, line := range lines {
-		if bytes.HasPrefix(line, parentPrefix) {
-			if insert < 0 {
-				insert = len(kept)
-			}
-			continue
-		}
-		kept = append(kept, line)
-		if bytes.HasPrefix(line, treePrefix) && afterTree == 0 {
-			afterTree = len(kept)
-		}
-	}
-	// A commit with no parent lines to replace still has to put any new ones
-	// straight after the tree line.
-	if insert < 0 {
-		insert = afterTree
-	}
-
-	out := make([][]byte, 0, len(kept)+len(parents))
-	out = append(out, kept[:insert]...)
+	hashes := make([]plumbing.Hash, 0, len(parents))
 	for _, parent := range parents {
-		out = append(out, append(append([]byte{}, parentPrefix...), parent...))
+		// Round-tripping the name is the check, not FromHex's own verdict: it
+		// accepts a partial hash for backwards compatibility and zero-pads it
+		// to a full-width one, so a truncated SHA would be written out as a
+		// real object name pointing at nothing rather than refused.
+		hash, ok := plumbing.FromHex(parent)
+		if !ok || hash.String() != parent {
+			return nil, fmt.Errorf("cannot reparent onto %q: that is not an object name", parent)
+		}
+		hashes = append(hashes, hash)
 	}
-	out = append(out, kept[insert:]...)
+	commit.ParentHashes = hashes
 
-	return assemble(out, message)
+	return encodeObject(commit.EncodeWithoutSignature)
 }
 
 // withSignature appends the armored signature to the payload's headers in

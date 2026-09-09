@@ -27,11 +27,13 @@
 // payloads only git can rebuild; a rewrite there replaces the header git
 // verifies and warns that the other is gone.
 //
-// Parent lines are moved at the byte level rather than by mutating and
-// re-encoding a decoded commit. go-git only reproduces an object's bytes while
-// its decoded fields still match it, and a decode captures less than git
-// accepts: an author or committer header that does not sit in its canonical
-// slot is read as empty, so re-encoding a commit whose headers arrived in
-// another order would drop a name and date git reads back without complaint.
-// Every byte git wrote and this run did not deliberately change is kept.
+// Reparenting a commit is a decode, a change to its parent hashes, and a
+// re-encode without its signature — no byte-level surgery on the header block.
+// That keeps every byte git wrote and this run did not deliberately change,
+// but only against the go-git the go.mod replace directive selects: a fork
+// that decodes headers wherever git put them and replays the ones a rewrite
+// did not touch. Released go-git normalizes idents it re-encodes and reads an
+// author or committer outside its canonical slot as empty, so the same rewrite
+// there would move dates and drop names git itself reads back without
+// complaint.
 package gitsign

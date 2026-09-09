@@ -35,8 +35,8 @@ require (
 	github.com/speakeasy-api/openapi v1.19.2 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/vmware-labs/yaml-jsonpath v0.3.2 // indirect
-	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
+	golang.org/x/crypto v0.56.0 // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
@@ -49,27 +49,34 @@ require (
 tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 
 // go-git is built from github.com/kjanat/go-git, the fork carrying
-// go-git/go-git#2328, which keeps a decoded commit's ident and header bytes
-// intact when the object is re-encoded — what a rewrite-then-sign run needs.
+// go-git/go-git#2328, which decodes a commit's headers wherever git put them
+// and replays the ones a rewrite did not touch. pkg/gitsign reparents commits
+// through the struct encoder and needs both halves of that: released go-git
+// reads an author or committer outside its canonical slot as no ident at all,
+// and normalizes the idents it does decode.
+//
 // That fork is this repository's supported source for go-git, not a stopgap
 // held until upstream moves: no released go-git carries the fix, and pkg/gitsign
 // is a package whose whole subject is byte fidelity. The branch is cut from
 // go-git main rather than from the alpha.5 tag required above, so this also
-// builds the unreleased work in between; the require line names a version
-// nothing here compiles.
+// builds the unreleased work in between; the require line names a version this
+// build never uses.
 //
 // The pin is a pseudo-version because the fork carries no tags. It names the
 // exact commit either way, and moving to a tag later changes nothing about
-// what is compiled.
+// what is compiled. Nothing re-syncs it: Dependabot leaves a replaced module
+// alone, so picking up an upstream go-git change — a security fix included —
+// means rebasing kjanat/go-git by hand and moving the commit named below.
 //
 // The left side is unversioned on purpose. Pinning it to alpha.5 would stop
 // matching the moment the require line moves and drop the fix out of the build
-// in silence, which is the worse failure here.
-// TestPinnedStructEncoderKeepsEveryShapeVerbatim goes red when this directive
-// is missing, so its absence is loud either way.
+// in silence, which is the worse failure here. Losing the directive outright
+// still compiles, so the tests are what catch it: every row of
+// TestUnsignedObjectChangesOnlyParents runs through the encoder this selects,
+// and TestUnsignedObjectNeedsThePinnedFork names the damage released go-git
+// does instead.
 //
-// Two consequences to know about: "go install pkg@version" refuses a module
-// that carries a replace, so tagging client/v* would not on its own make the
-// CLI go-installable; and Dependabot leaves a replaced module alone, so the
-// require line above can be bumped without changing what is compiled.
-replace github.com/go-git/go-git/v6 => github.com/kjanat/go-git/v6 v6.0.0-20260820085920-af7691355d98
+// One more consequence to know about: "go install pkg@version" refuses a
+// module that carries a replace, so tagging client/v* would not on its own
+// make the CLI go-installable.
+replace github.com/go-git/go-git/v6 => github.com/kjanat/go-git/v6 v6.0.0-20260909231536-ddab11a1c776
