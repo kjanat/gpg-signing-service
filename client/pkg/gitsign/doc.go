@@ -29,9 +29,9 @@
 //
 // Parent lines are moved at the byte level rather than by mutating and
 // re-encoding a decoded commit. go-git only reproduces an object's bytes while
-// its decoded fields still match it, and once a field is mutated its encoder
-// canonicalizes author and committer lines that git itself accepts unchanged —
-// on released go-git an ident with no space before the date is read as a
-// different timestamp entirely. Every byte git wrote and this run did not
-// deliberately change is kept.
+// its decoded fields still match it, and a decode captures less than git
+// accepts: an author or committer header that does not sit in its canonical
+// slot is read as empty, so re-encoding a commit whose headers arrived in
+// another order would drop a name and date git reads back without complaint.
+// Every byte git wrote and this run did not deliberately change is kept.
 package gitsign

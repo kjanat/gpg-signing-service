@@ -16,6 +16,16 @@ const (
 	newParent  = "9999999999999999999999999999999999999999"
 	testArmor  = "-----BEGIN PGP SIGNATURE-----\n\nAAAA\nBBBB\n-----END PGP SIGNATURE-----"
 	testAuthor = "author A U Thor <author@example.test> 1700000000 +0000"
+	// The ident git fsck calls missingSpaceBeforeDate: no space between the
+	// closing bracket and the timestamp. git reads it as November 2023, and
+	// go-git without the pin in go.mod reads it as March 1992.
+	crampedAuthor    = "author A U Thor <author@example.test>1700000000 +0000"
+	crampedCommitter = "committer A U Thor <author@example.test>1700000000 +0000"
+	// customHeader is a header no encoder knows, which has to survive a
+	// rewrite in place, and latin1Encoding a non-default encoding header the
+	// same is true of.
+	customHeader   = "custom value"
+	latin1Encoding = "encoding ISO-8859-1"
 	// sha256HexLength is how long a sha256 object name prints, which is how the
 	// engine tests tell the two formats apart without re-asking git.
 	sha256HexLength = 64
@@ -343,51 +353,233 @@ func TestWithSignatureRoundTrips(t *testing.T) {
 	}
 }
 
-// The pin in go.mod is the subject here, not this package's own paths. Parents
-// are moved at the byte level precisely so a rewrite never reaches go-git's
-// struct encoder, which means nothing else in this suite would notice the
-// replace directive falling out of the build — and released go-git reads
-// "<author@example.test>1700000000" as the year 1992, then writes that back.
-// Mutating ParentHashes is what forces the struct path here.
-func TestPinnedStructEncoderKeepsAnIdentVerbatim(t *testing.T) {
-	ident := "A U Thor <author@example.test>1700000000 +0000"
-	raw := rawCommit([]string{
-		"tree " + treeSHA,
-		"parent " + parentOne,
-		"author " + ident,
-		"committer " + ident,
-	}, "subject\n")
+// structEncoded moves a commit's parents the way go-git means them to be
+// moved: mutate ParentHashes and re-encode. Nothing in this package does that
+// — the byte path exists so a rewrite never reaches the struct encoder — so
+// this is the only thing in the suite that exercises it.
+func structEncoded(t *testing.T, raw []byte, parents []string) []byte {
+	t.Helper()
 
 	commit, err := decodeCommit(raw)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("could not decode the commit: %v", err)
 	}
-	moved, ok := plumbing.FromHex(newParent)
-	if !ok {
-		t.Fatalf("could not read the replacement parent %s", newParent)
+	hashes := make([]plumbing.Hash, 0, len(parents))
+	for _, parent := range parents {
+		hash, ok := plumbing.FromHex(parent)
+		if !ok {
+			t.Fatalf("could not read the replacement parent %s", parent)
+		}
+		hashes = append(hashes, hash)
 	}
-	commit.ParentHashes = []plumbing.Hash{moved}
+	commit.ParentHashes = hashes
 
 	encoded, err := encodeObject(commit.EncodeWithoutSignature)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("could not encode the commit: %v", err)
+	}
+	return encoded
+}
+
+// The pin in go.mod is the subject here, not this package's own paths. This
+// repository builds go-git from the fork carrying go-git/go-git#2328, where
+// the struct encoder writes a decoded commit's ident and header bytes back
+// unchanged; released go-git reads "<author@example.test>1700000000" as the
+// year 1992 and then writes that back, drops an explicit "encoding UTF-8" and
+// reorders unknown headers around it. Because no production path here reaches
+// that encoder, nothing else in the suite would notice the replace directive
+// falling out of the build, so every shape the fork fixes is driven through it
+// directly and checked against the byte path's answer.
+func TestPinnedStructEncoderKeepsEveryShapeVerbatim(t *testing.T) {
+	committer := strings.Replace(testAuthor, "author", "committer", 1)
+
+	tests := []struct {
+		name   string
+		header []string
+	}{
+		{
+			name:   "canonical ident",
+			header: []string{"tree " + treeSHA, "parent " + parentOne, testAuthor, committer},
+		},
+		{
+			name: "no space before the date",
+			header: []string{
+				"tree " + treeSHA, "parent " + parentOne,
+				crampedAuthor, crampedCommitter,
+			},
+		},
+		{
+			name: "no space before the email",
+			header: []string{
+				"tree " + treeSHA, "parent " + parentOne,
+				"author A U Thor<author@example.test> 1700000000 +0000",
+				"committer A U Thor<author@example.test> 1700000000 +0000",
+			},
+		},
+		{
+			name: "no timezone",
+			header: []string{
+				"tree " + treeSHA, "parent " + parentOne,
+				"author A U Thor <author@example.test> 1700000000",
+				"committer A U Thor <author@example.test> 1700000000",
+			},
+		},
+		{
+			name: "zero-padded timestamp",
+			header: []string{
+				"tree " + treeSHA, "parent " + parentOne,
+				"author A U Thor <author@example.test> 0001700000000 +0000",
+				"committer A U Thor <author@example.test> 0001700000000 +0000",
+			},
+		},
+		{
+			name:   "explicit UTF-8 encoding",
+			header: []string{"tree " + treeSHA, "parent " + parentOne, testAuthor, committer, "encoding UTF-8"},
+		},
+		{
+			name: "unknown header before encoding",
+			header: []string{
+				"tree " + treeSHA, "parent " + parentOne, testAuthor, committer,
+				customHeader, latin1Encoding,
+			},
+		},
+		{
+			name: "mergetag with continuations",
+			header: append([]string{
+				"tree " + treeSHA, "parent " + parentOne, "parent " + parentTwo, testAuthor, committer,
+			}, mergeTagHeaderLines(parentTwo, "v1")...),
+		},
 	}
 
-	got := string(encoded)
-	if !strings.Contains(got, "parent "+newParent) {
-		t.Fatalf("expected the moved parent, got:\n%q", got)
-	}
-	if !strings.Contains(got, "author "+ident) || !strings.Contains(got, "committer "+ident) {
-		t.Errorf("go-git's struct encoder rewrote the ident, which means go.mod's replace directive is "+
-			"not in this build:\n%q", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := rawCommit(tt.header, "subject\n\nbody\n")
+
+			parents, err := parentsOf(raw)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			moved := append([]string{newParent}, parents[1:]...)
+
+			want, err := unsignedObject(raw, moved)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			got := structEncoded(t, raw, moved)
+
+			if string(got) != string(want) {
+				t.Errorf("go-git's struct encoder did not reproduce the object, which means go.mod's "+
+					"replace directive is not in this build:\n want %q\n  got %q", want, got)
+			}
+		})
 	}
 }
 
-// Moving a parent must not disturb any other byte. go-git re-encodes from
-// struct fields the moment a decoded commit is mutated, and its encoder
-// canonicalizes ident lines, drops an explicit "encoding UTF-8" header and
-// reorders unknown headers. Every row below is an object git itself reads
-// unchanged, so a round trip that swaps the parent back has to reproduce it.
+// The shapes the fork does not fix, and the reason the parent lines are still
+// moved a byte at a time rather than through the encoder above.
+//
+// Two causes, neither of them in #2328's scope. go-git reads the author and
+// committer out of their canonical slots alone — straight after the parents,
+// and straight after each other — so a header sitting before or between them
+// decodes as no ident at all, and the encoder writes "author  <> 0 +0000" back
+// over a real name and date. And an extra header with an empty value loses the
+// space that separated the key from it.
+//
+// git reads every row here without complaint: an interposed gpgsig reports
+// "an=A U Thor at=1700000000" from git log, the same as the canonical form.
+// "git fsck" does call the ident shapes missingAuthor or missingCommitter,
+// which is the company they keep — missingSpaceBeforeDate is flagged the same
+// way — and importers write all of it. A rewrite that dropped authorship on
+// the way past would be a far worse answer than a rewrite that moved a parent
+// and left everything else alone.
+func TestUnsignedObjectKeepsWhatTheStructPathLoses(t *testing.T) {
+	committer := strings.Replace(testAuthor, "author", "committer", 1)
+	signature := signatureHeaderLines("gpgsig")
+
+	tests := []struct {
+		name string
+		// signed marks a row whose signature header the strip removes, so only
+		// the ident assertion applies and not the round trip.
+		signed bool
+		header []string
+	}{
+		{
+			name:   "signature before the author",
+			signed: true,
+			header: append(append([]string{"tree " + treeSHA, "parent " + parentOne}, signature...), testAuthor, committer),
+		},
+		{
+			name:   "signature between author and committer",
+			signed: true,
+			header: append(append([]string{"tree " + treeSHA, "parent " + parentOne, testAuthor}, signature...), committer),
+		},
+		{
+			name: "mergetag before the author",
+			header: append([]string{
+				"tree " + treeSHA, "parent " + parentOne, "parent " + parentTwo,
+			}, append(mergeTagHeaderLines(parentTwo, "v1"), testAuthor, committer)...),
+		},
+		{
+			name:   "unknown header before the author",
+			header: []string{"tree " + treeSHA, "parent " + parentOne, customHeader, testAuthor, committer},
+		},
+		{
+			name:   "encoding before the author",
+			header: []string{"tree " + treeSHA, "parent " + parentOne, latin1Encoding, testAuthor, committer},
+		},
+		{
+			name:   "unknown header between author and committer",
+			header: []string{"tree " + treeSHA, "parent " + parentOne, testAuthor, customHeader, committer},
+		},
+		{
+			name:   "committer before the author",
+			header: []string{"tree " + treeSHA, "parent " + parentOne, committer, testAuthor},
+		},
+		{
+			name:   "extra header with an empty value",
+			header: []string{"tree " + treeSHA, "parent " + parentOne, testAuthor, committer, "custom "},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := rawCommit(tt.header, "subject\n\nbody\n")
+
+			parents, err := parentsOf(original)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			moved := append([]string{newParent}, parents[1:]...)
+
+			payload, err := unsignedObject(original, moved)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !strings.Contains(string(payload), "\n"+testAuthor+"\n") ||
+				!strings.Contains(string(payload), "\n"+committer+"\n") {
+				t.Errorf("moving a parent rewrote an ident go-git cannot decode:\n%q", payload)
+			}
+
+			if tt.signed {
+				return
+			}
+			restored, err := unsignedObject(payload, parents)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if string(restored) != string(original) {
+				t.Errorf("a round trip through a moved parent changed the object:\n want %q\n  got %q",
+					original, restored)
+			}
+		})
+	}
+}
+
+// Moving a parent must not disturb any other byte. Every row below is an
+// object git itself reads unchanged, and each one is a shape some encoder has
+// been caught normalizing: ident lines, an explicit "encoding UTF-8" header,
+// unknown headers ordered around it. A round trip that swaps the parent back
+// has to reproduce the object exactly.
 func TestUnsignedObjectPreservesEveryOtherByte(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -401,8 +593,7 @@ func TestUnsignedObjectPreservesEveryOtherByte(t *testing.T) {
 			name: "no space before the date",
 			header: []string{
 				"tree " + treeSHA, "parent " + parentOne,
-				"author A U Thor <author@example.test>1700000000 +0000",
-				"committer A U Thor <author@example.test>1700000000 +0000",
+				crampedAuthor, crampedCommitter,
 			},
 		},
 		{
@@ -440,7 +631,7 @@ func TestUnsignedObjectPreservesEveryOtherByte(t *testing.T) {
 			name: "unknown header before encoding",
 			header: []string{
 				"tree " + treeSHA, "parent " + parentOne, testAuthor,
-				strings.Replace(testAuthor, "author", "committer", 1), "custom value", "encoding ISO-8859-1",
+				strings.Replace(testAuthor, "author", "committer", 1), customHeader, latin1Encoding,
 			},
 		},
 		{
@@ -479,14 +670,16 @@ func TestUnsignedObjectPreservesEveryOtherByte(t *testing.T) {
 	}
 }
 
-// A reparented commit's ident has to survive verbatim even when go-git's own
-// decoder misreads it, because git is what reads the object afterwards.
+// A reparented commit's ident has to survive verbatim whatever go-git's own
+// decoder makes of it, because git is what reads the object afterwards. This
+// shape is the one the pinned fork fixes at the decoder; the assertion holds
+// either way, which is the point of moving the line rather than rewriting it.
 func TestUnsignedObjectKeepsAnIdentGoGitMisreads(t *testing.T) {
 	raw := rawCommit([]string{
 		"tree " + treeSHA,
 		"parent " + parentOne,
-		"author A U Thor <author@example.test>1700000000 +0000",
-		"committer A U Thor <author@example.test>1700000000 +0000",
+		crampedAuthor,
+		crampedCommitter,
 	}, "subject\n")
 
 	payload, err := unsignedObject(raw, []string{newParent})

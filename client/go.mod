@@ -48,22 +48,28 @@ require (
 
 tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 
-// go-git/go-git#2328 keeps a decoded commit's ident and header bytes intact
-// when the object is re-encoded, which is what a rewrite-then-sign run needs.
-// The branch is cut from go-git main rather than from the alpha.5 tag required
-// above, so this also builds the unreleased work in between; the require line
-// names a version nothing here compiles.
+// go-git is built from github.com/kjanat/go-git, the fork carrying
+// go-git/go-git#2328, which keeps a decoded commit's ident and header bytes
+// intact when the object is re-encoded — what a rewrite-then-sign run needs.
+// That fork is this repository's supported source for go-git, not a stopgap
+// held until upstream moves: no released go-git carries the fix, and pkg/gitsign
+// is a package whose whole subject is byte fidelity. The branch is cut from
+// go-git main rather than from the alpha.5 tag required above, so this also
+// builds the unreleased work in between; the require line names a version
+// nothing here compiles.
+//
+// The pin is a pseudo-version because the fork carries no tags. It names the
+// exact commit either way, and moving to a tag later changes nothing about
+// what is compiled.
 //
 // The left side is unversioned on purpose. Pinning it to alpha.5 would stop
 // matching the moment the require line moves and drop the fix out of the build
-// in silence, which is the worse failure for a package whose subject is byte
-// fidelity. TestPinnedStructEncoderKeepsAnIdentVerbatim goes red when this
-// directive is missing, so its absence is loud either way.
+// in silence, which is the worse failure here.
+// TestPinnedStructEncoderKeepsEveryShapeVerbatim goes red when this directive
+// is missing, so its absence is loud either way.
 //
 // Two consequences to know about: "go install pkg@version" refuses a module
 // that carries a replace, so tagging client/v* would not on its own make the
 // CLI go-installable; and Dependabot leaves a replaced module alone, so the
 // require line above can be bumped without changing what is compiled.
-//
-// Drop this once #2328 merges and a tagged v6 carries it.
 replace github.com/go-git/go-git/v6 => github.com/kjanat/go-git/v6 v6.0.0-20260820085920-af7691355d98

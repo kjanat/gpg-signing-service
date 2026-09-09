@@ -74,10 +74,11 @@ func TestParseIdentAcceptsAnIdentWithNoName(t *testing.T) {
 	}
 }
 
-// git tolerates idents this parser refuses, and that asymmetry is deliberate:
-// released go-git reads an ident with no space before its date as a timestamp
-// decades off, so a repair that guessed at one would move the commit rather
-// than fail. Every shape outside the strict form stops the run by name.
+// git tolerates idents this parser refuses, and that asymmetry is deliberate.
+// A repair rewrites an ident from its parsed halves, so a shape this parser
+// cannot spell back byte for byte is one it must not accept: guessing would
+// move the commit's date or drop a name rather than fail. Every shape outside
+// the strict form stops the run by name.
 func TestParseIdentRefusesEveryShapeItCannotReproduce(t *testing.T) {
 	for name, value := range map[string]string{
 		"no date":            botName + " <" + botEmail + ">",

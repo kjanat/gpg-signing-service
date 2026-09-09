@@ -172,19 +172,24 @@ func committerEmail(raw []byte) (string, error) {
 // rather than by mutating ParentHashes and re-encoding. EncodeWithoutSignature
 // only reproduces the source bytes while the decoded fields still match the
 // object it came from; any mutation sends it down the struct encoder, which
-// canonicalizes author and committer lines that git itself accepts unchanged.
-// An ident with no space before the date is the sharp case: released go-git
-// reads "<a@x>1700000000" as 700000000, so a re-encode would move the commit
-// from November 2023 to March 1992. Moving the parent lines by hand keeps every
-// other byte exactly as git wrote it.
+// can write back no more than the decode captured.
 //
-// go-git/go-git#2328 makes the struct encoder faithful for every shape this
-// package's tests cover, and go.mod pins it;
-// TestPinnedStructEncoderKeepsAnIdentVerbatim drives that encoder directly, so
-// the pin cannot fall out of the build without a red test. The byte path stays
-// anyway: a replace directive applies only to the main module, so anything
-// importing this package as a library builds against released go-git, where
-// the struct encoder is still lossy.
+// The encoder half of that is settled. go.mod builds go-git from the fork
+// carrying go-git/go-git#2328, which is the dependency source this repository
+// supports, and there an ident with no space before the date, a missing
+// timezone, a zero-padded timestamp, an explicit "encoding UTF-8" and an
+// unknown header ahead of "encoding" all come back out of the struct path
+// unchanged. TestPinnedStructEncoderKeepsEveryShapeVerbatim drives that
+// encoder directly, so the pin cannot fall out of the build quietly.
+//
+// The decoder is what keeps the byte path. go-git reads the author and
+// committer from their canonical slots alone — straight after the parents, and
+// straight after each other — and the fork does not change that. A header
+// interposed before or between them (gpgsig, mergetag, encoding, an unknown
+// one) leaves both idents empty, so a re-encode writes "author  <> 0 +0000"
+// over a name and date git itself reads back correctly. Moving the parent
+// lines by hand keeps every byte git wrote that this run did not deliberately
+// change; TestUnsignedObjectKeepsWhatTheStructPathLoses pins the class.
 func unsignedObject(raw []byte, parents []string) ([]byte, error) {
 	commit, err := decodeCommit(raw)
 	if err != nil {
