@@ -492,14 +492,20 @@ func TestPinnedStructEncoderKeepsEveryShapeVerbatim(t *testing.T) {
 // way — and importers write all of it. A rewrite that dropped authorship on
 // the way past would be a far worse answer than a rewrite that moved a parent
 // and left everything else alone.
+//
+// Each row is asserted in both directions: the byte path keeps the ident, and
+// the struct path still does not. The second half is what dates this test. The
+// rationale it backs was last rewritten because the encoder half of it had
+// quietly stopped being true, so the decoder half is pinned rather than
+// described.
 func TestUnsignedObjectKeepsWhatTheStructPathLoses(t *testing.T) {
 	committer := strings.Replace(testAuthor, "author", "committer", 1)
 	signature := signatureHeaderLines("gpgsig")
 
 	tests := []struct {
 		name string
-		// signed marks a row whose signature header the strip removes, so only
-		// the ident assertion applies and not the round trip.
+		// signed marks a row whose signature header the strip removes, so the
+		// ident assertions apply and the round trip does not.
 		signed bool
 		header []string
 	}{
@@ -558,6 +564,17 @@ func TestUnsignedObjectKeepsWhatTheStructPathLoses(t *testing.T) {
 			if !strings.Contains(string(payload), "\n"+testAuthor+"\n") ||
 				!strings.Contains(string(payload), "\n"+committer+"\n") {
 				t.Errorf("moving a parent rewrote an ident go-git cannot decode:\n%q", payload)
+			}
+
+			// The other half of the claim, and the one that decides whether
+			// replaceParents is still earning its place: the struct path has
+			// to still get this row wrong. If it stops, the reason recorded in
+			// commit.go and doc.go has gone stale and the byte path is up for
+			// removal again — which is exactly the drift this test exists to
+			// make loud rather than leave to be rediscovered.
+			if lost := structEncoded(t, original, moved); string(lost) == string(payload) {
+				t.Errorf("go-git now reproduces this shape through the struct encoder, so the reason "+
+					"unsignedObject moves parent lines by hand no longer holds for it:\n%q", lost)
 			}
 
 			if tt.signed {
