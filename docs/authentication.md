@@ -46,7 +46,7 @@ curl -X POST "$GPG_SIGN_URL/admin/subjects" \
     "name": "kjanat-repos",
     "issuer": "https://token.actions.githubusercontent.com",
     "subjectPrefix": "repo:kjanat",
-    "keyIds": ["62E75E54497815DD"],
+    "keyIds": ["AFD5E3EC68371856"],
     "expiresInDays": 365
   }'
 ```
@@ -169,7 +169,7 @@ does not necessarily stop the subject signing — it promotes the next row up,
 
 ```
 repo:kjanat/       keyIds: []                 ← owner-wide, every key
-repo:kjanat/svc    keyIds: [62E75E54497815DD] ← this repo, one key
+repo:kjanat/svc    keyIds: [AFD5E3EC68371856] ← this repo, one key
 ```
 
 Revoke `repo:kjanat/svc` and that repository keeps signing, now under the
@@ -424,7 +424,7 @@ created="$(
     --header "Content-Type: application/json" \
     --data '{
       "name": "ci/woodpecker",
-      "keyIds": ["62E75E54497815DD"],
+      "keyIds": ["AFD5E3EC68371856"],
       "expiresInDays": 90
     }'
 )"
@@ -443,7 +443,7 @@ The CLI sends either an OIDC JWT or a service token through the same variable:
 export GPG_SIGN_URL="https://your-worker.example"
 export GPG_SIGN_TOKEN="gst_..."
 
-printf 'data to sign' | gpg-sign sign --key-id 62E75E54497815DD
+printf 'data to sign' | gpg-sign sign --key-id AFD5E3EC68371856
 ```
 
 ### List and revoke
@@ -482,7 +482,7 @@ way, that may only read. It is accepted on `GET` and `HEAD` admin routes and
 refused on every admin route that changes state:
 
 ```console
-$ curl -sS -X DELETE "$GPG_SIGN_URL/admin/keys/62E75E54497815DD" \
+$ curl -sS -X DELETE "$GPG_SIGN_URL/admin/keys/AFD5E3EC68371856" \
     -H "Authorization: Bearer $ADMIN_READONLY_TOKEN" | jq -r .code
 AUTH_SCOPE_INSUFFICIENT
 ```

@@ -586,7 +586,7 @@ GITHUB_APP_ID      = "123456"  # from the App's settings page
 # Which <installation, repository> pairs a delivery may be about, and which
 # key each of them may cause to sign with. The `=<keyId>` suffix is optional;
 # without it the repository's events are received and may sign nothing.
-GITHUB_APP_ALLOWED_REPOSITORIES = "12345678:kjanat/gpg-signing-service=62E75E54497815DD"
+GITHUB_APP_ALLOWED_REPOSITORIES = "12345678:kjanat/gpg-signing-service=AFD5E3EC68371856"
 
 # Publish a `GPG signature` check run on the head of every branch this service
 # handles a push for. Needs `Checks: Read and write` on the App. Off by default;
@@ -842,10 +842,10 @@ signing service sign.
 So an entry may bind exactly one key, in the same string:
 
 ```toml
-GITHUB_APP_ALLOWED_REPOSITORIES = "12345678:kjanat/gpg-signing-service=62E75E54497815DD, 12345678:kjanat/tools"
+GITHUB_APP_ALLOWED_REPOSITORIES = "12345678:kjanat/gpg-signing-service=AFD5E3EC68371856, 12345678:kjanat/tools"
 ```
 
-`gpg-signing-service` may cause `62E75E54497815DD` to sign. `tools` may cause
+`gpg-signing-service` may cause `AFD5E3EC68371856` to sign. `tools` may cause
 nothing to sign; its deliveries are still received, authorized and logged.
 
 ### Why the key is in the entry and not in its own variable

@@ -2,8 +2,8 @@
 """Report OpenPGP key packets carried by tracked files.
 
 #147: an encrypted secret-key packet belonging to the deployment's own signing
-key -- `62E75E54497815DD`, the `KEY_ID` in wrangler.toml and the key that signed
-v1.2.0 -- was in the test corpus in twelve places. Two of them were stamped with
+key -- `62E75E54497815DD`, then the `KEY_ID` in wrangler.toml and still the key
+that signed v1.2.0 -- was in the test corpus in twelve places. Two of them were stamped with
 that key's own creation time; the other ten carried the same public point and the
 same S2K-protected secret bytes under an earlier timestamp, which is a different
 fingerprint and the same key. A passphrase the repository does not hold was the
@@ -129,8 +129,12 @@ from pathlib import Path
 # into the point it summarises. The comment names each key by its public
 # fingerprint, which is on every signature it ever made.
 RETIRED_IDENTITIES = {
-    # 806D3A1B9F957D6731950BCA62E75E54497815DD -- the key wrangler.toml's KEY_ID
-    # names and the v1.2.0 tag carries. Also covers
+    # 806D3A1B9F957D6731950BCA62E75E54497815DD -- the key the v1.2.0 tag carries.
+    # Rotated out of production on 2026-09-08, so wrangler.toml no longer names
+    # it. It stays here because this rule is about what may never come back as a
+    # fixture, not about what is deployed -- and the key that replaced it must
+    # never be listed here, because the rule fires on public packets too and the
+    # live public key belongs in `docs/`. Also covers
     # 5D213ED994DD735E68FBC67411EB425655B81A8A, the same keypair re-stamped in
     # 2024, because the digest ignores creation time.
     "8fa75e7da087baa229d21bbed9acf069abf7b86341b622515a5a3597bbdf211e": (

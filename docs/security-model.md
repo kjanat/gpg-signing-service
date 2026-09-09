@@ -164,9 +164,12 @@ exact description of bytes that are already in published history, in a matcher
 representation that `scripts/allowlist-regex.py --decode` reverses on purpose;
 an exact-match entry cannot stop describing what it matches. Removing the
 representation would not remove the exposure, because the commits it names are
-public. Only rotating the key does that, which is why
-[#147](https://github.com/kjanat/gpg-signing-service/issues/147) stays open until
-the operator has replaced it.
+public. Only rotating the key does that, and that rotation has happened: the key
+those entries describe was replaced on 2026-09-08 and removed from the signing
+path, so what they still describe is a key nothing signs with. The retirement,
+the revocation decision and the reasons the published history is being kept are
+recorded in
+[ADR-004](adr/ADR-004-retired-key-revocation.md).
 
 ## Key expiry monitoring
 

@@ -231,7 +231,7 @@ allowed_sender_addresses = ["gpg-signing-service@kjanat.dev"]
 
 [env.staging.vars]  # Staging environment variables
 ALLOWED_ISSUERS             = "https://token.actions.githubusercontent.com,https://gitlab.com"
-KEY_ID                      = "62E75E54497815DD"
+KEY_ID                      = "AFD5E3EC68371856"
 ENVIRONMENT                 = "staging"
 KEY_EXPIRY_ALERT_FROM       = "gpg-signing-service@kjanat.dev"
 KEY_EXPIRY_ALERT_TO         = "info@kajkowalski.nl"
