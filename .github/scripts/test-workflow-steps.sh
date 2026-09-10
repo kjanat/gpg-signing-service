@@ -245,6 +245,59 @@ if ((status == 0)); then
 	exit 1
 fi
 
+# --- parsed command lines from one job -----------------------------------------
+
+run_lines_case() {
+	local description="$1" expected="$2" got
+	fixture "$3"
+	got="$(workflow_run_lines "${workflow}" client-test)" || exit 1
+	if [[ "${got}" != "${expected}" ]]; then
+		printf 'FAIL: run lines for %s were %q, expected %q\n' "${description}" "${got}" "${expected}" >&2
+		exit 1
+	fi
+}
+
+run_lines_case 'a flow job with an aliased step' 'task c:l' \
+	'jobs:
+  setup: { steps: [&Lint { run: task c:l }] }
+  client-test: { steps: [*Lint] }'
+
+run_lines_case 'literal shell commands' $'task c:t\ntask c:l' \
+	'jobs:
+  client-test:
+    steps:
+      - run: |-
+          task c:t
+          task c:l'
+
+run_lines_case 'a folded argument, not a second command' 'echo task c:l' \
+	'jobs:
+  client-test:
+    steps:
+      - run: >-
+          echo
+          task c:l'
+
+run_lines_case 'a command present only in another job' 'task c:t' \
+	'jobs:
+  lint: { steps: [{ run: task c:l }] }
+  client-test: { steps: [{ run: task c:t }] }'
+
+run_lines_case 'a job with no run steps' '' \
+	'jobs: { client-test: { steps: [{ uses: $/.github/actions/setup-bun }] } }'
+
+for invalid in \
+	'jobs: { lint: { steps: [{ run: task c:l }] } }' \
+	'jobs: { client-test: { steps: [{ run: [task, c:l] }] } }' \
+	'jobs: { client-test: { steps: [not-a-mapping] } }' \
+	'jobs: { client-test: ['; do
+	fixture "${invalid}"
+	if got="$(workflow_run_lines "${workflow}" client-test 2>/dev/null)"; then
+		printf 'FAIL: run lines accepted a missing job or malformed workflow and answered %q\n' "${got}" >&2
+		exit 1
+	fi
+done
+
 # --- which actions are pinned --------------------------------------------------
 
 pinned_sha='3d3c42e5aac5ba805825da76410c181273ba90b1'

@@ -4,6 +4,7 @@
  * pinned to something immutable.
  *
  *   bun .github/scripts/workflow-steps.ts runs-script   <file> <script>...
+ *   bun .github/scripts/workflow-steps.ts run-lines     <file> <job>
  *   bun .github/scripts/workflow-steps.ts mutable-uses  <file> [--job <id>] [--expect-uses]
  *   bun .github/scripts/workflow-steps.ts job-field     <file> <job> <field>
  *   bun .github/scripts/workflow-steps.ts input-field   <file> <input> <field>
@@ -200,20 +201,28 @@ function commandExecutes(command: string, script: string): boolean {
 	return word.replace(/^\.\//, "") === script.replace(/^\.\//, "");
 }
 
-/** The first of `scripts` that some step in `file` — or in one job — executes, or "". */
-function runsScript(file: string, only: string | null, scripts: string[]): string {
+/** The parsed run lines in one job, or all jobs when no job is selected. */
+function runLines(file: string, only: string | null): string[] {
 	const jobs = readJobs(file);
+	const lines: string[] = [];
 
 	for (const [jobId, job] of selectJobs(file, jobs, only)) {
 		for (const step of stepsOf(file, jobId, job)) {
 			if (step.run === undefined) continue;
 			if (typeof step.run !== "string") fail(`${file}: job ${jobId} has a run: that is not a string`);
 
-			for (const command of commandsOf(step.run)) {
-				for (const script of scripts) {
-					if (commandExecutes(command, script)) return script;
-				}
-			}
+			lines.push(...commandsOf(step.run));
+		}
+	}
+
+	return lines;
+}
+
+/** The first of `scripts` that some step in `file` — or in one job — executes, or "". */
+function runsScript(file: string, only: string | null, scripts: string[]): string {
+	for (const command of runLines(file, only)) {
+		for (const script of scripts) {
+			if (commandExecutes(command, script)) return script;
 		}
 	}
 
@@ -357,7 +366,7 @@ function main(argv: string[]): number {
 	const [command, file, ...rest] = argv;
 	if (command === undefined || file === undefined) {
 		process.stderr.write(
-			"usage: workflow-steps.ts <runs-script|mutable-uses|job-field|input-field|input-fields> <file> ...\n",
+			"usage: workflow-steps.ts <runs-script|run-lines|mutable-uses|job-field|input-field|input-fields> <file> ...\n",
 		);
 		return 2;
 	}
@@ -378,6 +387,12 @@ function main(argv: string[]): number {
 				if (scripts.length === 0) fail("runs-script needs at least one script path");
 				const found = runsScript(file, jobId, scripts);
 				if (found !== "") process.stdout.write(`${found}\n`);
+				return 0;
+			}
+			case "run-lines": {
+				const [jobId] = rest;
+				if (jobId === undefined) fail("run-lines needs a job id");
+				for (const line of runLines(file, jobId)) process.stdout.write(`${line}\n`);
 				return 0;
 			}
 			case "mutable-uses": {

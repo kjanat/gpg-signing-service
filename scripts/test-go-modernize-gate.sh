@@ -24,6 +24,9 @@
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
+# shellcheck source=.github/scripts/workflow-steps.sh
+source "${repo_root}/.github/scripts/workflow-steps.sh"
+
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "${tmp_dir}"' EXIT
 
@@ -174,24 +177,18 @@ fi
 new_case workflow-runs-client-lint
 workflow="${repo_root}/.github/workflows/ci.yml"
 
-# Scoped to the client-test job rather than grepped file-wide: `task c:l` living
-# in some other job would satisfy a whole-file match while the assertion's own
-# failure message claims to be about this one.
-client_job="$(awk '
-	/^  client-test:/ { in_job = 1; next }
-	in_job && /^  [^[:space:]]/ { exit }
-	in_job { print }
-' "${workflow}")"
+# Resolve the actual client-test mapping and its run scalars, including flow
+# mappings, aliases and folded blocks. A missing job or malformed YAML fails
+# here; commands in another job cannot satisfy this assertion.
+client_commands="$(workflow_run_lines "${workflow}" client-test)" || exit 1
 
-if [[ -z ${client_job} ]]; then
-	fail "no 'client-test' job in .github/workflows/ci.yml; the modernization check has no CI home"
 # Every alias the include exposes, so renaming the invocation in the workflow is
 # not mistaken for removing it -- but `lint` has to be terminated rather than
 # left on a \b, which `lint:fix` also satisfies. `client:lint:fix` deliberately
 # does not chain modernize:check, so a job that ran it would disarm the gate
 # with this case still green.
-elif ! grep -qE 'run:[[:space:]]*task (c|client|gpg-sign):(l|lint)([[:space:]]|,|}|$)' <<<"${client_job}"; then
-	fail "the Go client job in .github/workflows/ci.yml no longer runs 'task c:l'"$'\n'"${client_job}"
+if ! grep -qE '^[[:space:]]*task[[:space:]]+(c|client|gpg-sign):(l|lint)([[:space:]]|$)' <<<"${client_commands}"; then
+	fail "the Go client job in .github/workflows/ci.yml no longer runs 'task c:l'"$'\n'"${client_commands}"
 fi
 
 if [[ ${failures} -ne 0 ]]; then
