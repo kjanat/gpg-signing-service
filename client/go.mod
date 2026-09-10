@@ -62,11 +62,14 @@ tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 // builds the unreleased work in between; the require line names a version this
 // build never uses.
 //
-// The pin is a pseudo-version because the fork carries no tags. It names the
-// exact commit either way, and moving to a tag later changes nothing about
-// what is compiled. Nothing re-syncs it: Dependabot leaves a replaced module
-// alone, so picking up an upstream go-git change — a security fix included —
-// means rebasing kjanat/go-git by hand and moving the commit named below.
+// The pin is the fork's signed annotated tag v6.0.0-kjanat.1, which names
+// commit ddab11a1c7762bda7dee392391d72e52a3cde07e — the same commit the
+// pseudo-version here before it named, so nothing about what compiles changed
+// with the spelling. What changed is what a reader can check: the tag is signed
+// by the fork's maintainer, and `git cat-file tag` on it says which commit it
+// promises. Nothing re-syncs it: Dependabot leaves a replaced module alone, so
+// picking up an upstream go-git change — a security fix included — means
+// rebasing kjanat/go-git by hand and moving the tag named below.
 //
 // The left side is unversioned on purpose. Pinning it to alpha.5 would stop
 // matching the moment the require line moves and drop the fix out of the build
@@ -79,4 +82,4 @@ tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 // One more consequence to know about: "go install pkg@version" refuses a
 // module that carries a replace, so tagging client/v* would not on its own
 // make the CLI go-installable.
-replace github.com/go-git/go-git/v6 => github.com/kjanat/go-git/v6 v6.0.0-20260909231536-ddab11a1c776
+replace github.com/go-git/go-git/v6 => github.com/kjanat/go-git/v6 v6.0.0-kjanat.1

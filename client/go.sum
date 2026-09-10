@@ -63,8 +63,8 @@ github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLf
 github.com/juju/gnuflag v0.0.0-20171113085948-2ce1bb71843d/go.mod h1:2PavIy+JPciBPrBUjwbNvtwB6RQlve+hkpll6QSNmOE=
 github.com/kevinburke/ssh_config v1.6.0 h1:J1FBfmuVosPHf5GRdltRLhPJtJpTlMdKTBjRgTaQBFY=
 github.com/kevinburke/ssh_config v1.6.0/go.mod h1:q2RIzfka+BXARoNexmF9gkxEX7DmvbW9P4hIVx2Kg4M=
-github.com/kjanat/go-git/v6 v6.0.0-20260909231536-ddab11a1c776 h1:3HtFy47N0sUz0oZB9881BQLTJ75b9K7Vc1gv2tC0mHw=
-github.com/kjanat/go-git/v6 v6.0.0-20260909231536-ddab11a1c776/go.mod h1:2eK2w/x2zu4GWIHvrPUnxOTKkQ1H9Hm40hDPLl1az9Q=
+github.com/kjanat/go-git/v6 v6.0.0-kjanat.1 h1:UwmO1vcTV0XMxfF/zzb3MH+IXR30FTIcjy253rTp+bw=
+github.com/kjanat/go-git/v6 v6.0.0-kjanat.1/go.mod h1:2eK2w/x2zu4GWIHvrPUnxOTKkQ1H9Hm40hDPLl1az9Q=
 github.com/klauspost/cpuid/v2 v2.3.0 h1:S4CRMLnYUhGeDFDqkGriYKdfoFlDnMtqTiI/sFzhA9Y=
 github.com/klauspost/cpuid/v2 v2.3.0/go.mod h1:hqwkgyIinND0mEev00jJYCxPNVRVXFQeu1XKlok6oO0=
 github.com/kr/pretty v0.1.0/go.mod h1:dAy3ld7l9f0ibDNOQOHHMYYIIbhfbHSm3C4ZsoJORNo=
