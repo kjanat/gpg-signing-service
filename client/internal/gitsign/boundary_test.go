@@ -245,8 +245,8 @@ func TestGoModReplacesGoGitWithTheFork(t *testing.T) {
 // Trimming quote characters — what these guards did — decodes exactly the first
 // spelling. The other two arrived at the comparison still carrying backticks or
 // still spelling "git" as "go-\x67it", matched nothing forbidden, and were
-// reported as a clean pkg/. TestPublishedImportWalkDecodesImportLiterals holds
-// all three against the same guard.
+// reported as a clean pkg/. TestPublishedImportWalkDecodesImportLiterals puts
+// every spelling through the same guard.
 func importPath(literal string) (string, bool) {
 	path, err := strconv.Unquote(literal)
 	if err != nil {
@@ -272,9 +272,9 @@ func TestPublishedImportWalkDecodesImportLiterals(t *testing.T) {
 		// A raw string literal. Nothing about an import path forbids one, and
 		// gofmt leaves it alone.
 		"raw.go": "import `" + goGitModule + "`",
-		// A basic string literal using the escapes TOML's cousin also allows:
-		// \x67 is "g", \u0069 is "i". The bytes on disk share no substring with
-		// the path they denote past "github.com/go-".
+		// A basic string literal spelled with Go's own escapes: \x67 is "g"
+		// and \u0069 is "i", so the bytes on disk share no substring with the
+		// path they denote past "github.com/go-".
 		"escaped.go": `import "github.com/go-g\x69t/go-\x67\u0069t/v6"`,
 		// Two hops down, to keep the prefix half of namesGoGit honest.
 		"beneath.go": `import "github.com/go-git/go-g\x69t/v6/plumbing/object"`,
