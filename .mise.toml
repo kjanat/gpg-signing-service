@@ -40,7 +40,10 @@ shellcheck     = "latest"
 task           = "latest"
 tombi          = "1.5.4"
 uv             = "0.12.12"
-wrangler       = { version = "4.131.0", allow_builds = ["esbuild", "sharp", "workerd"] }
+
+[tools.wrangler]
+version = "4.131.0"
+allow_builds = ["esbuild", "sharp", "workerd"]
 
 [tool_alias]
 actionlint = "github:kjanat/actionlint"
