@@ -57,11 +57,212 @@ fail() {
 # which is the thing this file exists to distrust, and bun.lock is not JSON
 # anyway -- it carries trailing commas.
 
-# The value of a `[tools]` entry in .mise.toml. Names are matched with the
-# optional quoting mise allows (`"cargo:runner-run" = ...`) so a quoted pin is
-# not read as absent.
+# The version a tool is pinned to in .mise.toml, read semantically. mise accepts
+# three spellings of the same pin and this repository now uses two of them:
+#
+#   [tools]
+#   biome = "2.5.13"                          a scalar under the table
+#   golangci-lint = { version = "2.13.2" }    an inline table
+#
+#   [tools.wrangler]                          a table of its own, which is what a
+#   version      = "4.131.0"                  pin needs the moment it acquires
+#   allow_builds = ["esbuild", "sharp"]       siblings
+#
+# What this replaced was one sed matching `name = "version"` anchored to the
+# start of a line. When wrangler moved to the third form to carry allow_builds,
+# that sed matched nothing -- and "nothing" is the same answer it gives for a
+# tool nobody pinned, so the gate went red claiming the repository had left its
+# single most dangerous producer floating. The two wrangler mutants then went
+# red on that same standing complaint rather than on the regression they inject,
+# which is the worse half of it: a mutation that never applied still "passed",
+# and the assertion it was supposed to exercise had stopped being exercised at
+# all. That is the failure mode this whole file exists to rule out, one level up.
+#
+# So this reads sections and dotted keys instead of lines. It is still not a TOML
+# parser -- no multi-line strings, no escape processing -- but it knows what a
+# section is, which is the part a pin gate cannot do without, and it stays a
+# reader this file owns rather than a tool resolved at run time.
+# The $0 below is awk's current line, not a shell positional; the program is
+# handed to awk verbatim.
+# shellcheck disable=SC2016
+mise_awk='
+function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+
+# One key or one scalar, with its outermost quotes removed. TOML allows both
+# quote characters here; the tool names and versions never need an escape.
+function unquote(s,   first, last) {
+	s = trim(s)
+	if (length(s) < 2) return s
+	first = substr(s, 1, 1)
+	last  = substr(s, length(s), 1)
+	if (first == last && (first == "\"" || first == SQ)) return substr(s, 2, length(s) - 2)
+	return s
+}
+
+# Everything ahead of a "#" that is not inside a string.
+function uncomment(s,   i, c, q, out) {
+	q = ""; out = ""
+	for (i = 1; i <= length(s); i++) {
+		c = substr(s, i, 1)
+		if (q == "") {
+			if (c == "#") break
+			if (c == "\"" || c == SQ) q = c
+		} else if (c == q) q = ""
+		out = out c
+	}
+	return out
+}
+
+# A dotted key or section header split on the dots outside quotes, each part
+# unquoted: tools."cargo:runner-run" becomes tools, cargo:runner-run.
+function split_path(s, parts,   i, c, q, cur, n) {
+	n = 0; cur = ""; q = ""
+	for (i = 1; i <= length(s); i++) {
+		c = substr(s, i, 1)
+		if (q != "") { if (c == q) q = ""; else cur = cur c; continue }
+		if (c == "\"" || c == SQ) { q = c; continue }
+		if (c == ".") { parts[++n] = trim(cur); cur = ""; continue }
+		cur = cur c
+	}
+	parts[++n] = trim(cur)
+	return n
+}
+
+# The version inside an inline table, if the value is one.
+function inline_version(v,   m) {
+	if (v !~ /^\{/) return ""
+	if (!match(v, /version[ \t]*=[ \t]*"[^"]*"/)) return ""
+	m = substr(v, RSTART, RLENGTH)
+	sub(/^version[ \t]*=[ \t]*"/, "", m)
+	sub(/"$/, "", m)
+	return m
+}
+
+# The fully qualified key the current line assigns, section included, or "" for
+# a line that assigns nothing. Headers are consumed here, so callers only ever
+# see keys. Sets `value` (the text after the "="), `keytext` (before it) and
+# `prefix` (the same, with the original spacing and the "=", so a rewrite can
+# keep the file it edits readable).
+function mise_key(   line, header, eq, i, kn, kp, full) {
+	line = trim(uncomment($0))
+	if (line == "") return ""
+
+	if (line ~ /^\[\[?[^]]*\]\]?$/) {
+		header = line
+		sub(/^\[+/, "", header)
+		sub(/\]+$/, "", header)
+		depth = split_path(header, section)
+		return ""
+	}
+
+	eq = index(line, "=")
+	if (eq == 0) return ""
+	keytext = trim(substr(line, 1, eq - 1))
+	value   = trim(substr(line, eq + 1))
+	prefix  = substr($0, 1, index($0, "="))
+
+	kn = split_path(keytext, kp)
+	full = ""
+	for (i = 1; i <= depth; i++) full = full SEP section[i]
+	for (i = 1; i <= kn; i++)    full = full SEP kp[i]
+	return full
+}
+
+# Whether the current section header names the tool itself -- [tools.wrangler]
+# and anything under it -- so a mutator can drop the table with its siblings.
+function in_tool_table(   i) {
+	if (depth < 2) return 0
+	return (section[1] == "tools" && section[2] == want)
+}
+
+BEGIN { SQ = sprintf("%c", 39); SEP = sprintf("%c", 30); depth = 0 }
+'
+
 mise_tool() {
-	sed -nE "s/^[[:space:]]*\"?$2\"?[[:space:]]*=[[:space:]]*\"([^\"]+)\".*/\1/p" "$1/.mise.toml" | head -1
+	awk -v want="$2" "${mise_awk}"'
+	{
+		key = mise_key()
+		if (key == SEP "tools" SEP want) {
+			inline = inline_version(value)
+			print (inline != "" ? inline : unquote(value))
+			exit
+		}
+		if (key == SEP "tools" SEP want SEP "version") {
+			print unquote(value)
+			exit
+		}
+	}' "$1/.mise.toml"
+}
+
+# The mutators, which have to read the file the same way for the same reason:
+# a mutation applied by a pattern that no longer matches is a mutant identical
+# to the repository, and a mutant identical to the repository passes. Both
+# refuse to write a file they did not change, so that failure is loud.
+mise_mutate() {
+	local file="$1/.mise.toml"
+	shift
+	if ! awk "$@" "${file}" >"${file}.mutant"; then
+		printf 'internal error: the mutation did not apply to %s\n' "${file}" >&2
+		exit 1
+	fi
+	mv "${file}.mutant" "${file}"
+}
+
+# Repin a tool, in whichever of the three forms it is written in.
+# As above: the $0 in the program below is awk's.
+# shellcheck disable=SC2016
+mise_set_version() {
+	mise_mutate "$1" -v want="$2" -v pin="$3" "${mise_awk}"'
+	{
+		key = mise_key()
+		if (key == SEP "tools" SEP want) {
+			if (inline_version(value) != "") {
+				line = $0
+				sub(/version[ \t]*=[ \t]*"[^"]*"/, "version = \"" pin "\"", line)
+				print line
+			} else {
+				print prefix " \"" pin "\""
+			}
+			changed = 1
+			next
+		}
+		if (key == SEP "tools" SEP want SEP "version") {
+			print prefix " \"" pin "\""
+			changed = 1
+			next
+		}
+		print
+	}
+	END { if (!changed) exit 1 }'
+}
+
+# Drop a tool outright: the [tools] entry, or the [tools.NAME] table together
+# with the siblings that made it a table in the first place.
+mise_remove_tool() {
+	mise_mutate "$1" -v want="$2" "${mise_awk}"'
+	{
+		key = mise_key()
+		if (key ~ "^" SEP "tools" SEP want "(" SEP "|$)") { changed = 1; next }
+		if (key == "" && in_tool_table()) { changed = 1; next }
+		print
+	}
+	END { if (!changed) exit 1 }'
+}
+
+# Drop only the `version` of a tool, leaving the table and its siblings behind:
+# the shape a half-finished edit leaves, and the one a reader that keys off the
+# section header rather than the key would report as pinned.
+mise_remove_version() {
+	mise_mutate "$1" -v want="$2" "${mise_awk}"'
+	{
+		key = mise_key()
+		if (key == SEP "tools" SEP want SEP "version" || key == SEP "tools" SEP want) {
+			changed = 1
+			next
+		}
+		print
+	}
+	END { if (!changed) exit 1 }'
 }
 
 # A `"key": "value"` pair inside one named block, addressed by the block's own
@@ -121,7 +322,7 @@ check_root() {
 	for tool in "${PRODUCERS[@]}"; do
 		version="$(mise_tool "${root}" "${tool}")"
 		if [[ -z ${version} ]]; then
-			note "${tool} is not in .mise.toml [tools] -- it rewrites committed files, so it cannot be left to whatever is on PATH"
+			note "${tool} has no pinned version in .mise.toml -- it rewrites committed files, so it cannot be left to whatever is on PATH"
 		elif ! is_exact_version "${version}"; then
 			note "${tool} is pinned to '${version}' in .mise.toml -- a producer has to name one release, or 'mise install' becomes a repository mutation"
 		fi
@@ -160,6 +361,82 @@ check_root() {
 	unset -f note
 	return "${problems}"
 }
+
+# --- the reader, against every form it claims to read -------------------------
+#
+# The regression that made this necessary was silent in exactly one direction:
+# a reader that cannot see a pin reports the same "" as a reader looking at a
+# tool nobody pinned, so the gate stayed loud while the mutants it ran went
+# quiet. The cases below name each form separately, so the next form that stops
+# being read fails as itself.
+
+new_case 'the .mise.toml reader understands every form mise writes a pin in'
+reader_root="${tmp_dir}/reader"
+mkdir -p "${reader_root}"
+cat >"${reader_root}/.mise.toml" <<'FIXTURE'
+[tools]
+scalar          = "1.2.3"
+inline          = { version = "2.3.4", allow_builds = ["esbuild"] }
+"cargo:quoted"  = "3.4.5"
+trailing        = "4.5.6" # the pin, and a note about it
+'single'        = '5.6.7'
+
+[tools.tabled]
+version      = "6.7.8"
+allow_builds = ["esbuild", "sharp", "workerd"]
+
+[tools.versionless]
+allow_builds = ["esbuild"]
+
+[settings]
+elsewhere = "9.9.9"
+FIXTURE
+
+expect_read() {
+	local name="$1" want="$2" got
+	got="$(mise_tool "${reader_root}" "${name}")"
+	if [[ ${got} != "${want}" ]]; then
+		fail "the reader gives '${name}' as '${got}', want '${want}'"
+	fi
+}
+
+expect_read scalar 1.2.3
+expect_read inline 2.3.4
+expect_read 'cargo:quoted' 3.4.5
+expect_read trailing 4.5.6
+expect_read single 5.6.7
+# The form this file could not read: a table of its own, with the siblings that
+# are the reason for writing one.
+expect_read tabled 6.7.8
+# A table with no version is not a pin, however much of a section it looks like.
+expect_read versionless ''
+# ...and neither is a key of the same name in some other section. `[tools]` is
+# the scope; a file-wide match would read `elsewhere` out of `[settings]`.
+expect_read elsewhere ''
+expect_read absent ''
+
+new_case 'the mutators reach the same forms the reader does'
+for form in scalar inline tabled; do
+	mutated="${tmp_dir}/reader-${form}"
+	mkdir -p "${mutated}"
+	cp "${reader_root}/.mise.toml" "${mutated}/.mise.toml"
+	mise_set_version "${mutated}" "${form}" 0.0.0
+	if [[ "$(mise_tool "${mutated}" "${form}")" != "0.0.0" ]]; then
+		fail "repinning the ${form} form did not take"
+	fi
+	mise_remove_tool "${mutated}" "${form}"
+	if [[ -n "$(mise_tool "${mutated}" "${form}")" ]]; then
+		fail "removing the ${form} form left a pin behind"
+	fi
+done
+# A mutation that finds nothing to change has to be an error rather than a
+# silently unmodified copy -- that is the shape the old sed mutants failed in.
+mutated="${tmp_dir}/reader-absent"
+mkdir -p "${mutated}"
+cp "${reader_root}/.mise.toml" "${mutated}/.mise.toml"
+if (mise_set_version "${mutated}" absent 0.0.0) 2>/dev/null; then
+	fail 'repinning a tool that is not there succeeded, so a stale mutant would pass as applied'
+fi
 
 # --- the repository itself has to satisfy them -------------------------------
 
@@ -256,16 +533,34 @@ expect_caught() {
 }
 
 root="$(mutant_root biome-latest)"
-sed -i -E 's/^([[:space:]]*biome[[:space:]]*=[[:space:]]*)".*"/\1"latest"/' "${root}/.mise.toml"
+mise_set_version "${root}" biome latest
 expect_caught 'mutant: biome = "latest" is rejected' "${root}" "biome is pinned to 'latest'"
 
+# wrangler is the one written as a table of its own, so this is also the mutant
+# that proves the mutators reach that form. mise_set_version exits non-zero
+# rather than writing an unchanged file, which is what makes it a mutant at all.
 root="$(mutant_root wrangler-latest)"
-sed -i -E 's/^([[:space:]]*wrangler[[:space:]]*=[[:space:]]*)".*"/\1"latest"/' "${root}/.mise.toml"
-expect_caught 'mutant: wrangler = "latest" is rejected' "${root}" "wrangler is pinned to 'latest'"
+mise_set_version "${root}" wrangler latest
+expect_caught 'mutant: a floating [tools.wrangler] version is rejected' "${root}" "wrangler is pinned to 'latest'"
 
 root="$(mutant_root tombi-latest)"
-sed -i -E 's/^([[:space:]]*tombi[[:space:]]*=[[:space:]]*)".*"/\1"latest"/' "${root}/.mise.toml"
+mise_set_version "${root}" tombi latest
 expect_caught 'mutant: a floating dprint-invoked formatter is rejected' "${root}" "tombi is pinned to 'latest'"
+
+# The pin removed outright, table and siblings with it.
+root="$(mutant_root wrangler-unpinned)"
+mise_remove_tool "${root}" wrangler
+expect_caught 'mutant: dropping the wrangler pin from .mise.toml is rejected' "${root}" 'wrangler has no pinned version'
+
+# And the half of that a table form makes possible on its own: [tools.wrangler]
+# still there, allow_builds still there, no version. A reader keying off the
+# section header would call that pinned.
+root="$(mutant_root wrangler-versionless)"
+mise_remove_version "${root}" wrangler
+if ! grep -q 'allow_builds' "${root}/.mise.toml"; then
+	fail 'the versionless mutant removed the whole table rather than just the pin'
+fi
+expect_caught 'mutant: [tools.wrangler] with siblings but no version is rejected' "${root}" 'wrangler has no pinned version'
 
 # The pre-#125 state exactly: scripts calling a binary that is only there while
 # some other package keeps depending on it.
@@ -278,7 +573,7 @@ sed -i -E 's/^([[:space:]]*"wrangler": )"[^"]*"/\1"^4.123.0"/' "${root}/package.
 expect_caught 'mutant: a floating wrangler range is rejected' "${root}" 'has to be an exact version'
 
 root="$(mutant_root wrangler-split)"
-sed -i -E 's/^([[:space:]]*wrangler[[:space:]]*=[[:space:]]*)".*"/\1"4.127.1"/' "${root}/.mise.toml"
+mise_set_version "${root}" wrangler 4.127.1
 expect_caught 'mutant: two pinned-but-different wranglers are rejected' "${root}" 'two versions are two producers'
 
 # --- and the typegen gate has to read a resolution, not a declaration ---------
