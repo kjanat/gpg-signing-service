@@ -53,7 +53,7 @@ jobs:
             os="${target%/*}"
             arch="${target#*/}"
             ext=""
-            [ "${os}" = windows ] && ext=".exe"
+            [[ "${os}" = windows ]] && ext=".exe"
             GOOS="${os}" GOARCH="${arch}" go build -trimpath -ldflags "${LDFLAGS}" \
               -o "../dist/gpg-sign-${os}-${arch}${ext}" ./cmd/gpg-sign
           done
@@ -112,9 +112,12 @@ jobs:
             | sed 's/by @claude\[bot\] in /by @kjanat in /g' \
             > normalized.md
 
-          [[ "$(grep -c '^## What.s Changed$' normalized.md)" -eq 1 ]]
+          changed="$(grep -c '^## What.s Changed$' normalized.md)"
+          [[ "${changed}" -eq 1 ]]
           if grep -Fq '@claude[bot]' normalized.md; then exit 1; fi
           grep -Fq '**Full Changelog**:' normalized.md
 
-          gh api --method PATCH "repos/${GH_REPO}/releases/${release_id}" \
-            --raw-field body="$(cat normalized.md)" >/dev/null
+          normalized="$(cat normalized.md)"
+          gh api \
+            --method PATCH "repos/${GH_REPO}/releases/${release_id}" \
+            --raw-field body="${normalized}" >/dev/null

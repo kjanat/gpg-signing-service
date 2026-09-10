@@ -221,7 +221,7 @@ pin_case 'a local action has nothing to pin' '' \
 	'jobs:
   release:
     steps:
-      - uses: ./.github/actions/setup-bun'
+      - uses: $/.github/actions/setup-bun'
 pin_case 'a branch that looks like a sha but is short is not a pin' 'foo/bar@3d3c42e' \
 	'jobs:
   release:

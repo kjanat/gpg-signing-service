@@ -118,7 +118,7 @@ jobs:
           persist-credentials: false
       - { uses: jdx/mise-action@v4, with: { version: "${{ vars.MISE_VERSION }}" } }
       - { uses: kjanat/install-dprint@v2 }
-      - { uses: ./.github/actions/setup-bun, id: bun, with: { skip-install: true } }
+      - { uses: $/.github/actions/setup-bun, id: bun, with: { skip-install: true } }
 
       # Note what is absent: setup-claude-signing. This job makes no commits, so
       # it needs no signing, no id-token: write and no OIDC minting endpoint.
@@ -234,7 +234,7 @@ jobs:
       - name: Set up service-signed commits
         if: steps.gate.outputs.eligible == 'true'
         id: signing
-        uses: ./.github/actions/setup-claude-signing
+        uses: $/.github/actions/setup-claude-signing
         with:
           service-url: "${{ vars.SIGNING_SERVICE_URL }}"
           disable-signing: "${{ vars.GPG_SIGN_DISABLE }}"

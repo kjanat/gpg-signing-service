@@ -229,8 +229,9 @@ function runsScript(file: string, only: string | null, scripts: string[]): strin
  * that mints real signatures. `# v7.0.1` after the SHA is what makes it
  * readable and what Dependabot bumps; the SHA is what runs.
  *
- * `./` and `./.github/actions/...` are this checkout: whatever the workflow was
- * checked out at is what runs, so there is nothing to pin them to.
+ * `./` resolves in the checked-out workspace. `$/` resolves in the running
+ * workflow or action's repository at its own commit and cannot carry a ref
+ * suffix. Neither needs an external action pin.
  */
 function mutableUses(file: string, jobId: string | null, expectUses: boolean): string[] {
 	const jobs = readJobs(file);
@@ -243,6 +244,10 @@ function mutableUses(file: string, jobId: string | null, expectUses: boolean): s
 
 		seen += 1;
 		if (value.startsWith("./")) return;
+		if (value.startsWith("$/")) {
+			if (value.includes("@")) fail(`${file}: ${where} has a self-repository reference with a ref suffix`);
+			return;
+		}
 
 		const at = value.lastIndexOf("@");
 		if (at > 0 && COMMIT_SHA.test(value.slice(at + 1))) return;

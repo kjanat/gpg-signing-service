@@ -315,12 +315,24 @@ uses_case 'a full-SHA pin in a flow mapping with inputs' '' \
     steps:
       - { uses: actions/checkout@${pinned_sha}, with: { fetch-depth: 0 } }"
 
-uses_case 'local actions in this checkout' '' \
+uses_case 'workspace and self-repository actions' '' \
 	'jobs:
   sign:
     steps:
       - uses: ./
-      - uses: ./.github/actions/setup-bun'
+      - uses: ./.github/actions/setup-bun
+      - uses: $/.github/actions/setup-bun'
+
+for invalid_ref in '$/.github/actions/setup-bun@v7' "\$/.github/actions/setup-bun@${pinned_sha}"; do
+	fixture "jobs:
+  sign:
+    steps:
+      - uses: ${invalid_ref}"
+	if workflow_mutable_uses "${workflow}" >/dev/null 2>&1; then
+		printf 'FAIL: a self-repository action with a ref suffix was accepted: %s\n' "${invalid_ref}" >&2
+		exit 1
+	fi
+done
 
 uses_case 'only the named job' '' \
 	"jobs:

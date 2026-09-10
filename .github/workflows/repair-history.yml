@@ -66,7 +66,7 @@ jobs:
       - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         if: inputs.build_from_source
         with: { working_directory: client, version: "${{ vars.MISE_VERSION }}" }
-      - { uses: ./.github/actions/setup-bun, if: inputs.build_from_source }
+      - { uses: $/.github/actions/setup-bun, if: inputs.build_from_source }
       - name: Build the checked-out CLI
         if: inputs.build_from_source
         id: build
