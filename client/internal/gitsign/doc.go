@@ -36,4 +36,14 @@
 // author or committer outside its canonical slot as empty, so the same rewrite
 // there would move dates and drop names git itself reads back without
 // complaint.
+//
+// That is why this package is internal. A replace directive binds the module
+// that writes it and no other: Go ignores the directives of a module it depends
+// on, so an external importer would build this code against the released go-git
+// named on the require line and get the damage above without a warning, a build
+// failure, or any way to notice. The compiler refusing the import is the only
+// version of that boundary which cannot be talked past. The Go library this
+// repository does publish is
+// [github.com/kjanat/gpg-signing-service/client/pkg/client], which asks nothing
+// of go-git; everything here is reached through the gpg-sign CLI.
 package gitsign

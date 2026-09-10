@@ -2,7 +2,7 @@
 # Drive .github/scripts/sign-commits.sh against a recording stub.
 #
 # The signing walk moved into `gpg-sign sign-commit` and is covered by the Go
-# suite in client/pkg/gitsign — base resolution, the allow-resign refusals, the
+# suite in client/internal/gitsign — base resolution, the allow-resign refusals, the
 # stripped-vs-reparent distinction, the pinned verifier. What is left here is
 # the half that cannot live in Go: the flags this script builds out of dispatch
 # inputs, and the binary it builds them for.
