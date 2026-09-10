@@ -65,7 +65,7 @@ fail() {
 #   golangci-lint = { version = "2.13.2" }    an inline table
 #
 #   [tools.wrangler]                          a table of its own, which is what a
-#   version      = "4.131.0"                  pin needs the moment it acquires
+#   version      = "4.129.1"                  pin needs the moment it acquires
 #   allow_builds = ["esbuild", "sharp"]       siblings
 #
 # What this replaced was one sed matching `name = "version"` anchored to the
@@ -170,7 +170,7 @@ function mise_key(   line, header, eq, i, kn, kp, full) {
 
 # Whether the current section header names the tool itself -- [tools.wrangler]
 # and anything under it -- so a mutator can drop the table with its siblings.
-function in_tool_table(   i) {
+function in_tool_table() {
 	if (depth < 2) return 0
 	return (section[1] == "tools" && section[2] == want)
 }
