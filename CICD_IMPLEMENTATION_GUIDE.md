@@ -61,7 +61,7 @@ dependencies:
     contents: read
   steps:
     - uses: actions/checkout@v7
-    - uses: ./.github/actions/setup-bun
+    - uses: $/.github/actions/setup-bun
     - uses: jdx/mise-action@v4
       with: { working_directory: client }
 
@@ -241,7 +241,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v4
-      - uses: ./.github/actions/setup-bun
+      - uses: $/.github/actions/setup-bun
 
       - name: Deploy to Production
         run: |

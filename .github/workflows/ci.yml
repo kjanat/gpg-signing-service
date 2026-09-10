@@ -1,84 +1,53 @@
 name: CI
-on: { push: { branches: [master] }, pull_request: { branches: [master] } }
+on: { push: &Master { branches: [master] }, pull_request: *Master }
 
 jobs:
-  verify-api:
-    name: Verify API Generation
-    runs-on: ubuntu-latest
-    steps: [uses: actions/checkout@v7, { uses: ./.github/actions/check-api-changes, with: { mise-version: "${{ vars.MISE_VERSION }}" } }]
-
-  format:
-    name: Format check
-    runs-on: ubuntu-latest
-    steps: [uses: actions/checkout@v7, { uses: ./.github/actions/check-formatting, with: { mise-version: "${{ vars.MISE_VERSION }}" } }]
-
-  typecheck:
-    name: Typecheck
-    runs-on: ubuntu-latest
+  verify-api: {
+    name: Verify API Generation,
+    runs-on: &Ubuntu ubuntu-latest,
     steps: [
-      uses: actions/checkout@v7,
-      { uses: jdx/mise-action@v4, with: { version: "${{ vars.MISE_VERSION }}" } },
-      uses: ./.github/actions/setup-bun,
-      { run: task typecheck },
-    ]
+      &Check { uses: &CheckoutAction actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 }, # v7.0.1
+      { uses: $/.github/actions/check-api-changes, with: &WithMiseVer { mise-version: &MiseVer "${{ vars.MISE_VERSION }}" } },
+    ],
+  }
 
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
+  format: { name: Format check, runs-on: *Ubuntu, steps: [*Check, { uses: $/.github/actions/check-formatting, with: *WithMiseVer }] }
+
+  typecheck: {
+    name: Typecheck,
+    runs-on: *Ubuntu,
     steps: [
-      uses: actions/checkout@v7,
-      { uses: jdx/mise-action@v4, with: { working_directory: client, version: "${{ vars.MISE_VERSION }}" } },
-      uses: ./.github/actions/setup-bun,
-      uses: kjanat/install-dprint@v2,
-      { run: task lint },
-    ]
+      *Check,
+      &Mise { uses: &MiseAction jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c, with: { version: *MiseVer } }, # v4.3.0
+      &Bun { uses: $/.github/actions/setup-bun },
+      run: task typecheck,
+    ],
+  }
 
-  test:
-    name: Test
-    runs-on: ubuntu-latest
+  lint: {
+    name: Lint,
+    runs-on: *Ubuntu,
     steps: [
-      uses: actions/checkout@v7,
-      { uses: jdx/mise-action@v4, with: { version: "${{ vars.MISE_VERSION }}" } },
-      uses: ./.github/actions/setup-bun,
-      { run: task test },
-    ]
+      *Check,
+      &MiseGo { uses: *MiseAction, with: { working_directory: client, version: *MiseVer } },
+      *Bun,
+      { uses: kjanat/dprint-check@v3, with: { install-only: true } },
+      run: task lint,
+    ],
+  }
 
-  client-test:
-    name: Go client test
-    runs-on: ubuntu-latest
-    steps: [
-      uses: actions/checkout@v7,
-      { uses: jdx/mise-action@v4, with: { working_directory: client, version: "${{ vars.MISE_VERSION }}" } },
-      { run: task c:t },
-      { run: task c:l },
-    ]
+  test: { name: Test, runs-on: *Ubuntu, steps: [*Check, *Mise, *Bun, { run: task test }] }
+  client-test: { name: Go client test, runs-on: *Ubuntu, steps: [*Check, *MiseGo, { run: task c:t }, { run: task c:l }] }
 
-  # Turns the Aug 30 provenance failure from silent into loud. The REST squash
-  # path builds the merge commit itself and stamps `claude[bot]` / `GitHub` on
-  # it, which no signature check can catch — a manufactured commit signs
-  # perfectly well. This runs over the commits a push actually added, so the
-  # next one is a red build rather than the twentieth.
-  # Tests: .github/scripts/test-commit-provenance.sh (task test:commit-provenance).
   provenance:
     name: Commit provenance
-    # Deleting a branch is also a push, and on that event `github.sha` is the
-    # default branch's tip rather than anything the push added. `before..after`
-    # would then span commits the deletion had nothing to do with — history
-    # somebody else's merge wrote — and blame this push for them. There is
-    # nothing to check when a ref goes away, so do not run.
     if: github.event_name == 'push' && github.event.deleted == false
-    runs-on: ubuntu-latest
+    runs-on: *Ubuntu
+    defaults: { run: { shell: bash } }
     steps:
-      # Pinned to a commit, not a tag. This job is the guard: an action whose
-      # tag is repointed runs before the check it is meant to be checked by,
-      # in a job on the default branch. The trailing comment is the readable
-      # version and what Dependabot bumps.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { fetch-depth: 0 }
+      - { uses: *CheckoutAction, with: { fetch-depth: 0 } }
       - name: Check the pushed commits name a real author
-        env:
-          BEFORE: ${{ github.event.before }}
-          AFTER: ${{ github.sha }}
+        env: { BEFORE: "${{ github.event.before }}", AFTER: "${{ github.sha }}" }
         run: |
           # The first push to a branch reports an all-zero "before"; there is
           # no range to check then, and pre-existing history is repaired once

@@ -953,7 +953,7 @@ expect_prompt 'claude-agent-guard.sh attribution' 'the session must scan what it
 # checks.
 expect_prompt '/tmp/pr-title.txt' 'a pull request title is covered by the policy, so it must be scannable'
 expect_prompt 'claude-agent-guard.sh commits' 'the session must scan its own commit messages'
-expect_workflow './.github/actions/setup-claude-signing' 'service-signed commits must survive the rewrite'
+expect_workflow '$/.github/actions/setup-claude-signing' 'service-signed commits must survive the rewrite'
 expect_workflow 'GIT_AUTHOR_EMAIL' 'the owner git identity must survive the rewrite'
 expect_workflow 'GIT_COMMITTER_EMAIL' 'the owner git identity must survive the rewrite'
 expect_workflow 'id-token: write' 'the signing shim needs OIDC'

@@ -641,7 +641,7 @@ for name, job in privileged.items():
     # 8. It runs only trusted, non-executing actions. Adding a toolchain setup
     #    here — setup-bun, mise — would be the quiet way to start running the
     #    branch's code in the job that holds the token.
-    allowed_uses = {"actions/checkout", "actions/download-artifact", "./.github/actions/setup-claude-signing"}
+    allowed_uses = {"actions/checkout", "actions/download-artifact", "$/.github/actions/setup-claude-signing"}
     for step in steps:
         uses = str(step.get("uses", "")).split("@")[0]
         if uses:
@@ -760,7 +760,7 @@ MUTATIONS = {
     # branch's install scripts without any checkout looking suspicious.
     "privileged-gains-toolchain": lambda: head + sep + tail.replace(
         "      - name: Re-authorize before writing",
-        "      - { uses: ./.github/actions/setup-bun }\n      - name: Re-authorize before writing",
+        "      - { uses: $/.github/actions/setup-bun }\n      - name: Re-authorize before writing",
         1,
     ),
     # The pull request escaping its subdirectory puts it in the workspace root,
