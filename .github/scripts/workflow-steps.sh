@@ -5,6 +5,7 @@
 #
 #   source .github/scripts/workflow-steps.sh
 #   workflow_runs_script  <workflow.yml> <script-path>...
+#   workflow_run_lines    <workflow.yml> <job-id>
 #   workflow_mutable_uses <workflow.yml> [--job <id>] [--expect-uses]
 #   workflow_job_field    <workflow.yml> <job-id> <field>
 #   workflow_input_field  <workflow.yml> <input> <field>
@@ -77,6 +78,13 @@ workflow_steps_run() {
 # cannot be parsed.
 workflow_runs_script() {
 	workflow_steps_run runs-script "$@"
+}
+
+# The run lines from one job, after YAML folding and alias resolution. This
+# reads shell text, including comments; callers must check command positions.
+# A missing job or malformed run value returns non-zero, not an empty answer.
+workflow_run_lines() {
+	workflow_steps_run run-lines "$@"
 }
 
 # Every `uses:` in a workflow — or in one named job, with `--job <id>` — that
