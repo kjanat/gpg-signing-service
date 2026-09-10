@@ -665,16 +665,55 @@ func TestReachesFailsClosedOnAnUnresolvedGraph(t *testing.T) {
 
 // And the same for a tree with nothing published in it: the closure has to
 // refuse rather than hand back an empty root set that every predicate passes.
+//
+// The fixture has to contain a pkg/ directory holding no Go files, because
+// that is the only shape that reaches the assertion. A module with no pkg/ at
+// all makes `go list ./pkg/...` exit non-zero ("lstat ./pkg/: no such file or
+// directory"), so the closure returns from goList's error path and the
+// empty-pattern guard is never consulted -- a fixture built that way passes
+// with the guard deleted, which is the exact accounting this file rejects
+// everywhere else. `go list` exits 0 and merely warns when the pattern
+// resolves and matches nothing, and that is the case the guard is for: pkg/
+// still there, emptied by a move that nobody pointed these tests at.
+//
+// Stated as a mutant: delete both `named no packages` guards and
+// dependencyClosure returns an empty root set and a nil error -- the silently
+// clean answer they exist to prevent. Against a fixture with no pkg/ at all
+// that mutant survives; against this one it does not.
 func TestDependencyClosureRefusesATreeWithNoPublishedPackages(t *testing.T) {
+	module := writeFixtureModule(t)
+	if err := os.MkdirAll(filepath.Join(module, "pkg"), 0o750); err != nil {
+		t.Fatalf("building the fixture pkg/ tree: %v", err)
+	}
+
+	roots, graph, err := dependencyClosure(module)
+	if err == nil {
+		t.Fatalf("a pkg/ with no packages in it resolved to %d root(s) and %d node(s) "+
+			"instead of an error", len(roots), len(graph))
+	}
+}
+
+// The other half of the same shape, kept apart from it: a module with no pkg/
+// directory at all cannot resolve the pattern, and that has to surface as the
+// `go list` failure it is rather than as a clean empty tree.
+func TestDependencyClosureRefusesATreeWithNoPublishedDirectory(t *testing.T) {
+	roots, graph, err := dependencyClosure(writeFixtureModule(t))
+	if err == nil {
+		t.Fatalf("a module with no pkg/ resolved to %d root(s) and %d node(s) instead of an error",
+			len(roots), len(graph))
+	}
+}
+
+// writeFixtureModule returns a temporary directory holding nothing but a go.mod
+// naming the toolchain running these tests, so `go list` resolves in it.
+func writeFixtureModule(t *testing.T) string {
+	t.Helper()
+
 	module := t.TempDir()
 	manifest := "module fixture\n\ngo " + strings.TrimPrefix(runtime.Version(), "go") + "\n"
 	if err := os.WriteFile(filepath.Join(module, "go.mod"), []byte(manifest), 0o600); err != nil {
 		t.Fatalf("writing the fixture go.mod: %v", err)
 	}
 
-	roots, graph, err := dependencyClosure(module)
-	if err == nil {
-		t.Fatalf("a module with no pkg/ resolved to %d root(s) and %d node(s) instead of an error",
-			len(roots), len(graph))
-	}
+	return module
 }
