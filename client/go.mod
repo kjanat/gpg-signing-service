@@ -69,7 +69,18 @@ tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 // by the fork's maintainer, and `git cat-file tag` on it says which commit it
 // promises. Nothing re-syncs it: Dependabot leaves a replaced module alone, so
 // picking up an upstream go-git change — a security fix included — means
-// rebasing kjanat/go-git by hand and moving the tag named below.
+// rebasing kjanat/go-git by hand, cutting a new signed annotated tag for the
+// rebased commit — v6.0.0-kjanat.2, then .3 — and moving the replace below onto
+// that new tag.
+//
+// v6.0.0-kjanat.1 is immutable, and so is every tag that succeeds it: never
+// retarget or recreate one. A tag that moves keeps its name while changing what
+// it promises, which is the one thing this pin exists to rule out — go.sum here
+// records the hash of the tree the old tag named, every checkout that already
+// resolved it holds a different one under the same spelling, and a reader
+// checking `git cat-file tag` gets an answer that was not true when the line was
+// written. Cutting a new tag leaves the old answer intact and makes the change
+// legible as a diff on this line.
 //
 // A replace is invisible past this module's own edge: Go ignores the directives
 // of a module it merely depends on, so anything importing this repository would
