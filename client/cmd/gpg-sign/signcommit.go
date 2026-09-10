@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/kjanat/gpg-signing-service/client/pkg/gitsign"
+	"github.com/kjanat/gpg-signing-service/client/internal/gitsign"
 	"github.com/spf13/cobra"
 )
 

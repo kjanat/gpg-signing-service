@@ -50,17 +50,17 @@ tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 
 // go-git is built from github.com/kjanat/go-git, the fork carrying
 // go-git/go-git#2328, which decodes a commit's headers wherever git put them
-// and replays the ones a rewrite did not touch. pkg/gitsign reparents commits
-// through the struct encoder and needs both halves of that: released go-git
-// reads an author or committer outside its canonical slot as no ident at all,
-// and normalizes the idents it does decode.
+// and replays the ones a rewrite did not touch. internal/gitsign reparents
+// commits through the struct encoder and needs both halves of that: released
+// go-git reads an author or committer outside its canonical slot as no ident at
+// all, and normalizes the idents it does decode.
 //
 // That fork is this repository's supported source for go-git, not a stopgap
-// held until upstream moves: no released go-git carries the fix, and pkg/gitsign
-// is a package whose whole subject is byte fidelity. The branch is cut from
-// go-git main rather than from the alpha.5 tag required above, so this also
-// builds the unreleased work in between; the require line names a version this
-// build never uses.
+// held until upstream moves: no released go-git carries the fix, and
+// internal/gitsign is a package whose whole subject is byte fidelity. The
+// branch is cut from go-git main rather than from the alpha.5 tag required
+// above, so this also builds the unreleased work in between; the require line
+// names a version this build never uses.
 //
 // The pin is the fork's signed annotated tag v6.0.0-kjanat.1, which names
 // commit ddab11a1c7762bda7dee392391d72e52a3cde07e — the same commit the
@@ -70,6 +70,14 @@ tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 // promises. Nothing re-syncs it: Dependabot leaves a replaced module alone, so
 // picking up an upstream go-git change — a security fix included — means
 // rebasing kjanat/go-git by hand and moving the tag named below.
+//
+// A replace is invisible past this module's own edge: Go ignores the directives
+// of a module it merely depends on, so anything importing this repository would
+// resolve the stock alpha.5 above and reparent through the encoder that empties
+// idents and moves dates. That is why the package resting on this line lives at
+// client/internal/gitsign. The compiler refuses the import rather than letting a
+// downstream build silently lose the fidelity the fork is here to provide; the
+// documented Go surface, client/pkg/client, asks nothing of go-git.
 //
 // The left side is unversioned on purpose. Pinning it to alpha.5 would stop
 // matching the moment the require line moves and drop the fix out of the build
