@@ -250,7 +250,16 @@ openssl genrsa -traditional -out "${probe_pem}" 2048 2>/dev/null \
 	|| openssl genrsa -out "${probe_pem}" 2048 2>/dev/null
 probe_pem_body="$(sed -n '2p' "${probe_pem}")"
 probe_b64="$(head -c 48 /dev/urandom | base64 | tr -d '\n')"
-probe_aws_id="AKIA$(rand_alnum 16 'A-Z0-9')"
+# The suffix is drawn from base32's alphabet, which is the one real AWS key ids
+# use, because the rule's does not stay still: 8.24.3 accepts `[A-Z0-9]` there
+# and 8.30.1 accepts only `[A-Z2-7]`. An `A-Z0-9` draw therefore fires on every
+# scanner today and on (32/36)^16 of the runs of a newer one -- about one in
+# seven, measured at 43/300 under 8.30.1 -- so it is a probe that goes
+# intermittent, and silently, the moment the pin moves. `A-Z2-7` is a
+# subset of both, so the plant named for `aws-access-token` reaches it under
+# either. Narrowing the draw does not narrow what is being tested: the plant is
+# still a realistic credential that no allowance may swallow.
+probe_aws_id="AKIA$(rand_alnum 16 'A-Z2-7')"
 probe_aws_key="$(head -c 40 /dev/urandom | base64 | head -c 40)"
 probe_pat="ghp_$(rand_alnum 36 'A-Za-z0-9')"
 
@@ -262,8 +271,8 @@ probe_pat="ghp_$(rand_alnum 36 'A-Za-z0-9')"
 # `aws-access-token` and not some neighbouring generic match.
 
 new_case 'the generated AWS id has the exact shape aws-access-token requires'
-[[ ${probe_aws_id} =~ ^AKIA[A-Z0-9]{16}$ ]] \
-	|| fail "the AWS probe generated ${#probe_aws_id} characters ('${probe_aws_id}'); the rule needs AKIA plus exactly 16"
+[[ ${probe_aws_id} =~ ^AKIA[A-Z2-7]{16}$ ]] \
+	|| fail "the AWS probe generated '${probe_aws_id}'; the rule needs AKIA plus exactly 16 characters, and 8.30.1 needs them inside base32's [A-Z2-7]"
 
 new_case 'the generated GitHub token has the exact shape its rule requires'
 [[ ${probe_pat} =~ ^ghp_[A-Za-z0-9]{36}$ ]] \

@@ -18,6 +18,17 @@
 # version CI actually runs, so scripts/test-gitleaks-contract.sh has to read it
 # with that same version rather than with whatever resolved today (#145).
 #
+# So this pin is not a dependency that can be refreshed on its own. It is one
+# end of a three-way agreement with `GITLEAKS_VERSION` in
+# .github/workflows/security.yml and .github/workflows/gitleaks.yml, and moving
+# it alone changes which semantics the gate reads .gitleaks.toml with while CI
+# keeps reading it with the old ones. That is exactly what happened in 73e98fe,
+# where an actionlint change carried a 8.24.3 -> 8.30.1 bump along with it and
+# took as many as five contract cases red on master. A bump has to move all
+# three at once, and .gitleaks.toml has to be re-read for the new version's
+# semantics first -- 8.25.0+ honour `[[allowlists]]` and `condition`, which this
+# config is written to do without.
+#
 # wrangler is deliberately the same version bun.lock resolves, not merely some
 # fixed one: `wrangler types` stamps its own workerd into the generated header,
 # so two channels at two versions are two producers again. The two channels
@@ -33,7 +44,7 @@ runner-run     = "latest"
 actionlint     = "1.16.1"
 biome          = "2.5.13"
 cargo-binstall = "latest"
-gitleaks       = "8.30.1"
+gitleaks       = "8.24.3"
 golangci-lint  = "2.13.2"
 lefthook       = "latest"
 shellcheck     = "latest"
