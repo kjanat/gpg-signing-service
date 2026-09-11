@@ -338,6 +338,161 @@ func TestImportPathRefusesALiteralItCannotDecode(t *testing.T) {
 	}
 }
 
+// --- the targets the closure has to be resolved for ---------------------------
+//
+// `go list` answers for one platform: the one it is running on, unless GOOS and
+// GOARCH say otherwise. Build constraints are part of that answer, so a closure
+// resolved for the host says nothing about the others. An internal wrapper
+// whose only go-git import sits behind //go:build windows leaves every guard in
+// this file green on a Linux runner and ships stock go-git in a third of the
+// binaries a release uploads — the bypass of the paragraph below, wearing a
+// build tag and costing one line to write.
+//
+// So the closure is resolved once per released target. The list lives here
+// rather than being read out of the workflow at run time, because a guard whose
+// subject is parsed out of YAML stops guarding the moment the YAML is
+// reorganised, and stops loudly only if you were lucky.
+// TestReleaseTargetsMatchTheReleaseWorkflow reads the workflow instead and
+// fails when the two disagree, which turns drift into one failing test naming
+// both lists rather than a silently narrowed search.
+
+// releaseWorkflow builds and uploads the client binaries, and is the authority
+// on which platforms this repository is on the hook for.
+const releaseWorkflow = ".github/workflows/release.yml"
+
+// releaseTarget is one GOOS/GOARCH pair releaseWorkflow builds the client for.
+type releaseTarget struct {
+	goos, goarch string
+}
+
+func (target releaseTarget) String() string { return target.goos + "/" + target.goarch }
+
+// The targets of releaseWorkflow's "Build binaries" step, kept in step with it
+// by TestReleaseTargetsMatchTheReleaseWorkflow. GOARCH is carried as well as
+// GOOS because a constraint can name either, and `_arm64.go` hides an import
+// from an amd64 runner exactly as well as `_windows.go` hides one from Linux.
+var releaseTargets = []releaseTarget{
+	{goos: "linux", goarch: amd64},
+	{goos: "linux", goarch: arm64},
+	{goos: "darwin", goarch: amd64},
+	{goos: "darwin", goarch: arm64},
+	{goos: "windows", goarch: amd64},
+	{goos: "windows", goarch: arm64},
+}
+
+// Named only because every line of the list above would otherwise repeat them.
+const (
+	amd64 = "amd64"
+	arm64 = "arm64"
+)
+
+// hostTarget is what `go list` resolves for with no GOOS or GOARCH in its
+// environment: the one target the closure used to be read for.
+func hostTarget() releaseTarget {
+	return releaseTarget{goos: runtime.GOOS, goarch: runtime.GOARCH}
+}
+
+// repoRoot walks up from the client module to the directory the workflows live
+// in, so the drift check reads the release.yml a release would run.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+
+	dir, _ := moduleRoot(t)
+	for at := dir; ; {
+		if _, err := os.Stat(filepath.Join(at, releaseWorkflow)); err == nil {
+			return at
+		}
+
+		parent := filepath.Dir(at)
+		if parent == at {
+			t.Fatalf("no %s above %s; this check cannot read the target list it exists "+
+				"to compare releaseTargets against, and a comparison against nothing "+
+				"must not pass", releaseWorkflow, dir)
+		}
+		at = parent
+	}
+}
+
+// release.yml names its targets twice — once in the loop that builds them, once
+// in the list of assets it uploads — and releaseTargets names them a third
+// time. All three have to agree. A target the release builds and this file omits
+// is a binary whose published-package closure nothing resolves; one this file
+// carries and the release does not is a check nobody asked for, which is the
+// cheaper mistake but still worth knowing about.
+func TestReleaseTargetsMatchTheReleaseWorkflow(t *testing.T) {
+	// #nosec G304 -- a fixed path beneath the repository root this test walked to.
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), releaseWorkflow))
+	if err != nil {
+		t.Fatalf("reading %s: %v", releaseWorkflow, err)
+	}
+
+	built, uploaded := workflowTargets(string(raw))
+
+	// Both directions this reader can come back empty are failures, not
+	// agreement: the build step reorganised into a matrix, or the assets
+	// renamed. Either way the drift check has stopped reading the list it
+	// compares against, and the empty set agrees with nothing.
+	if len(built) == 0 {
+		t.Fatalf("no `for target in GOOS/GOARCH ...` loop found in %s; releaseTargets is "+
+			"unverified, and the closure may be resolved for targets the release no "+
+			"longer builds — or miss ones it does", releaseWorkflow)
+	}
+	if len(uploaded) == 0 {
+		t.Fatalf("no dist/gpg-sign-GOOS-GOARCH assets found in %s; the second list this "+
+			"check reads is no longer where it reads it", releaseWorkflow)
+	}
+
+	declared := make([]string, 0, len(releaseTargets))
+	for _, target := range releaseTargets {
+		declared = append(declared, target.String())
+	}
+	slices.Sort(declared)
+	slices.Sort(built)
+	slices.Sort(uploaded)
+
+	if !slices.Equal(declared, built) {
+		t.Errorf("releaseTargets is %v and %s builds %v; the dependency closure is "+
+			"resolved for the former, so every target only in the latter ships "+
+			"unchecked", declared, releaseWorkflow, built)
+	}
+	if !slices.Equal(built, uploaded) {
+		t.Errorf("%s builds %v and uploads %v; one of its two lists has drifted from "+
+			"the other, and this file cannot be in step with both", releaseWorkflow, built, uploaded)
+	}
+}
+
+// workflowTargets reads the two places release.yml names its targets: the
+// `for target in ...` loop of the build step and the asset names of the release
+// step. Deliberately shallow, and deliberately not a YAML parser — it is a
+// drift detector, and anything it cannot read it reports as nothing read, which
+// its one caller fails on.
+func workflowTargets(workflow string) (built, uploaded []string) {
+	const (
+		loop  = "for target in "
+		asset = "dist/gpg-sign-"
+	)
+
+	for line := range strings.Lines(workflow) {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, loop):
+			list, _, _ := strings.Cut(strings.TrimPrefix(line, loop), ";")
+			for target := range strings.FieldsSeq(list) {
+				if goos, goarch, ok := strings.Cut(target, "/"); ok {
+					built = append(built, goos+"/"+goarch)
+				}
+			}
+		case strings.HasPrefix(line, asset):
+			name := strings.TrimSuffix(strings.TrimPrefix(line, asset), ".exe")
+			if goos, goarch, ok := strings.Cut(name, "-"); ok {
+				uploaded = append(uploaded, goos+"/"+goarch)
+			}
+		}
+	}
+
+	return built, uploaded
+}
+
 // --- the dependency closure --------------------------------------------------
 //
 // TestNoPublishedPackageImportsGoGit above reads the import lines of the files
@@ -358,20 +513,26 @@ type listedPackage struct {
 	Imports    []string
 }
 
-// goList runs `go list` in dir and decodes the object stream it writes.
-func goList(dir string, args ...string) ([]listedPackage, error) {
+// goList runs `go list` in dir, for one target, and decodes the object stream
+// it writes.
+//
+// The target is the whole point of the signature. `go list` resolves build
+// constraints for the platform it is asked about and no other, so which
+// platform it is asked about decides what the graph below contains.
+func goList(dir string, target releaseTarget, args ...string) ([]listedPackage, error) {
 	// #nosec G204 -- args are the fixed flag lists written at the call sites
 	// below; dir is a module root this test walked to.
 	command := exec.Command("go", append([]string{"list", "-json=ImportPath,Imports"}, args...)...)
 	command.Dir = dir
+	command.Env = append(os.Environ(), "GOOS="+target.goos, "GOARCH="+target.goarch)
 
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 
 	out, err := command.Output()
 	if err != nil {
-		return nil, fmt.Errorf("go list %s in %s: %w\n%s",
-			strings.Join(args, " "), dir, err, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("go list %s in %s for %s: %w\n%s",
+			strings.Join(args, " "), dir, target, err, strings.TrimSpace(stderr.String()))
 	}
 
 	var packages []listedPackage
@@ -401,25 +562,27 @@ func compiledInto(node string) string {
 	return strings.TrimSuffix(node, "_test")
 }
 
-// dependencyClosure returns the packages `go list` resolves under pkg/ — as the
-// node names the graph uses, tests included — and the import graph reachable
-// from them.
+// dependencyClosure returns the packages `go list` resolves under pkg/ for one
+// release target — as the node names the graph uses, tests included — and the
+// import graph reachable from them.
 //
 // Every way of learning nothing is an error rather than an empty result. A
 // pattern that matches no package, a graph with no nodes, or a published
 // package the graph has no node for all produce a search that reports no
 // violations, which is indistinguishable from a clean tree and is how a guard
 // like this stops guarding: pkg/ is renamed, the pattern goes empty, and the
-// suite stays green.
-func dependencyClosure(dir string) (roots []string, graph map[string][]string, err error) {
-	published, err := goList(dir, "./pkg/...")
+// suite stays green. A target is another way to learn nothing — the answer is
+// only about the platform asked for — which is why the caller asks about all of
+// them and every error below names the one it came from.
+func dependencyClosure(dir string, target releaseTarget) (roots []string, graph map[string][]string, err error) {
+	published, err := goList(dir, target, "./pkg/...")
 	if err != nil {
 		return nil, nil, err
 	}
 	if len(published) == 0 {
-		return nil, nil, fmt.Errorf("go list ./pkg/... in %s named no packages; "+
+		return nil, nil, fmt.Errorf("go list ./pkg/... in %s for %s named no packages; "+
 			"these guards only mean anything while that is where the published "+
-			"packages live", dir)
+			"packages live", dir, target)
 	}
 
 	names := make(map[string]bool, len(published))
@@ -430,12 +593,13 @@ func dependencyClosure(dir string) (roots []string, graph map[string][]string, e
 	// -deps for the closure, -test because a _test.go under pkg/ acquiring
 	// go-git is the published package acquiring it in the one place nobody
 	// reads as published surface.
-	nodes, err := goList(dir, "-deps", "-test", "./pkg/...")
+	nodes, err := goList(dir, target, "-deps", "-test", "./pkg/...")
 	if err != nil {
 		return nil, nil, err
 	}
 	if len(nodes) == 0 {
-		return nil, nil, fmt.Errorf("go list -deps -test ./pkg/... in %s named no packages", dir)
+		return nil, nil, fmt.Errorf("go list -deps -test ./pkg/... in %s for %s named no packages",
+			dir, target)
 	}
 
 	graph = make(map[string][]string, len(nodes))
@@ -454,8 +618,8 @@ func dependencyClosure(dir string) (roots []string, graph map[string][]string, e
 	}
 	for name := range names {
 		if !covered[name] {
-			return nil, nil, fmt.Errorf("the dependency graph has no node for the "+
-				"published package %s, so nothing was searched from it", name)
+			return nil, nil, fmt.Errorf("the dependency graph for %s has no node for the "+
+				"published package %s, so nothing was searched from it", target, name)
 		}
 	}
 	slices.Sort(roots)
@@ -545,31 +709,40 @@ func chainTo(node string, from map[string]string) []string {
 // dependency wearing an internal path, and an internal wrapper between it and
 // pkg/ changes nothing about what a downstream build resolves — it only moves
 // the evidence out of the files the AST walk reads.
+// Once per released target, because one target's answer is only about that
+// target. Each runs as its own subtest so a failure names the platform in its
+// own right rather than leaving a reader to infer it from a chain.
 func TestNoPublishedPackageDependsOnGoGit(t *testing.T) {
 	dir, module := moduleRoot(t)
 	gitsign := module + "/internal/gitsign"
 
-	roots, graph, err := dependencyClosure(dir)
-	if err != nil {
-		t.Fatalf("resolving the dependency closure under pkg/: %v", err)
-	}
+	for _, target := range releaseTargets {
+		t.Run(target.String(), func(t *testing.T) {
+			roots, graph, err := dependencyClosure(dir, target)
+			if err != nil {
+				t.Fatalf("resolving the dependency closure under pkg/ for %s: %v", target, err)
+			}
 
-	chains, unresolved := reaches(roots, graph, func(node string) bool {
-		return namesGoGit(node) || compiledInto(node) == gitsign
-	})
-	if len(unresolved) > 0 {
-		t.Fatalf("go list described no imports for %d package(s) reachable from pkg/ (%s); "+
-			"a graph this search could not finish walking is not a graph it found clean",
-			len(unresolved), strings.Join(unresolved, ", "))
-	}
+			chains, unresolved := reaches(roots, graph, func(node string) bool {
+				return namesGoGit(node) || compiledInto(node) == gitsign
+			})
+			if len(unresolved) > 0 {
+				t.Fatalf("go list described no imports for %d package(s) reachable from pkg/ "+
+					"when built for %s (%s); a graph this search could not finish walking is "+
+					"not a graph it found clean",
+					len(unresolved), target, strings.Join(unresolved, ", "))
+			}
 
-	for _, chain := range chains {
-		t.Errorf("a published package reaches %s:\n\t%s\n"+
-			"go-git is byte-faithful here only through the go.mod replace directive, "+
-			"which a module depending on this one does not inherit, so anything under "+
-			"pkg/ that can reach it — through an internal wrapper as much as directly — "+
-			"builds against stock go-git downstream",
-			chain[len(chain)-1], strings.Join(chain, "\n\t  -> "))
+			for _, chain := range chains {
+				t.Errorf("a published package reaches %s when the client is built for %s:\n\t%s\n"+
+					"go-git is byte-faithful here only through the go.mod replace directive, "+
+					"which a module depending on this one does not inherit, so anything under "+
+					"pkg/ that can reach it — through an internal wrapper as much as directly, "+
+					"on one release target as much as on all six — builds against stock go-git "+
+					"downstream",
+					chain[len(chain)-1], target, strings.Join(chain, "\n\t  -> "))
+			}
+		})
 	}
 }
 
@@ -663,6 +836,124 @@ func TestReachesFailsClosedOnAnUnresolvedGraph(t *testing.T) {
 	}
 }
 
+// The bypass one platform at a time, as a module rather than as a graph
+// literal: pkg/client imports an internal wrapper, and the wrapper's only
+// go-git import is in a file the host's build constraints exclude. Every file
+// under pkg/ is clean in every spelling, so the AST walk has nothing to read;
+// the closure resolved for the host is clean too, which is what this guard used
+// to be; and the release still ships two contaminated binaries.
+//
+// Stated as a mutant: narrow releaseTargets back to the host target — the
+// single-pass `go list` this replaced — and the contaminated targets stop being
+// resolved at all, so nothing reaches go-git and the fixture reports clean. The
+// host assertion below is what makes that mutant fail here rather than pass
+// quietly, because it pins the thing the old guard got right as the reason it
+// was not enough.
+func TestTheClosureFindsGoGitBehindAPlatformTaggedWrapper(t *testing.T) {
+	host := hostTarget()
+
+	contaminated := ""
+	for _, target := range releaseTargets {
+		if target.goos != host.goos {
+			contaminated = target.goos
+			break
+		}
+	}
+	if contaminated == "" {
+		t.Fatalf("releaseTargets (%v) names no GOOS besides the host's %q, so this fixture "+
+			"cannot model a target the host's answer does not cover — which means the "+
+			"closure is back to being resolved for one platform", releaseTargets, host.goos)
+	}
+
+	module := writePlatformTaggedFixture(t, contaminated)
+	const (
+		published = "fixture/pkg/client"
+		wrapper   = "fixture/internal/wrap"
+		object    = goGitModule + "/plumbing/object"
+	)
+
+	// The bypass itself, before the fix is given a chance to catch it: the
+	// platform this test is running on sees a clean closure. If this ever fails,
+	// the fixture has stopped modelling the hole and the rest proves nothing.
+	roots, graph, err := dependencyClosure(module, host)
+	if err != nil {
+		t.Fatalf("resolving the fixture closure for the host (%s): %v", host, err)
+	}
+	if chains, _ := reaches(roots, graph, namesGoGit); len(chains) != 0 {
+		t.Fatalf("the fixture does not model the bypass: the host target %s already "+
+			"reaches go-git (%v), so a guard resolving one platform would have caught it",
+			host, chains)
+	}
+
+	// And now every target the release builds, which is the fix.
+	reached := 0
+	for _, target := range releaseTargets {
+		roots, graph, err := dependencyClosure(module, target)
+		if err != nil {
+			t.Fatalf("resolving the fixture closure for %s: %v", target, err)
+		}
+		chains, unresolved := reaches(roots, graph, namesGoGit)
+		if len(unresolved) > 0 {
+			t.Fatalf("the fixture graph for %s left %s unresolved",
+				target, strings.Join(unresolved, ", "))
+		}
+
+		if target.goos != contaminated {
+			if len(chains) != 0 {
+				t.Errorf("%s reached %v, but the fixture hides go-git behind //go:build %s",
+					target, chains, contaminated)
+			}
+			continue
+		}
+
+		reached++
+		want := []string{published, wrapper, object}
+		if len(chains) != 1 || !slices.Equal(chains[0], want) {
+			t.Errorf("the closure for %s reported %v, want the one chain %v: the import is "+
+				"in a file only %s compiles, and the failure has to name both the target "+
+				"and the route", target, chains, want, contaminated)
+		}
+	}
+	if reached == 0 {
+		t.Errorf("no release target reached the go-git the fixture hides behind //go:build %s; "+
+			"the closure is being resolved for platforms that cannot see it", contaminated)
+	}
+}
+
+// writePlatformTaggedFixture builds a module whose published package reaches
+// go-git only when compiled for goos, and returns its root.
+//
+// go-git is a local stub the fixture's go.mod replaces, so the fixture needs no
+// network and no module cache — what is being tested is which files `go list`
+// reads for which target, and a two-line package named
+// github.com/go-git/go-git/v6 exercises that as well as the real one.
+func writePlatformTaggedFixture(t *testing.T, goos string) string {
+	t.Helper()
+
+	root := t.TempDir()
+	release := "go " + strings.TrimPrefix(runtime.Version(), "go") + "\n"
+	stub, module := filepath.Join(root, "gogit"), filepath.Join(root, "module")
+
+	files := map[string]string{
+		filepath.Join(stub, "go.mod"):                                 "module " + goGitModule + "\n\n" + release,
+		filepath.Join(stub, "plumbing", "object", "object.go"):        "package object\n\ntype Commit struct{}\n",
+		filepath.Join(module, "go.mod"):                               "module fixture\n\n" + release + "\nrequire " + goGitModule + " v6.0.0\n\nreplace " + goGitModule + " => ../gogit\n",
+		filepath.Join(module, "pkg", "client", "client.go"):           "package client\n\nimport \"fixture/internal/wrap\"\n\ntype Commit = wrap.Commit\n",
+		filepath.Join(module, "internal", "wrap", "wrap_"+goos+".go"): "//go:build " + goos + "\n\npackage wrap\n\nimport \"" + goGitModule + "/plumbing/object\"\n\ntype Commit = object.Commit\n",
+		filepath.Join(module, "internal", "wrap", "wrap_portable.go"): "//go:build !" + goos + "\n\npackage wrap\n\ntype Commit struct{}\n",
+	}
+	for path, content := range files {
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatalf("building the fixture tree: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatalf("writing %s: %v", path, err)
+		}
+	}
+
+	return module
+}
+
 // And the same for a tree with nothing published in it: the closure has to
 // refuse rather than hand back an empty root set that every predicate passes.
 //
@@ -686,7 +977,7 @@ func TestDependencyClosureRefusesATreeWithNoPublishedPackages(t *testing.T) {
 		t.Fatalf("building the fixture pkg/ tree: %v", err)
 	}
 
-	roots, graph, err := dependencyClosure(module)
+	roots, graph, err := dependencyClosure(module, hostTarget())
 	if err == nil {
 		t.Fatalf("a pkg/ with no packages in it resolved to %d root(s) and %d node(s) "+
 			"instead of an error", len(roots), len(graph))
@@ -697,7 +988,7 @@ func TestDependencyClosureRefusesATreeWithNoPublishedPackages(t *testing.T) {
 // directory at all cannot resolve the pattern, and that has to surface as the
 // `go list` failure it is rather than as a clean empty tree.
 func TestDependencyClosureRefusesATreeWithNoPublishedDirectory(t *testing.T) {
-	roots, graph, err := dependencyClosure(writeFixtureModule(t))
+	roots, graph, err := dependencyClosure(writeFixtureModule(t), hostTarget())
 	if err == nil {
 		t.Fatalf("a module with no pkg/ resolved to %d root(s) and %d node(s) instead of an error",
 			len(roots), len(graph))
