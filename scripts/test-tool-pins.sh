@@ -128,13 +128,24 @@ function split_path(s, parts,   i, c, q, cur, n) {
 	return n
 }
 
-# The version inside an inline table, if the value is one.
-function inline_version(v,   m) {
-	if (v !~ /^\{/) return ""
-	if (!match(v, /version[ \t]*=[ \t]*"[^"]*"/)) return ""
+# Whether a value is an inline table, which is the question the callers have to
+# ask before they fall back to unquote(): the text of a table is not a version,
+# and a table with no `version` key is a tool left unpinned rather than one
+# pinned to `{ allow_builds = [...] }`.
+function is_inline_table(v) { return v ~ /^\{/ }
+
+# The version inside an inline table, in whichever quote character it was
+# written with -- TOML allows both here exactly as it does for the scalar form,
+# and reading only one of them turned a single-quoted pin into the literal text
+# of the table it was written in.
+function inline_version(v,   m, q) {
+	if (!is_inline_table(v)) return ""
+	if (match(v, /version[ \t]*=[ \t]*"[^"]*"/)) q = "\""
+	else if (match(v, "version[ \t]*=[ \t]*" SQ "[^" SQ "]*" SQ)) q = SQ
+	else return ""
 	m = substr(v, RSTART, RLENGTH)
-	sub(/^version[ \t]*=[ \t]*"/, "", m)
-	sub(/"$/, "", m)
+	sub("^version[ \t]*=[ \t]*" q, "", m)
+	sub(q "$", "", m)
 	return m
 }
 
@@ -183,8 +194,11 @@ mise_tool() {
 	{
 		key = mise_key()
 		if (key == SEP "tools" SEP want) {
-			inline = inline_version(value)
-			print (inline != "" ? inline : unquote(value))
+			# An inline table is read through its `version` and nothing else. The
+			# fallback below is for the scalar form; handing it a table prints the
+			# table, and "pinned to `{ allow_builds = [...] }`" is the one thing
+			# this reader must never say in place of "not pinned".
+			print (is_inline_table(value) ? inline_version(value) : unquote(value))
 			exit
 		}
 		if (key == SEP "tools" SEP want SEP "version") {
@@ -216,14 +230,21 @@ mise_set_version() {
 	{
 		key = mise_key()
 		if (key == SEP "tools" SEP want) {
-			if (inline_version(value) != "") {
+			if (is_inline_table(value)) {
+				# Either quote character, for the reason inline_version takes
+				# both. `changed` is set by the substitution rather than ahead of
+				# it: an inline table with no `version` is not a line this can
+				# repin, and the END rule below has to hear that.
 				line = $0
-				sub(/version[ \t]*=[ \t]*"[^"]*"/, "version = \"" pin "\"", line)
+				if (sub(/version[ \t]*=[ \t]*"[^"]*"/, "version = \"" pin "\"", line) ||
+					sub("version[ \t]*=[ \t]*" SQ "[^" SQ "]*" SQ, "version = \"" pin "\"", line)) {
+					changed = 1
+				}
 				print line
 			} else {
 				print prefix " \"" pin "\""
+				changed = 1
 			}
-			changed = 1
 			next
 		}
 		if (key == SEP "tools" SEP want SEP "version") {
@@ -377,6 +398,8 @@ cat >"${reader_root}/.mise.toml" <<'FIXTURE'
 [tools]
 scalar          = "1.2.3"
 inline          = { version = "2.3.4", allow_builds = ["esbuild"] }
+inlinesingle    = { version = '7.8.9' }
+inlineempty     = { allow_builds = ["esbuild"] }
 "cargo:quoted"  = "3.4.5"
 trailing        = "4.5.6" # the pin, and a note about it
 'single'        = '5.6.7'
@@ -402,6 +425,14 @@ expect_read() {
 
 expect_read scalar 1.2.3
 expect_read inline 2.3.4
+# TOML allows either quote character inside an inline table as much as outside
+# one. Reading only the double-quoted form left a single-quoted pin unread, and
+# the fallback then reported the text of the table as the version.
+expect_read inlinesingle 7.8.9
+# And an inline table with no version is unpinned. Printing the table instead is
+# the one substitution that turns "nobody pinned this" into "pinned to something
+# is_exact_version happens to reject" -- the distinction this file exists to keep.
+expect_read inlineempty ''
 expect_read 'cargo:quoted' 3.4.5
 expect_read trailing 4.5.6
 expect_read single 5.6.7
@@ -416,7 +447,7 @@ expect_read elsewhere ''
 expect_read absent ''
 
 new_case 'the mutators reach the same forms the reader does'
-for form in scalar inline tabled; do
+for form in scalar inline inlinesingle tabled; do
 	mutated="${tmp_dir}/reader-${form}"
 	mkdir -p "${mutated}"
 	cp "${reader_root}/.mise.toml" "${mutated}/.mise.toml"
@@ -436,6 +467,15 @@ mkdir -p "${mutated}"
 cp "${reader_root}/.mise.toml" "${mutated}/.mise.toml"
 if (mise_set_version "${mutated}" absent 0.0.0) 2>/dev/null; then
 	fail 'repinning a tool that is not there succeeded, so a stale mutant would pass as applied'
+fi
+# The same requirement one step in: an inline table with no `version` is a line
+# the repinner finds and cannot rewrite, which is not the same as a line it
+# rewrote and has to be just as loud.
+mutated="${tmp_dir}/reader-inlineempty"
+mkdir -p "${mutated}"
+cp "${reader_root}/.mise.toml" "${mutated}/.mise.toml"
+if (mise_set_version "${mutated}" inlineempty 0.0.0) 2>/dev/null; then
+	fail 'repinning an inline table with no version succeeded, so the mutant it writes is the original'
 fi
 
 # --- the repository itself has to satisfy them -------------------------------
