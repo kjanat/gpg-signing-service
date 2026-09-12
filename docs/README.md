@@ -21,6 +21,7 @@ implementation disagree.
 | Look up an endpoint                        | [API guide](api.md)                           |
 | Diagnose a failure                         | [Troubleshooting](troubleshooting.md)         |
 | Look up an error code                      | [Error reference](errors.md)                  |
+| Finish the 2026-09-08 key handoff          | [Key handoff runbook](key-handoff-runbook.md) |
 
 ## Components
 

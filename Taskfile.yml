@@ -66,6 +66,7 @@ tasks:
       - task: test:composite-actions
       - task: test:gitleaks-contract
       - task: test:key-material
+      - task: test:key-handoff
 
   test:sentry:
     desc: Run the Sentry boundary suite alone — the inner loop of the mutation set
@@ -184,6 +185,11 @@ tasks:
     aliases: [tkm, keys]
     cmd: bash scripts/test-key-material.sh
 
+  test:key-handoff:
+    desc: Test the local-operator handoff path (backup retrieval, revocation publication)
+    aliases: [tkh, handoff]
+    cmd: bash scripts/test-key-handoff.sh
+
   test:coverage:
     desc: Run tests with coverage
     aliases: [tc]
@@ -212,6 +218,7 @@ tasks:
       - task: test:composite-actions
       - task: test:gitleaks-contract
       - task: test:key-material
+      - task: test:key-handoff
 
   test:watch:
     desc: Run tests in watch mode
