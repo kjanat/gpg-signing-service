@@ -76,7 +76,7 @@
     "dprint": "0.57.4",
     "eslint": "10.10.0",
     "jiti": "2.7.0",
-    "typescript": "<7.0.2",
+    "typescript": "<7",
     "typescript-eslint": "8.70.0",
     "vitest": "^4.1.11",
     "wrangler": "4.129.1",
