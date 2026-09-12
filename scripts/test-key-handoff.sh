@@ -350,6 +350,40 @@ grep -q "same directory" <<<"${last_output}" \
 	|| fail "the failure does not name the shared directory: ${last_output}"
 rm -f "${backup_key}/passphrase.txt"
 
+new_case 'the same-directory refusal survives the environment route'
+# KEY_HANDOFF_PASSPHRASE_FILE is documented as an equal alternative to
+# --passphrase-backup, so it has to face the same hygiene check. It did not:
+# routing the path through the environment skipped distinct_locations entirely
+# and the run still printed "the separately stored passphrase" and "Retrieval is
+# proven" over a key and its passphrase sharing one directory. That claim is what
+# the operator deletes their local copies on.
+cp "${backup_pass}/passphrase.txt" "${backup_key}/passphrase.txt"
+set +e
+env KEY_HANDOFF_PASSPHRASE_FILE="${backup_key}/passphrase.txt" \
+	"${handoff}" verify-backup \
+	--private-backup "${backup_key}/replacement.asc" \
+	--preserved-backup "${backup_key}/preserved.asc" \
+	>"${tmp_dir}/env-out" 2>&1
+env_status=$?
+set -e
+rm -f "${backup_key}/passphrase.txt"
+[ "${env_status}" != 0 ] \
+	|| fail 'a key and its passphrase in one directory were accepted via KEY_HANDOFF_PASSPHRASE_FILE'
+grep -q "same directory" "${tmp_dir}/env-out" \
+	|| fail "the environment route does not name the shared directory: $(cat "${tmp_dir}/env-out")"
+
+new_case 'the environment route still works when the locations are distinct'
+set +e
+env KEY_HANDOFF_PASSPHRASE_FILE="${backup_pass}/passphrase.txt" \
+	"${handoff}" verify-backup \
+	--private-backup "${backup_key}/replacement.asc" \
+	--preserved-backup "${backup_key}/preserved.asc" \
+	>"${tmp_dir}/env-ok" 2>&1
+env_ok_status=$?
+set -e
+[ "${env_ok_status}" = 0 ] \
+	|| fail "a well-separated passphrase supplied through the environment was rejected: $(cat "${tmp_dir}/env-ok")"
+
 new_case 'skipping the preserved key is refused rather than silently allowed'
 run_handoff verify-backup \
 	--private-backup "${backup_key}/replacement.asc" \
@@ -542,6 +576,17 @@ new_case 'the script takes no passphrase, key or certificate from the environmen
 if grep -nE '^\s*(PASSPHRASE|KEY_HANDOFF_PASSPHRASE)=' "${handoff}" | grep -q .; then
 	fail 'key-handoff.sh reads a passphrase value out of the environment'
 fi
+
+new_case 'the temporary directory is cleaned up on interruption, not only on normal exit'
+# bash does not run an EXIT trap when it dies on an uncaught SIGINT, and the long
+# part of a real run is a keyserver round trip -- exactly where Ctrl-C lands.
+# What survives is the plaintext passphrase and a keyring holding the unlocked
+# secret key. Asserted over the source because reproducing the race in a suite
+# would be the flakiest case here.
+grep -qE "^\s*trap .* INT\b" "${handoff}" \
+	|| fail 'nothing traps SIGINT, so Ctrl-C leaves the passphrase on disk'
+grep -qE "^\s*trap .* TERM\b" "${handoff}" \
+	|| fail 'nothing traps SIGTERM'
 
 new_case 'the default publication targets are the ones ADR-004 names'
 grep -q 'hkps://keys.openpgp.org' "${handoff}" \

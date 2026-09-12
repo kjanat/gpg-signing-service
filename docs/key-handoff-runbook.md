@@ -62,17 +62,23 @@ rejects `--passphrase` outright and explains why.
 Three accepted sources, safest first:
 
 1. **the terminal prompt** — run the command with no passphrase flag on a TTY
-   and it asks, reading from `/dev/tty` without echo. Nothing is written down,
-   nothing is inherited by a child process.
+   and it asks, reading from `/dev/tty` without echo. Nothing is stored in a
+   location you have to remember to clean up, and nothing is inherited by a
+   child process.
 2. **`--passphrase-backup PATH`** — a file in the passphrase's own backup
    location. This is the one to use for `verify-backup`, because the point of
    that command is to prove the file in that location is the right passphrase.
 3. **`KEY_HANDOFF_PASSPHRASE_FILE`** — a path in the environment. A path, never
    a value: an environment variable holding the passphrase itself is inherited
-   by every child process and shows up in `ps e` and in core dumps.
+   by every child process and shows up in `ps e` and in core dumps. It is
+   otherwise identical to `--passphrase-backup`, including the distinctness
+   check below — a path routed through the environment is not a way around it.
 
 Whichever you use, the passphrase reaches gpg as `--passphrase-file` pointing at
-a file inside a mode-700 temporary directory that is removed on exit.
+a file inside a mode-700 temporary directory, which is removed when the script
+exits — including when you interrupt it. That file is the one place a
+prompt-entered passphrase touches the disk; if `$TMPDIR` is not a tmpfs, point
+it at one before a real run.
 
 ## 1. Validate the handoff
 

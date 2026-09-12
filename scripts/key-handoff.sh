@@ -246,6 +246,14 @@ distinct_locations() {
 # is world-readable on Linux, so `--passphrase "$SECRET"` publishes it to every
 # local user for the lifetime of the process; `--passphrase-file` does not.
 PASSPHRASE_FILE=""
+
+# The one path every file-backed source resolves to, set once in main(). Both
+# --passphrase-backup and KEY_HANDOFF_PASSPHRASE_FILE name a file in the
+# passphrase's own backup location, so both have to face the same
+# same-file/same-directory check; resolving them to one variable is what stops a
+# later caller from checking the flag and forgetting the environment.
+PASSPHRASE_SOURCE=""
+
 acquire_passphrase() {
 	local supplied="${1:-}"
 	local target="$WORK/passphrase"
@@ -255,9 +263,6 @@ acquire_passphrase() {
 		# First line only, trailing newline stripped: a passphrase written by an
 		# editor almost always has one, and gpg would otherwise fold it in.
 		head -n 1 "$supplied" | tr -d '\r\n' >"$target"
-	elif [ -n "${KEY_HANDOFF_PASSPHRASE_FILE:-}" ]; then
-		[ -f "$KEY_HANDOFF_PASSPHRASE_FILE" ] || fail "KEY_HANDOFF_PASSPHRASE_FILE points at nothing: $KEY_HANDOFF_PASSPHRASE_FILE"
-		head -n 1 "$KEY_HANDOFF_PASSPHRASE_FILE" | tr -d '\r\n' >"$target"
 	elif [ -t 0 ]; then
 		local entered=""
 		printf 'Passphrase for the replacement key (not echoed): ' >&2
@@ -266,7 +271,7 @@ acquire_passphrase() {
 		printf '%s' "$entered" >"$target"
 		unset entered
 	else
-		fail "no passphrase source. Give --passphrase-backup PATH, set KEY_HANDOFF_PASSPHRASE_FILE, or run this on a terminal so it can prompt. It is never accepted as a command-line argument."
+		fail "no passphrase source. Give --passphrase-backup PATH, set KEY_HANDOFF_PASSPHRASE_FILE to a path, or run this on a terminal so it can prompt. It is never accepted as a command-line argument."
 	fi
 	chmod 600 "$target"
 	[ -s "$target" ] || fail "the passphrase source produced nothing"
@@ -354,8 +359,8 @@ cmd_validate() {
 		|| fail "no preserved material for $PRESERVED_KEY. That key now shares the replacement's passphrase, so it is part of this handoff whether or not it was part of the rotation."
 	ok "preserved key material present ($PRESERVED_KEY)"
 
-	if [ -n "$PRIVATE_BACKUP" ] && [ -n "$PASSPHRASE_BACKUP" ]; then
-		distinct_locations "$PRIVATE_BACKUP" "$PASSPHRASE_BACKUP"
+	if [ -n "$PRIVATE_BACKUP" ] && [ -n "$PASSPHRASE_SOURCE" ]; then
+		distinct_locations "$PRIVATE_BACKUP" "$PASSPHRASE_SOURCE"
 		ok "the private-key backup and the passphrase backup are in separate locations"
 	fi
 
@@ -366,10 +371,10 @@ cmd_verify_backup() {
 	section "backup retrieval: replacement $REPLACEMENT_KEY"
 	[ -n "$PRIVATE_BACKUP" ] || fail "--private-backup PATH is required: point it at the copy read back out of the backup, not at the handoff directory. Verifying the original proves nothing about the backup."
 	[ -f "$PRIVATE_BACKUP" ] || fail "private-key backup not found: $PRIVATE_BACKUP. A backup that cannot be read back is not a backup."
-	[ -n "$PASSPHRASE_BACKUP" ] || [ -n "${KEY_HANDOFF_PASSPHRASE_FILE:-}" ] || [ -t 0 ] \
+	[ -n "$PASSPHRASE_SOURCE" ] || [ -t 0 ] \
 		|| fail "no passphrase source; see --help"
-	if [ -n "$PASSPHRASE_BACKUP" ]; then
-		distinct_locations "$PRIVATE_BACKUP" "$PASSPHRASE_BACKUP"
+	if [ -n "$PASSPHRASE_SOURCE" ]; then
+		distinct_locations "$PRIVATE_BACKUP" "$PASSPHRASE_SOURCE"
 		ok "the private-key backup and the passphrase backup are in separate locations"
 	fi
 
@@ -379,7 +384,7 @@ cmd_verify_backup() {
 	local before after
 	before="$(backup_digest)"
 
-	acquire_passphrase "$PASSPHRASE_BACKUP"
+	acquire_passphrase "$PASSPHRASE_SOURCE"
 
 	local home
 	home="$(new_keyring)"
@@ -411,7 +416,7 @@ cmd_verify_backup() {
 
 backup_digest() {
 	local f
-	for f in "$PRIVATE_BACKUP" "$PASSPHRASE_BACKUP" "$PRESERVED_BACKUP"; do
+	for f in "$PRIVATE_BACKUP" "$PASSPHRASE_SOURCE" "$PRESERVED_BACKUP"; do
 		[ -n "$f" ] && [ -f "$f" ] || continue
 		sha256sum "$f"
 	done | sha256sum | cut -d' ' -f1
@@ -623,10 +628,18 @@ main() {
 	[ "${#KEYSERVERS[@]}" -gt 0 ] || KEYSERVERS=("${DEFAULT_KEYSERVERS[@]}")
 
 	refuse_ci
+	# After the CI refusal, which has to land before anything looks at a path.
+	PASSPHRASE_SOURCE="${PASSPHRASE_BACKUP:-${KEY_HANDOFF_PASSPHRASE_FILE:-}}"
 	command -v gpg >/dev/null 2>&1 || fail "gpg not found; this whole procedure is GnuPG"
 
 	WORK="$(mktemp -d)"
+	# EXIT alone is not enough: bash does not run an EXIT trap when it dies on an
+	# uncaught SIGINT, and the long part of this script is a keyserver round trip
+	# -- exactly where an operator reaches for Ctrl-C. What would be left behind is
+	# the plaintext passphrase and a keyring holding the unlocked secret key.
 	trap cleanup EXIT
+	trap 'exit 130' INT
+	trap 'exit 143' TERM HUP
 	chmod 700 "$WORK"
 
 	case "$command" in
