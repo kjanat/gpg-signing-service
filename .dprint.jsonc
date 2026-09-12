@@ -40,17 +40,15 @@
     "commands": [
       {
         "cwd": "${configDir}/client",
-        "command": "golangci-lint fmt --color never --stdin {{file_path}}",
+        "command": "mise x golangci-lint -- golangci-lint fmt --color never --stdin {{file_path}}",
         "exts": ["go"],
         "stdin": true,
-        "cacheKeyFiles": ["../.golangci.yml", "../.mise.toml"],
-        "setupCommand": "mise install golangci-lint"
+        "cacheKeyFiles": ["../.golangci.yml", "../.mise.toml"]
       },
       {
-        "command": "tombi format - --stdin-filename {{file_path}}",
+        "command": "mise x tombi -- tombi format - --stdin-filename {{file_path}}",
         "exts": ["toml"],
-        "cacheKeyFiles": ["tombi.toml", ".mise.toml"],
-        "setupCommand": "mise install tombi"
+        "cacheKeyFiles": ["tombi.toml", ".mise.toml"]
       }
     ]
   },
