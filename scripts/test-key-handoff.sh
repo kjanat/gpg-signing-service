@@ -220,6 +220,40 @@ show_keys_isolated() {
 	GNUPGHOME="${home}" gpg --batch --no-tty --quiet --show-keys --with-colons "$1" 2>/dev/null || true
 }
 
+show_keys_status=0
+show_keys_records=""
+show_keys_isolated_with_status() {
+	# The same call with the exit status kept. The partial-parse cases rest on a
+	# claim about that status -- that gpg prints records and *then* fails -- and
+	# a helper ending in `|| true` cannot state it. Its own empty home, as above,
+	# and for a second reason here: an empty keyring is what key-handoff.sh
+	# classifies against, and gpg checks a signature it has the key for and skips
+	# one it does not, so a home holding the fixtures would answer a different
+	# question from the one under test.
+	local home="${tmp_dir}/show-keys-gnupg"
+	mkdir -p "${home}"
+	chmod 700 "${home}"
+	set +e
+	GNUPGHOME="${home}" gpg --batch --no-tty --quiet --show-keys --with-colons "$1" \
+		>"${tmp_dir}/show-keys.out" 2>/dev/null
+	show_keys_status=$?
+	set -e
+	show_keys_records="$(cat "${tmp_dir}/show-keys.out")"
+}
+
+stops_short() {
+	# stops_short <whole-key-file> <out>
+	#
+	# One complete export followed by a second that stops part way through: what
+	# a key file looks like when the write was interrupted, or when a copy ran
+	# out of disk after the first key. gpg walks it packet by packet, prints the
+	# first key in full, hits the cut and gives up -- so stdout says "here is a
+	# key" and the exit status says "I could not read this file", and only one of
+	# those two is true about the file.
+	cat "$1" >"$2"
+	head -c 200 "${tmp_dir}/stranger-secret.asc" >>"$2"
+}
+
 revoked_export() {
 	# revoked_export <public-key-file> <revocation-file> <out>
 	#
@@ -411,6 +445,60 @@ run_handoff validate --handoff "${truncated}"
 [ "${last_status}" != 0 ] || fail 'a handoff holding a truncated secret key validated'
 grep -q "cannot decode" <<<"${last_output}" \
 	|| fail "a truncated key was not reported as undecodable: ${last_output}"
+
+new_case 'gpg prints key records and then fails on a file that stops part way through'
+# The premise the next three cases rest on, stated on its own so that a gpg whose
+# behaviour changed would fail here rather than quietly turning those three into
+# tests of nothing. This is the shape the fail-closed contract had a hole for:
+# not a file gpg refuses -- those were already caught -- but a file gpg answers
+# and then refuses, where reading only stdout gets a complete, ordinary,
+# entirely wrong answer.
+stops_short "${good}/replacement-secret.asc" "${tmp_dir}/stops-short.asc"
+show_keys_isolated_with_status "${tmp_dir}/stops-short.asc"
+[ "${show_keys_status}" != 0 ] \
+	|| fail 'gpg read a file that stops part way through without complaint, so the premise no longer holds'
+grep -qi "^sec:.*${REPLACEMENT_ID}" <<<"${show_keys_records}" \
+	|| fail "gpg printed no usable record before failing, so this is the already-covered undecodable case, not a partial parse: ${show_keys_records}"
+
+new_case 'a file that parses and then stops is refused, records and all'
+# Under the old helper this file validated: `gpg --show-keys ... || true` threw
+# the status away and the caller saw a normal `sec` record for the key it was
+# looking for. The handoff directory reported sound, and the material the
+# operator would have restored from stops in the middle.
+stops="${tmp_dir}/handoff-stops-short"
+cp -r "${good}" "${stops}"
+stops_short "${good}/replacement-secret.asc" "${stops}/replacement-secret.asc"
+run_handoff validate --handoff "${stops}"
+[ "${last_status}" != 0 ] || fail 'a handoff holding a file that stops part way through validated'
+grep -q "stopped before the end of the file" <<<"${last_output}" \
+	|| fail "the failure does not say the file stops short: ${last_output}"
+grep -q "replacement-secret.asc" <<<"${last_output}" \
+	|| fail 'the failure does not name the file'
+
+new_case 'and --allow-note does not cover it'
+# --allow-note is for files this run cannot speak to. A file it caught stopping
+# short is not one of those, and an acknowledgement that it is "just a note"
+# would wave through precisely what the command exists to find.
+run_handoff validate --handoff "${stops}" --allow-note "${stops}/replacement-secret.asc"
+[ "${last_status}" != 0 ] || fail 'acknowledging a file that stops part way through waved it through'
+grep -q "stopped before the end of the file" <<<"${last_output}" \
+	|| fail "the acknowledged file was refused for the wrong reason: ${last_output}"
+
+new_case 'nor is one published as a revocation certificate'
+# The other caller of the same classification. A certificate that stops short
+# still names the key it was written for, so the id comparison downstream is
+# happy with it; what it will not do is revoke anything.
+stops_short "${good}/retired-revocation.asc" "${tmp_dir}/stops-short-revocation.asc"
+state_stops="${tmp_dir}/server-stops-short"
+start_server "${state_stops}"
+url_stops="${server_url}"
+run_handoff publish-revocation --handoff "${good}" --keyserver "${url_stops}" \
+	--revocation "${tmp_dir}/stops-short-revocation.asc" --confirm-publish
+[ "${last_status}" != 0 ] || fail 'a revocation certificate that stops part way through was published'
+grep -q "stopped before the end of the file" <<<"${last_output}" \
+	|| fail "the failure does not say the certificate stops short: ${last_output}"
+[ "$(upload_count "${state_stops}")" = 0 ] \
+	|| fail 'a certificate this run could not read end to end reached the keyserver'
 
 new_case '--allow-note acknowledges one named file, and only that one'
 run_handoff validate --handoff "${with_note}" --allow-note "${with_note}/README.txt"

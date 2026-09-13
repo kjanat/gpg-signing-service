@@ -53,6 +53,15 @@ procedure exists to catch. If a file is genuinely just a note, acknowledge it
 with `--allow-note PATH`, once per file, after you have looked at it. There is
 no blanket opt-out on purpose.
 
+One refusal in that family has no acknowledgement at all: a file `gpg` starts
+reading, prints key records for, and then gives up on part way through. That is
+an export cut short — an interrupted write, a copy that ran out of disk, a
+transfer that dropped — and it is the one kind of broken file that answers every
+question you can ask it. It will tell you which key it holds; it will not
+restore. `validate` names it and stops, and `--allow-note` will not move it,
+because acknowledging it as "just a note" is exactly the mistake. Replace it
+from material that is whole.
+
 You also need `gpg` on `PATH`, **bash 4 or newer** — macOS still ships 3.2 at
 `/bin/bash`, so `brew install bash` and run it with that one — and a terminal.
 

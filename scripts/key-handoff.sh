@@ -12,9 +12,10 @@
 #   key-handoff.sh publish-revocation  publish the retired key's revocation
 #   key-handoff.sh verify-published    fetch the retired key back and re-check
 #
-# Everything is fail-closed: an unreadable file, an unexpected key id, a
-# passphrase that does not unlock, a keyserver that will not serve the key back
-# as revoked -- each is an error, never a warning. Nothing writes to the handoff
+# Everything is fail-closed: an unreadable file, a file gpg reads part of and
+# then gives up on, an unexpected key id, a passphrase that does not unlock, a
+# keyserver that will not serve the key back as revoked -- each is an error,
+# never a warning. Nothing writes to the handoff
 # directory or to the backups; every import lands in a throwaway GNUPGHOME that
 # is removed on exit.
 #
@@ -342,9 +343,9 @@ new_keyring() {
 # wants a home to put a trustdb and a lock file in, and the operator's own
 # ~/.gnupg is not this script's to touch: on a clean account a bare `gpg` call
 # creates pubring.kbx and trustdb.gpg there, and on an established one it takes
-# that keyring's locks. Fixed rather than mktemp'd because classify_file runs
-# show_keys inside a command substitution, so anything it assigned would be lost
-# with the subshell and every file would get its own directory.
+# that keyring's locks. Fixed rather than mktemp'd because one directory for the
+# whole run is all this needs: nothing is ever imported into it, so there is no
+# state for one file's classification to leak into the next one's.
 CLASSIFY_HOME=""
 init_classify_home() {
 	CLASSIFY_HOME="$WORK/gnupg-classify"
@@ -365,22 +366,69 @@ gpg_in() {
 # for public, `rvs` for a bare revocation signature. Field 5 is the long key id
 # and, for `rvs`, field 13 is the fingerprint of the key being revoked. Parsing
 # that is why this script never has to guess at filenames.
-show_keys() {
-	[ -n "$CLASSIFY_HOME" ] || fail "internal: the classification keyring was never set up"
-	GNUPGHOME="$CLASSIFY_HOME" gpg --batch --no-tty --quiet \
-		--show-keys --with-colons "$1" 2>/dev/null || true
-}
+#
+# gpg's exit status is the load-bearing half of that, and it is easy to throw
+# away. gpg walks an OpenPGP file packet by packet and prints as it goes, so a
+# file whose first key is intact and whose second is truncated prints perfectly
+# ordinary `pub`/`sec`/`fpr` records and *then* exits non-zero. Read only what
+# landed on stdout and that file is indistinguishable from a sound one -- which
+# is exactly the failure this command exists to catch, arriving dressed as a
+# pass. So the records come back in a variable and the status comes back as the
+# return value, with no `|| true` and no pipeline in between to lose it.
+CLASSIFIED=""
+# Which of the three things happened, for callers that need to tell "this is not
+# a key" from "this is a key that stops half way through":
+#
+#   records      gpg read the file through to the end; CLASSIFIED holds what it
+#                found, which may be nothing -- a file with no OpenPGP in it
+#                that gpg nonetheless got to the end of.
+#   undecodable  gpg failed and decoded nothing: a note, a checksum listing, a
+#                passphrase left in the wrong place, or material too damaged to
+#                yield even one record. The operator can acknowledge one of
+#                these by name; it is a file whose contents this run cannot
+#                speak to, not a file it caught lying.
+#   partial      gpg decoded key records and then failed. This is OpenPGP
+#                material that does not reach the end of its own file, and no
+#                acknowledgement covers it: a half-written export is the shape a
+#                backup takes when it was interrupted, and it reads as a key
+#                right up until the day it has to be one.
+CLASSIFY_OUTCOME=""
 
 classify_file() {
-	# Prints "ROLE KEYID" for each key-shaped record in the file, or nothing.
-	local records
-	records="$(show_keys "$1")"
-	[ -n "$records" ] || return 0
-	awk -F: '
+	# Sets CLASSIFIED and CLASSIFY_OUTCOME. Returns zero only for `records`.
+	local path="$1"
+	local raw="$WORK/show-keys.colons"
+	CLASSIFIED=""
+	CLASSIFY_OUTCOME=""
+	[ -n "$CLASSIFY_HOME" ] || fail "internal: the classification keyring was never set up"
+	local status=0
+	GNUPGHOME="$CLASSIFY_HOME" gpg --batch --no-tty --quiet \
+		--show-keys --with-colons "$path" >"$raw" 2>/dev/null || status=$?
+	local rendered=""
+	rendered="$(awk -F: '
 		$1 == "sec" { print "secret " toupper($5) }
 		$1 == "pub" { print "public " toupper($5) }
 		$1 == "rvs" { print "revocation " toupper($5) }
-	' <<<"$records"
+	' "$raw")" || {
+		rm -f "$raw"
+		fail "internal: could not read the records gpg produced for $path"
+	}
+	rm -f "$raw"
+	if [ "$status" -ne 0 ]; then
+		# Whatever gpg printed before it stopped is discarded rather than
+		# returned. Half a reading of a file is not a reading of half the file:
+		# nothing downstream can tell which records came from material that was
+		# whole, so none of them are offered.
+		if [ -n "$rendered" ]; then
+			CLASSIFY_OUTCOME="partial"
+		else
+			CLASSIFY_OUTCOME="undecodable"
+		fi
+		return 1
+	fi
+	CLASSIFIED="$rendered"
+	CLASSIFY_OUTCOME="records"
+	return 0
 }
 
 key_id_matches() {
@@ -426,7 +474,7 @@ inventory_handoff() {
 	INV_SECRET=""
 	INV_PUBLIC=""
 	INV_REVOCATION=""
-	local found=0 notes=0 unclassified=""
+	local found=0 notes=0 unclassified="" partial=""
 	# `! -type d` rather than `-type f`: a dangling symlink, a fifo or a socket in
 	# the handoff directory is not a file this script can read, and `-type f`
 	# would walk straight past it as though the directory held nothing odd.
@@ -441,14 +489,27 @@ inventory_handoff() {
 			|| fail "cannot read $f in $dir. A handoff directory holding a file this procedure cannot open has not been checked, and reporting it as sound would be a guess. Fix the permissions or move the file out."
 		[ -f "$f" ] \
 			|| fail "$f in $dir is not a regular file. Dangling symlinks, fifos and device nodes cannot be classified, and a directory this procedure cannot account for in full is not a directory it can call sound."
-		records="$(classify_file "$f")"
+		records=""
+		if classify_file "$f"; then
+			records="$CLASSIFIED"
+		fi
+		if [ "$CLASSIFY_OUTCOME" = "partial" ]; then
+			# Not note-eligible, and deliberately so. --allow-note exists for
+			# files this run cannot speak to; this is a file it caught stopping
+			# short, and an acknowledgement that it is "just a note" would be
+			# the operator waving through the precise failure the whole command
+			# is here to find.
+			partial+="  $f"$'\n'
+			continue
+		fi
 		if [ -z "$records" ]; then
 			# Nothing OpenPGP could be decoded: a note, a checksum listing, a
-			# stray passphrase file, or a truncated key. All four matter -- the
-			# first two because an unaccounted file in this directory is a
-			# question nobody answered, the last two because they are the failure
-			# this command exists to catch. The operator acknowledges each one by
-			# name with --allow-note; there is no blanket opt-out.
+			# stray passphrase file, or material damaged past the first packet.
+			# All of them matter -- the first two because an unaccounted file in
+			# this directory is a question nobody answered, the last because it
+			# is the failure this command exists to catch. The operator
+			# acknowledges each one by name with --allow-note; there is no
+			# blanket opt-out.
 			if is_allowed_note "$f"; then
 				notes=$((notes + 1))
 				continue
@@ -468,6 +529,9 @@ inventory_handoff() {
 		done <<<"$records"
 	done
 	[ "$found" -gt 0 ] || fail "handoff directory $dir holds no files"
+	[ -z "$partial" ] \
+		|| fail "gpg decoded OpenPGP records from these file(s) in $dir and then stopped before the end of the file:
+${partial}Each one is key material that does not run to its own end -- a truncated export, a copy cut short by a full disk, a transfer that dropped. gpg prints the packets it managed to read before it gives up, so a file like this answers every question about which key it holds and still cannot be restored from. Replace them from material that is whole. --allow-note does not cover this and is not meant to."
 	[ -z "$unclassified" ] \
 		|| fail "gpg cannot decode these file(s) in $dir, so this run cannot say what they are:
 ${unclassified}A truncated or corrupt key looks exactly like this, and so does a passphrase left in the same directory as the key it protects. Move them out, or acknowledge each one with --allow-note PATH once you have looked at it."
@@ -936,7 +1000,13 @@ prepare_revoked_keyring() {
 	# some other key imports without complaint and leaves the key unrevoked, so
 	# check the binding before the import rather than inferring it after.
 	local cert_ids
-	cert_ids="$(classify_file "$revocation" | awk '$1 == "revocation" { print $2 }')"
+	if ! classify_file "$revocation"; then
+		if [ "$CLASSIFY_OUTCOME" = "partial" ]; then
+			fail "gpg decoded OpenPGP records from $revocation and then stopped before the end of the file. A certificate that does not run to its own end still names the key it was written for, so an id comparison is happy with it; what it will not do is revoke anything. Nothing is published from a certificate this run could not read end to end."
+		fi
+		fail "gpg cannot decode $revocation at all, so this run cannot say it is a revocation certificate for $RETIRED_KEY -- or for anything."
+	fi
+	cert_ids="$(awk '$1 == "revocation" { print $2 }' <<<"$CLASSIFIED")"
 	[ -n "$cert_ids" ] || fail "$revocation is not a revocation certificate"
 	local matched=0 id
 	while IFS= read -r id; do
@@ -1147,7 +1217,7 @@ main() {
 	trap 'exit 130' INT
 	trap 'exit 143' TERM HUP
 	chmod 700 "$WORK"
-	# Before anything decodes a file: show_keys runs gpg, and without this it
+	# Before anything decodes a file: classify_file runs gpg, and without this it
 	# would run it against the operator's own ~/.gnupg.
 	init_classify_home
 	# And before anything reads handoff material: the path canonicalisation and
