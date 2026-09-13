@@ -231,7 +231,11 @@ allowed_sender_addresses = ["gpg-signing-service@kjanat.dev"]
 
 [env.staging.vars]  # Staging environment variables
 ALLOWED_ISSUERS             = "https://token.actions.githubusercontent.com,https://gitlab.com"
-KEY_ID                      = "62E75E54497815DD"
+# The 2026-09-08 rotation (ADR-004). Staging never held a key -- its KeyStorage
+# Durable Object has no stored data -- so this was configuration drift rather
+# than exposure, but a staging default naming the retired key is a default that
+# can be deployed by accident.
+KEY_ID                      = "AFD5E3EC68371856"
 ENVIRONMENT                 = "staging"
 KEY_EXPIRY_ALERT_FROM       = "gpg-signing-service@kjanat.dev"
 KEY_EXPIRY_ALERT_TO         = "info@kajkowalski.nl"

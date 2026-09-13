@@ -23,6 +23,17 @@
 # docs/key-handoff-runbook.md.
 set -euo pipefail
 
+# bash 4 or newer. `${var^^}`, associative-free empty-array expansion under
+# `set -u`, and `${!var}` indirection are all used below; macOS still ships 3.2
+# at /bin/bash, and `#!/usr/bin/env bash` finds it unless Homebrew's is earlier
+# on PATH. A procedure that runs twice, unsupervised, on a laptop should say so
+# rather than dying halfway through with `unbound variable`.
+if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
+	printf 'key-handoff.sh needs bash 4 or newer; this is %s. On macOS: brew install bash, then run it with that bash.\n' \
+		"${BASH_VERSION:-unknown}" >&2
+	exit 1
+fi
+
 # --- production identities ----------------------------------------------------
 # Public key ids. These appear in wrangler.toml, in the audit trail and on every
 # signature the keys ever made; they are identifiers, not secrets. Overridable so
@@ -62,15 +73,27 @@ Options:
   --preserved-backup PATH  Restored copy of the preserved D8BC04E534E7706F key
   --retired-public PATH    Retired public key, if not found in the handoff dir
   --revocation PATH        Retired key's revocation certificate, if not found
+  --allow-note PATH        Acknowledge one non-key file in the handoff dir;
+                           repeatable. Without it, anything `validate` cannot
+                           decode stops the run.
+  --check-unlock           validate only: also prompt for the passphrase and
+                           prove the handoff's own replacement key unlocks.
+                           Says nothing about any backup.
   --keyserver URL          Publication target; repeatable, replaces defaults
   --confirm-publish        Actually upload. Without it, nothing leaves the host.
   --dry-run                Never upload, even with --confirm-publish.
   -h, --help               This text.
 
 Secrets are never taken as arguments. The passphrase is read from the file named
-by --passphrase-backup, or from KEY_HANDOFF_PASSPHRASE_FILE, or prompted for on
-the terminal. It is never placed on a command line, in an environment variable
-that a child process inherits, or in any output.
+by --passphrase-backup or by KEY_HANDOFF_PASSPHRASE_FILE -- both name a file in
+the passphrase's own backup location and both face the same checks -- or, for
+`validate --check-unlock` only, prompted for on the terminal. It is never placed
+on a command line, in an environment variable that a child process inherits, or
+in any output.
+
+`verify-backup` will not accept a typed passphrase: its whole claim is that the
+passphrase was retrieved from its backup, and a passphrase you remember is not
+evidence of that.
 
 This script refuses to run under CI. See docs/key-handoff-runbook.md.
 EOF
@@ -138,6 +161,21 @@ new_keyring() {
 	printf '%s' "$home"
 }
 
+# The keyring `--show-keys` runs against. It imports nothing, but gpg still
+# wants a home to put a trustdb and a lock file in, and the operator's own
+# ~/.gnupg is not this script's to touch: on a clean account a bare `gpg` call
+# creates pubring.kbx and trustdb.gpg there, and on an established one it takes
+# that keyring's locks. Fixed rather than mktemp'd because classify_file runs
+# show_keys inside a command substitution, so anything it assigned would be lost
+# with the subshell and every file would get its own directory.
+CLASSIFY_HOME=""
+init_classify_home() {
+	CLASSIFY_HOME="$WORK/gnupg-classify"
+	mkdir -p "$CLASSIFY_HOME"
+	chmod 700 "$CLASSIFY_HOME"
+	printf 'no-tty\nbatch\n' >"$CLASSIFY_HOME/gpg.conf"
+}
+
 gpg_in() {
 	local home="$1"
 	shift
@@ -151,7 +189,9 @@ gpg_in() {
 # and, for `rvs`, field 13 is the fingerprint of the key being revoked. Parsing
 # that is why this script never has to guess at filenames.
 show_keys() {
-	gpg --batch --no-tty --quiet --show-keys --with-colons "$1" 2>/dev/null || true
+	[ -n "$CLASSIFY_HOME" ] || fail "internal: the classification keyring was never set up"
+	GNUPGHOME="$CLASSIFY_HOME" gpg --batch --no-tty --quiet \
+		--show-keys --with-colons "$1" 2>/dev/null || true
 }
 
 classify_file() {
@@ -180,15 +220,61 @@ INV_SECRET=""
 INV_PUBLIC=""
 INV_REVOCATION=""
 
+# --allow-note paths, newline-separated. A string rather than an array so the
+# empty case needs no `set -u` incantation and so the whole file stays in one
+# idiom; nobody passes enough of these for the difference to matter.
+ALLOWED_NOTES=""
+
+resolve_path() {
+	readlink -f "$1" 2>/dev/null || printf '%s' "$1"
+}
+
+is_allowed_note() {
+	# An operator-acknowledged non-key file, matched on its resolved path so a
+	# relative --allow-note and an absolute find result are the same file.
+	[ -n "$ALLOWED_NOTES" ] || return 1
+	local resolved candidate
+	resolved="$(resolve_path "$1")"
+	while IFS= read -r candidate; do
+		[ -n "$candidate" ] || continue
+		if [ "$resolved" = "$(resolve_path "$candidate")" ]; then
+			return 0
+		fi
+	done <<<"$ALLOWED_NOTES"
+	return 1
+}
+
 inventory_handoff() {
-	local dir="$1" f role id line
+	local dir="$1" f role id line records
 	[ -d "$dir" ] || fail "handoff directory not found: $dir. This material is offline by design; point --handoff at the mounted copy."
 	INV_SECRET=""
 	INV_PUBLIC=""
 	INV_REVOCATION=""
-	local found=0
+	local found=0 notes=0 unclassified=""
+	# `! -type d` rather than `-type f`: a dangling symlink, a fifo or a socket in
+	# the handoff directory is not a file this script can read, and `-type f`
+	# would walk straight past it as though the directory held nothing odd.
 	while IFS= read -r -d '' f; do
 		found=$((found + 1))
+		[ -r "$f" ] \
+			|| fail "cannot read $f in $dir. A handoff directory holding a file this procedure cannot open has not been checked, and reporting it as sound would be a guess. Fix the permissions or move the file out."
+		[ -f "$f" ] \
+			|| fail "$f in $dir is not a regular file. Dangling symlinks, fifos and device nodes cannot be classified, and a directory this procedure cannot account for in full is not a directory it can call sound."
+		records="$(classify_file "$f")"
+		if [ -z "$records" ]; then
+			# Nothing OpenPGP could be decoded: a note, a checksum listing, a
+			# stray passphrase file, or a truncated key. All four matter -- the
+			# first two because an unaccounted file in this directory is a
+			# question nobody answered, the last two because they are the failure
+			# this command exists to catch. The operator acknowledges each one by
+			# name with --allow-note; there is no blanket opt-out.
+			if is_allowed_note "$f"; then
+				notes=$((notes + 1))
+				continue
+			fi
+			unclassified+="  $f"$'\n'
+			continue
+		fi
 		while IFS= read -r line; do
 			[ -n "$line" ] || continue
 			role="${line%% *}"
@@ -198,9 +284,15 @@ inventory_handoff() {
 				public) INV_PUBLIC+="${id}"$'\t'"${f}"$'\n' ;;
 				revocation) INV_REVOCATION+="${id}"$'\t'"${f}"$'\n' ;;
 			esac
-		done < <(classify_file "$f")
-	done < <(find "$dir" -type f -print0 | sort -z)
+		done <<<"$records"
+	done < <(find "$dir" ! -type d -print0 | sort -z)
 	[ "$found" -gt 0 ] || fail "handoff directory $dir holds no files"
+	[ -z "$unclassified" ] \
+		|| fail "gpg cannot decode these file(s) in $dir, so this run cannot say what they are:
+${unclassified}A truncated or corrupt key looks exactly like this, and so does a passphrase left in the same directory as the key it protects. Move them out, or acknowledge each one with --allow-note PATH once you have looked at it."
+	if [ "$notes" -gt 0 ]; then
+		note "$notes file(s) acknowledged with --allow-note and not inspected further"
+	fi
 	note "inventoried $found file(s) in $dir"
 }
 
@@ -233,12 +325,35 @@ distinct_locations() {
 	# actually happens, because a single `cp -r` of a folder takes both.
 	local a="$1" b="$2"
 	local ra rb
-	ra="$(readlink -f "$a" 2>/dev/null || printf '%s' "$a")"
-	rb="$(readlink -f "$b" 2>/dev/null || printf '%s' "$b")"
+	ra="$(resolve_path "$a")"
+	rb="$(resolve_path "$b")"
 	[ "$ra" != "$rb" ] \
 		|| fail "the private-key backup and the passphrase backup are the same file. Keep them in separate locations; a single backup holding both is a single point of compromise."
 	[ "$(dirname "$ra")" != "$(dirname "$rb")" ] \
 		|| fail "the private-key backup and the passphrase backup are in the same directory ($(dirname "$ra")). Anything that copies that directory copies both. Put the passphrase somewhere else entirely."
+}
+
+refuse_handoff_original() {
+	# `verify-backup` claims the material came back out of a backup. Pointed at
+	# the handoff directory it claims nothing at all -- the file it read is the
+	# original, and the operator is about to delete their local copies on the
+	# strength of a sentence about a backup that was never opened. The error text
+	# has said so since the first draft; this is what makes it true.
+	#
+	# Resolved paths on both sides, so a symlink into the handoff directory, a
+	# `..` that climbs back into it, or a relative path from elsewhere all land on
+	# the same answer.
+	local path="$1" label="$2"
+	local handoff
+	handoff="$(resolve_path "$HANDOFF_DIR")"
+	[ -d "$handoff" ] || return 0
+	local resolved
+	resolved="$(resolve_path "$path")"
+	case "$resolved" in
+		"$handoff" | "$handoff"/*)
+			fail "$label resolves to $resolved, which is inside the handoff directory $handoff. That is the original, not a backup: reading it proves the file you already have is readable and nothing whatever about the copy you are about to rely on. Restore from the backup to a scratch directory and point this at that."
+			;;
+	esac
 }
 
 # --- passphrase acquisition ---------------------------------------------------
@@ -255,7 +370,8 @@ PASSPHRASE_FILE=""
 PASSPHRASE_SOURCE=""
 
 acquire_passphrase() {
-	local supplied="${1:-}"
+	# acquire_passphrase <file-source-or-empty> <allow-prompt 0|1>
+	local supplied="${1:-}" allow_prompt="${2:-0}"
 	local target="$WORK/passphrase"
 	if [ -n "$supplied" ]; then
 		[ -f "$supplied" ] || fail "passphrase backup not found: $supplied"
@@ -263,22 +379,60 @@ acquire_passphrase() {
 		# First line only, trailing newline stripped: a passphrase written by an
 		# editor almost always has one, and gpg would otherwise fold it in.
 		head -n 1 "$supplied" | tr -d '\r\n' >"$target"
-	elif [ -t 0 ]; then
+	elif [ "$allow_prompt" = 1 ] && [ -t 0 ]; then
 		local entered=""
 		printf 'Passphrase for the replacement key (not echoed): ' >&2
 		IFS= read -rs entered </dev/tty
 		printf '\n' >&2
 		printf '%s' "$entered" >"$target"
 		unset entered
+	elif [ "$allow_prompt" = 1 ]; then
+		fail "no passphrase source, and no terminal to prompt on. Give --passphrase-backup PATH or set KEY_HANDOFF_PASSPHRASE_FILE to a path. It is never accepted as a command-line argument."
 	else
-		fail "no passphrase source. Give --passphrase-backup PATH, set KEY_HANDOFF_PASSPHRASE_FILE to a path, or run this on a terminal so it can prompt. It is never accepted as a command-line argument."
+		fail "no passphrase backup. Give --passphrase-backup PATH, or set KEY_HANDOFF_PASSPHRASE_FILE to a path in the passphrase's own backup location."
 	fi
 	chmod 600 "$target"
 	[ -s "$target" ] || fail "the passphrase source produced nothing"
 	PASSPHRASE_FILE="$target"
 }
 
+# A passphrase this run invents, used once, to prove a secret key refuses to sign
+# without the real one. It never protects anything and never leaves $WORK.
+decoy_passphrase_file() {
+	local target="$WORK/decoy-passphrase"
+	if [ ! -s "$target" ]; then
+		local decoy
+		decoy="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+		[ -n "$decoy" ] || fail "internal: could not draw a decoy passphrase from /dev/urandom"
+		printf 'key-handoff-decoy-%s' "$decoy" >"$target"
+		chmod 600 "$target"
+	fi
+	printf '%s' "$target"
+}
+
 # --- proofs -------------------------------------------------------------------
+prove_passphrase_required() {
+	# A secret key whose protection was stripped signs without gpg ever looking
+	# at --passphrase-file, so prove_unlock's success would say nothing: any
+	# non-empty passphrase backup, including one belonging to a different key,
+	# would "unlock" it and the run would report retrieval proven over a private
+	# key sitting in the backup in the clear.
+	#
+	# This runs before prove_unlock and never after: once the real passphrase has
+	# unlocked the key, gpg-agent has it cached and a wrong one may sail through.
+	local home="$1" keyid="$2" label="$3"
+	local decoy nonce
+	decoy="$(decoy_passphrase_file)"
+	nonce="$WORK/decoy-nonce-$keyid"
+	printf 'key-handoff protection proof\n' >"$nonce"
+	if gpg_in "$home" --pinentry-mode loopback --passphrase-file "$decoy" \
+		--local-user "$keyid" --detach-sign --output "$nonce.sig" "$nonce" 2>/dev/null; then
+		fail "$label ($keyid) signed with a passphrase this run invented, so the restored secret key is not passphrase-protected at all. The backup holds usable private key material in the clear, and the passphrase backup next to it proves nothing. Re-export the key with its protection intact before trusting either."
+	fi
+	rm -f "$nonce" "$nonce.sig"
+	ok "$label refuses to sign without the right passphrase, so it is genuinely protected ($keyid)"
+}
+
 prove_unlock() {
 	# Importing a secret key proves the file parses. It does not prove the
 	# passphrase in the other backup is the passphrase for *this* key -- gpg
@@ -309,6 +463,36 @@ assert_imported_id() {
 		fi
 	done <<<"$ids"
 	fail "$label is not $want. The keyring holds: ${ids//$'\n'/, }. Restoring the wrong key is indistinguishable from restoring no key."
+}
+
+prove_certificate_revokes() {
+	# prove_certificate_revokes <cert-path> <key-material-path> <key-id> <label>
+	#
+	# Matching the issuer id on the `rvs` record says the certificate was written
+	# for this key. It does not say the signature on it is intact: gpg parses the
+	# packet and reports the issuer without checking the maths, so a certificate
+	# corrupted in the backup -- or truncated when it was written out -- still
+	# names the right key and still passes an id comparison. What it will not do
+	# is revoke anything, and the operator finds that out on the one day it
+	# matters. So import both halves into a keyring that has never held either and
+	# make gpg say the word.
+	local cert="$1" material="$2" keyid="$3" label="$4"
+	local home
+	home="$(new_keyring)"
+	gpg_in "$home" --import "$material" 2>/dev/null \
+		|| fail "$label: the key material at $material did not import, so the certificate cannot be checked against it"
+	if is_revoked "$home" "$keyid"; then
+		# The key material already carries a revocation, so applying the
+		# certificate changes nothing observable and cannot be used as evidence
+		# about the certificate. Say that rather than claiming a proof.
+		note "$label: the key material at $material already carries a revocation for $keyid, so this run cannot tell whether the certificate at $cert would have applied it"
+		return 0
+	fi
+	gpg_in "$home" --import "$cert" 2>/dev/null \
+		|| fail "$label: gpg refused to import the revocation certificate at $cert. It names $keyid -- that much is only a header -- but the signature on it does not check out, which is what a certificate corrupted or truncated in storage looks like. There is no way to make another one without the secret key."
+	is_revoked "$home" "$keyid" \
+		|| fail "$label: importing $cert alongside $keyid leaves gpg still reporting the key as live. The certificate names the right key but does not revoke it -- it is corrupt, truncated, or signed by something else. There is no way to make another one without the secret key."
+	ok "$label: the revocation certificate actually revokes $keyid, not just names it"
 }
 
 is_revoked() {
@@ -345,14 +529,28 @@ cmd_validate() {
 		fail "no revocation certificate for the replacement $REPLACEMENT_KEY. Losing it means the replacement can never be retired the way $RETIRED_KEY is being retired now."
 	fi
 
+	# Naming the right key is the cheap half. Whether the certificate still
+	# carries an intact signature is the half that decides if the replacement can
+	# ever be retired, and the only way to ask is to make gpg apply it.
+	local repl_cert repl_material
+	repl_cert="$(inventory_path "$INV_REVOCATION" "$REPLACEMENT_KEY")"
+	repl_material="$(inventory_path "$INV_PUBLIC" "$REPLACEMENT_KEY" || true)"
+	[ -n "$repl_material" ] || repl_material="$(inventory_path "$INV_SECRET" "$REPLACEMENT_KEY")"
+	prove_certificate_revokes "$repl_cert" "$repl_material" "$REPLACEMENT_KEY" "replacement"
+
 	inventory_has "$INV_REVOCATION" "$RETIRED_KEY" \
 		|| fail "no revocation certificate for the retired $RETIRED_KEY in $HANDOFF_DIR. This script will not generate one -- ADR-004 turns on publishing the certificate that already exists."
 	ok "retired-key revocation certificate present, and belongs to $RETIRED_KEY"
 
 	if inventory_has "$INV_PUBLIC" "$RETIRED_KEY" || inventory_has "$INV_SECRET" "$RETIRED_KEY"; then
 		ok "retired public key material present, so the revocation has a key to travel on ($RETIRED_KEY)"
+		local retired_cert retired_material
+		retired_cert="$(inventory_path "$INV_REVOCATION" "$RETIRED_KEY")"
+		retired_material="$(inventory_path "$INV_PUBLIC" "$RETIRED_KEY" || true)"
+		[ -n "$retired_material" ] || retired_material="$(inventory_path "$INV_SECRET" "$RETIRED_KEY")"
+		prove_certificate_revokes "$retired_cert" "$retired_material" "$RETIRED_KEY" "retired"
 	else
-		note "no retired public key in $HANDOFF_DIR; pass --retired-public PATH before publishing. Neither keyserver currently carries $RETIRED_KEY, so the revocation cannot be uploaded on its own."
+		note "no retired public key in $HANDOFF_DIR; pass --retired-public PATH before publishing. Neither keyserver currently carries $RETIRED_KEY, so the revocation cannot be uploaded on its own. Its certificate cannot be proved to revoke anything until that key is here."
 	fi
 
 	inventory_has "$INV_SECRET" "$PRESERVED_KEY" \
@@ -364,19 +562,49 @@ cmd_validate() {
 		ok "the private-key backup and the passphrase backup are in separate locations"
 	fi
 
+	if [ "$CHECK_UNLOCK" = 1 ]; then
+		section "passphrase check: handoff originals, not backups"
+		# The one place a typed passphrase is honest. This unlocks the key in the
+		# handoff directory -- the original -- so the claim is "the passphrase you
+		# have is the passphrase for this key", which a prompt can support.
+		# verify-backup's claim is that the passphrase came back out of its own
+		# backup, which a prompt cannot support at all, and that command refuses
+		# to be run this way.
+		acquire_passphrase "$PASSPHRASE_SOURCE" 1
+		local uhome umaterial
+		umaterial="$(inventory_path "$INV_SECRET" "$REPLACEMENT_KEY")"
+		uhome="$(new_keyring)"
+		gpg_in "$uhome" --import "$umaterial" 2>/dev/null \
+			|| fail "the replacement secret key in $HANDOFF_DIR did not import"
+		prove_passphrase_required "$uhome" "$REPLACEMENT_KEY" "the handoff replacement key"
+		prove_unlock "$uhome" "$REPLACEMENT_KEY" "the handoff replacement key"
+		note "that was the handoff original. It says nothing about any backup; verify-backup is what does."
+	fi
+
 	printf '\nvalidate: handoff structure is sound. This proves the material is present and internally consistent. It does not prove any of it was backed up.\n'
 }
 
 cmd_verify_backup() {
 	section "backup retrieval: replacement $REPLACEMENT_KEY"
+
+	# Everything this command needs is demanded before it prompts for, imports or
+	# reads anything. Discovering a missing flag after the operator has already
+	# fetched a passphrase out of a vault is the right refusal at the wrong
+	# moment.
 	[ -n "$PRIVATE_BACKUP" ] || fail "--private-backup PATH is required: point it at the copy read back out of the backup, not at the handoff directory. Verifying the original proves nothing about the backup."
+	[ -n "$PRESERVED_BACKUP" ] || fail "--preserved-backup PATH is required: $PRESERVED_KEY now uses the replacement's passphrase, so it is part of the same handoff and the same backup check. Pass it explicitly."
+	[ -n "$PASSPHRASE_SOURCE" ] \
+		|| fail "--passphrase-backup PATH is required (or KEY_HANDOFF_PASSPHRASE_FILE). This command's claim is that the passphrase is retrievable from its own backup, alongside the key it protects and apart from it. A passphrase typed at a prompt is a passphrase you remember, which is the thing that stops being true once the local copies are gone. Restore the passphrase file from its backup and point this at it; if you only want to check a passphrase you already have against the handoff originals, that is \`validate --check-unlock\`."
 	[ -f "$PRIVATE_BACKUP" ] || fail "private-key backup not found: $PRIVATE_BACKUP. A backup that cannot be read back is not a backup."
-	[ -n "$PASSPHRASE_SOURCE" ] || [ -t 0 ] \
-		|| fail "no passphrase source; see --help"
-	if [ -n "$PASSPHRASE_SOURCE" ]; then
-		distinct_locations "$PRIVATE_BACKUP" "$PASSPHRASE_SOURCE"
-		ok "the private-key backup and the passphrase backup are in separate locations"
-	fi
+	[ -f "$PRESERVED_BACKUP" ] || fail "preserved-key backup not found: $PRESERVED_BACKUP"
+
+	# None of the three may be the handoff copy wearing a backup's name.
+	refuse_handoff_original "$PRIVATE_BACKUP" "the private-key backup"
+	refuse_handoff_original "$PRESERVED_BACKUP" "the preserved-key backup"
+	refuse_handoff_original "$PASSPHRASE_SOURCE" "the passphrase backup"
+
+	distinct_locations "$PRIVATE_BACKUP" "$PASSPHRASE_SOURCE"
+	ok "the private-key backup and the passphrase backup are in separate locations"
 
 	# Fingerprint the originals before touching them, and again afterwards. The
 	# operator is about to delete the local copies on the strength of this run,
@@ -384,7 +612,7 @@ cmd_verify_backup() {
 	local before after
 	before="$(backup_digest)"
 
-	acquire_passphrase "$PASSPHRASE_SOURCE"
+	acquire_passphrase "$PASSPHRASE_SOURCE" 0
 
 	local home
 	home="$(new_keyring)"
@@ -392,20 +620,17 @@ cmd_verify_backup() {
 		|| fail "the private-key backup at $PRIVATE_BACKUP did not import. It is corrupt, truncated, or not OpenPGP key material."
 	ok "the private-key backup imports into a clean keyring"
 	assert_imported_id "$home" "$REPLACEMENT_KEY" "the restored key"
+	prove_passphrase_required "$home" "$REPLACEMENT_KEY" "the restored replacement key"
 	prove_unlock "$home" "$REPLACEMENT_KEY" "the restored replacement key"
 
-	if [ -n "$PRESERVED_BACKUP" ]; then
-		section "backup retrieval: preserved $PRESERVED_KEY"
-		[ -f "$PRESERVED_BACKUP" ] || fail "preserved-key backup not found: $PRESERVED_BACKUP"
-		local phome
-		phome="$(new_keyring)"
-		gpg_in "$phome" --import "$PRESERVED_BACKUP" 2>/dev/null \
-			|| fail "the preserved-key backup at $PRESERVED_BACKUP did not import"
-		assert_imported_id "$phome" "$PRESERVED_KEY" "the restored preserved key"
-		prove_unlock "$phome" "$PRESERVED_KEY" "the restored preserved key"
-	else
-		fail "--preserved-backup PATH is required: $PRESERVED_KEY now uses the replacement's passphrase, so it is part of the same handoff and the same backup check. Pass it explicitly."
-	fi
+	section "backup retrieval: preserved $PRESERVED_KEY"
+	local phome
+	phome="$(new_keyring)"
+	gpg_in "$phome" --import "$PRESERVED_BACKUP" 2>/dev/null \
+		|| fail "the preserved-key backup at $PRESERVED_BACKUP did not import"
+	assert_imported_id "$phome" "$PRESERVED_KEY" "the restored preserved key"
+	prove_passphrase_required "$phome" "$PRESERVED_KEY" "the restored preserved key"
+	prove_unlock "$phome" "$PRESERVED_KEY" "the restored preserved key"
 
 	after="$(backup_digest)"
 	[ "$before" = "$after" ] || fail "the backup files changed during verification. Nothing here writes to them; investigate before trusting this run."
@@ -514,8 +739,12 @@ cmd_publish_revocation() {
 	printf '  -- targets: %s\n' "${KEYSERVERS[*]}"
 
 	if [ "$DRY_RUN" = 1 ] || [ "$CONFIRM_PUBLISH" != 1 ]; then
-		printf '\npublish-revocation: verify-only. The certificate is valid, it belongs to %s, and it revokes the key locally. Nothing was uploaded.\nRe-run with --confirm-publish to publish to: %s\n' \
-			"$RETIRED_KEY" "${KEYSERVERS[*]}"
+		printf '\npublish-revocation: verify-only. The certificate is valid, it belongs to %s, and it revokes the key locally. Nothing was uploaded.\n' "$RETIRED_KEY"
+		if [ "$DRY_RUN" = 1 ] && [ "$CONFIRM_PUBLISH" = 1 ]; then
+			printf '%s\n' "--dry-run overrides --confirm-publish, which is why this uploaded nothing. Drop --dry-run to publish to: ${KEYSERVERS[*]}"
+		else
+			printf '%s\n' "Re-run with --confirm-publish to publish to: ${KEYSERVERS[*]}"
+		fi
 		return 0
 	fi
 
@@ -552,6 +781,7 @@ RETIRED_PUBLIC=""
 REVOCATION_FILE=""
 CONFIRM_PUBLISH=0
 DRY_RUN=0
+CHECK_UNLOCK=0
 KEYSERVERS=()
 
 main() {
@@ -600,6 +830,14 @@ main() {
 				REVOCATION_FILE="${2:?--revocation needs a path}"
 				shift 2
 				;;
+			--allow-note)
+				ALLOWED_NOTES+="${2:?--allow-note needs a path}"$'\n'
+				shift 2
+				;;
+			--check-unlock)
+				CHECK_UNLOCK=1
+				shift
+				;;
 			--keyserver)
 				KEYSERVERS+=("${2:?--keyserver needs a URL}")
 				shift 2
@@ -627,6 +865,10 @@ main() {
 
 	[ "${#KEYSERVERS[@]}" -gt 0 ] || KEYSERVERS=("${DEFAULT_KEYSERVERS[@]}")
 
+	if [ "$CHECK_UNLOCK" = 1 ] && [ "$command" != validate ]; then
+		fail "--check-unlock belongs to validate. $command either has no passphrase to check or, in verify-backup's case, needs the passphrase to come out of its own backup rather than out of a prompt."
+	fi
+
 	refuse_ci
 	# After the CI refusal, which has to land before anything looks at a path.
 	PASSPHRASE_SOURCE="${PASSPHRASE_BACKUP:-${KEY_HANDOFF_PASSPHRASE_FILE:-}}"
@@ -641,6 +883,9 @@ main() {
 	trap 'exit 130' INT
 	trap 'exit 143' TERM HUP
 	chmod 700 "$WORK"
+	# Before anything decodes a file: show_keys runs gpg, and without this it
+	# would run it against the operator's own ~/.gnupg.
+	init_classify_home
 
 	case "$command" in
 		validate) cmd_validate ;;

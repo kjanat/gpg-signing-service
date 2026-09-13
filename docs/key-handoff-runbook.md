@@ -45,9 +45,18 @@ classifies by decoding each file, not by its name:
 replacement's passphrase. It was not part of the exposure, but it is part of the
 same restore.
 
-You also need `gpg` on `PATH`, and a terminal. The script refuses to run when it
-detects CI, because material that reaches a runner has already lost the property
-this whole exercise is protecting. The refusal is deliberate and there is no
+It should contain nothing else. Anything in it that `gpg` cannot decode stops
+`validate` by name — a stray note, a checksum listing, a passphrase filed in the
+wrong place, and a key that was truncated when it was written out all look
+identical from the outside, and the last two are the failures this whole
+procedure exists to catch. If a file is genuinely just a note, acknowledge it
+with `--allow-note PATH`, once per file, after you have looked at it. There is
+no blanket opt-out on purpose.
+
+You also need `gpg` on `PATH`, **bash 4 or newer** — macOS still ships 3.2 at
+`/bin/bash`, so `brew install bash` and run it with that one — and a terminal.
+The script refuses to run when it detects CI, because material that reaches a
+runner has already lost the property this whole exercise is protecting. The refusal is deliberate and there is no
 flag for it; only `KEY_HANDOFF_ALLOW_CI=yes-i-am-a-local-operator` in the
 environment, which exists so the repository's own test suite can drive the
 script with throwaway keys.
@@ -59,20 +68,27 @@ on Linux, so `--passphrase "$SECRET"` would publish it to every local user for
 the lifetime of the process, and shells record it in history besides. The script
 rejects `--passphrase` outright and explains why.
 
-Three accepted sources, safest first:
+Three accepted sources, and which command accepts which is the point:
 
-1. **the terminal prompt** — run the command with no passphrase flag on a TTY
-   and it asks, reading from `/dev/tty` without echo. Nothing is stored in a
-   location you have to remember to clean up, and nothing is inherited by a
-   child process.
-2. **`--passphrase-backup PATH`** — a file in the passphrase's own backup
-   location. This is the one to use for `verify-backup`, because the point of
-   that command is to prove the file in that location is the right passphrase.
-3. **`KEY_HANDOFF_PASSPHRASE_FILE`** — a path in the environment. A path, never
+1. **`--passphrase-backup PATH`** — a file in the passphrase's own backup
+   location. The only source `verify-backup` takes, because the only thing that
+   command claims is that the file in that location is the right passphrase.
+2. **`KEY_HANDOFF_PASSPHRASE_FILE`** — a path in the environment. A path, never
    a value: an environment variable holding the passphrase itself is inherited
    by every child process and shows up in `ps e` and in core dumps. It is
    otherwise identical to `--passphrase-backup`, including the distinctness
    check below — a path routed through the environment is not a way around it.
+3. **the terminal prompt** — `validate --check-unlock` only, reading from
+   `/dev/tty` without echo. The claim that command makes is "the passphrase I
+   have is the passphrase for the key in the handoff directory", which is a
+   thing a typed passphrase can support.
+
+`verify-backup` **refuses** a typed passphrase and says so. Its closing sentence
+is what your local copies get deleted on, and the acceptance criterion it stands
+for is that the passphrase is retrievable from its own backup. A passphrase you
+remember is precisely the thing that stops being true later; it is not evidence
+about a backup, and a command that accepted it here would be reassuring rather
+than correct.
 
 Whichever you use, the passphrase reaches gpg as `--passphrase-file` pointing at
 a file inside a mode-700 temporary directory, which is removed when the script
@@ -92,6 +108,22 @@ certificate for the replacement exists, that the retired key's revocation
 certificate really revokes `62E75E54497815DD` and not something else, and that
 the preserved key material is there.
 
+It also imports each revocation certificate next to the key it names, in a
+keyring that has never held either, and makes gpg report the key revoked. An
+issuer id read off the packet only says the certificate was _written_ for that
+key; a certificate that rotted in storage still says it, right up until the day
+you need it, and there is no way to make another one without the secret key.
+
+If you already hold the passphrase and want to check it against the originals
+before restoring anything:
+
+```bash
+bash scripts/key-handoff.sh validate --handoff .keys/rotation-20260908 --check-unlock
+```
+
+That prompts, then makes the handoff's own replacement key sign a nonce. It says
+nothing about any backup, and it prints that disclaimer itself.
+
 This proves the material is present and internally consistent. It proves nothing
 about whether any of it was backed up. That is the next step, and it is the one
 the acceptance criterion turns on.
@@ -109,13 +141,17 @@ bash scripts/key-handoff.sh verify-backup \
   --preserved-backup /mnt/restored/preserved-D8BC04E534E7706F.asc
 ```
 
-Or, to be prompted for the passphrase instead of reading it from a file:
+All three paths are required, and all three are checked before anything is
+imported or any file is opened — a missing flag discovered after you have already
+fetched a passphrase out of a vault is the right refusal at the wrong moment.
 
-```bash
-bash scripts/key-handoff.sh verify-backup \
-  --private-backup   /mnt/restored/replacement-secret.asc \
-  --preserved-backup /mnt/restored/preserved-D8BC04E534E7706F.asc
-```
+Pointing any of them at a file inside `--handoff` is refused, and so is a symlink
+or a `..` that lands back inside it: that file is the original, and reading it
+proves the copy you already have is readable and nothing at all about the copy
+you are about to rely on. If for some reason your restore really does live under
+the handoff path, restore it somewhere else instead; the refusal is not
+negotiable because this command's whole output is the evidence for deleting the
+originals.
 
 What it proves, in order:
 
@@ -126,6 +162,12 @@ What it proves, in order:
 - the private-key backup **imports** into a keyring that has never held it;
 - the imported key **is `AFD5E3EC68371856`** and not some other key. Restoring
   the wrong key is indistinguishable from restoring no key until you need it;
+- the key is **actually passphrase-protected** — it refuses to sign under a
+  passphrase the run invents on the spot. A secret key whose protection was
+  stripped signs without gpg ever reading the passphrase file, so the unlock
+  proof below would succeed against any passphrase at all, including one
+  belonging to a different key, over a private key sitting in the backup in the
+  clear;
 - the passphrase from the _separate_ location **unlocks** it. This is a signing
   operation over a nonce, not an import: gpg imports an encrypted secret key
   without ever consulting the passphrase, so "it imported" is not evidence;
@@ -184,6 +226,17 @@ bash scripts/key-handoff.sh verify-published
 A partial publication fails the whole run. One target serving the revocation and
 another still handing out a live key is the state that leaves a verifier
 accepting a signature from a key everyone else knows is dead.
+
+One difference between the test suite and the real targets, so it does not read
+as a failure when you meet it: `scripts/mock-keyserver.py` serves back whatever
+it was sent, user ids and all, because it speaks HKP and nothing else.
+keys.openpgp.org applies a policy on top — it strips user ids that have not been
+confirmed by email, and distributes the revocation without them. So the key that
+comes back from that target may carry no user id at all while
+`keyserver.ubuntu.com` returns one. That is the expected shape; what the script
+asserts, and all it asserts, is that gpg reports the key **revoked** in a keyring
+that has never seen it. If you want to see it before the real run, point
+`verify-published --keyserver` at the two targets with a throwaway key id first.
 
 ## What must not happen
 

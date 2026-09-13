@@ -25,11 +25,15 @@ The rotation is complete. What follows is the observed state, not a plan:
   `AFD5E3EC68371856`. The tokens that pinned the retired key are revoked.
 - The retired key is no longer registered on the GitHub account; the replacement
   is.
-- Staging's `KEY_ID` named the retired key until 2026-09-09, but staging never
-  held any key: its `KeyStorage` Durable Object has no stored data and its audit
-  database has no applied migrations. Nothing signed there, with that key or any
-  other. The reference was configuration drift, not exposure. It now names the
-  replacement.
+- Staging's `KEY_ID` named the retired key, but staging never held any key: its
+  `KeyStorage` Durable Object has no stored data and its audit database has no
+  applied migrations. Nothing signed there, with that key or any other. The
+  reference was configuration drift, not exposure. The live staging binding was
+  moved to `AFD5E3EC68371856` on 2026-09-09; `env.staging.vars.KEY_ID` in
+  `wrangler.toml` and the generated `worker-configuration.d.ts` follow it here,
+  so the tree and the deployment name the same key. `wrangler.test.toml` keeps
+  naming the retired key on purpose: the unit suite's fixtures are about what
+  that key id did historically, not about what is deployed.
 
 Two decisions were still open: whether to publish a revocation for the retired
 key, and what to do about the published history.
