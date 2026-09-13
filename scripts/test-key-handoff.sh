@@ -220,6 +220,28 @@ show_keys_isolated() {
 	GNUPGHOME="${home}" gpg --batch --no-tty --quiet --show-keys --with-colons "$1" 2>/dev/null || true
 }
 
+revoked_export() {
+	# revoked_export <public-key-file> <revocation-file> <out>
+	#
+	# The public half with its own revocation already applied: what the retired
+	# key's material looks like once the retirement has been published, and what
+	# the replacement's material must never look like while production is signing
+	# with it.
+	local home="${tmp_dir}/revoked-export-gnupg"
+	rm -rf "${home}"
+	mkdir -p "${home}"
+	chmod 700 "${home}"
+	GNUPGHOME="${home}" gpg --batch --quiet --import "$1" 2>/dev/null
+	GNUPGHOME="${home}" gpg --batch --quiet --import "$2" 2>/dev/null
+	GNUPGHOME="${home}" gpg --batch --quiet --armor --export >"$3" 2>/dev/null
+	GNUPGHOME="${home}" gpgconf --kill all >/dev/null 2>&1 || true
+	rm -rf "${home}"
+	[ -s "$3" ] || {
+		printf 'could not build a pre-revoked export\n' >&2
+		exit 1
+	}
+}
+
 corrupt_certificate() {
 	# A revocation certificate whose packet structure survives and whose issuer
 	# subpacket still names the right key, but whose signature no longer checks
@@ -450,6 +472,45 @@ run_handoff validate --handoff "${corrupt_cert}"
 [ "${last_status}" != 0 ] || fail 'a replacement revocation certificate that cannot revoke anything validated'
 grep -q "does not check out\|still reporting the key as live" <<<"${last_output}" \
 	|| fail "the failure does not distinguish naming from revoking: ${last_output}"
+
+new_case 'a replacement key that already carries a revocation is refused'
+# Two failures wearing one face. The replacement is what production signs with,
+# so a revoked copy of it in the handoff means the wrong key was handed off or
+# the live one has been retired without anyone saying so -- and in that state the
+# certificate cannot be checked at all, because importing it into a keyring that
+# already reports the key revoked changes nothing observable. The first draft
+# read that as "nothing to do here" and moved on.
+prerevoked_repl="${tmp_dir}/handoff-prerevoked-replacement"
+cp -r "${good}" "${prerevoked_repl}"
+revoked_export "${good}/replacement-public.asc" "${good}/replacement-revocation.asc" \
+	"${prerevoked_repl}/replacement-public.asc"
+run_handoff validate --handoff "${prerevoked_repl}"
+[ "${last_status}" != 0 ] \
+	|| fail "a handoff whose replacement key is already revoked validated: ${last_output}"
+grep -q "already reports" <<<"${last_output}" \
+	|| fail "the failure does not say the key arrived revoked: ${last_output}"
+grep -q "stays unproved\|which key is actually live" <<<"${last_output}" \
+	|| fail "the failure does not say the certificate went unchecked: ${last_output}"
+
+new_case 'an already-revoked retired key passes, and the run says what it did not check'
+# The other side of the same rule. The retired key carrying its revocation is
+# the end state this whole procedure is pushing towards, so an operator
+# re-running validate after publication must not be stopped by success -- but
+# the certificate was not checked in that state either, and the run has to say
+# so rather than print the line that means it was.
+prerevoked_retired="${tmp_dir}/handoff-prerevoked-retired"
+cp -r "${good}" "${prerevoked_retired}"
+revoked_export "${good}/retired-public.asc" "${good}/retired-revocation.asc" \
+	"${prerevoked_retired}/retired-public.asc"
+run_handoff validate --handoff "${prerevoked_retired}"
+[ "${last_status}" = 0 ] \
+	|| fail "an already-published retirement was treated as a broken handoff: ${last_output}"
+grep -q "NOT proved usable" <<<"${last_output}" \
+	|| fail "the run claims more about the retired certificate than it checked: ${last_output}"
+grep -q "Not proved by this run" <<<"${last_output}" \
+	|| fail 'the closing summary does not repeat what went unchecked'
+grep -q "the revocation certificate actually revokes ${RETIRED_ID}" <<<"${last_output}" \
+	&& fail 'the run claimed it proved a certificate it never imported'
 
 new_case 'the same holds for the retired key certificate'
 corrupt_retired="${tmp_dir}/handoff-corrupt-retired-cert"
@@ -695,6 +756,39 @@ run_handoff verify-backup --handoff "${good}" \
 	--preserved-backup "${backup_key}/preserved.asc"
 [ "${last_status}" != 0 ] || fail 'a passphrase path inside the handoff directory was accepted'
 
+new_case 'the preserved key and its passphrase in one directory is refused'
+# The separation rule is per key, not per run. Keeping the replacement backup
+# somewhere else was enough to satisfy the first draft while D8BC04E534E7706F --
+# which the rotation moved onto the replacement's passphrase -- sat in the
+# passphrase's own directory. Whoever copies that directory gets a usable key
+# and the passphrase that opens it, which is the entire thing this check is for.
+cp "${good}/preserved-secret.asc" "${backup_pass}/preserved.asc"
+run_handoff verify-backup \
+	--private-backup "${backup_key}/replacement.asc" \
+	--passphrase-backup "${backup_pass}/passphrase.txt" \
+	--preserved-backup "${backup_pass}/preserved.asc"
+rm -f "${backup_pass}/preserved.asc"
+[ "${last_status}" != 0 ] \
+	|| fail 'the preserved key and the passphrase that opens it shared a directory and the run passed'
+grep -q "same directory" <<<"${last_output}" \
+	|| fail "the failure does not name the shared directory: ${last_output}"
+grep -q "preserved-key backup" <<<"${last_output}" \
+	|| fail "the failure does not say which key it is about: ${last_output}"
+grep -q "Retrieval is proven" <<<"${last_output}" \
+	&& fail 'the run reached its closing claim anyway'
+
+new_case 'and the same file, by the same rule'
+together_preserved="${tmp_dir}/backup-vault-preserved-together"
+mkdir -p "${together_preserved}"
+cp "${good}/preserved-secret.asc" "${together_preserved}/both.asc"
+run_handoff verify-backup \
+	--private-backup "${backup_key}/replacement.asc" \
+	--passphrase-backup "${together_preserved}/both.asc" \
+	--preserved-backup "${together_preserved}/both.asc"
+[ "${last_status}" != 0 ] || fail 'one file holding the preserved key and the passphrase was accepted'
+grep -q "same file" <<<"${last_output}" \
+	|| fail "the failure does not name the shared file: ${last_output}"
+
 new_case 'a real backup still verifies with the handoff directory named'
 # The refusal above must not have made the ordinary run unusable: the whole
 # point is that backups live somewhere else, and naming --handoff as well is
@@ -747,6 +841,26 @@ grep -q "Nothing was uploaded" <<<"${last_output}" \
 	|| fail 'verify-only did not say it published nothing'
 [ "$(upload_count "${state_dry}")" = 0 ] \
 	|| fail 'verify-only uploaded a key'
+
+new_case 'publish-revocation says so too when the key arrives already revoked'
+# The same rule as validate's, in the other command that imports a certificate.
+# Publishing an already-revoked key is still right -- what reaches the keyserver
+# is revoked either way -- but the certificate was not what put the revocation
+# there, and the closing sentence is what the operator reads as evidence.
+prepublished="${tmp_dir}/handoff-prepublished"
+cp -r "${good}" "${prepublished}"
+revoked_export "${good}/retired-public.asc" "${good}/retired-revocation.asc" \
+	"${prepublished}/retired-public.asc"
+state_pre="${tmp_dir}/server-prerevoked"
+start_server "${state_pre}"
+run_handoff publish-revocation --handoff "${prepublished}" --keyserver "${server_url}"
+[ "${last_status}" = 0 ] \
+	|| fail "a re-run after publication was treated as a broken handoff: ${last_output}"
+grep -q "NOT exercised by this run" <<<"${last_output}" \
+	|| fail "the run claims the certificate was proved when it was not: ${last_output}"
+grep -q "by the certificate this run imported" <<<"${last_output}" \
+	&& fail 'the run credits the certificate for a revocation that was already there'
+[ "$(upload_count "${state_pre}")" = 0 ] || fail 'verify-only uploaded a key'
 
 new_case '--dry-run beats --confirm-publish'
 # Belt and braces: an operator who pastes a command with both should get the
@@ -1016,6 +1130,170 @@ run_handoff validate --handoff "${good}" --confrim-publish
 new_case 'an unknown command is an error'
 run_handoff publish --handoff "${good}"
 [ "${last_status}" != 0 ] || fail 'an unknown command ran'
+
+# --- 6. portability -----------------------------------------------------------
+# The runbook says an operator may run this on a Mac. This runner is not a Mac
+# and never will be, so the honest thing is to model what a Mac withholds rather
+# than to test on Linux and claim the difference away: no `sha256sum`, no
+# `sort -z`, no `readlink -f`, and nothing else on PATH beyond what the script
+# declares it needs. The declared list is read out of the script itself, so a
+# future call to some coreutils convenience shows up here as a missing program
+# rather than as a green run on the one platform that happens to have it.
+printf '\n# 6. portability\n'
+
+declared_tools="$(sed -n 's/^REQUIRED_TOOLS=(\(.*\))$/\1/p' "${handoff}")"
+[ -n "${declared_tools}" ] || {
+	printf 'could not read REQUIRED_TOOLS out of %s\n' "${handoff}" >&2
+	exit 1
+}
+
+real_readlink="$(command -v readlink)"
+
+build_bin() {
+	# A PATH holding exactly the named tools and nothing else. `bash` and `env`
+	# come along unasked because the shebang needs them before a line of the
+	# script has run.
+	local dir="$1"
+	shift
+	rm -rf "${dir}"
+	mkdir -p "${dir}"
+	local tool src
+	for tool in "$@" bash env; do
+		src="$(command -v "${tool}" 2>/dev/null || true)"
+		[ -n "${src}" ] || continue
+		ln -sf "${src}" "${dir}/${tool}"
+	done
+}
+
+write_bsd_readlink() {
+	# readlink as BSD and macOS have it: one link at a time, and the GNU
+	# spellings are errors rather than quiet successes.
+	#
+	# Unlinked first, never written through: build_bin left a symlink to the
+	# real readlink there, and `>` follows a symlink to its target.
+	rm -f "$1/readlink"
+	cat >"$1/readlink" <<SHIM
+#!/bin/sh
+case "\${1:-}" in
+	-f | -e | -m | --canonicalize*)
+		printf 'readlink: illegal option -- %s\n' "\$1" >&2
+		exit 1
+		;;
+esac
+[ "\${1:-}" = "--" ] && shift
+exec ${real_readlink} "\$@"
+SHIM
+	chmod +x "$1/readlink"
+}
+
+run_portable() {
+	# ${1} becomes the entire PATH. env -i so nothing of this suite's own
+	# environment -- least of all a PATH pointing back at /usr/bin -- leaks in.
+	local path="$1"
+	shift
+	set +e
+	env -i PATH="${path}" HOME="${HOME}" TMPDIR="${tmp_dir}" \
+		KEY_HANDOFF_ALLOW_CI="${KEY_HANDOFF_ALLOW_CI}" \
+		KEY_HANDOFF_REPLACEMENT_KEY="${KEY_HANDOFF_REPLACEMENT_KEY}" \
+		KEY_HANDOFF_RETIRED_KEY="${KEY_HANDOFF_RETIRED_KEY}" \
+		KEY_HANDOFF_PRESERVED_KEY="${KEY_HANDOFF_PRESERVED_KEY}" \
+		bash "${handoff}" "$@" >"${tmp_dir}/portable-out" 2>&1
+	last_status=$?
+	set -e
+	last_output="$(cat "${tmp_dir}/portable-out")"
+}
+
+bsd_bin="${tmp_dir}/bsd-bin"
+# shellcheck disable=SC2086 # the declared list is a word list on purpose
+build_bin "${bsd_bin}" ${declared_tools}
+write_bsd_readlink "${bsd_bin}"
+
+new_case 'the script runs with nothing on PATH but the tools it declares'
+run_portable "${bsd_bin}" validate --handoff "${good}"
+[ "${last_status}" = 0 ] \
+	|| fail "validate needs something it does not declare: ${last_output}"
+run_portable "${bsd_bin}" verify-backup \
+	--private-backup "${backup_key}/replacement.asc" \
+	--passphrase-backup "${backup_pass}/passphrase.txt" \
+	--preserved-backup "${backup_key}/preserved.asc"
+[ "${last_status}" = 0 ] \
+	|| fail "verify-backup needs something it does not declare: ${last_output}"
+grep -q "byte-identical" <<<"${last_output}" \
+	|| fail 'the before/after digest did not run without sha256sum'
+
+new_case 'a readlink with no -f does not weaken the handoff-original refusal'
+# The check this all exists for. `readlink -f ... || printf %s "$1"` answers with
+# its own input where -f is not understood, so the refusal that rejects a
+# symlink pointing back into the handoff directory would compare the path
+# against itself and let it through -- on the one platform nobody here can test
+# by accident.
+run_portable "${bsd_bin}" verify-backup --handoff "${good}" \
+	--private-backup "${alias_dir}/replacement.asc" \
+	--passphrase-backup "${backup_pass}/passphrase.txt" \
+	--preserved-backup "${backup_key}/preserved.asc"
+[ "${last_status}" != 0 ] \
+	|| fail 'a symlink into the handoff directory was accepted where readlink has no -f'
+grep -q "inside the handoff directory" <<<"${last_output}" \
+	|| fail "the symlink was not resolved without readlink -f: ${last_output}"
+run_portable "${bsd_bin}" verify-backup --handoff "${good}" \
+	--private-backup "${backup_key}/../$(basename "${good}")/replacement-secret.asc" \
+	--passphrase-backup "${backup_pass}/passphrase.txt" \
+	--preserved-backup "${backup_key}/preserved.asc"
+[ "${last_status}" != 0 ] \
+	|| fail 'a .. path into the handoff directory was accepted where readlink has no -f'
+
+new_case 'a canonicaliser that answers with its own input stops the run'
+# Not a platform, a shape: the fallback the script used to have, and the shim an
+# operator writes to make an error message go away. It has to be caught by the
+# script rather than trusted, and caught before any handoff material is read.
+lying_bin="${tmp_dir}/lying-bin"
+# shellcheck disable=SC2086 # the declared list is a word list on purpose
+build_bin "${lying_bin}" ${declared_tools}
+rm -f "${lying_bin}/readlink"
+cat >"${lying_bin}/readlink" <<'SHIM'
+#!/bin/sh
+for arg in "$@"; do :; done
+printf '%s\n' "${arg}"
+SHIM
+chmod +x "${lying_bin}/readlink"
+run_portable "${lying_bin}" validate --handoff "${good}"
+[ "${last_status}" != 0 ] \
+	|| fail 'a readlink that resolves nothing was good enough to validate a handoff'
+grep -q "path canonicalisation does not work" <<<"${last_output}" \
+	|| fail "the refusal does not name the broken primitive: ${last_output}"
+grep -q "inventoried" <<<"${last_output}" \
+	&& fail 'handoff material was read before the path primitives were checked'
+
+new_case 'a declared tool that is missing is named, before anything is read'
+missing_bin="${tmp_dir}/missing-bin"
+# shellcheck disable=SC2086 # the declared list is a word list on purpose
+build_bin "${missing_bin}" ${declared_tools}
+rm -f "${missing_bin}/od"
+run_portable "${missing_bin}" validate --handoff "${good}"
+[ "${last_status}" != 0 ] || fail 'the script ran with a declared tool missing'
+grep -q " od" <<<"${last_output}" || fail "the failure does not name od: ${last_output}"
+grep -q "Nothing has been read yet" <<<"${last_output}" \
+	|| fail 'the failure does not say it stopped before reading anything'
+
+new_case 'no GNU-only spelling survives in the script, in any branch'
+# The PATH cases above only cover the code they reach. This covers the rest:
+# a `sha256sum` on an error path nothing in this suite triggers is still a
+# `sha256sum` that is not there on the day.
+script_code="$(grep -vE '^[[:space:]]*#' "${handoff}")"
+for gnuism in 'readlink -f' 'readlink -e' 'readlink -m' 'sha256sum' 'sha1sum' \
+	'sort -z' 'stat -c' 'date -d' 'sed -i' 'cp -T' 'grep -P'; do
+	if grep -qF -- "${gnuism}" <<<"${script_code}"; then
+		fail "the script uses ${gnuism}, which a stock macOS or BSD userland does not have"
+	fi
+done
+
+new_case 'the declared tool list is the one the capability check reads'
+# Two copies of one fact otherwise: the list above drives every case in this
+# section, and a check that walked some other list would leave them testing
+# nothing.
+# shellcheck disable=SC2016 # the literal shell source is the thing being matched
+grep -q 'for tool in "\${REQUIRED_TOOLS\[@\]}"' "${handoff}" \
+	|| fail 'the capability check no longer iterates REQUIRED_TOOLS, so this section proves nothing'
 
 # --- result -------------------------------------------------------------------
 printf '\n'

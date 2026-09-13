@@ -55,11 +55,30 @@ no blanket opt-out on purpose.
 
 You also need `gpg` on `PATH`, **bash 4 or newer** — macOS still ships 3.2 at
 `/bin/bash`, so `brew install bash` and run it with that one — and a terminal.
+
+That is the whole list of things to install. Everything else the script runs is
+in a stock POSIX userland: `awk`, `cat`, `chmod`, `date`, `find`, `gpgconf`,
+`head`, `ln`, `mkdir`, `mktemp`, `od`, `readlink`, `rm`, `tr`. No GNU extension
+of any of them is used — no `readlink -f`, no `sha256sum`, no `sort -z` — so a
+Mac needs no `coreutils` from Homebrew and you do not have to assemble a GNU
+userland by accident. Anything missing is named before a single file is read.
+
 The script refuses to run when it detects CI, because material that reaches a
-runner has already lost the property this whole exercise is protecting. The refusal is deliberate and there is no
-flag for it; only `KEY_HANDOFF_ALLOW_CI=yes-i-am-a-local-operator` in the
-environment, which exists so the repository's own test suite can drive the
-script with throwaway keys.
+runner has already lost the property this whole exercise is protecting. The
+refusal is deliberate and there is no flag for it; only
+`KEY_HANDOFF_ALLOW_CI=yes-i-am-a-local-operator` in the environment, which exists
+so the repository's own test suite can drive the script with throwaway keys.
+
+Two things the script checks by doing them rather than by asking what platform
+this is, at the start of every run, before it opens any handoff material:
+
+- **path canonicalisation**, against a symlink and a `..` it makes itself. Every
+  refusal that keeps a backup path from pointing back into the handoff directory
+  rests on resolving paths, and a resolver that quietly hands back its own input
+  turns all of them into string comparisons against the string the mistake
+  supplied. If it does not resolve, the run stops there.
+- **the SHA-256 digest**, against the digest of nothing. That is what "the backup
+  files are byte-identical to how this run found them" is measured with.
 
 ## Handling the passphrase
 
@@ -114,6 +133,23 @@ issuer id read off the packet only says the certificate was _written_ for that
 key; a certificate that rotted in storage still says it, right up until the day
 you need it, and there is no way to make another one without the secret key.
 
+That proof is impossible against key material that already carries a revocation:
+importing a certificate into a keyring that already reports the key revoked
+changes nothing anyone can observe. The two keys are treated differently there,
+on purpose:
+
+- **the replacement** arriving already revoked is a **failure**, and the run
+  stops. It is what production signs with, so either the wrong key was handed
+  off or the live one has been retired without the rest of this saying so — and
+  on top of that, the certificate meant to retire it one day has gone unchecked.
+  Find out which key is actually live before going further.
+- **the retired key** arriving already revoked is **fine** — it is the end state
+  this whole procedure is pushing towards, and re-running `validate` after
+  publication must not be punished. But the certificate was not checked in that
+  state either, so the run says so in as many words and repeats it under _Not
+  proved by this run_ at the end, rather than printing the line that means it
+  was proved.
+
 If you already hold the passphrase and want to check it against the originals
 before restoring anything:
 
@@ -155,10 +191,14 @@ originals.
 
 What it proves, in order:
 
-- the two backup locations are **distinct** — not the same file, and not even
-  the same directory. A passphrase stored next to the key it protects is one
+- the backup locations are **distinct** — not the same file, and not even the
+  same directory. A passphrase stored next to a key it protects is one
   compromised backup, not two, and the failure that actually happens is a single
-  `cp -r` of a folder holding both.
+  `cp -r` of a folder holding both. This applies to **both** key backups: the
+  rotation moved `D8BC04E534E7706F` onto the replacement's passphrase, so a
+  folder holding the preserved key and that passphrase is exactly as usable to
+  whoever copies it as one holding the replacement and that passphrase. Three
+  paths, three places.
 - the private-key backup **imports** into a keyring that has never held it;
 - the imported key **is `AFD5E3EC68371856`** and not some other key. Restoring
   the wrong key is indistinguishable from restoring no key until you need it;

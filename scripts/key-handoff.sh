@@ -34,6 +34,175 @@ if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
 	exit 1
 fi
 
+# --- portability --------------------------------------------------------------
+# The runbook says this runs on the operator's laptop, and that the laptop may be
+# a Mac. macOS is not a GNU userland: `readlink -f` is a GNU extension, there is
+# no `sha256sum`, and `sort -z` is not in BSD sort. The first draft used all
+# three, and the worst of them by a distance was
+#
+#     readlink -f "$1" 2>/dev/null || printf '%s' "$1"
+#
+# under the canonicalisation every path check in this file is built on. On a
+# machine whose readlink does not know -f, that line answers with the caller's
+# own input -- so the refusal that rejects a symlink pointing back into the
+# handoff directory silently becomes a string comparison against the string the
+# mistake supplied. Degrading quietly is the one thing a security check may not
+# do.
+#
+# Nothing here is asked of coreutils now. Paths are canonicalised with `cd -P`,
+# `pwd -P` and one-argument `readlink`, which BSD and GNU have spelled the same
+# way for decades; digests come out of gpg, which this procedure cannot run
+# without anyway; ordering happens in the shell. REQUIRED_TOOLS is the whole list
+# of external programs, checked before any handoff material is read, and the test
+# suite runs this script with nothing else at all on PATH so the list cannot
+# drift away from the code.
+REQUIRED_TOOLS=(awk cat chmod date find gpg gpgconf head ln mkdir mktemp od readlink rm tr)
+
+# Byte ordering, case folding and gpg's own parsing must not depend on whatever
+# locale the operator's terminal happens to be in.
+export LC_ALL=C
+# `cd` consults CDPATH, prints when it uses it, and can land somewhere else
+# entirely. Every path canonical_path hands it is absolute, which CDPATH does not
+# apply to, but a canonicaliser resting on that subtlety is not one to leave to
+# chance.
+unset CDPATH
+
+canonical_path() {
+	# The absolute path with every `.`, `..` and symlink resolved -- or nothing
+	# at all, and a non-zero status. There is deliberately no third answer: a
+	# caller that cannot be told the truth about a path must not be handed a
+	# guess that looks like one.
+	local path="$1" hops=0 dir base target
+	[ -n "$path" ] || return 1
+	case "$path" in
+		/*) ;;
+		*) path="$PWD/$path" ;;
+	esac
+	while :; do
+		hops=$((hops + 1))
+		# A symlink loop is not this function's to diagnose. It is its not to
+		# spin on; Linux itself gives up at 40.
+		[ "$hops" -le 64 ] || return 1
+		base="${path##*/}"
+		case "$base" in
+			'' | '.' | '..')
+				# A trailing `/`, `/.` or `/..`: the whole path names a
+				# directory, and `cd -P` resolves all of it in one step.
+				path="$(cd -P -- "$path" 2>/dev/null && pwd -P)" || return 1
+				printf '%s' "$path"
+				return 0
+				;;
+		esac
+		dir="${path%/*}"
+		[ -n "$dir" ] || dir=/
+		# `cd -P` resolves the symlinks in the leading directories and `pwd -P`
+		# prints the result with `.` and `..` already gone. A directory that does
+		# not exist is a failure, not an approximation.
+		dir="$(cd -P -- "$dir" 2>/dev/null && pwd -P)" || return 1
+		case "$dir" in
+			/) path="/$base" ;;
+			*) path="$dir/$base" ;;
+		esac
+		[ -L "$path" ] || break
+		# One link, one call: `readlink FILE` is the spelling BSD, macOS and GNU
+		# all share. No `--` guard is needed and none is passed, because $path
+		# here is built from `pwd -P` and cannot begin with a dash -- and a
+		# readlink whose option parsing is minimal is precisely the kind this has
+		# to survive.
+		target="$(readlink "$path")" && [ -n "$target" ] || return 1
+		case "$target" in
+			/*) path="$target" ;;
+			*) path="$dir/$target" ;;
+		esac
+	done
+	printf '%s' "$path"
+}
+
+parent_of() {
+	# dirname(1) for a path already known to be absolute and canonical.
+	local parent="${1%/*}"
+	printf '%s' "${parent:-/}"
+}
+
+# Filled by sort_paths. An array rather than a string because a path may contain
+# a newline, which is exactly the case a line-oriented sort would mangle.
+SORTED_PATHS=()
+sort_paths() {
+	# `find -print0 | sort -z` was the first draft. `-z` is GNU sort and BSD sort
+	# has no equivalent at all, so on macOS that pipeline fails or, worse,
+	# passes the whole NUL-joined blob through as a single filename. A handoff
+	# directory holds a handful of files, so an insertion sort in the shell is
+	# the entire algorithm required and it keeps every byte of every path.
+	SORTED_PATHS=("$@")
+	local i j current
+	for ((i = 1; i < ${#SORTED_PATHS[@]}; i++)); do
+		current="${SORTED_PATHS[i]}"
+		j=$((i - 1))
+		while [ "$j" -ge 0 ] && [[ "${SORTED_PATHS[j]}" > "$current" ]]; do
+			SORTED_PATHS[j + 1]="${SORTED_PATHS[j]}"
+			j=$((j - 1))
+		done
+		SORTED_PATHS[j + 1]="$current"
+	done
+}
+
+file_digest() {
+	# SHA-256 of one file, lower-case hex. Out of gpg rather than sha256sum:
+	# sha256sum is coreutils, macOS ships shasum, other systems only have
+	# openssl, and gpg is the one program this procedure cannot run without. Fed
+	# on stdin so the output carries no filename to parse back off.
+	[ -n "$CLASSIFY_HOME" ] || fail "internal: the classification keyring was never set up"
+	local out
+	out="$(GNUPGHOME="$CLASSIFY_HOME" gpg --batch --no-tty --quiet \
+		--print-md SHA256 <"$1" 2>/dev/null)" || return 1
+	out="${out//[[:space:]]/}"
+	out="${out,,}"
+	[ "${#out}" = 64 ] || return 1
+	printf '%s' "$out"
+}
+
+require_tools() {
+	local tool missing=""
+	for tool in "${REQUIRED_TOOLS[@]}"; do
+		command -v "$tool" >/dev/null 2>&1 || missing+=" $tool"
+	done
+	[ -z "$missing" ] \
+		|| fail "these programs are required and are not on PATH:${missing}. That is the complete list, and this script asks for no GNU extension of any of them, so a stock macOS or BSD userland is enough. Nothing has been read yet."
+}
+
+prove_primitives() {
+	# The capability check that counts, done by doing it rather than by asking
+	# what platform this is. A canonicaliser that resolves nothing still returns
+	# a plausible-looking string, so the only way to know is to hand it a
+	# symlink and a `..` and see whether the answer is the real file.
+	local probe="$WORK/primitives" real
+	mkdir -p "$probe/real"
+	printf 'key-handoff primitive probe\n' >"$probe/real/file"
+	# Two symlinks, one in the middle of the path and one at the end of it,
+	# because they are resolved by different machinery: `cd -P` walks the
+	# directories in the kernel, while the last component is the only one
+	# readlink itself is ever asked about. A probe with no trailing symlink would
+	# pass on a readlink that answers with its own input.
+	if ! ln -s "$probe/real" "$probe/link" 2>/dev/null \
+		|| ! ln -s "$probe/real/file" "$probe/filelink" 2>/dev/null; then
+		fail "cannot create a symlink under $WORK, so the path checks this run depends on cannot be proved to work here. Point TMPDIR at a filesystem that allows symlinks."
+	fi
+	real="$(cd -P -- "$probe/real" && pwd -P)"
+	local got=""
+	got="$(canonical_path "$probe/link/../filelink")" || got=""
+	[ "$got" = "$real/file" ] \
+		|| fail "path canonicalisation does not work on this machine: $probe/link/../filelink resolved to '${got:-nothing}' instead of $real/file. Every refusal that keeps a backup path from pointing back into the handoff directory is built on that resolution, and one that answers with its own input turns all of them into string comparisons. Refusing rather than running them."
+	# And the digest, which is what "the backup files are byte-identical to how
+	# this run found them" rests on. Empty input pins it to SHA-256 rather than
+	# to whatever this gpg was willing to hand back.
+	: >"$probe/empty"
+	local empty=""
+	empty="$(file_digest "$probe/empty")" || empty=""
+	[ "$empty" = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ] \
+		|| fail "this gpg does not compute SHA-256 through --print-md: the digest of no bytes came back as '${empty:-nothing}'. Without it nothing here can show the backup files were left untouched."
+	rm -rf "$probe"
+}
+
 # --- production identities ----------------------------------------------------
 # Public key ids. These appear in wrangler.toml, in the audit trail and on every
 # signature the keys ever made; they are identifiers, not secrets. Overridable so
@@ -93,7 +262,15 @@ in any output.
 
 `verify-backup` will not accept a typed passphrase: its whole claim is that the
 passphrase was retrieved from its backup, and a passphrase you remember is not
-evidence of that.
+evidence of that. It also requires the private-key backup, the preserved-key
+backup and the passphrase backup to be in three separate places -- both keys are
+opened by that one passphrase, so a directory holding either of them next to it
+is one compromised backup rather than two.
+
+Needs bash 4 or newer, gpg, and a stock POSIX userland: awk, cat, chmod, date,
+find, gpgconf, head, ln, mkdir, mktemp, od, readlink, rm, tr. No GNU extension of
+any of them is used, so macOS needs Homebrew's bash and nothing else. Missing
+programs are named before anything is read.
 
 This script refuses to run under CI. See docs/key-handoff-runbook.md.
 EOF
@@ -225,19 +402,18 @@ INV_REVOCATION=""
 # idiom; nobody passes enough of these for the difference to matter.
 ALLOWED_NOTES=""
 
-resolve_path() {
-	readlink -f "$1" 2>/dev/null || printf '%s' "$1"
-}
-
 is_allowed_note() {
 	# An operator-acknowledged non-key file, matched on its resolved path so a
 	# relative --allow-note and an absolute find result are the same file.
 	[ -n "$ALLOWED_NOTES" ] || return 1
-	local resolved candidate
-	resolved="$(resolve_path "$1")"
+	local resolved candidate candidate_resolved
+	resolved="$(canonical_path "$1")" \
+		|| fail "cannot resolve $1 to a path on this machine, so --allow-note cannot be matched against it"
 	while IFS= read -r candidate; do
 		[ -n "$candidate" ] || continue
-		if [ "$resolved" = "$(resolve_path "$candidate")" ]; then
+		candidate_resolved="$(canonical_path "$candidate")" \
+			|| fail "--allow-note $candidate does not resolve to anything on this machine. An acknowledgement that names no file acknowledges no file."
+		if [ "$resolved" = "$candidate_resolved" ]; then
 			return 0
 		fi
 	done <<<"$ALLOWED_NOTES"
@@ -254,7 +430,12 @@ inventory_handoff() {
 	# `! -type d` rather than `-type f`: a dangling symlink, a fifo or a socket in
 	# the handoff directory is not a file this script can read, and `-type f`
 	# would walk straight past it as though the directory held nothing odd.
+	local entries=()
 	while IFS= read -r -d '' f; do
+		entries+=("$f")
+	done < <(find "$dir" ! -type d -print0)
+	sort_paths ${entries[@]+"${entries[@]}"}
+	for f in ${SORTED_PATHS[@]+"${SORTED_PATHS[@]}"}; do
 		found=$((found + 1))
 		[ -r "$f" ] \
 			|| fail "cannot read $f in $dir. A handoff directory holding a file this procedure cannot open has not been checked, and reporting it as sound would be a guess. Fix the permissions or move the file out."
@@ -285,7 +466,7 @@ inventory_handoff() {
 				revocation) INV_REVOCATION+="${id}"$'\t'"${f}"$'\n' ;;
 			esac
 		done <<<"$records"
-	done < <(find "$dir" ! -type d -print0 | sort -z)
+	done
 	[ "$found" -gt 0 ] || fail "handoff directory $dir holds no files"
 	[ -z "$unclassified" ] \
 		|| fail "gpg cannot decode these file(s) in $dir, so this run cannot say what they are:
@@ -320,17 +501,28 @@ inventory_path() {
 
 # --- backup-location hygiene --------------------------------------------------
 distinct_locations() {
-	# A passphrase stored next to the key it protects is one compromised backup,
+	# distinct_locations <path-a> <label-a> <path-b> <label-b>
+	#
+	# A passphrase stored next to a key it protects is one compromised backup,
 	# not two. Same file is the obvious failure; same directory is the one that
 	# actually happens, because a single `cp -r` of a folder takes both.
-	local a="$1" b="$2"
+	#
+	# The rule is per key, not per run: every secret key the replacement
+	# passphrase opens has to be somewhere that passphrase is not, which is why
+	# the preserved key faces this as well as the replacement. A copy of the
+	# folder holding the preserved key and the passphrase together is exactly as
+	# usable to whoever takes it as one holding the replacement and the
+	# passphrase, and they share the passphrase.
+	local a="$1" alabel="$2" b="$3" blabel="$4"
 	local ra rb
-	ra="$(resolve_path "$a")"
-	rb="$(resolve_path "$b")"
+	ra="$(canonical_path "$a")" \
+		|| fail "cannot resolve $alabel ($a) to a path on this machine, so this run cannot tell where it is stored relative to $blabel. That check is not one to skip."
+	rb="$(canonical_path "$b")" \
+		|| fail "cannot resolve $blabel ($b) to a path on this machine, so this run cannot tell where it is stored relative to $alabel. That check is not one to skip."
 	[ "$ra" != "$rb" ] \
-		|| fail "the private-key backup and the passphrase backup are the same file. Keep them in separate locations; a single backup holding both is a single point of compromise."
-	[ "$(dirname "$ra")" != "$(dirname "$rb")" ] \
-		|| fail "the private-key backup and the passphrase backup are in the same directory ($(dirname "$ra")). Anything that copies that directory copies both. Put the passphrase somewhere else entirely."
+		|| fail "$alabel and $blabel are the same file. Keep them in separate locations; a single backup holding both is a single point of compromise."
+	[ "$(parent_of "$ra")" != "$(parent_of "$rb")" ] \
+		|| fail "$alabel and $blabel are in the same directory ($(parent_of "$ra")). Anything that copies that directory copies both. Put the passphrase somewhere else entirely."
 }
 
 refuse_handoff_original() {
@@ -344,11 +536,13 @@ refuse_handoff_original() {
 	# `..` that climbs back into it, or a relative path from elsewhere all land on
 	# the same answer.
 	local path="$1" label="$2"
+	[ -d "$HANDOFF_DIR" ] || return 0
 	local handoff
-	handoff="$(resolve_path "$HANDOFF_DIR")"
-	[ -d "$handoff" ] || return 0
+	handoff="$(canonical_path "$HANDOFF_DIR")" \
+		|| fail "cannot resolve the handoff directory $HANDOFF_DIR to a path on this machine, so this run cannot tell whether $label points back into it"
 	local resolved
-	resolved="$(resolve_path "$path")"
+	resolved="$(canonical_path "$path")" \
+		|| fail "cannot resolve $label ($path) to a path on this machine, so this run cannot tell whether it points back into the handoff directory. A path that will not resolve is refused rather than assumed innocent."
 	case "$resolved" in
 		"$handoff" | "$handoff"/*)
 			fail "$label resolves to $resolved, which is inside the handoff directory $handoff. That is the original, not a backup: reading it proves the file you already have is readable and nothing whatever about the copy you are about to rely on. Restore from the backup to a scratch directory and point this at that."
@@ -465,8 +659,26 @@ assert_imported_id() {
 	fail "$label is not $want. The keyring holds: ${ids//$'\n'/, }. Restoring the wrong key is indistinguishable from restoring no key."
 }
 
+# Things this run looked at and could not prove. `validate` says so again at the
+# end, because a note eight screens up is a note nobody read.
+UNPROVEN=""
+
 prove_certificate_revokes() {
-	# prove_certificate_revokes <cert-path> <key-material-path> <key-id> <label>
+	# prove_certificate_revokes <cert> <key-material> <key-id> <label> <policy>
+	#
+	# <policy> is what to do when the key material already reports the key
+	# revoked before the certificate is applied, which is a state no import can
+	# see through: applying a certificate to an already-revoked key changes
+	# nothing observable, so the certificate learns nothing either way.
+	#
+	#   refuse  the replacement. Being revoked already is itself the failure --
+	#           it is what production signs with today -- and on top of that the
+	#           certificate that is meant to retire it one day stays unproved.
+	#   report  the retired key, whose public material may legitimately have the
+	#           revocation on it already: that is the end state this whole
+	#           procedure is pushing towards, and an operator re-running validate
+	#           after publication should not be stopped by success. The run then
+	#           says, in as many words, that it did not check the certificate.
 	#
 	# Matching the issuer id on the `rvs` record says the certificate was written
 	# for this key. It does not say the signature on it is intact: gpg parses the
@@ -476,17 +688,23 @@ prove_certificate_revokes() {
 	# is revoke anything, and the operator finds that out on the one day it
 	# matters. So import both halves into a keyring that has never held either and
 	# make gpg say the word.
-	local cert="$1" material="$2" keyid="$3" label="$4"
+	local cert="$1" material="$2" keyid="$3" label="$4" policy="$5"
 	local home
 	home="$(new_keyring)"
 	gpg_in "$home" --import "$material" 2>/dev/null \
 		|| fail "$label: the key material at $material did not import, so the certificate cannot be checked against it"
 	if is_revoked "$home" "$keyid"; then
-		# The key material already carries a revocation, so applying the
-		# certificate changes nothing observable and cannot be used as evidence
-		# about the certificate. Say that rather than claiming a proof.
-		note "$label: the key material at $material already carries a revocation for $keyid, so this run cannot tell whether the certificate at $cert would have applied it"
-		return 0
+		case "$policy" in
+			refuse)
+				fail "$label: the key material at $material already reports $keyid as revoked, before this run imported any certificate. Two things are wrong at once. That key is what production signs with, so a revoked copy in the handoff means either the wrong key was handed off or the live one has been retired without the rest of this saying so. And in that state nothing can be learned about the certificate at $cert: importing it into a keyring that already reports the key revoked changes nothing observable, so the certificate that is supposed to retire $keyid one day stays unproved. Establish which key is actually live before going further."
+				;;
+			report)
+				note "$label: the key material at $material already reports $keyid as revoked, so importing the certificate at $cert changes nothing this run can observe. The certificate itself is therefore NOT proved usable here -- it was not checked, only named."
+				UNPROVEN+="  - the certificate at $cert was not proved to revoke $keyid: the key material at $material already carries a revocation, which is what an already-published retirement looks like. Nothing is wrong; nothing was checked either."$'\n'
+				return 0
+				;;
+			*) fail "internal: unknown pre-revoked policy $policy" ;;
+		esac
 	fi
 	gpg_in "$home" --import "$cert" 2>/dev/null \
 		|| fail "$label: gpg refused to import the revocation certificate at $cert. It names $keyid -- that much is only a header -- but the signature on it does not check out, which is what a certificate corrupted or truncated in storage looks like. There is no way to make another one without the secret key."
@@ -536,7 +754,7 @@ cmd_validate() {
 	repl_cert="$(inventory_path "$INV_REVOCATION" "$REPLACEMENT_KEY")"
 	repl_material="$(inventory_path "$INV_PUBLIC" "$REPLACEMENT_KEY" || true)"
 	[ -n "$repl_material" ] || repl_material="$(inventory_path "$INV_SECRET" "$REPLACEMENT_KEY")"
-	prove_certificate_revokes "$repl_cert" "$repl_material" "$REPLACEMENT_KEY" "replacement"
+	prove_certificate_revokes "$repl_cert" "$repl_material" "$REPLACEMENT_KEY" "replacement" refuse
 
 	inventory_has "$INV_REVOCATION" "$RETIRED_KEY" \
 		|| fail "no revocation certificate for the retired $RETIRED_KEY in $HANDOFF_DIR. This script will not generate one -- ADR-004 turns on publishing the certificate that already exists."
@@ -548,7 +766,7 @@ cmd_validate() {
 		retired_cert="$(inventory_path "$INV_REVOCATION" "$RETIRED_KEY")"
 		retired_material="$(inventory_path "$INV_PUBLIC" "$RETIRED_KEY" || true)"
 		[ -n "$retired_material" ] || retired_material="$(inventory_path "$INV_SECRET" "$RETIRED_KEY")"
-		prove_certificate_revokes "$retired_cert" "$retired_material" "$RETIRED_KEY" "retired"
+		prove_certificate_revokes "$retired_cert" "$retired_material" "$RETIRED_KEY" "retired" report
 	else
 		note "no retired public key in $HANDOFF_DIR; pass --retired-public PATH before publishing. Neither keyserver currently carries $RETIRED_KEY, so the revocation cannot be uploaded on its own. Its certificate cannot be proved to revoke anything until that key is here."
 	fi
@@ -557,9 +775,17 @@ cmd_validate() {
 		|| fail "no preserved material for $PRESERVED_KEY. That key now shares the replacement's passphrase, so it is part of this handoff whether or not it was part of the rotation."
 	ok "preserved key material present ($PRESERVED_KEY)"
 
-	if [ -n "$PRIVATE_BACKUP" ] && [ -n "$PASSPHRASE_SOURCE" ]; then
-		distinct_locations "$PRIVATE_BACKUP" "$PASSPHRASE_SOURCE"
-		ok "the private-key backup and the passphrase backup are in separate locations"
+	if [ -n "$PASSPHRASE_SOURCE" ]; then
+		if [ -n "$PRIVATE_BACKUP" ]; then
+			distinct_locations "$PRIVATE_BACKUP" "the private-key backup" \
+				"$PASSPHRASE_SOURCE" "the passphrase backup"
+			ok "the private-key backup and the passphrase backup are in separate locations"
+		fi
+		if [ -n "$PRESERVED_BACKUP" ]; then
+			distinct_locations "$PRESERVED_BACKUP" "the preserved-key backup" \
+				"$PASSPHRASE_SOURCE" "the passphrase backup"
+			ok "the preserved-key backup and the passphrase backup are in separate locations"
+		fi
 	fi
 
 	if [ "$CHECK_UNLOCK" = 1 ]; then
@@ -582,6 +808,9 @@ cmd_validate() {
 	fi
 
 	printf '\nvalidate: handoff structure is sound. This proves the material is present and internally consistent. It does not prove any of it was backed up.\n'
+	if [ -n "$UNPROVEN" ]; then
+		printf '\nNot proved by this run:\n%s' "$UNPROVEN"
+	fi
 }
 
 cmd_verify_backup() {
@@ -603,14 +832,24 @@ cmd_verify_backup() {
 	refuse_handoff_original "$PRESERVED_BACKUP" "the preserved-key backup"
 	refuse_handoff_original "$PASSPHRASE_SOURCE" "the passphrase backup"
 
-	distinct_locations "$PRIVATE_BACKUP" "$PASSPHRASE_SOURCE"
+	distinct_locations "$PRIVATE_BACKUP" "the private-key backup" \
+		"$PASSPHRASE_SOURCE" "the passphrase backup"
 	ok "the private-key backup and the passphrase backup are in separate locations"
+	# $PRESERVED_KEY is opened by the same passphrase, so it is under the same
+	# rule. Checking only the replacement left the operator free to keep the
+	# preserved key in the passphrase's own directory and still be told retrieval
+	# was proven -- and whoever copies that directory walks away with a key and
+	# the passphrase that opens it, which is the entire failure this check names.
+	distinct_locations "$PRESERVED_BACKUP" "the preserved-key backup" \
+		"$PASSPHRASE_SOURCE" "the passphrase backup"
+	ok "the preserved-key backup and the passphrase backup are in separate locations"
 
 	# Fingerprint the originals before touching them, and again afterwards. The
 	# operator is about to delete the local copies on the strength of this run,
 	# so "left the originals untouched" has to be measured rather than asserted.
 	local before after
-	before="$(backup_digest)"
+	before="$(backup_digest)" \
+		|| fail "could not fingerprint the backup files before reading them, so this run could not show afterwards that it left them alone"
 
 	acquire_passphrase "$PASSPHRASE_SOURCE" 0
 
@@ -632,7 +871,8 @@ cmd_verify_backup() {
 	prove_passphrase_required "$phome" "$PRESERVED_KEY" "the restored preserved key"
 	prove_unlock "$phome" "$PRESERVED_KEY" "the restored preserved key"
 
-	after="$(backup_digest)"
+	after="$(backup_digest)" \
+		|| fail "could not fingerprint the backup files after reading them"
 	[ "$before" = "$after" ] || fail "the backup files changed during verification. Nothing here writes to them; investigate before trusting this run."
 	ok "the backup files are byte-identical to how this run found them"
 
@@ -640,12 +880,27 @@ cmd_verify_backup() {
 }
 
 backup_digest() {
-	local f
+	# One digest over every file this command was pointed at, path included, so
+	# a file swapped for another of the same length is as visible as a file
+	# edited in place. sha256sum is not on a Mac and cut is one more coreutils
+	# dependency for nothing; file_digest asks gpg, which is already here.
+	local f d manifest="$WORK/backup-manifest"
+	: >"$manifest"
 	for f in "$PRIVATE_BACKUP" "$PASSPHRASE_SOURCE" "$PRESERVED_BACKUP"; do
 		[ -n "$f" ] && [ -f "$f" ] || continue
-		sha256sum "$f"
-	done | sha256sum | cut -d' ' -f1
+		d="$(file_digest "$f")" || return 1
+		printf '%s  %s\n' "$d" "$f" >>"$manifest"
+	done
+	file_digest "$manifest" || return 1
+	rm -f "$manifest"
 }
+
+# Set by prepare_revoked_keyring: whether the retired public material arrived
+# with the revocation already on it. Publishing it is still the right thing --
+# the revoked key is what reaches the keyservers either way -- but the
+# certificate was not what put it there, and the closing sentence must not say
+# it was. Same rule as validate's, in the other command that imports one.
+PRE_REVOKED=0
 
 # Set by prepare_revoked_keyring. A return value cannot travel on stdout here:
 # the same function prints the proofs it just made, and a caller capturing the
@@ -696,14 +951,19 @@ prepare_revoked_keyring() {
 		|| fail "the retired public key at $retired_pub did not import"
 	assert_imported_id "$home" "$RETIRED_KEY" "the retired public key"
 	if is_revoked "$home" "$RETIRED_KEY"; then
-		note "the retired key already carried a revocation before this run"
+		PRE_REVOKED=1
+		note "the retired public material at $retired_pub already carries a revocation, so importing the certificate cannot change anything this run can observe. The revoked key is what gets published either way; the certificate is simply not what this run proved."
 	fi
 
 	gpg_in "$home" --import "$revocation" 2>/dev/null \
 		|| fail "the revocation certificate did not import"
 	is_revoked "$home" "$RETIRED_KEY" \
 		|| fail "after importing the certificate, gpg still reports $RETIRED_KEY as live. Nothing is published until this holds locally."
-	ok "$RETIRED_KEY is revoked in the local keyring"
+	if [ "$PRE_REVOKED" = 1 ]; then
+		ok "$RETIRED_KEY is revoked in the local keyring -- it arrived that way, and the certificate was not what proved it"
+	else
+		ok "$RETIRED_KEY is revoked in the local keyring, by the certificate this run imported"
+	fi
 
 	REVOKED_HOME="$home"
 }
@@ -739,7 +999,11 @@ cmd_publish_revocation() {
 	printf '  -- targets: %s\n' "${KEYSERVERS[*]}"
 
 	if [ "$DRY_RUN" = 1 ] || [ "$CONFIRM_PUBLISH" != 1 ]; then
-		printf '\npublish-revocation: verify-only. The certificate is valid, it belongs to %s, and it revokes the key locally. Nothing was uploaded.\n' "$RETIRED_KEY"
+		if [ "$PRE_REVOKED" = 1 ]; then
+			printf '\npublish-revocation: verify-only. The key material for %s already carried its revocation, so the certificate was NOT exercised by this run -- it belongs to that key and nothing more was shown. What would be published is revoked regardless. Nothing was uploaded.\n' "$RETIRED_KEY"
+		else
+			printf '\npublish-revocation: verify-only. The certificate is valid, it belongs to %s, and it revokes the key locally. Nothing was uploaded.\n' "$RETIRED_KEY"
+		fi
 		if [ "$DRY_RUN" = 1 ] && [ "$CONFIRM_PUBLISH" = 1 ]; then
 			printf '%s\n' "--dry-run overrides --confirm-publish, which is why this uploaded nothing. Drop --dry-run to publish to: ${KEYSERVERS[*]}"
 		else
@@ -872,7 +1136,7 @@ main() {
 	refuse_ci
 	# After the CI refusal, which has to land before anything looks at a path.
 	PASSPHRASE_SOURCE="${PASSPHRASE_BACKUP:-${KEY_HANDOFF_PASSPHRASE_FILE:-}}"
-	command -v gpg >/dev/null 2>&1 || fail "gpg not found; this whole procedure is GnuPG"
+	require_tools
 
 	WORK="$(mktemp -d)"
 	# EXIT alone is not enough: bash does not run an EXIT trap when it dies on an
@@ -886,6 +1150,9 @@ main() {
 	# Before anything decodes a file: show_keys runs gpg, and without this it
 	# would run it against the operator's own ~/.gnupg.
 	init_classify_home
+	# And before anything reads handoff material: the path canonicalisation and
+	# the digest are checked by being used, on this machine, in this shell.
+	prove_primitives
 
 	case "$command" in
 		validate) cmd_validate ;;
