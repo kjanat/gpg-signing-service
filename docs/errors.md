@@ -259,7 +259,7 @@ rather than the message, which is how `{"keyIds": ["${MY_KEY_ID}"]}` in single
 quotes is diagnosed without the response repeating the literal back. Only the
 routes with a declared request schema produce it; a hand-written `400` does not.
 
-Key ids are the 16-character long id — `62E75E54497815DD`, not
+Key ids are the 16-character long id — `AFD5E3EC68371856`, not
 `signing-key-v1`.
 
 ### PAYLOAD_TOO_LARGE

@@ -299,7 +299,7 @@ just `X-RateLimit-Remaining` and `X-RateLimit-Reset`.
 
 ```json
 {
-  "error": "Token is not allowed to sign with key 62E75E54497815DD",
+  "error": "Token is not allowed to sign with key AFD5E3EC68371856",
   "code": "KEY_NOT_ALLOWED",
   "requestId": "550e8400-e29b-41d4-a716-446655440000",
   "docs": "https://gpg.kajkowalski.nl/e/KEY_NOT_ALLOWED"

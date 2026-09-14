@@ -194,7 +194,7 @@ export interface Env {
 	 * and which signing key each of them may cause to sign with.
 	 *
 	 * Comma-separated `<installationId>:<owner>/<repo>[=<keyId>]` entries, e.g.
-	 * `12345678:kjanat/gpg-signing-service=62E75E54497815DD`. Unset authorizes no
+	 * `12345678:kjanat/gpg-signing-service=AFD5E3EC68371856`. Unset authorizes no
 	 * installation and no repository — the App-level `ping`, which names neither,
 	 * still answers so an operator can check the endpoint before writing this.
 	 *

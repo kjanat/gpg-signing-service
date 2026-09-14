@@ -67,6 +67,7 @@ tasks:
       - task: test:gitleaks-contract
       - task: test:key-material
       - task: test:key-handoff
+      - task: test:retired-key-refs
 
   test:sentry:
     desc: Run the Sentry boundary suite alone — the inner loop of the mutation set
@@ -190,6 +191,11 @@ tasks:
     aliases: [tkh, handoff]
     cmd: bash scripts/test-key-handoff.sh
 
+  test:retired-key-refs:
+    desc: Test that no live-facing doc or CLI example names the retired signing key
+    aliases: [trk, retired]
+    cmd: bash scripts/test-retired-key-refs.sh
+
   test:coverage:
     desc: Run tests with coverage
     aliases: [tc]
@@ -219,6 +225,7 @@ tasks:
       - task: test:gitleaks-contract
       - task: test:key-material
       - task: test:key-handoff
+      - task: test:retired-key-refs
 
   test:watch:
     desc: Run tests in watch mode

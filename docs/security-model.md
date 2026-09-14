@@ -164,9 +164,27 @@ exact description of bytes that are already in published history, in a matcher
 representation that `scripts/allowlist-regex.py --decode` reverses on purpose;
 an exact-match entry cannot stop describing what it matches. Removing the
 representation would not remove the exposure, because the commits it names are
-public. Only rotating the key does that, which is why
-[#147](https://github.com/kjanat/gpg-signing-service/issues/147) stays open until
-the operator has replaced it.
+public. Only rotating the key does that, and it has: production moved to
+`AFD5E3EC68371856` on 2026-09-08.
+[#147](https://github.com/kjanat/gpg-signing-service/issues/147) stays open for
+the two operator-only steps left — verifying the offline backup of the
+replacement credentials, and publishing the retired key's revocation — not for
+another rotation.
+
+A second, much smaller gate covers what is left once the material is gone: the
+retired key's **id**. That id is public and always was, so this is not a secrecy
+problem — it is that production answers `404 KEY_NOT_FOUND` for it, and an
+example that still passes it hands a new operator a failure to debug. `task
+test:retired-key-refs` fails if any tracked file names that id outside two
+tiers: the files whose subject _is_ the retirement (ADR-004, the
+[key handoff runbook](key-handoff-runbook.md) and its tooling, the key-material
+guard's own retired set) and the unit suites and `wrangler.test.toml`, where the
+id is deterministic historical data. Inside the first tier the id still has to
+sit near language marking it as retired, because a path allowlist on its own
+would let a signing example be appended to the runbook — which is exactly where
+one would look at home. Use `AFD5E3EC68371856` in an example that means the
+deployed key, and `A1B2C3D4E5F67890` in one that changes stored state, so a
+copied command cannot land on a live key.
 
 ## Key expiry monitoring
 

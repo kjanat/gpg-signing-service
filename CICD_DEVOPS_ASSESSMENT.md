@@ -397,7 +397,8 @@ new_sqlite_classes = ["KeyStorage", "RateLimiter"]
 
 **Status**: **Partial**
 
-**Documented Variables** (in `wrangler.toml`):
+**Documented Variables** (in `wrangler.toml`, as they stood at the assessment
+date):
 
 ```toml
 [vars]
@@ -405,6 +406,11 @@ BUN_VERSION     = "1.3.3"
 ALLOWED_ISSUERS = "https://token.actions.githubusercontent.com,https://gitlab.com"
 KEY_ID          = "62E75E54497815DD"
 ```
+
+> That `KEY_ID` is the key the 2026-09-08 rotation retired. It is left as it
+> stood because this is a dated record, not a current example; production signs
+> with `AFD5E3EC68371856`. See
+> [ADR-004](docs/adr/ADR-004-retired-key-revocation.md).
 
 **Issues**:
 

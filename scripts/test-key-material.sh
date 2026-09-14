@@ -2,9 +2,9 @@
 # Covers the key-material contract: no tracked file carries a private key, and
 # no tracked file carries a retired production key even in public form.
 #
-# #147: `src/__tests__/` held the deployment's own encrypted signing key --
-# 62E75E54497815DD, the `KEY_ID` wrangler.toml sets and the key the v1.2.0 tag
-# is signed with -- in twelve places across four suites. Ten of them wore an
+# #147: `src/__tests__/` held what was then the deployment's own encrypted signing
+# key -- 62E75E54497815DD, the key the v1.2.0 tag is signed with, retired by the
+# 2026-09-08 rotation -- in twelve places across four suites. Ten of them wore an
 # earlier creation timestamp, which is a different fingerprint over an identical
 # public point and an identical S2K-protected secret, so a check that compared
 # fingerprints would have called those ten a different key and moved on.

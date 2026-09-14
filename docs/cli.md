@@ -132,7 +132,10 @@ reports `built`.
 Run `gpg-sign <command> --help` for all flags.
 
 Key IDs must contain exactly 16 hexadecimal characters, for example
-`62E75E54497815DD`.
+`AFD5E3EC68371856`, the key this deployment signs with. Examples that _change_
+stored state — uploading a key here, deleting one in
+[Authentication](authentication.md#read-only-admin-token) — use the placeholder
+`A1B2C3D4E5F67890` instead, so a copied command cannot land on a live key.
 
 ## Examples
 
@@ -145,7 +148,7 @@ GPG_SIGN_URL="https://your-worker.example" gpg-sign health
 ### Public key
 
 ```bash
-gpg-sign public-key --key-id 62E75E54497815DD > signing-key.asc
+gpg-sign public-key --key-id AFD5E3EC68371856 > signing-key.asc
 gpg --import signing-key.asc
 ```
 
@@ -156,14 +159,14 @@ export GPG_SIGN_URL="https://your-worker.example"
 export GPG_SIGN_TOKEN="gst_..."
 
 printf 'data to sign' |
-  gpg-sign sign --key-id 62E75E54497815DD > signature.asc
+  gpg-sign sign --key-id AFD5E3EC68371856 > signature.asc
 ```
 
 For Git:
 
 ```bash
 git cat-file commit HEAD |
-  gpg-sign sign --key-id 62E75E54497815DD > commit.sig
+  gpg-sign sign --key-id AFD5E3EC68371856 > commit.sig
 ```
 
 `commit.sig` is not yet part of the commit. See
@@ -175,7 +178,7 @@ git cat-file commit HEAD |
 export GPG_SIGN_URL="https://your-worker.example"
 export GPG_SIGN_TOKEN="gst_..."
 
-gpg-sign sign-commit --base origin/master --key-id 62E75E54497815DD
+gpg-sign sign-commit --base origin/master --key-id AFD5E3EC68371856
 ```
 
 This rewrites every commit in `origin/master..HEAD` and moves the local `HEAD`
@@ -583,7 +586,7 @@ export GPG_SIGN_URL="https://your-worker.example"
 export GPG_SIGN_ADMIN_TOKEN="..."
 
 gpg-sign admin upload \
-  --key-id 62E75E54497815DD \
+  --key-id A1B2C3D4E5F67890 \
   --file .keys/private-key.asc
 ```
 

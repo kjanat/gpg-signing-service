@@ -36,7 +36,7 @@ OpenAPI 3.1.
 ## Sign request
 
 ```http
-POST /sign?keyId=62E75E54497815DD
+POST /sign?keyId=AFD5E3EC68371856
 Authorization: Bearer <OIDC-JWT-or-gst-token>
 Content-Type: text/plain
 X-Request-ID: 123e4567-e89b-42d3-a456-426614174000

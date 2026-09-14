@@ -29,7 +29,7 @@ Requires the git binary on PATH. Signature verification runs in-process, so
 no gpg installation is needed.
 
 Example:
-  gpg-sign sign-commit --key-id=62E75E54497815DD
+  gpg-sign sign-commit --key-id=AFD5E3EC68371856
   gpg-sign sign-commit --base=origin/master --allow-resign`,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		keyID, _ := cmd.Flags().GetString("key-id")

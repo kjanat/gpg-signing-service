@@ -56,7 +56,7 @@ jobs:
           GPG_SIGN_URL: ${{ vars.SIGNING_SERVICE_URL }}
         run: |
           git cat-file commit HEAD |
-            gpg-sign sign --key-id 62E75E54497815DD > commit.sig
+            gpg-sign sign --key-id AFD5E3EC68371856 > commit.sig
 
       - uses: actions/upload-artifact@v6
         with:
@@ -92,7 +92,7 @@ steps:
       GPG_SIGN_URL: ${{ vars.SIGNING_SERVICE_URL }}
     run: |
       git cat-file commit HEAD |
-        gpg-sign sign --key-id 62E75E54497815DD > commit.sig
+        gpg-sign sign --key-id AFD5E3EC68371856 > commit.sig
 ```
 
 The service token belongs in the caller repository's secret store, not in the
@@ -124,7 +124,7 @@ request-signature:
     - cd "$CI_PROJECT_DIR"
   script:
     - git cat-file commit HEAD |
-      gpg-sign sign --key-id 62E75E54497815DD > commit.sig
+      gpg-sign sign --key-id AFD5E3EC68371856 > commit.sig
   artifacts:
     paths: [commit.sig]
 ```
@@ -141,7 +141,7 @@ export GPG_SIGN_URL="https://your-worker.example"
 export GPG_SIGN_TOKEN="$GPG_SIGN_SERVICE_TOKEN"
 
 git cat-file commit HEAD |
-  gpg-sign sign --key-id 62E75E54497815DD > commit.sig
+  gpg-sign sign --key-id AFD5E3EC68371856 > commit.sig
 ```
 
 Prefer an expiration and key allowlist when the token is created. See
@@ -156,7 +156,7 @@ the new objects, verifies them against the service key, and moves the local
 `HEAD` ref:
 
 ```bash
-gpg-sign sign-commit --base origin/master --key-id 62E75E54497815DD
+gpg-sign sign-commit --base origin/master --key-id AFD5E3EC68371856
 ```
 
 This is still a privileged workflow. The command stops at `git update-ref HEAD`

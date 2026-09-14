@@ -874,7 +874,7 @@ export interface ReportDocument {
  *
  * Names the single affected key when there is exactly one, because that is the
  * common case and it makes the inbox row self-contained: an operator who sees
- * "62E75E54497815DD expires in 42 days" does not have to open anything to know
+ * "AFD5E3EC68371856 expires in 42 days" does not have to open anything to know
  * whether it is the production key.
  */
 export function reportSubject(rows: readonly KeyExpiryRow[], context: ReportContext): string {
