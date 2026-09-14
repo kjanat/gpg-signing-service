@@ -120,6 +120,16 @@ WINDOW = 3
 NEEDLE = re.compile(re.escape(RETIRED_KEY_ID), re.IGNORECASE)
 MARKER = re.compile("|".join(re.escape(m) for m in MARKERS), re.IGNORECASE)
 
+# A markdown link-reference definition -- `[ADR-004]: adr/ADR-004-retired-key-
+# revocation.md` -- carries no prose. Its label and its destination are named
+# after the incident, so `MARKER` matches it three times over while it says
+# nothing about the occurrence beside it. Every guide in this tree collects
+# those definitions at the bottom of the file, which is also where an appended
+# example lands, so leaving them in the window meant the runbook's own footer
+# vouched for the next thing written under it. Marker lookup skips them; the
+# occurrence has to be introduced by a sentence.
+LINK_DEF = re.compile(r"^\s*\[[^\]]+\]:\s*\S+\s*$")
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -140,14 +150,26 @@ def tier(path: str) -> str:
     return "live"
 
 
-def scan(path: str) -> list[Finding]:
-    """Findings for one tracked file, read as bytes so nothing is skipped."""
+def read(path: str) -> str | None:
+    """The file as text, or None if it could not be read at all.
+
+    Bytes, not text: a file that is not valid UTF-8 is still a file, and
+    skipping by encoding is an exclusion with another name.
+    """
     try:
-        text = Path(path).read_bytes().decode("latin-1")
+        return Path(path).read_bytes().decode("latin-1")
     except (IsADirectoryError, FileNotFoundError, PermissionError):
         # A submodule, a deleted-but-staged path, an unreadable file. Not a
         # place the id can be read from, so not a finding -- but not silently
-        # dropped either: `--considered` prints what was read.
+        # dropped either: `--considered` reports it as `unread`, and the suite
+        # fails if any tracked path lands there.
+        return None
+
+
+def scan(path: str) -> list[Finding]:
+    """Findings for one tracked file."""
+    text = read(path)
+    if text is None:
         return []
 
     where = tier(path)
@@ -175,7 +197,8 @@ def scan(path: str) -> list[Finding]:
             )
             continue
         window = lines[max(0, index - WINDOW) : index + WINDOW + 1]
-        if not any(MARKER.search(neighbour) for neighbour in window):
+        prose = [n for n in window if not LINK_DEF.match(n)]
+        if not any(MARKER.search(neighbour) for neighbour in prose):
             findings.append(
                 Finding(
                     path,
@@ -192,8 +215,12 @@ def scan(path: str) -> list[Finding]:
 def main(argv: list[str]) -> int:
     paths = [a for a in argv if a != "--considered"]
     if "--considered" in argv:
+        # Tier *and* whether the bytes were actually obtained. Printing one line
+        # per argument would say only that the path was passed in, which the
+        # caller already knew; the suite needs to know the file was opened.
         for path in paths:
-            print(f"{tier(path)}\t{path}")
+            state = "unread" if read(path) is None else "read"
+            print(f"{tier(path)}\t{state}\t{path}")
         return 0
 
     findings = [f for path in paths for f in scan(path)]

@@ -67,17 +67,27 @@ report() { cat "${tmp_dir}/report"; }
 # =============================================================================
 
 new_case 'no tracked file names the retired key outside the incident and fixture tiers'
-if ! (cd "${repo_root}" && git ls-files | xargs python3 "${detector}" >"${tmp_dir}/report" 2>&1); then
+if ! (cd "${repo_root}" && git ls-files -z | xargs -0 python3 "${detector}" >"${tmp_dir}/report" 2>&1); then
 	fail "$(report | head -n 5)"
 fi
 
 # The other end of the same fact. A gate that reported nothing because it read
-# nothing would pass the case above.
-new_case 'every tracked file is considered, with nothing dropped'
+# nothing would pass the case above, so count the files whose bytes the detector
+# actually got -- `--considered` reports `read` or `unread` per path, and
+# echoing one line per argument would only restate the argument list.
+# `-z`/`-0` because a tracked path containing a space would otherwise reach the
+# detector as two paths that do not exist, and be skipped as unreadable.
+new_case 'every tracked file is read, with nothing dropped'
 tracked="$(cd "${repo_root}" && git ls-files | wc -l)"
-considered="$(cd "${repo_root}" && git ls-files | xargs python3 "${detector}" --considered | wc -l)"
-[[ ${tracked} -eq ${considered} ]] \
-	|| fail "git tracks ${tracked} files and the detector considered ${considered}"
+were_read="$(cd "${repo_root}" && git ls-files -z | xargs -0 python3 "${detector}" --considered | grep -c "$(printf '\tread\t')")"
+[[ ${tracked} -eq ${were_read} ]] \
+	|| fail "git tracks ${tracked} files and the detector read ${were_read}"
+
+# ...and that count is only meaningful if `unread` is reachable, or the case
+# above is comparing an argument list against itself.
+new_case 'a path the detector cannot open is reported as unread, not as clean'
+[[ "$(cd "${repo_root}" && python3 "${detector}" --considered docs/does-not-exist.md)" == *$'\tunread\t'* ]] \
+	|| fail 'a missing path was reported as read'
 
 # A future rotation moves the deployment again. If it ever moves *onto* the key
 # this gate hunts, every example in the tree is wrong in the opposite direction
@@ -216,6 +226,39 @@ new_case 'the marked line of that same file is not reported'
 if grep -q 'docs/key-handoff-runbook.md:1:' "${tmp_dir}/report"; then
 	fail 'prose that says the key is retired was reported anyway'
 fi
+
+# The footer of every guide in this tree is a block of markdown link-reference
+# definitions, and `[ADR-004]: adr/ADR-004-retired-key-revocation.md` matches
+# three markers inside a file path while saying nothing about the line beneath
+# it. An appended example lands in exactly that part of the file, so before this
+# was excluded the runbook's own footer vouched for whatever was written under
+# it -- the one failure the semantic tier exists to catch.
+new_case 'mutant: a link-reference footer does not vouch for an example under it'
+plant 'docs/key-handoff-runbook.md' <<EOF
+The 2026-09-08 rotation retired ${retired}.
+
+[#147]: https://github.com/kjanat/gpg-signing-service/issues/147
+[ADR-004]: adr/ADR-004-retired-key-revocation.md
+
+    gpg-sign sign --key-id ${retired} > commit.sig
+EOF
+if [[ "$(detect "${tmp_dir}/tree" docs/key-handoff-runbook.md)" == "found" ]]; then
+	grep -q 'docs/key-handoff-runbook.md:6:' "${tmp_dir}/report" \
+		|| fail "the example on line 6 was not among the findings: $(report | head -n 3)"
+else
+	fail 'a link-reference footer marked an operational example as retirement prose'
+fi
+
+# ...while a real sentence next to a link reference still marks the occurrence,
+# so the exclusion is of the definition line only and not of the vocabulary.
+new_case 'prose beside a link-reference footer still marks the occurrence'
+plant 'docs/adr/ADR-004-retired-key-revocation.md' <<EOF
+[#147]: https://github.com/kjanat/gpg-signing-service/issues/147
+
+The 2026-09-08 rotation retired ${retired}; its public half stays.
+EOF
+[[ "$(detect "${tmp_dir}/tree" docs/adr/ADR-004-retired-key-revocation.md)" == "clean" ]] \
+	|| fail "prose was reported because a link definition sat above it: $(report | head -n 1)"
 
 # =============================================================================
 # 5. The fixture tier, and the allowlist that decides all three
