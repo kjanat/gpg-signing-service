@@ -19,11 +19,15 @@
 #
 # Deleting every mention would break the containment record. ADR-004, the
 # key-handoff runbook and its tooling, the key-material guard's retired set and
-# fourteen unit suites all name the key on purpose. So the gate is scoped by path
-# *and* by meaning, and both halves are mutated below: section 3 proves the path
-# tier, section 4 proves that an operational example smuggled into an allowlisted
-# file is still caught, and section 5 proves the allowlist cannot quietly grow to
-# cover a live-facing guide.
+# fourteen unit suites all name the key on purpose. So the gate is scoped by
+# path, by meaning *and* by whether the line is something a reader runs, and
+# every one of those is mutated below: section 3 proves the path tier, section 4
+# proves that an unmarked example smuggled into an allowlisted file is caught,
+# section 5 proves a *marked* one is caught too -- prose an incident file is full
+# of by construction cannot vouch for a command -- and section 6 proves the
+# allowlist cannot quietly grow to cover a live-facing guide. Section 7 attacks
+# the path list itself, where a filename containing a newline used to walk past
+# the gate and past the accounting that was supposed to notice.
 #
 # Run: task test:retired-key-refs
 set -euo pipefail
@@ -66,20 +70,26 @@ report() { cat "${tmp_dir}/report"; }
 # 1. The tree the gate is guarding
 # =============================================================================
 
+# NUL from end to end: `-z` out of git, `--stdin0` into the detector. A tracked
+# path may contain a space or a newline, and every line-oriented or
+# quote-parsing step between the two is a way for such a path to arrive as
+# something that does not exist and be skipped as unreadable. Section 7 plants
+# one and proves this pipeline sees it.
 new_case 'no tracked file names the retired key outside the incident and fixture tiers'
-if ! (cd "${repo_root}" && git ls-files -z | xargs -0 python3 "${detector}" >"${tmp_dir}/report" 2>&1); then
+if ! (cd "${repo_root}" && git ls-files -z | python3 "${detector}" --stdin0 >"${tmp_dir}/report" 2>&1); then
 	fail "$(report | head -n 5)"
 fi
 
 # The other end of the same fact. A gate that reported nothing because it read
 # nothing would pass the case above, so count the files whose bytes the detector
 # actually got -- `--considered` reports `read` or `unread` per path, and
-# echoing one line per argument would only restate the argument list.
-# `-z`/`-0` because a tracked path containing a space would otherwise reach the
-# detector as two paths that do not exist, and be skipped as unreadable.
+# echoing one line per argument would only restate the argument list. Both
+# counts are NUL-delimited: `wc -l` over quoted paths and `wc -c` over NULs
+# agree today and would disagree the moment a newline enters a filename, which
+# is exactly when the count has to be right.
 new_case 'every tracked file is read, with nothing dropped'
-tracked="$(cd "${repo_root}" && git ls-files | wc -l)"
-were_read="$(cd "${repo_root}" && git ls-files -z | xargs -0 python3 "${detector}" --considered | grep -c "$(printf '\tread\t')")"
+tracked="$(cd "${repo_root}" && git ls-files -z | tr -dc '\0' | wc -c)"
+were_read="$(cd "${repo_root}" && git ls-files -z | python3 "${detector}" --considered --null --stdin0 | grep -zc "$(printf '\tread\t')" || true)"
 [[ ${tracked} -eq ${were_read} ]] \
 	|| fail "git tracks ${tracked} files and the detector read ${were_read}"
 
@@ -261,7 +271,128 @@ EOF
 	|| fail "prose was reported because a link definition sat above it: $(report | head -n 1)"
 
 # =============================================================================
-# 5. The fixture tier, and the allowlist that decides all three
+# 5. The executable rule: prose does not vouch for a command
+# =============================================================================
+
+# The window section 4 reads is the wrong unit for a command. An incident file is
+# full of retirement vocabulary by construction -- that is what makes it an
+# incident file -- so an example pasted under a sentence about the retirement
+# inherits that sentence's marker and goes through, while still being a line a
+# reader can paste into a shell and get `404 KEY_NOT_FOUND` from. The semantic
+# tier on its own answered `clean` here.
+new_case 'mutant: a command is reported even with retirement prose beside it'
+plant 'docs/key-handoff-runbook.md' <<EOF
+The retired key ${retired} is unavailable: the 2026-09-08 rotation revoked it.
+
+\`\`\`bash
+gpg-sign sign --key-id ${retired} > commit.sig
+\`\`\`
+
+Everything above is about the retirement of ${retired}.
+EOF
+if [[ "$(detect "${tmp_dir}/tree" docs/key-handoff-runbook.md)" == "found" ]]; then
+	grep -q '^docs/key-handoff-runbook.md:4: executable:' "${tmp_dir}/report" \
+		|| fail "the command on line 4 was not reported as executable: $(report | head -n 3)"
+	if grep -q '^docs/key-handoff-runbook.md:1:' "${tmp_dir}/report"; then
+		fail 'the sentence that introduces it was reported as well'
+	fi
+else
+	fail 'a command surrounded by retirement prose was not reported'
+fi
+
+# ...and that is the rule doing it, not the window. Neuter the executable branch
+# in a copy and require the same plant through.
+new_case 'mutant: without the executable rule the same file passes'
+unguarded="${tmp_dir}/unguarded.py"
+sed 's/^        if executable(line) and not revocation_operation(line):$/        if False:/' \
+	"${detector}" >"${unguarded}"
+grep -q '^        if False:$' "${unguarded}" || fail 'the mutant was not built'
+if (cd "${tmp_dir}/tree" && python3 "${unguarded}" docs/key-handoff-runbook.md >/dev/null 2>&1); then
+	: # clean without the rule, which is what makes the case above load-bearing
+else
+	fail 'the neutered detector reported it anyway, so the case above proves nothing'
+fi
+
+# The exemption, and it has to be real: publishing a revocation *is* naming the
+# retired key, and the runbook would be unwritable if these were findings. The
+# exemption is on the operation -- local gpg keyring work, keyserver
+# publication, the handoff script -- not on a flag spelling.
+new_case 'the revocation operations an incident file documents stay clean'
+plant 'docs/key-handoff-runbook.md' <<EOF
+Publishing the revocation has to name the key it revokes:
+
+\`\`\`bash
+gpg --keyserver hkps://keys.openpgp.org --send-keys ${retired}
+gpg --import revocation.asc && gpg --list-keys ${retired}
+bash scripts/key-handoff.sh publish-revocation --retired-key ${retired}
+\`\`\`
+EOF
+[[ "$(detect "${tmp_dir}/tree" docs/key-handoff-runbook.md)" == "clean" ]] \
+	|| fail "a revocation operation was reported: $(report | head -n 3)"
+
+# ...and it is narrow. A line that calls the service is never exempt, however
+# much revocation vocabulary shares it -- `| gpg --import` on the end of a
+# `gpg-sign` invocation does not make the invocation stop 404ing.
+new_case 'mutant: naming a revocation tool does not exempt a line that calls the service'
+plant 'docs/adr/ADR-004-retired-key-revocation.md' <<EOF
+The revocation certificate for the retired key is imported like this:
+
+    gpg-sign public-key --key-id ${retired} | gpg --import
+EOF
+[[ "$(detect "${tmp_dir}/tree" docs/adr/ADR-004-retired-key-revocation.md)" == "found" ]] \
+	|| fail 'a service call was exempted because the line also named gpg'
+
+# The boundary is argument position, not adjacency: ADR-004 records which
+# request 404s, and a sentence naming an endpoint and a key is not a line
+# anybody pastes. This is the shape of the real ADR-004 entry, so the case
+# pins it.
+new_case 'a sentence naming an endpoint and the key is not a command'
+plant 'docs/adr/ADR-004-retired-key-revocation.md' <<EOF
+- The retired key was removed from production on 2026-09-08. A \`GET /public-key\`
+  naming \`${retired}\` answers \`404 KEY_NOT_FOUND\`.
+EOF
+[[ "$(detect "${tmp_dir}/tree" docs/adr/ADR-004-retired-key-revocation.md)" == "clean" ]] \
+	|| fail "prose naming an endpoint and the key was read as a command: $(report | head -n 1)"
+
+# ...while the pasteable spellings of the same request are commands.
+new_case 'mutant: the query and JSON forms of that request are reported'
+plant 'docs/key-handoff-runbook.md' <<EOF
+The retired key ${retired} was revoked in the 2026-09-08 rotation.
+
+    curl "https://sign.example.com/public-key?keyId=${retired}"
+
+    {"keyId": "${retired}"}
+EOF
+if [[ "$(detect "${tmp_dir}/tree" docs/key-handoff-runbook.md)" == "found" ]]; then
+	grep -q '^docs/key-handoff-runbook.md:3: executable:' "${tmp_dir}/report" \
+		|| fail "the query form on line 3 was not reported: $(report | head -n 3)"
+	grep -q '^docs/key-handoff-runbook.md:5: executable:' "${tmp_dir}/report" \
+		|| fail "the JSON form on line 5 was not reported: $(report | head -n 3)"
+else
+	fail 'neither pasteable form of the request was reported'
+fi
+
+# A hyphen inside a word is not a flag. The generic flag arm would otherwise
+# read `retired-key <id>` -- a phrase this tree writes -- as `-key <id>`.
+new_case 'a hyphenated phrase before the id is prose, not a flag'
+plant 'docs/key-handoff-runbook.md' <<EOF
+The retired-key ${retired} keeps its public half so v1.2.0 still verifies.
+EOF
+[[ "$(detect "${tmp_dir}/tree" docs/key-handoff-runbook.md)" == "clean" ]] \
+	|| fail "a hyphenated phrase was read as a command-line flag: $(report | head -n 1)"
+
+# The fixture tier stays exempt from this rule too: the suites build requests
+# against the retired key on purpose, and a request object in a test is an
+# assertion, not an instruction.
+new_case 'a unit suite may build a request against the retired key'
+plant 'src/__tests__/public-key.test.ts' <<EOF
+const request = new Request("https://sign.test/public-key?keyId=${retired}");
+EOF
+[[ "$(detect "${tmp_dir}/tree" src/__tests__/public-key.test.ts)" == "clean" ]] \
+	|| fail 'a request built in a unit suite was reported as an instruction'
+
+# =============================================================================
+# 6. The fixture tier, and the allowlist that decides all three
 # =============================================================================
 
 new_case 'the retired key id is deterministic test data under src/__tests__'
@@ -344,6 +475,52 @@ EOF
 	|| fail 'the shipped detector did not report a live example in docs/cli.md'
 if (cd "${tmp_dir}/tree" && python3 "${widened}" docs/cli.md >/dev/null 2>&1); then
 	fail 'the widened detector reported it too, so the allowlist decides nothing'
+fi
+
+# =============================================================================
+# 7. The path list: a tracked name is bytes, and some of those bytes are newlines
+# =============================================================================
+
+# A path is anything but NUL and `/`, newlines included. `git ls-files` without
+# `-z` C-quotes such a path, `xargs` unquotes it into a name that does not
+# exist, and the detector skips it as unreadable -- while the accounting still
+# balances, because one quoted path is still one line. That is a gate and an
+# audit of the gate agreeing on a file neither of them read. Build a repository
+# with such a path in it and require the pipeline section 1 uses to see it.
+new_case 'a tracked file whose name contains a newline is scanned'
+scratch="${tmp_dir}/newline-repo"
+mkdir -p "${scratch}/docs"
+printf 'gpg-sign sign --key-id %s\n' "${retired}" >"${scratch}/$(printf 'docs/live\nexample.md')"
+git -C "${scratch}" init -q
+git -C "${scratch}" add -A
+if (cd "${scratch}" && git ls-files -z | python3 "${detector}" --stdin0 >"${tmp_dir}/report" 2>&1); then
+	fail 'the command planted in a newline-named file was not reported'
+else
+	grep -qF 'docs/live\nexample.md:1: live-facing:' "${tmp_dir}/report" \
+		|| fail "the finding did not name the file it is in: $(report | head -n 3)"
+fi
+
+# ...and the accounting sees one file, not two half-paths and not zero.
+new_case 'a newline-named file is counted once, as read'
+were_read="$(cd "${scratch}" && git ls-files -z | python3 "${detector}" --considered --null --stdin0 | grep -zc "$(printf '\tread\t')" || true)"
+[[ ${were_read} -eq 1 ]] \
+	|| fail "the detector reported reading ${were_read} files, not 1"
+
+# The human-readable listing has the same obligation: one record per file, so
+# the newline is escaped rather than printed. Otherwise a reader counting the
+# listing gets a different answer from the machine counting it.
+new_case 'the readable listing keeps one record per file'
+records="$(cd "${scratch}" && git ls-files -z | python3 "${detector}" --considered --stdin0 | wc -l)"
+[[ ${records} -eq 1 ]] \
+	|| fail "the listing printed ${records} lines for one file"
+
+# And the pipeline this replaced really would have missed all of it, so the
+# three cases above are load-bearing rather than decorative.
+new_case 'mutant: the line-oriented pipeline misses the same file'
+if (cd "${scratch}" && git ls-files | xargs python3 "${detector}" >/dev/null 2>&1); then
+	: # clean, because it never opened the file -- which is the point
+else
+	fail 'git ls-files | xargs reported it, so the NUL pipeline is not what found it'
 fi
 
 # =============================================================================

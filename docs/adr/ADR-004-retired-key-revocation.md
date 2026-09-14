@@ -18,7 +18,7 @@ The rotation is complete. What follows is the observed state, not a plan:
   under a new passphrase, whose encrypted private half has never been committed
   here.
 - The retired key was removed from the production `KeyStorage` Durable Object on
-  2026-09-08. `GET /public-key?keyId=62E75E54497815DD` answers `404
+  2026-09-08. A `GET /public-key` naming `62E75E54497815DD` answers `404
   KEY_NOT_FOUND`, and the audit trail records a post-removal sign attempt under
   that key failing the same way.
 - Every live OIDC subject grant and every unrevoked service token pins

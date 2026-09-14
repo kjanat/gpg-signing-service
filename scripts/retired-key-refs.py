@@ -21,7 +21,7 @@ key-material guard's own retired set, and of fourteen unit suites that use it as
 deterministic historical data. Those references have to stay: a containment
 record that cannot name the key it contained is not a record.
 
-So the rule is scoped two ways, and both scopes are needed.
+So the rule is scoped three ways, and all three scopes are needed.
 
   path       Only the files listed in `INCIDENT` and `FIXTURES` may mention the
              id at all. Every other tracked file must not, and there is no
@@ -36,10 +36,36 @@ So the rule is scoped two ways, and both scopes are needed.
              Prose that is *about* the retirement carries that vocabulary
              already; an operational example pasted in does not.
 
-`FIXTURES` is exempt from the semantic rule on purpose. `src/__tests__/**` and
-`wrangler.test.toml` use the id as a constant with no prose around it, and
-requiring a retirement word next to every `keyIds: ["62E7..."]` would be asking
-test data to argue for itself. Nothing in those paths is read as an instruction.
+  executable The semantic scope reads a window, and a window is the wrong unit
+             for a command. An incident file is *full* of retirement vocabulary
+             by construction, so a fenced `gpg-sign sign --key-id ...` pasted
+             under the sentence "the retired key is unavailable" inherits that
+             sentence's marker and goes through -- while still being a line a
+             reader can copy into a shell and get `404 KEY_NOT_FOUND` from. So
+             a line that puts the id in *argument position* is reported on its
+             own terms, whatever sits around it. No marker, and no window,
+             suppresses it.
+
+             The one exemption is narrow and explicit: the operations the
+             retirement procedure itself runs against this key -- local gpg
+             keyring work, keyserver revocation publication, and
+             `scripts/key-handoff.sh`, which refuses to touch any other key.
+             Those commands *have* to name it; that is what publishing a
+             revocation is. A line that also calls the service is never
+             exempt, so `gpg-sign ... | gpg --import` does not buy its way out
+             with the second half.
+
+             Argument position, not mere adjacency: `GET /public-key` for
+             `<id>` is a sentence naming an endpoint and a key, and there is
+             nothing there to paste. `--key-id <id>`, `?keyId=<id>` and
+             `"keyId": "<id>"` are a command someone runs.
+
+`FIXTURES` is exempt from the semantic and executable rules alike, on purpose.
+`src/__tests__/**` and `wrangler.test.toml` use the id as a constant with no prose
+around it -- requiring a retirement word next to every `keyIds: ["62E7..."]` would
+be asking test data to argue for itself, and the request objects those suites
+build against the retired key are the assertions, not instructions. Nothing in
+those paths is read by an operator looking for a command to run.
 
 What this does not cover: the id written some other way -- split, interpolated,
 built from a variable. A reader cannot act on those either, which is the property
@@ -49,6 +75,7 @@ fingerprint is covered for free: it ends in the short id.
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from dataclasses import dataclass
@@ -130,6 +157,70 @@ MARKER = re.compile("|".join(re.escape(m) for m in MARKERS), re.IGNORECASE)
 # occurrence has to be introduced by a sentence.
 LINK_DEF = re.compile(r"^\s*\[[^\]]+\]:\s*\S+\s*$")
 
+# The id in argument position: a flag's value, a query parameter, or a JSON
+# field. What these have in common is that the id is being *passed to* something
+# rather than mentioned, which is exactly the difference between a line a reader
+# copies and a line a reader reads. The flag arm is deliberately generic -- any
+# option, not a list of the ones we happen to have shipped -- with a lookbehind
+# so the hyphen inside `retired-key 62E7...` is not read as one.
+ARGUMENT = re.compile(
+    r"(?:"
+    r"(?<![A-Za-z0-9_-])--?[A-Za-z][A-Za-z0-9-]*[=\s]+"  # --key-id ID, -k ID
+    r"|[?&][A-Za-z_][A-Za-z0-9_-]*="  # ?keyId=ID
+    r'|"[A-Za-z_][A-Za-z0-9_-]*"\s*:\s*'  # "keyId": "ID"
+    r")"
+    r"[\'\"`]?" + re.escape(RETIRED_KEY_ID),
+    re.IGNORECASE,
+)
+
+# The client CLI. Its arguments are positional as often as they are flagged
+# (`gpg-sign public-key <id>`), so naming it on a line that also carries the id
+# is enough on its own.
+CLIENT = re.compile(r"\bgpg-sign\b", re.IGNORECASE)
+
+# Anything that asks the deployed service to act on the key. The retired key is
+# a 404 there, so no exemption reaches a line that does this.
+SERVICE = re.compile(
+    r"\bgpg-sign\b|\bcurl\b|\bwget\b|\bhttpie\b|/public-key|/sign\b|/admin\b",
+    re.IGNORECASE,
+)
+
+# The operations ADR-004 and the runbook exist to describe: local keyring work
+# and revocation publication. `gpg2?\b(?![\w-])` so `gpg-sign` is not read as
+# `gpg` -- the whole point of the exemption is that it does not cover the client.
+REVOCATION = re.compile(
+    r"\bgpg2?(?![\w-])|\bgpgv(?![\w-])|key-handoff\.sh"
+    r"|--keyserver\b|hkps?://|\bgit\s+verify-\w+",
+    re.IGNORECASE,
+)
+
+
+def executable(line: str) -> bool:
+    """Whether this line hands the retired key id to something that runs."""
+    return bool(ARGUMENT.search(line) or CLIENT.search(line))
+
+
+def revocation_operation(line: str) -> bool:
+    """Whether this line is one of the operations allowed to name the key."""
+    return bool(REVOCATION.search(line)) and not SERVICE.search(line)
+
+
+def display(path: str) -> str:
+    """A path rendered so that one record is one line, whatever it contains.
+
+    A tracked path may hold anything but NUL and `/` -- including a newline.
+    Printed raw, such a path splits a finding across two lines, and a count of
+    output lines stops being a count of files. Escaping the separators keeps
+    both honest; `--null` exists for callers that want the bytes back exactly.
+    """
+    return (
+        path
+        .replace("\\", "\\\\")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -139,7 +230,7 @@ class Finding:
     detail: str
 
     def __str__(self) -> str:
-        return f"{self.path}:{self.line}: {self.rule}: {self.detail}"
+        return f"{display(self.path)}:{self.line}: {self.rule}: {self.detail}"
 
 
 def tier(path: str) -> str:
@@ -196,6 +287,20 @@ def scan(path: str) -> list[Finding]:
                 )
             )
             continue
+        if executable(line) and not revocation_operation(line):
+            findings.append(
+                Finding(
+                    path,
+                    number,
+                    "executable",
+                    f"passes the retired key {RETIRED_KEY_ID} to a command; "
+                    "copying this line gets 404 KEY_NOT_FOUND however the "
+                    "surrounding prose reads. Only the revocation operations "
+                    "(gpg keyring work, keyserver publication, "
+                    "scripts/key-handoff.sh) may name it this way",
+                )
+            )
+            continue
         window = lines[max(0, index - WINDOW) : index + WINDOW + 1]
         prose = [n for n in window if not LINK_DEF.match(n)]
         if not any(MARKER.search(neighbour) for neighbour in prose):
@@ -212,15 +317,41 @@ def scan(path: str) -> list[Finding]:
     return findings
 
 
+USAGE = "usage: retired-key-refs.py [--considered] [--null] [--stdin0] [PATH ...]"
+OPTIONS = {"--considered", "--null", "--stdin0"}
+
+
 def main(argv: list[str]) -> int:
-    paths = [a for a in argv if a != "--considered"]
-    if "--considered" in argv:
+    # `--` and no shorter: a tracked path is allowed to begin with a single
+    # dash, and refusing to open it would be an exclusion by filename.
+    options = {a for a in argv if a.startswith("--")}
+    unknown = options - OPTIONS
+    if unknown:
+        print(f"{USAGE}\nunknown option: {' '.join(sorted(unknown))}", file=sys.stderr)
+        return 2
+
+    paths = [a for a in argv if not a.startswith("--")]
+    if "--stdin0" in options:
+        # NUL-delimited paths, as `git ls-files -z` emits them. Nothing between
+        # git and here can split a path: no shell word splitting on the spaces,
+        # no `xargs` quote parsing, and no line separator to collide with a path
+        # that contains one. `os.fsdecode` keeps bytes that are not UTF-8
+        # round-trippable, so such a path is opened rather than skipped.
+        paths.extend(
+            os.fsdecode(raw) for raw in sys.stdin.buffer.read().split(b"\0") if raw
+        )
+
+    if "--considered" in options:
         # Tier *and* whether the bytes were actually obtained. Printing one line
         # per argument would say only that the path was passed in, which the
         # caller already knew; the suite needs to know the file was opened.
         for path in paths:
-            state = "unread" if read(path) is None else "read"
-            print(f"{tier(path)}\t{state}\t{path}")
+            record = f"{tier(path)}\t{'unread' if read(path) is None else 'read'}\t"
+            if "--null" in options:
+                sys.stdout.buffer.write(record.encode() + os.fsencode(path) + b"\0")
+            else:
+                print(record + display(path))
+        sys.stdout.flush()
         return 0
 
     findings = [f for path in paths for f in scan(path)]
