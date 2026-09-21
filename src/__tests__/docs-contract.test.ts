@@ -478,3 +478,145 @@ describe("relative links into the error reference", () => {
 		expect(broken).toEqual([]);
 	});
 });
+
+/**
+ * Which responses carry `X-RateLimit-*`, pinned against live responses.
+ *
+ * Three documents said `/admin/*` was "60 requests/minute, per admin token" —
+ * both halves wrong — and that "all responses include rate limit information".
+ * Nothing failed while that was untrue, for the whole life of the claim, which
+ * is this file's stated reason for existing. The corrections that replaced them
+ * are narrower but still prose, so they get the same treatment: each sentence
+ * below is a request whose headers decide whether the sentence is still true.
+ *
+ * The distinction being pinned is *when a limiter ruled*, not *whether the
+ * route is metered*. They are not the same set, and every counterexample here
+ * is a response from a metered route that carries no budget because it was
+ * built before — or instead of — the verdict.
+ */
+describe("the routes the rate-limit headers appear on", () => {
+	const PAIR = ["X-RateLimit-Remaining", "X-RateLimit-Reset"] as const;
+
+	const carries = (response: Response) => PAIR.every((name) => response.headers.has(name));
+
+	it("puts them on an /admin/* 401, because the meter runs ahead of the token check", async () => {
+		// The property that makes guessing ADMIN_TOKEN expensive: a request holding
+		// no credential has already spent from the bucket by the time it is
+		// refused. If this ever stops being true the limiter has moved behind
+		// `adminAuth` and the brute-force cost is gone, so this is a security
+		// assertion wearing a documentation test's clothes.
+		const response = await request("/admin/keys");
+
+		expect(response.status).toBe(401);
+		expect(carries(response)).toBe(true);
+	});
+
+	it("puts them on an authenticated /admin/* 404, because the meter also runs ahead of routing", async () => {
+		// API.md used to end its list with "and neither does a `404`", in the same
+		// sentence that said /admin/* carries them on every response. Both cannot
+		// hold: the meter is mounted on `/admin/*` as a whole, so an unrouted admin
+		// path is metered and *then* falls through to the 404 handler.
+		const response = await adminRequest("/admin/no-such-admin-route");
+
+		expect(response.status).toBe(404);
+		expect(carries(response)).toBe(true);
+	});
+
+	it("leaves them off the OPTIONS preflight to /admin/*, which never reaches the meter", async () => {
+		// `productionCors` is registered on the root app and answers OPTIONS before
+		// calling `next()`, so the /admin sub-app's middleware chain — limiter
+		// included — does not run at all. "Every response" was therefore false for
+		// the one request shape a browser makes first.
+		const response = await request("/admin/keys", {
+			method: "OPTIONS",
+			headers: { Origin: "https://example.test" },
+		});
+
+		expect(response.status).toBe(204);
+		expect(PAIR.some((name) => response.headers.has(name))).toBe(false);
+	});
+
+	it("leaves them off a /sign refusal raised before the verdict is read", async () => {
+		// The sign route sets the pair at exactly two places: the 200 path, and
+		// `rateLimitExceeded`. A malformed `keyId` is rejected before the
+		// `Promise.all` that reads the limiter's answer, so this 400 is past
+		// authentication and still carries no budget — which is why the documents
+		// may not promise the pair "once a request is past authentication".
+		const response = await request("/sign?keyId=NOT-A-HEX-KEYID", {
+			method: "POST",
+			headers: { Authorization: "Bearer not-a-real-token" },
+			body: "commit data",
+		});
+
+		expect(PAIR.some((name) => response.headers.has(name))).toBe(false);
+	});
+
+	it("leaves them off the unmetered public routes and the top-level 404", async () => {
+		// The enumerated list in API.md and DOCUMENTATION.md, asserted as the list
+		// rather than as prose. `/e/{code}` is here because both documents once
+		// enumerated four public routes and there are five.
+		for (const path of ["/health", "/public-key", "/doc", "/ui", "/e/NOT_A_CODE", "/no-such-route"]) {
+			const response = await request(path);
+			expect(PAIR.some((name) => response.headers.has(name))).toBe(false);
+		}
+	});
+
+	it("advertises exactly the pair a response actually carries", async () => {
+		// `securityHeaders` builds `Access-Control-Expose-Headers` by filtering on
+		// presence, so it is a second, independent witness to the same fact — and
+		// it is the only thing that makes these headers readable by a browser at
+		// all. A response that carries the pair but does not expose it is one a
+		// cross-origin caller cannot act on.
+		const metered = await request("/admin/keys");
+		const unmetered = await request("/health");
+
+		expect(metered.headers.get("Access-Control-Expose-Headers")).toContain("X-RateLimit-Remaining");
+		expect(unmetered.headers.get("Access-Control-Expose-Headers")).not.toContain("X-RateLimit-");
+	});
+});
+
+/**
+ * The numbers the documents publish, against the capacity the limiter uses.
+ *
+ * `60 requests/minute` survived in three documents because no test compared it
+ * with anything. These read the figure out of the prose and check it against a
+ * live response, so the documents cannot drift from the bucket again.
+ */
+describe("the published rate limits", () => {
+	it("agrees with the budget /admin/* actually reports", async () => {
+		// `X-RateLimit-Remaining` on the first request of a fresh bucket is
+		// capacity minus the one just spent, so the ceiling is derivable from a
+		// single live response — which is how the 60 was caught.
+		const documented = /\*\*Rate Limit\*\*: (\d+) requests\/minute, per client IP/.exec(apiGuide);
+		expect(documented).not.toBeNull();
+
+		const response = await request("/admin/keys", { headers: { "CF-Connecting-IP": "203.0.113.42" } });
+		const remaining = Number(response.headers.get("X-RateLimit-Remaining"));
+
+		expect(remaining + 1).toBe(Number(documented?.[1]));
+	});
+
+	it("says per client IP, and means it — a second IP gets its own bucket", async () => {
+		// The other half of the old claim. "Per admin token" is not merely wrong,
+		// it is unimplementable here: the meter runs before the bearer is read, so
+		// there is no token to key on. Two IPs spending in turn prove the key is
+		// the address.
+		const first = await request("/admin/keys", { headers: { "CF-Connecting-IP": "198.51.100.1" } });
+		const second = await request("/admin/keys", { headers: { "CF-Connecting-IP": "198.51.100.2" } });
+
+		expect(first.headers.get("X-RateLimit-Remaining")).toBe(second.headers.get("X-RateLimit-Remaining"));
+	});
+
+	it("keys on the IP rather than the bearer, so a token change does not reset the bucket", async () => {
+		// Stated as its own case because it is the security property the ordering
+		// buys. If these two diverged, the bucket would be per-credential and an
+		// attacker could reset it by varying the guess.
+		const ip = { "CF-Connecting-IP": "198.51.100.7" };
+		const anonymous = await request("/admin/keys", { headers: ip });
+		const guessing = await request("/admin/keys", { headers: { ...ip, Authorization: "Bearer wrong-guess" } });
+
+		expect(Number(guessing.headers.get("X-RateLimit-Remaining"))).toBe(
+			Number(anonymous.headers.get("X-RateLimit-Remaining")) - 1,
+		);
+	});
+});

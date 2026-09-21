@@ -91,10 +91,17 @@ the GPG Signing Service.
 
 Token bucket algorithm:
 
-- `/sign`: 100 requests/minute per OIDC identity
+- `/sign`: 100 requests/minute per caller — `<iss>:<sub>` on the OIDC path, the
+  credential on the service-token path
+- `/sign`: and 1000 requests/minute per trusted subject _row_, a second tier
+  that bounds what one row can mint by varying `sub`
 - `/admin/*`: 100 requests/minute per client IP (metered ahead of the token
   check, so unauthenticated attempts count)
-- Response headers: `X-RateLimit-Remaining`, `X-RateLimit-Reset`
+- `POST /github/webhook`: 100 requests/minute per client IP, ahead of the HMAC
+  check — only when `GITHUB_APP_ENABLED` is `"true"`
+- Response headers: `X-RateLimit-Remaining`, `X-RateLimit-Reset`, on the
+  responses a limiter actually ruled on — see
+  [API.md](API.md#rate-limit-headers) for which those are
 - `HTTP 429` when exceeded (includes `retryAfter` in response)
 
 ### Error Handling

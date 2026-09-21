@@ -92,8 +92,11 @@ Responses a limiter ruled on also carry:
 - `X-RateLimit-Remaining` - Requests remaining in rate limit window
 - `X-RateLimit-Reset` - Unix timestamp when limit resets
 
-The unmetered public routes (`/health`, `/public-key`, `/doc`, `/ui`) send the
-rate-limit pair on no response.
+The unmetered public routes (`/health`, `/public-key`, `/doc`, `/ui`,
+`/e/{code}`) send the rate-limit pair on no response. Neither does a response
+a metered route returned _before_ its limiter ruled — the `204` answering a
+`OPTIONS` preflight to `/admin/*`, or a `/sign` refusal raised ahead of the
+verdict (`400`, `403`, `404`, `500`). See [API.md](API.md#rate-limit-headers).
 
 ## Using the OpenAPI Specification
 
