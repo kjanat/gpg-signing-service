@@ -92,7 +92,8 @@ the GPG Signing Service.
 Token bucket algorithm:
 
 - `/sign`: 100 requests/minute per OIDC identity
-- `/admin/*`: 60 requests/minute per bearer token
+- `/admin/*`: 100 requests/minute per client IP (metered ahead of the token
+  check, so unauthenticated attempts count)
 - Response headers: `X-RateLimit-Remaining`, `X-RateLimit-Reset`
 - `HTTP 429` when exceeded (includes `retryAfter` in response)
 

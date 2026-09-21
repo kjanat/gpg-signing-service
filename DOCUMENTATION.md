@@ -79,15 +79,21 @@ https://gpg.kajkowalski.nl
 - `GET /admin/keys/{keyId}/public` (get public key)
 - `DELETE /admin/keys/{keyId}` (delete key)
 - `GET /admin/audit` (audit logs)
-- Rate limited: 60 req/minute
+- Rate limited: 100 req/minute per client IP, metered ahead of the token check
 
 ### Response Headers
 
-All responses include:
+Every response carries:
 
 - `X-Request-ID` - Unique request identifier
+
+Responses a limiter ruled on also carry:
+
 - `X-RateLimit-Remaining` - Requests remaining in rate limit window
 - `X-RateLimit-Reset` - Unix timestamp when limit resets
+
+The unmetered public routes (`/health`, `/public-key`, `/doc`, `/ui`) send the
+rate-limit pair on no response.
 
 ## Using the OpenAPI Specification
 

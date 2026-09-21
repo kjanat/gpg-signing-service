@@ -123,7 +123,12 @@ sign_with_service:
 
 **Authentication**: Bearer Token (ADMIN_TOKEN)
 
-**Rate Limit**: 60 requests/minute
+**Rate Limit**: 100 requests/minute, per client IP
+
+The limiter runs _before_ the token check, so an unauthenticated request to an
+`/admin/*` route is metered too — that is what makes brute-forcing `ADMIN_TOKEN`
+expensive. The bucket is therefore keyed by `CF-Connecting-IP`, not by the
+bearer: a caller holding no token at all still spends from it.
 
 **Headers**:
 
@@ -599,18 +604,29 @@ The service uses a token bucket rate limiter:
 
 ### Limits by Endpoint Type
 
-| Endpoint         | Limit          | Window            |
-| ---------------- | -------------- | ----------------- |
-| Public endpoints | Global default | Per request       |
-| `/sign`          | 100 req/min    | Per OIDC identity |
-| `/admin/*`       | 60 req/min     | Per admin token   |
+| Endpoint         | Limit       | Window            |
+| ---------------- | ----------- | ----------------- |
+| Public endpoints | not metered | —                 |
+| `/sign`          | 100 req/min | Per OIDC identity |
+| `/admin/*`       | 100 req/min | Per client IP     |
+
+`/health`, `/public-key`, `/doc` and `/ui` pass through no limiter in the
+Worker; they are protected by Cloudflare's edge only. Everything a limiter does
+rule on refills at its own capacity per minute, so a bucket idle for a full
+minute is back at full.
 
 ### Rate Limit Headers
 
-All responses include rate limit information:
+Rate-limited routes report their budget:
 
 - `X-RateLimit-Remaining`: Tokens remaining in current window
 - `X-RateLimit-Reset`: Unix timestamp when limit resets
+
+`/admin/*` carries them on every response, including the `401` for a missing or
+wrong bearer, because the meter runs ahead of the token check. `/sign` carries
+them once a request is past authentication. The unmetered public routes —
+`/health`, `/public-key`, `/doc`, `/ui` — carry neither, and neither does a
+`404`.
 
 ### Handling Rate Limits
 
