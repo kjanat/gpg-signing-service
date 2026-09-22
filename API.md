@@ -61,16 +61,20 @@ curl -X POST https://gpg.kajkowalski.nl/admin/keys \
 
 ### Public Endpoints
 
-No authentication required. These endpoints are rate-limited by global defaults.
+No authentication required, and no limiter in the Worker rules on them — they
+are protected by Cloudflare's edge only, and they carry no `X-RateLimit-*`
+headers.
 
 - `GET /health` - Service health status
 - `GET /public-key` - Retrieve public signing key
 
 ### Protected Endpoints (/sign)
 
-**Authentication**: OIDC Bearer Token
+**Authentication**: OIDC Bearer Token, or a `gst_`-prefixed service token
 
-**Rate Limit**: 100 requests/minute per OIDC identity
+**Rate Limit**: 100 requests/minute per caller — `<iss>:<sub>` on the OIDC
+path, the policy name on the service-token path. A trusted OIDC subject is
+additionally bounded by a 1000 req/min ceiling on its subject _row_.
 
 **Headers**:
 
@@ -123,7 +127,12 @@ sign_with_service:
 
 **Authentication**: Bearer Token (ADMIN_TOKEN)
 
-**Rate Limit**: 60 requests/minute
+**Rate Limit**: 100 requests/minute, per client IP
+
+The limiter runs _before_ the token check, so an unauthenticated request to an
+`/admin/*` route is metered too — that is what makes brute-forcing `ADMIN_TOKEN`
+expensive. The bucket is therefore keyed by `CF-Connecting-IP`, not by the
+bearer: a caller holding no token at all still spends from it.
 
 **Headers**:
 
@@ -592,25 +601,64 @@ worth retrying.
 
 The service uses a token bucket rate limiter:
 
-- Each OIDC identity has its own rate limit bucket
+- Each caller has its own rate limit bucket
 - Tokens are consumed per request
 - Tokens are refilled over time
 - When bucket is empty, requests are rejected with HTTP 429
 
 ### Limits by Endpoint Type
 
-| Endpoint         | Limit          | Window            |
-| ---------------- | -------------- | ----------------- |
-| Public endpoints | Global default | Per request       |
-| `/sign`          | 100 req/min    | Per OIDC identity |
-| `/admin/*`       | 60 req/min     | Per admin token   |
+| Endpoint         | Limit       | Window        |
+| ---------------- | ----------- | ------------- |
+| Public endpoints | not metered | —             |
+| `/sign`          | 100 req/min | Per caller    |
+| `/admin/*`       | 100 req/min | Per client IP |
+
+"Per caller" is `<iss>:<sub>` on the OIDC path and the service-token policy
+name on the service-token path — not "per OIDC identity", which named only half
+of `/sign`'s callers.
+
+`/health`, `/public-key`, `/doc`, `/ui` and `/e/{code}` pass through no limiter
+in the Worker; they are protected by Cloudflare's edge only. Everything a
+limiter does rule on refills at its own capacity per minute, so a bucket idle
+for a full minute is back at full.
+
+`/sign` has a second tier the table does not show, because it bounds a _row_
+rather than a caller: a request authenticated by a trusted OIDC subject also
+spends from a 1000 req/min bucket keyed on that subject's row id. The
+per-caller bucket is keyed on `<iss>:<sub>`, and GitHub puts the git ref in
+`sub`, so a caller that can push branches would otherwise mint a fresh 100/min
+budget per branch. A `429` from this tier is indistinguishable from the
+per-caller one in the response body.
+
+`POST /github/webhook` is metered too — 100 req/min per client IP, on its own
+bucket, ahead of the HMAC check — but only when `GITHUB_APP_ENABLED` is
+`"true"`. It is off in this deployment, where the route answers `404` like any
+unrouted path. See [GitHub App](docs/github-app.md).
 
 ### Rate Limit Headers
 
-All responses include rate limit information:
+Rate-limited routes report their budget:
 
 - `X-RateLimit-Remaining`: Tokens remaining in current window
 - `X-RateLimit-Reset`: Unix timestamp when limit resets
+
+A response carries the pair when a limiter actually ruled on it, and that is
+narrower than "the route is metered":
+
+- `/admin/*` carries them on every response the meter ruled on — including the
+  `401` for a missing or wrong bearer, and including a `404` for an
+  authenticated request to an unrouted admin path, because the meter runs ahead
+  of both the token check and routing. It does **not** carry them on the `204`
+  answer to an `OPTIONS` preflight, which the CORS middleware returns before the
+  meter runs, nor on the `503 RATE_LIMIT_ERROR` the meter itself sends when it
+  is unreachable.
+- `/sign` carries them on a `200` and on a `429`. It does **not** carry them on
+  a refusal that returns before the verdict is read — `400 INVALID_REQUEST` for
+  a malformed `keyId`, `403 KEY_NOT_ALLOWED`, `404 KEY_NOT_FOUND`, or a `500` —
+  even though all of those are past authentication.
+- The unmetered public routes — `/health`, `/public-key`, `/doc`, `/ui`,
+  `/e/{code}` — and the top-level `404` carry neither.
 
 ### Handling Rate Limits
 
