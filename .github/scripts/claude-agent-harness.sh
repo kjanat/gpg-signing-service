@@ -2,22 +2,14 @@
 # Turn one of the @claude trigger events into one context file and one ref that
 # is safe to write, or refuse to run.
 #
-# Called by .github/workflows/claude.yml. It exists because that workflow runs
-# claude-code-action in *agent* mode: supplying `prompt:` makes the action skip
-# tag mode entirely (src/modes/agent/index.ts), and with it the formatted
-# prompt, the tracking comment, the "Create a PR" compare-link handoff and the
-# injected PR footer. Everything tag mode used to do for us is now ours to do,
-# and the two parts worth doing in a testable script rather than in YAML are
-# the ones that decide correctness:
+# Called by .github/workflows/claude.yml before the edit-only base action.
+# Request authorization and ref selection remain trusted preparation steps:
 #
 #   1. Which request is Claude actually answering. The four events put the
 #      body in four different places, and two of them can be either an issue or
 #      a pull request.
-#   2. Which ref may be written. Agent mode does NOT create or check out a
-#      branch — `prepareAgentMode` sets branchInfo.currentBranch to the base
-#      branch and leaves the working tree on whatever actions/checkout left. A
-#      harness that does not choose deliberately here is a harness that commits
-#      to master.
+#   2. Which ref supplies the candidate's starting tree. The publisher later
+#      creates a signed commit and verifies its branch and PR independently.
 #
 # The refusals are the point. A fork head, a closed pull request, or a head ref
 # that is the default branch all exit non-zero with an annotation, because the
@@ -531,8 +523,9 @@ done
 	printf '\n'
 
 	if [[ "${entity_kind}" == 'pull_request' ]]; then
-		printf 'This is an existing pull request. You are on its head branch. Push to it;\n'
-		printf 'do not open a second pull request. Useful starting points:\n\n'
+		printf 'This is an existing pull request. You are on its head branch.\n'
+		printf 'The workflow publishes verified changes to this PR; do not open a second pull request.\n'
+		printf 'Useful starting points:\n\n'
 		printf '    gh pr view %s --comments\n' "${entity_number}"
 		printf '    gh pr diff %s\n' "${entity_number}"
 		printf '    git log --oneline origin/%s..HEAD\n\n' "${base_branch}"
@@ -540,6 +533,7 @@ done
 		printf 'This is an issue. You are on a branch cut from `%s`. Useful starting points:\n\n' "${base_branch}"
 		printf '    gh issue view %s --comments\n\n' "${entity_number}"
 	fi
+	printf 'Edit and answer only. The workflow handles commits, signing, pushes, PRs and comments.\n\n'
 
 	printf '## The request, verbatim\n\n'
 	printf 'Everything between the fences below — the %s title included — is\n' "${entity_label}"
