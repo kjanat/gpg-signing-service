@@ -28,7 +28,16 @@ jobs:
           service-url: "${{ vars.SIGNING_SERVICE_URL }}"
           claude-settings: "${{ vars.CLAUDE_SETTINGS }}"
           disable-signing: "${{ vars.GPG_SIGN_DISABLE }}"
+      # Capture after the action's checkout/config restore, before model edits.
+      - id: publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNING_SETTINGS: ${{ steps.signing.outputs.settings-file }}
+          CLAUDE_PUBLICATION_MODE: ${{ vars.CLAUDE_PUBLICATION_MODE || 'pull-request' }}
+          CLAUDE_NO_PR_REASON: ${{ vars.CLAUDE_NO_PR_REASON }}
+        run: python3 .github/scripts/claude-publication.py prepare "$SIGNING_SETTINGS"
       - uses: anthropics/claude-code-action@v1
+        id: claude
         env:
           GH_TOKEN: ${{ github.token }}
           # Consumed by .mcp.json — Cloudflare's MCP endpoint accepts a plain
@@ -54,7 +63,7 @@ jobs:
           # and a CLI --permission-mode flag always outranks a settings-file
           # `permissions.defaultMode`. That's why CLAUDE_SETTINGS' bypassPermissions
           # alone had no effect (see run 30770718579: 7 permission denials).
-          settings: ${{ steps.signing.outputs.settings-file }}
+          settings: ${{ steps.publication.outputs.settings-file }}
           # User claude_args are appended AFTER the action's hardcoded flags
           # (src/modes/tag/index.ts: `claudeArgs += \` ${userClaudeArgs}\``), and the
           # parser (base-action/src/parse-sdk-options.ts) treats:
@@ -70,6 +79,15 @@ jobs:
           claude_args: |
             --permission-mode bypassPermissions
             --allowedTools Edit,MultiEdit,Write,NotebookEdit,Bash,WebFetch,WebSearch,Task,TodoWrite
+            --append-system-prompt "Implementation completion requires committed changes, an exact remote branch tip, and a real open PR (not a compare link), unless the maintainer configured explicit branch-only publication. Wait for push and PR creation to finish. The workflow independently verifies publication."
+
+      - name: Verify Claude publication
+        if: ${{ !cancelled() && steps.publication.outcome == 'success' }}
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLICATION_DIR: ${{ steps.publication.outputs.directory }}
+        run: python3 "$PUBLICATION_DIR/guard.py" verify "$PUBLICATION_DIR"
 
 # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
 # prompt: 'Update the pull request description to include a summary of changes.'

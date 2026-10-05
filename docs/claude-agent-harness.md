@@ -18,6 +18,42 @@ with tests.
 - Publishing guards: `.github/scripts/claude-agent-guard.sh`
 - Tests: `.github/scripts/test-claude-agent-harness.sh` (`task test:agent-harness`)
 
+## Publication is a workflow postcondition
+
+Both the live tag-mode workflow and the pending agent-mode replacement run
+`.github/scripts/claude-publication.py` after the action. Run
+[`37348176618`](https://github.com/kjanat/gpg-signing-service/actions/runs/37348176618)
+returned success with a local implementation commit but no remote branch or PR.
+The action logged branch/compare 404s without failing. Its SDK conclusion is
+therefore insufficient evidence of completion.
+
+Preparation copies the checker outside the editable checkout and appends a
+write-once `SessionStart` hook to the existing signing settings. The snapshot
+runs after the action chooses its branch and restores trusted config files.
+It records HEAD, commits reachable from local branches, and existing workspace
+differences. Existing hooks and signing environment remain intact. A missing
+snapshot fails verification; repeated sessions cannot reset it.
+
+An unchanged question/review may succeed without a remote branch. New unstaged,
+staged or non-ignored untracked changes fail. New local commits must belong to
+the final branch, whose remote ref must equal local HEAD. The GitHub comparison
+against that exact SHA must succeed and show commits ahead of the base. Finally,
+exactly one open PR must match the head repository, branch and SHA, and the base
+repository and branch. API failures, including 404s, fail the job. The verifier
+uses the workflow token only for reads, after the action revokes its own token.
+
+The default completion mode is `pull-request`. A maintainer can explicitly set
+repository variable `CLAUDE_PUBLICATION_MODE=branch-only` together with a
+nonempty `CLAUDE_NO_PR_REASON` to allow a published branch without a PR. This
+still requires the exact remote commit and a successful comparison, and records
+the reason in the job summary. It never permits local-only work. Unknown modes
+and an unexplained branch-only mode fail during preparation.
+
+Run `task test:claude-publication` for the focused Git/API regressions. The check
+does not push, create commits, change signing configuration, repair provenance,
+or redispatch requests. As a correctness check sharing the agent's OS account,
+it is not a sandbox against an agent deliberately tampering with runner files.
+
 ## What the two modes actually differ on
 
 Read from the action source at `v1`, not from its documentation:

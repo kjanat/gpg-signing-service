@@ -971,12 +971,12 @@ expect_prompt '.github/workflows/**' 'the session must know it cannot push workf
 # The session inherits GH_TOKEN from run.ts, which sets it to the Claude App
 # installation token. Re-exporting github.token on the claude-code-action step
 # is the one configuration that would put the CI-suppressing token back in the
-# session, so exactly one step — the harness step, which is not the session —
-# may set it.
+# session. Only harness preparation and the two read-only publication steps
+# may set it. The publication suite also parses YAML to check the action's env.
 # shellcheck disable=SC2016  # the workflow's literal expression is the pattern
 token_exports="$(grep -cF 'GH_TOKEN: ${{ github.token }}' "${workflow}" || true)"
-[[ "${token_exports}" == 1 ]] \
-	|| fail "claude.yml exports github.token as GH_TOKEN ${token_exports} times; only the harness step may (see docs/claude-agent-harness.md)"
+[[ "${token_exports}" == 3 ]] \
+	|| fail "claude.yml exports github.token as GH_TOKEN ${token_exports} times; only preparation and read-only publication checks may"
 expect_workflow 'workflow GITHUB_TOKEN is deliberately not exported' \
 	'the reason the claude step has no GH_TOKEN has to be written down next to it'
 

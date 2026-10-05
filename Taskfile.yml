@@ -59,6 +59,7 @@ tasks:
       - task: test:review-gate
       - task: test:dependabot-fix
       - task: test:agent-harness
+      - task: test:claude-publication
       - task: test:session-start
       - task: test:go-modernize-gate
       - task: test:typegen-pin
@@ -155,6 +156,11 @@ tasks:
     desc: Test the cloud-session hook's shared mise tree, trust and install gating
     cmd: bash scripts/test-session-start-hook.sh
 
+  test:claude-publication:
+    desc: Test fail-closed Claude publication against real local Git repositories
+    deps: [install:noscripts]
+    cmd: python3 .github/scripts/test-claude-publication.py
+
   test:go-modernize-gate:
     desc: Test that a pending Go modernization fails CI (skips if go is absent)
     aliases: [mg]
@@ -217,6 +223,7 @@ tasks:
       - task: test:review-gate
       - task: test:dependabot-fix
       - task: test:agent-harness
+      - task: test:claude-publication
       - task: test:session-start
       - task: test:go-modernize-gate
       - task: test:typegen-pin

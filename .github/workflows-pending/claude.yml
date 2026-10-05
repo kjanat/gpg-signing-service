@@ -131,7 +131,7 @@ jobs:
       # tree wherever actions/checkout put it — so without this step a session
       # triggered from an issue would edit master.
       #
-      # This is also the only step that hands github.token to anything: the
+      # This and the read-only publication checks use github.token. The
       # action replaces GH_TOKEN with its own App installation token before
       # starting the session. github.token is hashed here (the digest only,
       # never the token) so claude-agent-guard.sh can prove the session is not
@@ -154,7 +154,17 @@ jobs:
           claude-settings: "${{ vars.CLAUDE_SETTINGS }}"
           disable-signing: "${{ vars.GPG_SIGN_DISABLE }}"
 
+      - id: publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNING_SETTINGS: ${{ steps.signing.outputs.settings-file }}
+          CLAUDE_BASE_BRANCH: ${{ steps.harness.outputs.base-branch }}
+          CLAUDE_PUBLICATION_MODE: ${{ vars.CLAUDE_PUBLICATION_MODE || 'pull-request' }}
+          CLAUDE_NO_PR_REASON: ${{ vars.CLAUDE_NO_PR_REASON }}
+        run: python3 .github/scripts/claude-publication.py prepare "$SIGNING_SETTINGS"
+
       - uses: anthropics/claude-code-action@v1
+        id: claude
         env:
           # The workflow GITHUB_TOKEN is deliberately not exported to this step.
           # run.ts sets GITHUB_TOKEN and GH_TOKEN to the Claude App installation
@@ -181,7 +191,7 @@ jobs:
           additional_permissions: "actions: read"
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           path_to_bun_executable: ${{ steps.bun.outputs.bun-path }}
-          settings: ${{ steps.signing.outputs.settings-file }}
+          settings: ${{ steps.publication.outputs.settings-file }}
           # Agent mode injects no --permission-mode and no --allowedTools of its
           # own (unlike tag mode, which hardcodes `--permission-mode acceptEdits`
           # in src/modes/tag/index.ts and forced the override this workflow used
@@ -247,6 +257,10 @@ jobs:
 
             ## Finishing
 
+            The workflow verifies publication independently after you return.
+            Wait for push and PR creation to finish. A missing PR fails the job
+            unless the maintainer configured explicit branch-only publication.
+
             1. Commit your work. Then check your own commit messages, BEFORE
                you push — a message that fails this check is one `git commit
                --amend` away from fixed while it is local, and a force-push
@@ -306,3 +320,11 @@ jobs:
             claude-code-action in prose when the change is about it is fine.
             `.github/scripts/claude-agent-guard.sh attribution` is the arbiter:
             if it passes, you are within policy.
+
+      - name: Verify Claude publication
+        if: ${{ !cancelled() && steps.publication.outcome == 'success' }}
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLICATION_DIR: ${{ steps.publication.outputs.directory }}
+        run: python3 "$PUBLICATION_DIR/guard.py" verify "$PUBLICATION_DIR"
