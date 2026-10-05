@@ -1,69 +1,39 @@
 #:schema https://mise.jdx.dev/schema/mise.json
+#:tombi toml-version = "v1.1.0"
 
-# Anything that can rewrite a file this repository commits is pinned; anything
-# that only reads is free to float. A floating linter reports a new finding and
-# someone looks at it, but a floating *producer* silently rewrites the tree from
-# whatever the machine resolved that day, which is #123/#125: `wrangler = "latest"`
-# and `biome = "latest"` each turned `mise install` into a repository mutation.
-#
-#   * wrangler  writes worker-configuration.d.ts (`wrangler types`)
-#   * biome     rewrites imports (`biome check --fix` in the pre-commit lint:fix)
-#   * tombi     rewrites TOML -- .dprint.jsonc shells out to it for *.toml
-#   * golangci-lint  rewrites Go -- .dprint.jsonc shells out to `golangci-lint fmt`
-#
-# gitleaks is the one reader that is pinned anyway, because for it the version
-# *is* the contract: gitleaks-action@v3 defaults GITLEAKS_VERSION to 8.24.3, and
-# 8.24.3 silently ignores the `[[allowlists]]` form and `condition = "AND"` that
-# newer releases honour. .gitleaks.toml is written for the semantics of the
-# version CI actually runs, so scripts/test-gitleaks-contract.sh has to read it
-# with that same version rather than with whatever resolved today (#145).
-#
-# So this pin is not a dependency that can be refreshed on its own. It is one
-# end of a three-way agreement with `GITLEAKS_VERSION` in
-# .github/workflows/security.yml and .github/workflows/gitleaks.yml, and moving
-# it alone changes which semantics the gate reads .gitleaks.toml with while CI
-# keeps reading it with the old ones. That is exactly what happened in 73e98fe,
-# where an actionlint change carried a 8.24.3 -> 8.30.1 bump along with it and
-# took as many as five contract cases red on master. A bump has to move all
-# three at once, and .gitleaks.toml has to be re-read for the new version's
-# semantics first -- 8.25.0+ honour `[[allowlists]]` and `condition`, which this
-# config is written to do without.
-#
-# wrangler is deliberately the same version bun.lock resolves, not merely some
-# fixed one: `wrangler types` stamps its own workerd into the generated header,
-# so two channels at two versions are two producers again. The two channels
-# exist because they reach different places -- .github/workflows/d1-migrate.yml
-# and scripts/cf.sh's WORKERS_CI branch run wrangler on a checkout that has no
-# node_modules -- but they are one version, and scripts/test-tool-pins.sh fails
-# if they drift apart.
-#
-# actionlint must understand the $/ repository references used by the workflows.
-# Keep local and CI validation on the same release of the fork that supports it.
 [tools]
-runner-run     = "latest"
-actionlint     = "1.16.1"
-biome          = "2.5.13"
-cargo-binstall = "latest"
-gitleaks       = "8.24.3"
-golangci-lint  = "2.13.2"
-lefthook       = "latest"
-shellcheck     = "latest"
-task           = "latest"
-tombi          = "1.5.4"
-uv             = "0.12.12"
+actionlint    = "latest"
+biome         = "2.5.15"
+bun           = "1.4.2"
+dprint        = { prerelease = true, version = "latest" }
+gitleaks      = "8.24.3"
+go            = "latest"
+golangci-lint = "2.14.0"
+lefthook      = "latest"
+runner-run    = "latest"
+shellcheck    = "latest"
+task          = "latest"
+tombi         = "1.7.2"
+typescript    = { filter_bins = ["tsc"], version = "latest" }
+uv            = "0.12.23"
 
 [tools.wrangler]
-version      = "4.129.1"
+version      = "4.147.0"
 allow_builds = ["esbuild", "sharp", "workerd"]
 
 [tool_alias]
 actionlint = "github:kjanat/actionlint"
-runner-run = "cargo:runner-run"
+dprint     = "github:kjanat/dprint"
+runner-run = "github:kjanat/runner"
+tombi      = "github:tombi-toml/tombi"
+typescript = "github:Microsoft/TypeScript"
+shellcheck = "github:koalaman/shellcheck"
 
 [settings]
-minimum_release_age                 = "0"
+minimum_release_age_excludes        = [
+  "github:kjanat/actionlint",
+  "github:kjanat/dprint",
+  "github:kjanat/runner",
+  "github:Microsoft/TypeScript",
+]
 idiomatic_version_file_enable_tools = ["go"]
-
-[settings.cargo]
-binstall      = true
-binstall_only = true

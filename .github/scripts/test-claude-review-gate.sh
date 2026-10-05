@@ -148,12 +148,11 @@ env -u CLAUDE_CODE_OAUTH_TOKEN -u GITHUB_ENV bash "${gate}" \
 expect_rc 1 "${rc}"
 expect_stdout '::error title=Claude review gate::'
 
-# --- the trusted Claude jobs still sign unconditionally ----------------------
+# --- every job that publishes commits still sets up signing ------------------
 #
-# The gate loosens exactly one workflow. #107 made signing setup the default for
-# every job that lets Claude commit, and the review job's `if:` is a statement
-# about a run that will not commit at all — not a precedent for making signing
-# optional. Assert the other two never grew a condition of their own.
+# Scheduled runs still sign unconditionally. Implementation runs move signing
+# into the trusted publisher; a verified no-change answer creates no commit.
+# Neither editing nor checking candidate code may receive signing credentials.
 python3 - "${repo_root}" <<'TRUSTED'
 import sys, pathlib, yaml
 
@@ -164,11 +163,31 @@ for name in ("claude.yml", "claude-scheduled.yml"):
     steps = [s for j in wf["jobs"].values() for s in j["steps"]]
     signing = [s for s in steps if s.get("uses", "").endswith("setup-claude-signing")]
     assert len(signing) == 1, f"{name}: expected one signing setup step, got {len(signing)}"
-    assert "if" not in signing[0], (
-        f"{name}: commit signing became conditional. These jobs run Claude with"
-        " write access on every invocation, so a run that cannot sign is a run"
-        " that must fail — see #107."
-    )
+    if name == "claude-scheduled.yml":
+        assert "if" not in signing[0], (
+            f"{name}: scheduled commit signing must remain unconditional"
+        )
+    else:
+        assert signing[0].get("if") == "needs.verify.outputs.status == 'changed'", (
+            f"{name}: signing must run for every changed candidate"
+        )
+        for job_name in ("edit", "verify"):
+            job = wf["jobs"][job_name]
+            assert job.get("permissions", {}).get("id-token") != "write", (
+                f"{name}: {job_name} must not mint signing credentials"
+            )
+            assert not any(
+                step.get("uses", "").endswith("setup-claude-signing")
+                for step in job["steps"]
+            ), f"{name}: {job_name} must not configure signing"
+        publisher = wf["jobs"]["publish"]["steps"]
+        publish_index = next(
+            i for i, step in enumerate(publisher)
+            if step.get("id") == "publish_result"
+        )
+        assert signing[0] in publisher and publisher.index(signing[0]) < publish_index, (
+            f"{name}: trusted signing setup must precede publication"
+        )
     # And the escape hatch is still the only way to sign nothing on purpose.
     assert signing[0]["with"]["disable-signing"] == "${{ vars.GPG_SIGN_DISABLE }}", (
         f"{name}: the GPG_SIGN_DISABLE escape hatch is no longer wired up"

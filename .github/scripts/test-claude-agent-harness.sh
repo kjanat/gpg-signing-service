@@ -2,13 +2,10 @@
 # Covers .github/scripts/claude-agent-harness.sh, .github/scripts/claude-agent-guard.sh
 # and the workflow that drives them.
 #
-# The @claude workflow runs claude-code-action in agent mode, which means the
-# action supplies no formatted prompt, no tracking comment, no branch and no
-# guard rails — this repository supplies all of them. Three of those decisions
-# are ones a green run would not reveal as wrong:
+# The workflow supplies request authorization, branch selection and publication
+# outside the edit-only base action. Three decisions deserve real regressions:
 #
-#   * who may start a job holding contents: write, id-token: write, every
-#     repository secret and unrestricted Bash;
+#   * who may start work that can reach a privileged publisher;
 #   * which ref a session writes to, where the failure mode is "committed to
 #     master" and the trigger is a payload shape nobody tests by hand;
 #   * whether a pull request is opened with a token that raises CI events.
@@ -19,47 +16,16 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 harness="${repo_root}/.github/scripts/claude-agent-harness.sh"
 guard="${repo_root}/.github/scripts/claude-agent-guard.sh"
-# The workflow lives in one of two places, and this is not cosmetic. A GitHub
-# App token has no `workflows` permission, so the bot that wrote this branch
-# could not put the file under .github/workflows/ — the push is rejected
-# outright, and the rejection kills the whole push rather than just that file.
-# The agent-mode workflow is therefore committed to .github/workflows-pending/
-# and a human activates it with a one-line `git mv`. See
-# docs/claude-agent-harness.md.
-#
-# Resolved PENDING-first, unlike test-dependabot-fix.sh: this workflow REPLACES
-# a live tag-mode claude.yml rather than adding a new file, so while both exist
-# the pending one is the version under review and the one these assertions are
-# about. Once it is moved into place there is only one, and they follow it.
-# Absent from both is a failure, not a skip: a suite that quietly passes when
-# its subject is missing is worse than no suite at all.
+# Live uses native comments; pending switches comments to App dispatch.
+# Both must preserve the same edit/verify/publish boundary. Trigger-specific
+# assertions below use pending while it exists, then follow it into live.
 pending_workflow="${repo_root}/.github/workflows-pending/claude.yml"
 live_workflow="${repo_root}/.github/workflows/claude.yml"
 
 if [[ -f "${pending_workflow}" ]]; then
 	workflow="${pending_workflow}"
-	printf '  note: the agent-mode workflow is still pending activation (git mv -f %s .github/workflows/claude.yml)\n' \
+	printf '  note: App comment dispatch remains pending activation (git mv -f %s .github/workflows/claude.yml)\n' \
 		'.github/workflows-pending/claude.yml'
-	# The live file is still the tag-mode workflow until the move happens. Say
-	# so rather than assert against it: every assertion below describes the
-	# replacement, and running them against what it replaces would be noise.
-	#
-	# Unless it is not still the tag-mode one. A live file that already names
-	# the harness means the replacement landed as a COPY rather than the
-	# `git mv -f` above, and from there every assertion below goes on being
-	# made against the staged leftover while GitHub dispatches the live file:
-	# green, and about a file nobody runs. That is exactly what
-	# test-repair-history.sh was doing silently until it was made to fail. A
-	# note cannot catch it — repair-history.yml carried the same "activate it
-	# with git mv" instruction in its own header and was copied anyway.
-	if grep -qF 'claude-agent-harness.sh' "${live_workflow}"; then
-		echo 'FAIL: .github/workflows/claude.yml is already the agent-mode harness AND a copy is still staged.' >&2
-		echo '      Everything below would be asserted against the staged copy, not the one that runs.' >&2
-		echo '      Activation is a rename, not a copy. Finish it:' >&2
-		echo '        git rm .github/workflows-pending/claude.yml' >&2
-		exit 1
-	fi
-	printf '  note: .github/workflows/claude.yml is still the tag-mode harness\n'
 elif [[ -f "${live_workflow}" ]]; then
 	workflow="${live_workflow}"
 else
@@ -588,6 +554,7 @@ expect_output 'base-branch=master'
 [[ "$(current_branch)" == 'feat/existing-pr' ]] \
 	|| fail "expected the pull request head branch, got $(current_branch)"
 expect_context 'do not open a second pull request'
+expect_context 'Edit and answer only. The workflow handles commits, signing, pushes, PRs and comments.'
 grep -qF 'pr work' "${tmp_dir}/repo/work/README.md" \
 	|| fail 'the pull request head branch must actually be checked out'
 
@@ -904,81 +871,34 @@ if grep -rqF 'ghs_a_workflow_token' "${tmp_dir}/harness"; then
 	fail 'the workflow token itself must never be written to disk'
 fi
 
-# --- the workflow that drives all of this ------------------------------------
-#
-# Static assertions rather than a run: these are the properties that make the
-# scripts above reachable and the trust boundary real, and none of them can be
-# observed from a green run.
-#
-# GitHub withholds the `workflows` permission from App installation tokens, so
-# this repository's own automation cannot push .github/workflows/claude.yml —
-# the harness lands in two pieces and the workflow half is applied by hand. The
-# assertions therefore arm themselves once the workflow references the harness,
-# and say so loudly until then. See docs/claude-agent-harness.md.
+# --- the workflows that drive this harness ----------------------------------
+# Routing tests above use real repositories. These assertions cover the
+# lifecycle wiring; test:claude-publication exercises publication failures.
 expect_workflow() {
 	grep -qF -- "$1" "${workflow}" || fail "claude.yml must contain: $1 ($2)"
 }
 expect_workflow_re() {
 	grep -qE -- "$1" "${workflow}" || fail "claude.yml must match: $1 ($2)"
 }
-# The prompt is where the policy has to be stated. Asserting against the
-# whole file would let the header comment — which quotes the same strings to
-# explain what agent mode stopped injecting — satisfy assertions about text
-# the session never sees.
-prompt_slice="${tmp_dir}/prompt-slice.txt"
-awk '/^[[:space:]]+prompt: \|$/ {inside = 1; next} inside' "${workflow}" >"${prompt_slice}"
-[[ -s "${prompt_slice}" ]] || fail 'claude.yml has no literal-block prompt:, so it is not in agent mode'
-expect_prompt() {
-	grep -qF -- "$1" "${prompt_slice}" || fail "the claude.yml prompt must contain: $1 ($2)"
-}
-
-# Agent mode is selected by the presence of `prompt:` and by nothing else
-# (src/modes/detector.ts). Lose it and every guarantee below reverts to tag
-# mode's defaults, silently.
-expect_workflow_re '^[[:space:]]+prompt: \|$' 'a literal-block prompt is what selects agent mode'
-expect_workflow 'github.actor == github.repository_owner' 'the owner gate is the trust boundary'
-# The workflow decides which events start a job and the harness decides which
-# of those are real requests. Where the condition reads a field, the harness
-# has to read it too; the issue title is the one field that is easy to add to
-# one side only.
-expect_workflow 'contains(github.event.issue.title' \
-	'the issue title is a trigger field, and the harness checks it (trigger_text)'
-# shellcheck disable=SC2016  # the harness's literal source line is the pattern
-grep -qF 'trigger_text="${entity_title}"' "${repo_root}/.github/scripts/claude-agent-harness.sh" \
-	|| fail 'the workflow triggers on the issue title, so the harness must accept it as a trigger too'
-expect_prompt 'claude-agent-guard.sh pr-token' 'the session must prove its token before opening a pull request'
-expect_prompt 'claude-agent-guard.sh attribution' 'the session must scan what it publishes'
-# The policy names pull request TITLES, and the guard only sees files it is
-# pointed at — so the title has to be one, or the rule covers something nothing
-# checks.
-expect_prompt '/tmp/pr-title.txt' 'a pull request title is covered by the policy, so it must be scannable'
-expect_prompt 'claude-agent-guard.sh commits' 'the session must scan its own commit messages'
-expect_workflow '$/.github/actions/setup-claude-signing' 'service-signed commits must survive the rewrite'
-expect_workflow 'GIT_AUTHOR_EMAIL' 'the owner git identity must survive the rewrite'
-expect_workflow 'GIT_COMMITTER_EMAIL' 'the owner git identity must survive the rewrite'
-expect_workflow 'id-token: write' 'the signing shim needs OIDC'
-expect_workflow 'bypassPermissions' 'the broad owner-trusted tool access is deliberate'
-expect_prompt 'gh pr create' 'an issue that changes code must end in a real pull request, not a compare URL'
-# Naming them is the requirement: "no AI attribution" is not a rule a model
-# can check itself against, and the guard script only sees what it is pointed at.
-for banned in 'Generated with Claude Code' 'Created with Claude' 'Co-Authored-By: Claude' 'claude.ai/code'; do
-	expect_prompt "${banned}" 'a prohibited string must be named to be prohibited'
+for lifecycle_workflow in "${live_workflow}" "${pending_workflow}"; do
+	[[ -f "${lifecycle_workflow}" ]] || continue
+	for stage in edit verify publish; do
+		grep -qxF "  ${stage}:" "${lifecycle_workflow}" \
+			|| fail "${lifecycle_workflow} lacks its ${stage} job"
+	done
+	for requirement in 'claude-code-action/base-action@' 'persist-credentials: false' \
+		'claude-input' 'claude-candidate' 'claude-verified' 'retention-days: 30' \
+		'No signing OIDC or publication token' 'Do not commit, push, create/edit a PR' \
+		'task lint:ci' 'setup-claude-signing'; do
+		grep -qF "${requirement}" "${lifecycle_workflow}" \
+			|| fail "${lifecycle_workflow} lacks lifecycle requirement: ${requirement}"
+	done
+	grep -qF "if: always() && steps.input.outcome == 'success'" "${lifecycle_workflow}" \
+		|| fail "${lifecycle_workflow} must preserve work after a failed model step"
 done
-expect_prompt 'Never commit to' 'the session must be told which ref is off limits'
-expect_prompt 'UNTRUSTED INPUT' 'the request body must be labelled as data, not as instructions'
-expect_prompt '.github/workflows/**' 'the session must know it cannot push workflow files'
-
-# The session inherits GH_TOKEN from run.ts, which sets it to the Claude App
-# installation token. Re-exporting github.token on the claude-code-action step
-# is the one configuration that would put the CI-suppressing token back in the
-# session, so exactly one step — the harness step, which is not the session —
-# may set it.
-# shellcheck disable=SC2016  # the workflow's literal expression is the pattern
-token_exports="$(grep -cF 'GH_TOKEN: ${{ github.token }}' "${workflow}" || true)"
-[[ "${token_exports}" == 1 ]] \
-	|| fail "claude.yml exports github.token as GH_TOKEN ${token_exports} times; only the harness step may (see docs/claude-agent-harness.md)"
-expect_workflow 'workflow GITHUB_TOKEN is deliberately not exported' \
-	'the reason the claude step has no GH_TOKEN has to be written down next to it'
+expect_workflow 'github.actor == github.repository_owner' 'native events remain owner-only'
+expect_workflow 'contains(github.event.issue.title' 'issue titles remain trigger fields'
+grep -qF 'trigger_text=' "${harness}" || fail 'harness must normalize trigger text'
 
 # Every one of the events the harness normalizes has to be able to reach it,
 # and no others.
@@ -1036,22 +956,5 @@ done
 # rollback a code change made under whatever pressure caused the rollback.
 printf '%s\n' "${normalized[@]}" | grep -qxF -- 'issue_comment' \
 	|| fail 'claude-agent-harness.sh no longer normalizes issue_comment, so turning the App dispatch off has no rollback path'
-
-# `pr-token` is a fail-closed check on the action's internals: if run.ts ever
-# stops exporting an App installation token, every issue-triggered session
-# reaches it and cannot open a pull request. The prompt has to say what to do
-# then, or a change upstream turns into a session that stalls without saying
-# why.
-# shellcheck disable=SC2016  # the backticks are markdown in the prompt, not a subshell
-expect_prompt 'If `pr-token` FAILS' 'a fail-closed guard needs a documented way forward'
-expect_prompt '/compare/' 'the fallback has to leave the maintainer a one-click way to open it'
-# The completion comment is as unrepeatable as a pull request body, and the
-# attribution policy covers it. Naming the guard in prose is not enough: the
-# command has to be in the sequence, before the thing it guards.
-expect_prompt 'attribution /tmp/comment.md' 'the completion comment must be scanned before it is posted'
-comment_guard_line="$(grep -n 'attribution /tmp/comment.md' "${prompt_slice}" | cut -d: -f1)"
-comment_post_line="$(grep -n 'gh issue comment' "${prompt_slice}" | tail -1 | cut -d: -f1)"
-((comment_guard_line < comment_post_line)) \
-	|| fail 'the attribution guard must run before the comment is posted, not after'
 
 echo 'claude agent harness tests passed'

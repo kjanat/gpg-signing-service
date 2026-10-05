@@ -59,6 +59,7 @@ tasks:
       - task: test:review-gate
       - task: test:dependabot-fix
       - task: test:agent-harness
+      - task: test:claude-publication
       - task: test:session-start
       - task: test:go-modernize-gate
       - task: test:typegen-pin
@@ -155,6 +156,11 @@ tasks:
     desc: Test the cloud-session hook's shared mise tree, trust and install gating
     cmd: bash scripts/test-session-start-hook.sh
 
+  test:claude-publication:
+    desc: Test fail-closed Claude publication against real local Git repositories
+    deps: [install:noscripts]
+    cmd: python3 .github/scripts/test-claude-publication.py {{.CLI_ARGS}}
+
   test:go-modernize-gate:
     desc: Test that a pending Go modernization fails CI (skips if go is absent)
     aliases: [mg]
@@ -217,6 +223,7 @@ tasks:
       - task: test:review-gate
       - task: test:dependabot-fix
       - task: test:agent-harness
+      - task: test:claude-publication
       - task: test:session-start
       - task: test:go-modernize-gate
       - task: test:typegen-pin
@@ -239,6 +246,19 @@ tasks:
     deps: [install:noscripts]
     cmds:
       - task: format
+      - task: lint:checks
+
+  lint:ci:
+    desc: Lint without changing the candidate being verified
+    deps: [install:noscripts]
+    cmds:
+      - task: lint:checks
+
+  # Share the checks so local lint and candidate verification cannot drift.
+  # Only local lint formats first; CI checks must leave the candidate unchanged.
+  lint:checks:
+    internal: true
+    cmds:
       - bun eslint src/
       # `check`, not `lint`: biome.jsonc turns the formatter off but leaves the
       # organizeImports assist on, and `biome lint` does not run assists. So a
