@@ -654,6 +654,16 @@ describe("pgpKeyExpiry with revoked signing subkeys", () => {
 		return Math.round((expiresAt.getTime() - key.getCreationTime().getTime()) / DAY_MS);
 	}
 
+	/**
+	 * The instant to classify these fixtures at. They are generated at the real
+	 * clock rather than at NOW, so classifying them against NOW drifts with the
+	 * calendar: a 30-day subkey leaves a 60-day window measured from NOW once
+	 * NOW is more than 30 days in the past.
+	 */
+	async function createdAt(armoredKey: string): Promise<Date> {
+		return (await openpgp.readKey({ armoredKey })).getCreationTime();
+	}
+
 	it("does not report a key whose only signing subkey is revoked as ok", async () => {
 		// The regression from #90: openpgp skips the revoked subkey and hands back
 		// the primary key instead, whose far-off expiry reads as perfectly healthy.
@@ -697,7 +707,7 @@ describe("pgpKeyExpiry with revoked signing subkeys", () => {
 		// The replacement's own 200 days, not the revoked subkey's 300 and not the
 		// primary key's 400.
 		expect(await daysFromCreation(armored, expiry.expiresAt)).toBe(200);
-		expect(classifyExpiry(PRODUCTION_KEY_ID, expiry, NOW, 60).state).toBe("ok");
+		expect(classifyExpiry(PRODUCTION_KEY_ID, expiry, await createdAt(armored), 60).state).toBe("ok");
 	});
 
 	it("counts the longest-lived usable subkey when several can sign", async () => {
@@ -714,7 +724,7 @@ describe("pgpKeyExpiry with revoked signing subkeys", () => {
 		if (expiry.kind !== "date") return;
 
 		expect(await daysFromCreation(armored, expiry.expiresAt)).toBe(400);
-		expect(classifyExpiry(PRODUCTION_KEY_ID, expiry, NOW, 60).state).toBe("ok");
+		expect(classifyExpiry(PRODUCTION_KEY_ID, expiry, await createdAt(armored), 60).state).toBe("ok");
 
 		// The rule above is a claim about openpgp, so it is asserted against
 		// openpgp: `getSigningKey` skips a lapsed subkey and carries on down the
@@ -738,7 +748,7 @@ describe("pgpKeyExpiry with revoked signing subkeys", () => {
 		if (expiry.kind !== "date") return;
 
 		expect(await daysFromCreation(armored, expiry.expiresAt)).toBe(30);
-		expect(classifyExpiry(PRODUCTION_KEY_ID, expiry, NOW, 60).state).toBe("warning");
+		expect(classifyExpiry(PRODUCTION_KEY_ID, expiry, await createdAt(armored), 60).state).toBe("warning");
 	});
 
 	it("keeps the primary key's expiry as a cap on its subkeys", async () => {
@@ -763,7 +773,7 @@ describe("pgpKeyExpiry with revoked signing subkeys", () => {
 		if (expiry.kind !== "date") return;
 
 		expect(await daysFromCreation(armored, expiry.expiresAt)).toBe(300);
-		expect(classifyExpiry(PRODUCTION_KEY_ID, expiry, NOW, 60).state).toBe("ok");
+		expect(classifyExpiry(PRODUCTION_KEY_ID, expiry, await createdAt(armored), 60).state).toBe("ok");
 	});
 
 	it("reports a revoked primary key before looking at its subkeys", async () => {
