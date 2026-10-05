@@ -62,7 +62,7 @@ dependencies:
   steps:
     - uses: actions/checkout@v7
     - uses: $/.github/actions/setup-bun
-    - uses: jdx/mise-action@v4
+    - uses: jdx/mise-action@v5
       with: { working_directory: client }
 
     # Check npm dependencies
@@ -240,7 +240,7 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v7
-      - uses: jdx/mise-action@v4
+      - uses: jdx/mise-action@v5
       - uses: $/.github/actions/setup-bun
 
       - name: Deploy to Production

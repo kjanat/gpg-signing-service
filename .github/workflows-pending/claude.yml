@@ -62,7 +62,7 @@ jobs:
           cp .github/scripts/claude-agent-harness.sh "$RUNNER_TEMP/claude-agent-harness.sh"
       # These jobs run model/candidate code on the default branch's cache scope.
       # Never restore or save mutable tool installations across that boundary.
-      - { uses: jdx/mise-action@v4, with: { version: "${{ vars.MISE_VERSION }}", cache: false } }
+      - { uses: &mise jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca, with: { version: "${{ vars.MISE_VERSION }}", cache: false } }
       - { uses: kjanat/install-dprint@v2, with: { cache: false } }
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with: { node-version: "24", package-manager-cache: false }
@@ -173,7 +173,7 @@ jobs:
         with: { name: claude-input, path: "${{ runner.temp }}/claude-input" }
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with: { name: claude-candidate, path: "${{ runner.temp }}/claude-candidate" }
-      - { uses: jdx/mise-action@v4, with: { version: "${{ vars.MISE_VERSION }}", cache: false } }
+      - { uses: *mise, with: { version: "${{ vars.MISE_VERSION }}", cache: false } }
       - { uses: kjanat/install-dprint@v2, with: { cache: false } }
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with: { node-version: "24", package-manager-cache: false }

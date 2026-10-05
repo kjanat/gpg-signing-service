@@ -3,37 +3,19 @@
 ---
 pre-commit:
   jobs:
-    - name: lint
-      run: task lint:fix
-      stage_fixed: true
-
-    - name: format
-      run: task format:staged
-      stage_fixed: true
-
-    - name: typegen
-      run: task typegen
-
-    - name: generate-api
-      run: task generate:api
-
+    - { name: lint, run: "task lint:fix", stage_fixed: true }
+    - { name: format, run: "task format:staged", stage_fixed: true }
+    - { name: typegen, run: task typegen }
+    - { name: generate-api, run: "task generate:api" }
     - name: "git: add auto-generated files"
-      run: |
-        git add \
-          client/openapi.json \
-          client/pkg/api/api.gen.go \
-          worker-configuration.d.ts
-
+      run: git add
+        client/openapi.json
+        client/pkg/api/api.gen.go
+        worker-configuration.d.ts
 pre-push:
   jobs:
-    - name: typecheck
-      run: task typecheck
-
-    - name: test coverage
-      run: task test:coverage
-
+    - { name: typecheck, run: task typecheck }
+    - { name: test coverage, run: "task test:coverage" }
 # Validate commit messages
 commit-msg:
-  commands:
-    "lint commit message":
-      run: bunx commitlint --edit {1}
+  commands: { "lint commit message": { run: "bunx commitlint --edit {1}" } }
