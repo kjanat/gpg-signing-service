@@ -7,14 +7,14 @@ the privileged publisher never checks out or executes their contents.
 
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
-from urllib.parse import quote, urlencode
+from pathlib import Path
 from urllib.error import HTTPError
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 REF = "refs/claude/candidate"
