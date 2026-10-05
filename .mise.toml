@@ -18,7 +18,7 @@ typescript    = { filter_bins = ["tsc"], version = "latest" }
 uv            = "0.12.23"
 
 [tools.wrangler]
-version      = "4.129.1"
+version      = "4.147.0"
 allow_builds = ["esbuild", "sharp", "workerd"]
 
 [tool_alias]
