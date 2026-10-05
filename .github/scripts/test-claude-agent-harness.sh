@@ -889,7 +889,7 @@ for lifecycle_workflow in "${live_workflow}" "${pending_workflow}"; do
 	for requirement in 'claude-code-action/base-action@' 'persist-credentials: false' \
 		'claude-input' 'claude-candidate' 'claude-verified' 'retention-days: 30' \
 		'No signing OIDC or publication token' 'Do not commit, push, create/edit a PR' \
-		'task lint:ci' 'setup-claude-signing' 'GIT_AUTHOR_EMAIL' 'GIT_COMMITTER_EMAIL'; do
+		'task lint:ci' 'setup-claude-signing'; do
 		grep -qF "${requirement}" "${lifecycle_workflow}" \
 			|| fail "${lifecycle_workflow} lacks lifecycle requirement: ${requirement}"
 	done

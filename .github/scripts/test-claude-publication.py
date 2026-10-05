@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """Real Git lifecycle regressions; only external GitHub/signing calls are mocked."""
 
+import base64
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.parse import quote
 
 sys.dont_write_bytecode = True
 SPEC = importlib.util.spec_from_file_location(
@@ -53,6 +56,8 @@ class PublicationTests(unittest.TestCase):
             "CLAUDE_EXECUTION_FILE": "",
             "GH_TOKEN": "fixture-app-token",
             "WORKFLOW_GITHUB_TOKEN": "fixture-workflow-token",
+            "ACTIONS_ID_TOKEN_REQUEST_URL": "https://oidc.invalid/token",
+            "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "fixture-oidc-request",
             "SIGNING_ENABLED": "true",
         }
         env_patch = patch.dict(os.environ, environment)
@@ -60,7 +65,9 @@ class PublicationTests(unittest.TestCase):
         self.addCleanup(env_patch.stop)
         guard.git("init", "--initial-branch=master")
         Path("file.txt").write_text("base\n")
-        guard.git("add", "file.txt")
+        Path(".github/workflows").mkdir(parents=True)
+        Path(".github/workflows/existing.yml").write_text("name: Existing\n")
+        guard.git("add", "file.txt", ".github/workflows/existing.yml")
         guard.git("commit", "-m", "base")
         self.start = guard.git("rev-parse", "HEAD")
         self.remote = self.root / "remote.git"
@@ -83,6 +90,13 @@ class PublicationTests(unittest.TestCase):
         self.transport_patch = patch.object(guard, "run", self.transport)
         self.transport_patch.start()
         self.addCleanup(self.transport_patch.stop)
+        self.exchange_patch = patch.object(
+            guard,
+            "http_json",
+            side_effect=[{"value": "fixture-oidc"}, {"token": "fixture-app-token"}],
+        )
+        self.exchange_patch.start()
+        self.addCleanup(self.exchange_patch.stop)
 
     def transport(self, *args, data=None, env=None):
         self.calls.append(args)
@@ -398,14 +412,143 @@ class PublicationTests(unittest.TestCase):
             self.publish()
         self.assertEqual(self.remote_head(), "")
 
-    def test_execution_tail_redacts_known_credentials(self):
+    def test_execution_transcript_is_never_exported(self):
         execution = self.root / "execution.json"
-        execution.write_text("token=fixture-app-token\n")
+        secret = "sensitive token/+="
+        variants = (
+            secret,
+            quote(secret, safe=""),
+            base64.b64encode(secret.encode()).decode(),
+        )
+        execution.write_text("\n".join(variants))
         os.environ["CLAUDE_EXECUTION_FILE"] = str(execution)
         self.exported()
-        text = (self.candidate / "execution-tail.txt").read_text()
-        self.assertNotIn("fixture-app-token", text)
-        self.assertIn("[REDACTED]", text)
+        self.assertFalse((self.candidate / "execution-tail.txt").exists())
+        self.assertEqual(
+            {path.name for path in self.candidate.iterdir()},
+            {
+                "recovery.bundle",
+                "candidate.bundle",
+                "staged.patch",
+                "unstaged.patch",
+                "checkout.patch",
+                "response.md",
+            },
+        )
+        for path in self.candidate.iterdir():
+            for variant in variants:
+                self.assertNotIn(variant.encode(), path.read_bytes())
+
+    def workflow_candidate(self, added=(), removed=(), copy_existing=False):
+        """Construct bundle paths without needing Windows to check out invalid names."""
+        self.exported()
+        self.verified.mkdir()
+        (self.verified / "response.md").write_text("Candidate ready for publication.\n")
+        blob = (
+            guard.git("rev-parse", self.start + ":.github/workflows/existing.yml")
+            if copy_existing
+            else guard.git("hash-object", "-w", "--stdin", data=b"name: Changed\n")
+        )
+        files = {}
+        for record in guard.run("git", "ls-tree", "-r", "-z", self.start).split(b"\0"):
+            if record:
+                metadata, name = record.split(b"\t", 1)
+                files[name.decode()] = metadata.decode()
+        for name in removed:
+            del files[name]
+        for name in added:
+            files[name] = "100644 blob " + blob
+        root = {}
+        for name, metadata in files.items():
+            node = root
+            parts = name.split("/")
+            for part in parts[:-1]:
+                node = node.setdefault(part, {})
+            node[parts[-1]] = metadata
+
+        def write_tree(node):
+            entries = b""
+            for name, value in node.items():
+                metadata = (
+                    "040000 tree " + write_tree(value)
+                    if isinstance(value, dict)
+                    else value
+                )
+                entries += (metadata + "\t" + name + "\0").encode()
+            return guard.git("mktree", "-z", data=entries)
+
+        tree = write_tree(root)
+        sha = guard.git(
+            "-c",
+            "commit.gpgsign=false",
+            "commit-tree",
+            tree,
+            "-p",
+            self.start,
+            data=b"Candidate fixture\n",
+        )
+        guard.make_bundle(self.verified / "verified.bundle", sha, self.start)
+
+    def assert_workflow_refused(self):
+        with self.assertRaisesRegex(
+            guard.PublicationError, "Workflow changes need maintainer activation"
+        ):
+            self.publish()
+        self.assertEqual(self.remote_head(), "")
+        self.assertEqual(self.comments(), [])
+        self.assertFalse(
+            any(call[0] == "gpg-sign" or "-S" in call for call in self.calls)
+        )
+        self.assertFalse(
+            any(call[0] == "git" and "push" in call for call in self.calls)
+        )
+        self.assertTrue((self.candidate / "recovery.bundle").is_file())
+        self.assertTrue((self.verified / "verified.bundle").is_file())
+
+    def test_new_active_workflow_refused_before_signing_or_push(self):
+        self.workflow_candidate(added=(".github/workflows/new.yml",))
+        self.assert_workflow_refused()
+
+    def test_modified_active_workflow_refused_before_signing_or_push(self):
+        self.workflow_candidate(added=(".github/workflows/existing.yml",))
+        self.assert_workflow_refused()
+
+    def test_deleted_active_workflow_refused_before_signing_or_push(self):
+        self.workflow_candidate(removed=(".github/workflows/existing.yml",))
+        self.assert_workflow_refused()
+
+    def test_workflow_renamed_out_of_active_directory_still_refused(self):
+        self.workflow_candidate(
+            added=(".github/workflows-pending/existing.yml",),
+            removed=(".github/workflows/existing.yml",),
+            copy_existing=True,
+        )
+        self.assert_workflow_refused()
+
+    def test_quoted_newline_workflow_name_cannot_evade_path_policy(self):
+        self.workflow_candidate(added=('.github/workflows/"quoted\nname.yml',))
+        self.assert_workflow_refused()
+
+    def test_exact_active_workflows_path_replacement_refused(self):
+        self.workflow_candidate(
+            added=(".github/workflows",), removed=(".github/workflows/existing.yml",)
+        )
+        self.assert_workflow_refused()
+
+    def test_pending_workflow_can_publish_without_changing_active_workflow(self):
+        self.workflow_candidate(added=(".github/workflows-pending/proposed.yml",))
+        self.publish()
+        self.assertTrue(self.remote_head())
+        self.assertEqual(
+            guard.git(
+                "show", self.remote_head() + ":.github/workflows-pending/proposed.yml"
+            ),
+            "name: Changed",
+        )
+        self.assertEqual(
+            guard.git("show", self.remote_head() + ":.github/workflows/existing.yml"),
+            "name: Existing",
+        )
 
     def test_staged_only_work_cannot_be_misclassified_as_nochange(self):
         Path("file.txt").write_text("staged implementation\n")
@@ -510,6 +653,100 @@ class WorkflowTests(unittest.TestCase):
         )
         cls.workflows = json.loads(result.stdout)
 
+    @staticmethod
+    def expression(expression, values):
+        # Evaluate this workflow's restricted expressions with supplied event
+        # values; missing GitHub properties behave as empty strings.
+        expression = expression.removeprefix("${{").removesuffix("}}").strip()
+        expression = re.sub(
+            r"\b(?:github|inputs)(?:\.[a-z_]+)+",
+            lambda match: repr(values.get(match[0], "")),
+            expression,
+        )
+        expression = expression.replace("&&", " and ").replace("||", " or ")
+        return eval(
+            " ".join(expression.split()),
+            {"__builtins__": {}},
+            {
+                "contains": lambda value, search: search.lower() in value.lower(),
+                "format": lambda template, value: template.format(value),
+            },
+        )
+
+    def test_concurrency_duplicates_edit_gate_and_isolates_unrelated_events(self):
+        for workflow in self.workflows:
+            group = workflow["concurrency"]["group"]
+            gate = workflow["jobs"]["edit"]["if"]
+            normalized = " ".join(group.split())
+            self.assertTrue(
+                normalized.startswith(
+                    "${{ ( " + " ".join(gate.split()) + " ) && format("
+                )
+            )
+            self.assertFalse(workflow["concurrency"]["cancel-in-progress"])
+            values = {
+                "github.actor": "owner",
+                "github.repository_owner": "owner",
+                "github.event.sender.type": "User",
+                "github.event_name": "issues",
+                "github.event.issue.number": 163,
+                "github.event.issue.body": "@claude implement",
+                "github.run_id": 100,
+            }
+            self.assertTrue(self.expression(gate, values))
+            self.assertEqual(self.expression(group, values), "claude-agent-163")
+            for override in (
+                {"github.actor": "claude[bot]", "github.event.sender.type": "Bot"},
+                {
+                    "github.event_name": "issue_comment",
+                    "github.event.comment.body": "Published abc in #164.",
+                },
+                {"github.event.issue.body": "Question without mention"},
+                {"github.actor": "outsider"},
+            ):
+                event = dict(values, **override)
+                self.assertFalse(self.expression(gate, event))
+                self.assertEqual(self.expression(group, event), "claude-noop-100")
+                event["github.run_id"] = 101
+                self.assertEqual(self.expression(group, event), "claude-noop-101")
+
+    def test_pending_dispatch_uses_requested_entity_queue(self):
+        pending = next(
+            workflow
+            for workflow in self.workflows
+            if "workflow_dispatch" in workflow["on"]
+        )
+        values = {
+            "github.event_name": "workflow_dispatch",
+            "inputs.issue_number": "163",
+            "github.run_id": 100,
+        }
+        self.assertTrue(self.expression(pending["jobs"]["edit"]["if"], values))
+        self.assertEqual(
+            self.expression(pending["concurrency"]["group"], values), "claude-agent-163"
+        )
+
+    def test_publisher_has_no_ambient_token_override_or_duplicate_identity(self):
+        for workflow in self.workflows:
+            serialized = json.dumps(workflow)
+            self.assertNotIn("CLAUDE_PUBLISH_TOKEN", serialized)
+            self.assertNotIn("CLAUDE_EXECUTION_FILE", serialized)
+            self.assertNotIn("CLAUDE_REDACT_TOKEN", serialized)
+            publisher = next(
+                step
+                for step in workflow["jobs"]["publish"]["steps"]
+                if " publish " in step.get("run", "")
+            )
+            for variable in (
+                "GH_TOKEN",
+                "GITHUB_TOKEN",
+                "GIT_AUTHOR_NAME",
+                "GIT_AUTHOR_EMAIL",
+                "GIT_COMMITTER_NAME",
+                "GIT_COMMITTER_EMAIL",
+            ):
+                self.assertNotIn(variable, publisher.get("env", {}))
+
     def test_editor_and_verifier_cannot_publish_or_request_signing_oidc(self):
         for workflow in self.workflows:
             with self.subTest(workflow=workflow["name"]):
@@ -589,20 +826,28 @@ class WorkflowTests(unittest.TestCase):
 
 
 class PublisherTokenTests(unittest.TestCase):
-    def test_workflow_token_is_refused(self):
-        with patch.dict(
-            os.environ, {"GH_TOKEN": "workflow", "WORKFLOW_GITHUB_TOKEN": "workflow"}
-        ):
-            with self.assertRaisesRegex(guard.PublicationError, "suppress PR CI"):
-                guard.publisher_token()
-
-    def test_explicit_app_token_needs_no_exchange(self):
-        with patch.dict(
-            os.environ, {"GH_TOKEN": "app", "WORKFLOW_GITHUB_TOKEN": "workflow"}
-        ):
-            with patch.object(guard, "http_json") as exchange:
-                self.assertEqual(guard.publisher_token(), ("app", False))
-                exchange.assert_not_called()
+    def test_ambient_tokens_never_override_oidc_app_identity(self):
+        for token in ("maintainer-pat", "workflow-token", "ambient-app-token"):
+            with (
+                self.subTest(token=token),
+                patch.dict(
+                    os.environ,
+                    {
+                        "GH_TOKEN": token,
+                        "GITHUB_TOKEN": token,
+                        "ACTIONS_ID_TOKEN_REQUEST_URL": "https://oidc.invalid/token",
+                        "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "oidc-request-secret",
+                    },
+                ),
+            ):
+                with patch.object(
+                    guard,
+                    "http_json",
+                    side_effect=[{"value": "jwt"}, {"token": "exchanged-app"}],
+                ) as exchange:
+                    self.assertEqual(guard.publisher_token(), "exchanged-app")
+                    self.assertEqual(exchange.call_count, 2)
+                    self.assertNotIn(token, str(exchange.call_args_list))
 
     def test_oidc_app_exchange_requests_only_publication_permissions(self):
         environment = {
@@ -617,7 +862,7 @@ class PublisherTokenTests(unittest.TestCase):
                 "http_json",
                 side_effect=[{"value": "oidc-jwt"}, {"token": "app-token"}],
             ) as exchange:
-                self.assertEqual(guard.publisher_token(), ("app-token", True))
+                self.assertEqual(guard.publisher_token(), "app-token")
                 self.assertEqual(exchange.call_count, 2)
                 self.assertIn(
                     "audience=claude-code-github-action",
@@ -641,9 +886,7 @@ class PublisherTokenTests(unittest.TestCase):
                     guard.publisher_token()
 
     def test_exchange_token_revoked_even_after_publication_failure(self):
-        with patch.object(
-            guard, "publisher_token", return_value=("temporary-app-token", True)
-        ):
+        with patch.object(guard, "publisher_token", return_value="temporary-app-token"):
             with patch.object(
                 guard,
                 "publish_result",

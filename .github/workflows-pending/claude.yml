@@ -26,7 +26,29 @@ on:
   pull_request_review: { types: [submitted] }
 permissions: { contents: read }
 concurrency:
-  group: claude-agent-${{ inputs.issue_number || github.event.issue.number || github.event.pull_request.number }}
+  # Match edit eligibility exactly. Unrelated comments, including publication
+  # replies, must never displace a queued request for the same entity.
+  group: >-
+    ${{
+      (
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.actor == github.repository_owner &&
+          github.event.sender.type == 'User' &&
+          (
+            (github.event_name == 'issues' &&
+              (contains(github.event.issue.body, '@claude') ||
+               contains(github.event.issue.title, '@claude'))) ||
+            (github.event_name == 'pull_request_review_comment' &&
+              contains(github.event.comment.body, '@claude')) ||
+            (github.event_name == 'pull_request_review' &&
+              contains(github.event.review.body, '@claude'))
+          )
+        )
+      ) &&
+      format('claude-agent-{0}', inputs.issue_number || github.event.issue.number || github.event.pull_request.number) ||
+      format('claude-noop-{0}', github.run_id)
+    }}
   cancel-in-progress: false
 
 jobs:
@@ -142,9 +164,7 @@ jobs:
         if: always() && steps.input.outcome == 'success'
         env:
           CLAUDE_OUTCOME: ${{ steps.claude.outcome == 'success' && steps.claude.outputs.conclusion == 'success' && 'success' || 'failure' }}
-          CLAUDE_EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
           CLAUDE_RESPONSE_FILE: ${{ runner.temp }}/claude-response.md
-          CLAUDE_REDACT_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: python3 "$RUNNER_TEMP/claude-publication.py" export "$RUNNER_TEMP/claude-input" "$RUNNER_TEMP/claude-candidate"
       - name: Preserve candidate even when editing or export failed
         if: always() && steps.input.outcome == 'success'
@@ -191,7 +211,7 @@ jobs:
           task typecheck
           task test:coverage
           task lint:ci
-      - name: Seal the exact tree that passed verification
+      - name: Check and bundle candidate after tests
         run: python3 "$RUNNER_TEMP/claude-publication.py" seal "$RUNNER_TEMP/claude-input" "$RUNNER_TEMP/claude-verified"
       - name: Preserve verified result
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -227,11 +247,5 @@ jobs:
       - name: Publish the verified result
         id: publish_result
         env:
-          GH_TOKEN: ${{ secrets.CLAUDE_PUBLISH_TOKEN }}
-          WORKFLOW_GITHUB_TOKEN: ${{ github.token }}
           SIGNING_ENABLED: ${{ steps.signing.outputs.signing-enabled }}
-          GIT_AUTHOR_NAME: Kaj Kowalski
-          GIT_AUTHOR_EMAIL: info@kajkowalski.nl
-          GIT_COMMITTER_NAME: Kaj Kowalski
-          GIT_COMMITTER_EMAIL: info@kajkowalski.nl
         run: python3 .github/scripts/claude-publication.py publish "$RUNNER_TEMP/claude-input" "$RUNNER_TEMP/claude-verified"

@@ -220,16 +220,6 @@ def export(directory, destination):
             response.stat().st_size <= 60000, "Response exceeds GitHub comment limit"
         )
         shutil.copyfile(response, destination / "response.md")
-    execution = os.environ.get("CLAUDE_EXECUTION_FILE")
-    if execution and Path(execution).is_file():
-        # Bounded diagnostic tail; redact the known credentials, never archive env.
-        with open(execution, "rb") as stream:
-            stream.seek(max(0, Path(execution).stat().st_size - 1024 * 1024))
-            text = stream.read().decode("utf-8", errors="replace")
-        for name in ("CLAUDE_REDACT_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"):
-            if os.environ.get(name):
-                text = text.replace(os.environ[name], "[REDACTED]")
-        (destination / "execution-tail.txt").write_text(text, encoding="utf-8")
 
 
 def import_candidate(directory, request, filename):
@@ -263,7 +253,8 @@ def response_file(directory):
 
 def verify(directory, candidate_dir, destination):
     request = policy(directory)
-    # Trusted job output, not a model-writable artifact or SDK success alone.
+    # Liveness signal only: the model can write step outputs. Candidate tests
+    # are a quality check, not an attestation against hostile candidate code.
     require(
         os.environ.get("CLAUDE_OUTCOME") == "success",
         "Editing did not complete successfully; recovery artifact retained",
@@ -312,15 +303,10 @@ def http_json(url, *, token, body=None):
 
 
 def publisher_token():
-    supplied = os.environ.get("GH_TOKEN", "")
-    require(
-        not supplied or supplied != os.environ.get("WORKFLOW_GITHUB_TOKEN"),
-        "GITHUB_TOKEN publication would suppress PR CI",
-    )
-    if supplied:
-        return supplied, False
     # Same exchange as anthropics/claude-code-action src/github/token.ts at
     # ed670b4cf9de2a5a570d130d2f6197b9e543cd64; run only in the trusted publisher.
+    # Never use ambient GH_TOKEN/GITHUB_TOKEN: a maintainer PAT could publish
+    # comments as the owner and recursively trigger another implementation run.
     url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"]
     oidc = http_json(
         url
@@ -345,7 +331,7 @@ def publisher_token():
         "App token exchange returned no token",
     )
     print("::add-mask::" + token, flush=True)
-    return token, True
+    return token
 
 
 def remote_sha(branch):
@@ -388,6 +374,19 @@ def check_pr(request, number, sha):
 def publish_result(directory, destination):
     request = policy(directory)
     _, tree = import_candidate(destination, request, "verified.bundle")
+    # Enforce in this trusted job, independently of token permissions and any
+    # candidate-controlled checks. NUL paths and no rename detection include
+    # deletions/renames and names that Git would otherwise quote.
+    touched = run(
+        "git", "diff", "--name-only", "--no-renames", "-z", request["start"], tree
+    ).split(b"\0")
+    require(
+        not any(
+            path == b".github/workflows" or path.startswith(b".github/workflows/")
+            for path in touched
+        ),
+        "Workflow changes need maintainer activation via .github/workflows-pending/",
+    )
     response = response_file(destination)
     # Trusted guard from workflow_sha, never from the candidate.
     run(
@@ -421,7 +420,7 @@ def publish_result(directory, destination):
     if request["kind"] == "pull_request":
         check_pr(request, request["number"], request["start"])
     entity = "issue" if request["kind"] == "issue" else "PR"
-    title = f"fix: address {entity} #{request['number']}"
+    title = f"chore: address {entity} #{request['number']}"
     signed = git(
         "-c",
         "commit.gpgsign=" + enabled,
@@ -492,15 +491,14 @@ def publish_result(directory, destination):
 
 
 def publish(directory, destination):
-    token, revoke = publisher_token()
+    token = publisher_token()
     previous = os.environ.get("GH_TOKEN")
     os.environ["GH_TOKEN"] = token
     try:
         publish_result(directory, destination)
     finally:
         try:
-            if revoke:
-                run("gh", "api", "--method", "DELETE", "/installation/token")
+            run("gh", "api", "--method", "DELETE", "/installation/token")
         finally:
             if previous is None:
                 os.environ.pop("GH_TOKEN", None)

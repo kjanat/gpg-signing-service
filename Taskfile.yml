@@ -246,6 +246,19 @@ tasks:
     deps: [install:noscripts]
     cmds:
       - task: format
+      - task: lint:checks
+
+  lint:ci:
+    desc: Lint without changing the candidate being verified
+    deps: [install:noscripts]
+    cmds:
+      - task: lint:checks
+
+  # Share the checks so local lint and candidate verification cannot drift.
+  # Only local lint formats first; CI checks must leave the candidate unchanged.
+  lint:checks:
+    internal: true
+    cmds:
       - bun eslint src/
       # `check`, not `lint`: biome.jsonc turns the formatter off but leaves the
       # organizeImports assist on, and `biome lint` does not run assists. So a
@@ -253,15 +266,6 @@ tasks:
       # the pre-commit `lint:fix` -- which is `biome check --fix` -- silently
       # rewrote it, which is the mutation half of #125. This is the same command
       # package.json's `lint:biome` runs, minus the fix.
-      - mise exec -- biome check
-      - task: lint:shell
-      - task: lint:actions
-
-  lint:ci:
-    desc: Lint without changing the candidate being verified
-    deps: [install:noscripts]
-    cmds:
-      - bun eslint src/
       - mise exec -- biome check
       - task: lint:shell
       - task: lint:actions

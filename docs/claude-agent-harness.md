@@ -23,8 +23,9 @@ A successful model invocation therefore cannot establish publication success.
    is shorter than the job timeout to reserve time for this handoff.
 3. **Verify.** A clean runner downloads the input and candidate, validates their
    Git relationship and runs repository checks with read-only permissions.
-   The trusted verifier seals the exact tree that passed. Failed validation
-   cannot produce a publishable result.
+   The verifier checks for changes made during testing before sealing the tree.
+   This is a quality check for ordinary mistakes, not a security attestation
+   against hostile candidate code; see the limits below.
 4. **Sign and publish.** A fresh trusted checkout imports verified Git objects
    without checking out or executing candidate code. Only this job receives
    signing OIDC and publication credentials. It creates the final service-signed
@@ -37,6 +38,12 @@ when editing, validation, signing or publication fails. Local work is retained
 for inspection rather than disappearing with the runner. Export/upload failures
 still fail the run; cancellation or runner loss before upload cannot guarantee
 recovery.
+
+This repository is public: any logged-in GitHub user can
+[download these artifacts](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts)
+during retention. They contain code, patches, recovery history and
+the response, but no exported model transcript. Do not place secrets in those
+files. Omitting transcripts does not make arbitrary file contents confidential.
 
 A question or review with no changed files can complete without a branch or PR.
 It must still produce a successful, validated answer. No-change handling cannot
@@ -71,9 +78,13 @@ entity and author, and checks the requester's write/admin permission. Enable the
 App dispatch path and replace the live workflow together; subscribing to both
 comment delivery routes would launch duplicate runs. See [GitHub App](github-app.md).
 
-Concurrency is per entity with `cancel-in-progress: false`. GitHub retains one
-running and one pending run in a concurrency group; newer queued requests can
-replace older pending ones. Submit one request per entity at a time.
+Only eligible requests share the entity's concurrency group, using the same
+event-specific owner, human-sender and mention checks as the job gate; the
+pending variant also admits its dispatch path. Skipped bot and non-mention
+events receive unique groups, so completion comments and unrelated traffic
+cannot displace a queued request. This workflow uses the default queue with
+`cancel-in-progress: false`: one running and one pending run per group. A newer
+actual request can replace an older pending request on the same entity.
 
 ## Trust boundaries and provenance
 
@@ -86,10 +97,26 @@ and lack of signing credentials matter. Verification also runs candidate code
 without publication credentials. The privileged publisher executes only the
 trusted workflow revision, its trusted helpers and signing setup.
 
+Verification executes the candidate's task definitions, scripts and tests.
+That code can replace its own checks, modify the copied verifier, or tamper
+with artifacts in the same runner account. The publisher independently
+revalidates Git structure, parentage, protected paths and publication refs; it
+does not establish that candidate code is safe or that hostile checks really
+ran. The SDK conclusion is a liveness signal, not tamper-proof evidence: the
+model can write step outputs. These gates detect ordinary incomplete work;
+they do not replace human review.
+
+Verification installs tools from `github.workflow_sha` before materializing
+the candidate. A candidate that changes tool versions is therefore checked
+with the existing toolchain; its proposed toolchain still needs normal CI.
+
 Publication uses a Claude App installation token obtained through the existing
 OIDC exchange. There is no workflow `GITHUB_TOKEN` fallback: that token would
 suppress ordinary PR-triggered CI. Failure to obtain publication credentials
-fails the publisher while retaining the artifacts.
+fails the publisher while retaining the artifacts. Maintainer PAT overrides
+are not accepted. The exchange follows the pinned action's
+[`src/github/token.ts`](https://github.com/anthropics/claude-code-action/blob/ed670b4cf9de2a5a570d130d2f6197b9e543cd64/src/github/token.ts);
+review that contract when updating the action pin.
 
 The existing signing preflight and Kaj author/committer identity remain in
 force. `GPG_SIGN_DISABLE` remains the explicit existing signing escape hatch;
@@ -97,10 +124,13 @@ model output cannot enable it. Attribution checks cover published text and
 commit messages. The temporary artifact commit is transport data, not the
 final published commit.
 
-An App token may lack permission to change `.github/workflows/`. Such a push
-must fail and retain the candidate; it must not silently omit files or report
-completion. `.github/workflows-pending/` remains available for changes requiring
-maintainer activation.
+Before signing, the publisher rejects changes to the exact
+`.github/workflows` path or any descendant, including additions, modifications,
+deletions and renames. This policy is independent of token permissions. The
+candidate remains available for maintainer activation through
+`.github/workflows-pending/`; files are never silently omitted. This restriction
+does not make other candidate code safe: existing workflows may execute changed
+scripts with secrets after publication. Human review remains necessary.
 
 ## Tests
 
