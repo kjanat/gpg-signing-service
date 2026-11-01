@@ -168,9 +168,9 @@ jobs:
         with: { ref: "${{ github.workflow_sha }}", fetch-depth: 0, persist-credentials: false }
       - name: Preserve trusted verifier before materializing candidate code
         run: cp .github/scripts/claude-publication.py "$RUNNER_TEMP/claude-publication.py"
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: claude-input, path: "${{ runner.temp }}/claude-input" }
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: claude-candidate, path: "${{ runner.temp }}/claude-candidate" }
       - { uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca, with: { version: "${{ vars.MISE_VERSION }}", cache: false } }
       - { uses: kjanat/install-dprint@v2, with: { cache: false } }
@@ -212,9 +212,9 @@ jobs:
       # objects are inspected/imported only; their code and hooks never execute.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { ref: "${{ github.workflow_sha }}", fetch-depth: 0, persist-credentials: false }
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: claude-input, path: "${{ runner.temp }}/claude-input" }
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { name: claude-verified, path: "${{ runner.temp }}/claude-verified" }
       - name: Set up service-signed commits
         if: needs.verify.outputs.status == 'changed'
