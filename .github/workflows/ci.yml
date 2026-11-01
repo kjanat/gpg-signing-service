@@ -18,7 +18,7 @@ jobs:
     runs-on: *Ubuntu,
     steps: [
       *Check,
-      &Mise { uses: &MiseAction jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca, with: { version: *MiseVer } }, # v5.1.1
+      &Mise { uses: &MiseAction jdx/mise-action@6be3c7ed4c21d4f76b208d351d95aac273ebb76d, with: { version: *MiseVer } }, # v5.2.4
       &Bun { uses: $/.github/actions/setup-bun },
       run: task typecheck,
     ],
