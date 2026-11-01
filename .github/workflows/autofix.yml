@@ -1,0 +1,13 @@
+name: autofix.ci
+on: { push: { branches: [master] }, pull_request: null }
+permissions: { contents: read }
+jobs:
+  autofix:
+    # An autofix commit pushed to a stacked PR rewrites a layer the merge queue coordinates
+    if: github.event.pull_request.stack == null
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v7
+      - uses: kjanat/actions@fmt
+      - uses: autofix-ci/action@v1
