@@ -25,6 +25,9 @@ run_gate() {
 		-u CLAUDE_CODE_OAUTH_TOKEN \
 		-u PR_HEAD_REPO \
 		-u GITHUB_ACTOR \
+		-u GITHUB_WORKSPACE \
+		-u REVIEW_WORKFLOW_FILE \
+		REVIEW_WORKFLOW_FILE="${repo_root}/.github/workflows/claude-code-review.yml" \
 		GITHUB_REPOSITORY='kjanat/gpg-signing-service' \
 		GITHUB_ENV="${tmp_dir}/github_env" \
 		GITHUB_STEP_SUMMARY="${tmp_dir}/summary" \
@@ -119,6 +122,72 @@ grep -qF 'claude-dependabot-fix.yml' "${tmp_dir}/out" \
 rc="$(run_gate PR_HEAD_REPO='someone-else/gpg-signing-service' GITHUB_ACTOR='dependabot[bot]')"
 expect_rc 0 "${rc}"
 expect_stdout '::notice title=Claude review skipped (fork pull request)::'
+
+# --- the Renovate pull request -------------------------------------------------
+#
+# claude-code-action fails -- not skips -- a run started by a bot that is not in
+# its allowed_bots: "Workflow initiated by non-human actor: renovate (type:
+# Bot)". Renovate pull requests are same-repo and Renovate runs read the
+# ordinary Actions secrets, so the token IS present and the step used to run and
+# go red. The gate has to decide that run is a no-op, even with the token.
+grep -qF 'allowed_bots: dependabot[bot],github-actions[bot],claude[bot]' "${repo_root}/.github/workflows/claude-code-review.yml" \
+	|| fail 'the live review workflow no longer has the allowed_bots line this suite reasons about'
+rc="$(run_gate CLAUDE_CODE_OAUTH_TOKEN='t' PR_HEAD_REPO='kjanat/gpg-signing-service' GITHUB_ACTOR='renovate[bot]')"
+expect_rc 0 "${rc}"
+expect_env 'HAS_CLAUDE_TOKEN='
+if grep -qxF 'HAS_CLAUDE_TOKEN=true' "${tmp_dir}/github_env"; then
+	fail 'a Renovate run with a token would still invoke the Claude action'
+fi
+expect_stdout '::notice title=Claude review skipped (Renovate pull request)::'
+refute_stdout '::warning'
+grep -qF 'Renovate pull request' "${tmp_dir}/summary" || fail 'the Renovate skip should reach the job summary'
+
+# Without a token it is the same deliberate skip, not the "misconfigured" warning.
+rc="$(run_gate PR_HEAD_REPO='kjanat/gpg-signing-service' GITHUB_ACTOR='renovate[bot]')"
+expect_rc 0 "${rc}"
+expect_env 'HAS_CLAUDE_TOKEN='
+expect_stdout '::notice title=Claude review skipped (Renovate pull request)::'
+
+# The spelling a display name is allowed to have.
+rc="$(run_gate CLAUDE_CODE_OAUTH_TOKEN='t' GITHUB_ACTOR='Renovate[Bot]')"
+expect_rc 0 "${rc}"
+expect_env 'HAS_CLAUDE_TOKEN='
+
+# If the workflow ever lists renovate[bot], this branch must stand down and the
+# review runs as it does for any allowed bot.
+printf '          allowed_bots: dependabot[bot],renovate[bot]\n' >"${tmp_dir}/allows-renovate.yml"
+rc="$(run_gate REVIEW_WORKFLOW_FILE="${tmp_dir}/allows-renovate.yml" CLAUDE_CODE_OAUTH_TOKEN='t' GITHUB_ACTOR='renovate[bot]')"
+expect_rc 0 "${rc}"
+expect_env 'HAS_CLAUDE_TOKEN=true'
+printf '          allowed_bots: "*"\n' >"${tmp_dir}/allows-all.yml"
+rc="$(run_gate REVIEW_WORKFLOW_FILE="${tmp_dir}/allows-all.yml" CLAUDE_CODE_OAUTH_TOKEN='t' GITHUB_ACTOR='renovate[bot]')"
+expect_rc 0 "${rc}"
+# YAML quotes are syntax, not part of the value: the action receives `*`.
+expect_env 'HAS_CLAUDE_TOKEN=true'
+
+# An unreadable workflow cannot be reasoned about: decline the skip and behave
+# exactly as before, rather than silently disabling reviews.
+rc="$(run_gate REVIEW_WORKFLOW_FILE="${tmp_dir}/does-not-exist.yml" CLAUDE_CODE_OAUTH_TOKEN='t' GITHUB_ACTOR='renovate[bot]')"
+expect_rc 0 "${rc}"
+expect_env 'HAS_CLAUDE_TOKEN=true'
+
+# Human reviews are not disabled: a person's pull request, and one whose login
+# merely contains the bot's name, still run Claude.
+for human in kjanat renovate renovate-bot 'not-renovate[bot]x' 'renovate[bot]-fan'; do
+	rc="$(run_gate CLAUDE_CODE_OAUTH_TOKEN='t' PR_HEAD_REPO='kjanat/gpg-signing-service' GITHUB_ACTOR="${human}")"
+	expect_rc 0 "${rc}"
+	expect_env 'HAS_CLAUDE_TOKEN=true'
+done
+
+# Other bots are not Renovate. An allowed one proceeds, and Dependabot keeps its
+# own skip reason.
+rc="$(run_gate CLAUDE_CODE_OAUTH_TOKEN='t' GITHUB_ACTOR='github-actions[bot]')"
+expect_rc 0 "${rc}"
+expect_env 'HAS_CLAUDE_TOKEN=true'
+rc="$(run_gate PR_HEAD_REPO='kjanat/gpg-signing-service' GITHUB_ACTOR='dependabot[bot]')"
+expect_stdout '::notice title=Claude review skipped (Dependabot secrets store)::'
+rc="$(run_gate CLAUDE_CODE_OAUTH_TOKEN='t' GITHUB_ACTOR='dependabot[bot]')"
+expect_env 'HAS_CLAUDE_TOKEN=true'
 
 # --- the missing secret on a trusted run -------------------------------------
 #

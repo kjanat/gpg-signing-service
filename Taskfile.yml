@@ -57,6 +57,8 @@ tasks:
       - task: test:commit-provenance
       - task: test:sign-commit-example
       - task: test:review-gate
+      - task: test:security-license-policy
+      - task: test:pending-workflows
       - task: test:dependabot-fix
       - task: test:agent-harness
       - task: test:claude-publication
@@ -142,6 +144,16 @@ tasks:
     desc: Test the Claude review job's no-token gate and its fork path
     cmd: bash .github/scripts/test-claude-review-gate.sh
 
+  test:security-license-policy:
+    desc: Test the staged Security workflow exempts only openpgp from the licence deny list
+    aliases: [tslp]
+    cmd: bash .github/scripts/test-security-license-policy.sh
+
+  test:pending-workflows:
+    desc: Test the staged autofix and security workflows and their one activation commit
+    aliases: [tpw]
+    cmd: bash .github/scripts/test-pending-workflows.sh
+
   test:dependabot-fix:
     desc: Test the trusted Dependabot write path's authorization, allowlist and privilege boundary
     aliases: [dbf]
@@ -221,6 +233,8 @@ tasks:
       - task: test:commit-provenance
       - task: test:sign-commit-example
       - task: test:review-gate
+      - task: test:security-license-policy
+      - task: test:pending-workflows
       - task: test:dependabot-fix
       - task: test:agent-harness
       - task: test:claude-publication
@@ -331,7 +345,7 @@ tasks:
       DPRINT_CONFIG_DISCOVERY: 0
     cmds:
       - task: client:format
-      - dprint fmt {{.CLI_ARGS}} --config "${CONFIG}" --allow-no-files
+      - bunx @kjanat/fmt {{.CLI_ARGS}} --config "${CONFIG}" --allow-no-files
 
   format:check:
     silent: true
@@ -345,12 +359,12 @@ tasks:
 
   format:staged:
     silent: true
-    desc: Format staged files with dprint
+    desc: Format staged files with kprint
     aliases: [fs]
     env:
       CONFIG: "{{.DPRINT_CONFIG}}"
       DPRINT_CONFIG_DISCOVERY: 0
-    cmd: dprint fmt --staged --config "${CONFIG}" --allow-no-files
+    cmd: bunx @kjanat/fmt --staged --config "${CONFIG}" --allow-no-files
 
   verify:hsts:
     desc: Compare the live Strict-Transport-Security header against the policy the Worker sets
@@ -404,6 +418,7 @@ tasks:
     cmds:
       - bun run generate:oapigen
       - task: client:generate
+      - bunx @kjanat/fmt
 
   generate:key:
     desc: Generate GPG key

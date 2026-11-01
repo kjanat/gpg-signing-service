@@ -485,26 +485,31 @@ this checkout in the meantime.
 
 #### Stopping it happening again
 
-`.github/scripts/check-commit-provenance.sh <range>` refuses commits whose
-committer is `GitHub <noreply@github.com>` or whose author or committer name
-ends in `[bot]`, in any case — `Renovate[Bot]` names the same mechanism as
-`renovate[bot]`, and a display name is free text GitHub does not hold to the
-lower-case spelling. Run it on pushes to the default branch, over the commits the
-push added, so a merge that manufactures identities is a red build immediately
-rather than twenty commits later. `PROVENANCE_ALLOW` takes addresses to permit
-anyway, one per line.
+`.github/scripts/check-commit-provenance.sh <range>` refuses commits that
+credit an AI agent. CI runs it on pushes to the default branch, over the
+commits the push added. A commit is refused when:
 
-It reads the message as well as the headers. A `Co-authored-by:` trailer is a
-provenance claim too, and this branch had to be rewritten once because four
-commits carried one that no one typed: correct `Kaj Kowalski` headers over
-`Co-authored-by: Kaj Kowalski <6353477+kjanat@users.noreply.github.com>`, which
-the header-only guard passed without comment. So a trailer whose name ends in
-`[bot]`, or whose address is `noreply@github.com` or any
-`users.noreply.github.com` alias, is refused — case-folded the same way —
-for the same reason the headers are: it credits an account a tool had the id for, not a correspondent. An
-ordinary human co-author at an address they write from is untouched, and
-`PROVENANCE_ALLOW` reaches the trailers too. `Signed-off-by:` is a different
-claim and is not read.
+- its author or committer name or address contains the word `claude`,
+  `codex` or `grok` in any case, or its address is at `anthropic.com`,
+  `openai.com` or `x.ai`. Letters, digits and hyphens around the word make it
+  part of a longer name, so `Jean-Claude` and `codex-team@` pass. A `[bot]`
+  identity that contains one of the three anywhere is refused;
+- any `Co-authored-by:` line names such an identity, in whichever paragraph
+  it sits;
+- any message line contains an agent session link: `claude.ai/code`,
+  `claude.com/claude-code`, `chatgpt.com/codex` or `grok.com`. This covers
+  prose that only mentions such a link;
+- a trailer key names an agent (`Claude-Session-Id:`), or a `Session`,
+  `Generated`, `Assisted`, `Agent` or `Model` trailer has an agent as its
+  value.
+
+Other bots pass, and so do web edits and merges of pull requests opened by a
+person. A squash merge is authored by whoever opened the pull request, so the
+squash of a pull request the Claude app opened is authored `claude[bot]` and
+refused, as `fa4f06e` (#162) was. Merge those pull requests with a merge
+commit or a rebase. Prose that names an agent without a session link passes.
+`PROVENANCE_ALLOW` takes addresses to permit anyway, one per line, for a
+person whose name or address matches.
 
 The job that runs it is gated on `github.event_name == 'push' &&
 github.event.deleted == false`: deleting a branch is a push too, and one whose

@@ -16,7 +16,9 @@
       "!!**/client",
       "!!**/wrangler",
       "!!**/worker-configuration.d.ts",
-      "!tsconfig.json"
+      "!tsconfig.json",
+      "!**/*.yml",
+      "!**/*.yaml"
     ]
   },
   "formatter": { "enabled": false },

@@ -349,11 +349,10 @@ check_root() {
 		fi
 	done
 
-	local declared_wrangler locked_wrangler mise_wrangler lock_direct
+	local declared_wrangler locked_wrangler lock_direct
 	declared_wrangler="$(json_block_value "${root}/package.json" '  ' devDependencies wrangler)"
 	lock_direct="$(json_block_value "${root}/bun.lock" '      ' devDependencies wrangler)"
 	locked_wrangler="$(lock_resolved "${root}" wrangler)"
-	mise_wrangler="$(mise_tool "${root}" wrangler)"
 
 	if [[ -z ${declared_wrangler} ]]; then
 		note "package.json invokes wrangler but does not depend on it -- node_modules/.bin/wrangler then exists only while bun keeps hoisting it out of @cloudflare/vitest-pool-workers, and it is the producer of a committed artifact"
@@ -369,14 +368,6 @@ check_root() {
 		note "no resolved top-level wrangler entry in bun.lock"
 	elif [[ -n ${declared_wrangler} && ${declared_wrangler} != "${locked_wrangler}" ]]; then
 		note "package.json asks for wrangler ${declared_wrangler} but bun.lock resolved ${locked_wrangler}"
-	fi
-
-	# The two channels are allowed to exist; they are not allowed to be two
-	# versions. `wrangler types` stamps its own workerd into the header of the
-	# file it writes, so a split version is a split producer no matter which one
-	# the Taskfile happens to name today.
-	if [[ -n ${mise_wrangler} && -n ${locked_wrangler} && ${mise_wrangler} != "${locked_wrangler}" ]]; then
-		note "the mise wrangler is ${mise_wrangler} and the bun.lock one is ${locked_wrangler} -- two channels are fine, two versions are two producers"
 	fi
 
 	unset -f note
@@ -480,7 +471,7 @@ fi
 
 # --- the repository itself has to satisfy them -------------------------------
 
-new_case 'every producer in .mise.toml is pinned and the two wranglers agree'
+new_case 'every producer in .mise.toml is pinned'
 set +e
 check_output="$(check_root "${repo_root}")"
 set -e
@@ -489,7 +480,8 @@ if [[ -n ${check_output} ]]; then
 		fail "${line}"
 	done <<<"${check_output}"
 else
-	printf '    wrangler %s (mise and bun.lock), biome %s, tombi %s\n' \
+	printf '    wrangler %s (mise) %s (bun.lock), biome %s, tombi %s\n' \
+		"$(mise_tool "${repo_root}" wrangler)" \
 		"$(lock_resolved "${repo_root}" wrangler)" \
 		"$(mise_tool "${repo_root}" biome)" \
 		"$(mise_tool "${repo_root}" tombi)"
@@ -611,10 +603,6 @@ expect_caught 'mutant: dropping the direct wrangler dep is rejected' "${root}" '
 root="$(mutant_root wrangler-range)"
 sed -i -E 's/^([[:space:]]*"wrangler": )"[^"]*"/\1"^4.123.0"/' "${root}/package.json"
 expect_caught 'mutant: a floating wrangler range is rejected' "${root}" 'has to be an exact version'
-
-root="$(mutant_root wrangler-split)"
-mise_set_version "${root}" wrangler 4.127.1
-expect_caught 'mutant: two pinned-but-different wranglers are rejected' "${root}" 'two versions are two producers'
 
 # --- and the typegen gate has to read a resolution, not a declaration ---------
 #

@@ -23,6 +23,9 @@
 #           PR_HEAD_REPO             github.event.pull_request.head.repo.full_name
 #           GITHUB_REPOSITORY        the repo the workflow belongs to
 #           GITHUB_ACTOR             who the run is for; distinguishes Dependabot
+#                                    and Renovate
+#           REVIEW_WORKFLOW_FILE     optional; the workflow whose `allowed_bots:`
+#                                    is read, default claude-code-review.yml
 #           GITHUB_ENV               where HAS_CLAUDE_TOKEN is written
 #           GITHUB_STEP_SUMMARY      optional; the skip reason is repeated here
 #
@@ -34,16 +37,65 @@
 set -Eeuo pipefail
 
 readonly DEPENDABOT='dependabot[bot]'
+readonly RENOVATE='renovate[bot]'
 
 readonly token="${CLAUDE_CODE_OAUTH_TOKEN-}"
 readonly head_repo="${PR_HEAD_REPO-}"
 readonly this_repo="${GITHUB_REPOSITORY-}"
 readonly actor="${GITHUB_ACTOR-}"
 readonly github_env="${GITHUB_ENV-}"
+readonly review_workflow="${REVIEW_WORKFLOW_FILE:-${GITHUB_WORKSPACE:-.}/.github/workflows/claude-code-review.yml}"
 
 if [[ -z "${github_env}" ]]; then
 	printf '%s\n' '::error title=Claude review gate::GITHUB_ENV is not set; this script only runs inside a job step'
 	exit 1
+fi
+
+# claude-code-action refuses to start for a bot actor that is not in its
+# `allowed_bots`, and it does so by FAILING the step ("Workflow initiated by
+# non-human actor: renovate (type: Bot)"), which is a red check on every
+# Renovate pull request. Renovate is a supported bot here in the same sense
+# Dependabot is -- its pull requests are expected, and nothing is wrong with
+# them -- it is just not one the review is configured to run for. So that case
+# is decided here, deliberately, as a no-op, rather than left for the action to
+# trip over.
+#
+# The decision follows the workflow instead of duplicating it: the list is read
+# from the very `allowed_bots:` line the action receives. If someone adds
+# renovate[bot] there, this branch stops applying and the review runs as for any
+# allowed bot. Exactly one actor is named; any other bot, and every human, is
+# untouched, and an unreadable workflow means "not allowed" only in the sense
+# that the skip is declined -- the gate then behaves as it always did.
+#
+# This runs before the token test on purpose: with the token present (the
+# Actions store, which Renovate runs do see) the action would otherwise be
+# invoked and fail.
+bot_is_allowed() {
+	local list
+	[[ -r "${review_workflow}" ]] || return 0
+	list="$(sed -n 's/^[[:space:]]*allowed_bots:[[:space:]]*//p' "${review_workflow}")"
+	list="${list//[[:space:]\"\']/}"
+	[[ ",${list,,}," == *",${1,,},"* || ",${list}," == *",*,"* ]]
+}
+
+if [[ "${actor,,}" == "${RENOVATE}" ]] && ! bot_is_allowed "${actor}"; then
+	printf 'HAS_CLAUDE_TOKEN=\n' >>"${github_env}"
+	title='Claude review skipped (Renovate pull request)'
+	detail=(
+		"${RENOVATE} is a supported bot, but claude-code-review.yml does not list it"
+		'in allowed_bots, and claude-code-action fails a run started by a bot that'
+		'is not listed. This run is a deliberate no-op: nothing is broken. Add'
+		"${RENOVATE} to allowed_bots to have Renovate pull requests reviewed."
+	)
+	printf '::notice title=%s::%s\n' "${title}" "${detail[0]}"
+	printf '  %s\n' "${detail[@]:1}"
+	if [[ -n "${GITHUB_STEP_SUMMARY-}" ]]; then
+		{
+			printf '### :zzz: %s\n\n' "${title}"
+			printf '%s\n' "${detail[@]}"
+		} >>"${GITHUB_STEP_SUMMARY}" || true
+	fi
+	exit 0
 fi
 
 if [[ -n "${token}" ]]; then
