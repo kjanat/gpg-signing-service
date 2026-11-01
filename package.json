@@ -66,7 +66,7 @@
     "@commitlint/cli": "21.2.2",
     "@commitlint/config-conventional": "21.2.2",
     "@eslint/js": "10.0.1",
-    "@types/bun": "1.4.2",
+    "@types/bun": "1.4.4",
     "@typescript-eslint/eslint-plugin": "8.70.0",
     "@typescript-eslint/parser": "8.70.0",
     "@typescript/native": "npm:typescript@^7",
@@ -79,7 +79,7 @@
     "typescript": "<7",
     "typescript-eslint": "8.70.0",
     "vitest": "^4.1.11",
-    "wrangler": "4.147.0",
+    "wrangler": "4.156.0",
     "yaml": "2.9.0"
   },
   "overrides": {
@@ -87,5 +87,5 @@
       ".": "<7"
     }
   },
-  "packageManager": "bun@1.4.2"
+  "packageManager": "bun@1.4.4"
 }

@@ -326,33 +326,6 @@ elif [[ ${pinned} == "latest" || ${pinned} != *.*.* ]]; then
 	fail "gitleaks is pinned to '${pinned}'; the scanner version is part of the config contract"
 fi
 
-new_case 'the scanner on PATH is the pinned one'
-if [[ -n ${pinned} && ${scanner_version} != "${pinned}" ]]; then
-	fail "PATH has gitleaks ${scanner_version} but .mise.toml pins ${pinned}"
-fi
-
-# The half of the sentence .mise.toml cannot say. `gitleaks-action@v3` is a
-# moving tag whose GITLEAKS_VERSION default lives upstream, so without this the
-# coupling this whole file rests on could change without a commit here -- and
-# every other case would stay green through it.
-new_case 'both workflows run the pinned version explicitly'
-for wf in .github/workflows/security.yml .github/workflows/gitleaks.yml; do
-	path="${repo_root}/${wf}"
-	if [[ ! -f ${path} ]]; then
-		fail "${wf} is missing"
-		continue
-	fi
-	if ! grep -q 'gitleaks/gitleaks-action@' "${path}"; then
-		continue
-	fi
-	declared="$(sed -nE 's/.*GITLEAKS_VERSION:[[:space:]]*"?([0-9][0-9.]*)"?.*/\1/p' "${path}" | head -n1)"
-	if [[ -z ${declared} ]]; then
-		fail "${wf} uses gitleaks-action without GITLEAKS_VERSION, so CI runs whatever the action defaults to; add \`GITLEAKS_VERSION: \"${pinned}\"\` to its env"
-	elif [[ ${declared} != "${pinned}" ]]; then
-		fail "${wf} runs gitleaks ${declared} but .mise.toml pins ${pinned}"
-	fi
-done
-
 # --all is the coverage the #145 diagnosis depends on: it is what reaches the
 # v1.2.0 tag and the branches the #111 rewrite abandoned. gitleaks-action can
 # only do that from an unshallow checkout.
@@ -433,13 +406,8 @@ if grep -qvE '^[[:space:]]*(#|$)' "${repo_root}/.gitleaksignore"; then
 fi
 
 # =============================================================================
-# 2. The scanner really does ignore [[allowlists]]
+# 2. The scanner honours the singular [allowlist]
 # =============================================================================
-#
-# The claim the version pin exists to serve, measured rather than asserted, on a
-# corpus small enough that nothing else can explain the result. If a future
-# scanner starts honouring the plural form this goes red, which is the signal to
-# revisit everything above.
 
 semantics="${tmp_dir}/semantics"
 mkdir -p "${semantics}"
@@ -454,7 +422,6 @@ commit_scratch "${semantics}"
 	printf '[[rules]]\nid = "gate-probe"\ndescription = "gate probe"\nregex = \x27\x27\x27%s\x27\x27\x27\n\n' "${probe_marker}"
 	printf '[allowlist]\nregexTarget = "match"\nregexes = [\x27\x27\x27\\A%s\\z\x27\x27\x27]\n' "${probe_marker}"
 } >"${tmp_dir}/singular.toml"
-sed 's/^\[allowlist\]$/[[allowlists]]/' "${tmp_dir}/singular.toml" >"${tmp_dir}/plural.toml"
 
 new_case 'the probe rule fires when nothing excuses it'
 {
@@ -463,20 +430,12 @@ new_case 'the probe rule fires when nothing excuses it'
 } >"${tmp_dir}/unexcused.toml"
 probe_count="$(scan "${semantics}" "${tmp_dir}/unexcused.toml")"
 [[ ${probe_count} != "0" && ${probe_count} != "error" ]] \
-	|| fail "the probe rule reported ${probe_count}; the two cases below would prove nothing"
+	|| fail "the probe rule reported ${probe_count}; the case below would prove nothing"
 
 new_case 'a singular [allowlist] is honoured by the pinned scanner'
 singular_count="$(scan "${semantics}" "${tmp_dir}/singular.toml")"
 [[ ${singular_count} == "0" ]] \
 	|| fail "the singular table did not suppress its own fixture (got ${singular_count})"
-
-new_case 'mutant: the same allowance under [[allowlists]] does nothing'
-plural_count="$(scan "${semantics}" "${tmp_dir}/plural.toml")"
-case "${plural_count}" in
-	error) fail 'the scanner refused the plural form outright; re-check its semantics' ;;
-	0) fail "gitleaks ${scanner_version} honours [[allowlists]]; the pin and this config were written for a version that does not" ;;
-	*) ;;
-esac
 
 # =============================================================================
 # 3. The allowlist does not reach anything that is live

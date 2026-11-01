@@ -1,4 +1,33 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"]
+  "extends": ["config:recommended"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "GITLEAKS_VERSION passed to gitleaks-action",
+      "managerFilePatterns": ["/^\\.github/workflows(-pending)?/[^/]+\\.ya?ml$/"],
+      "matchStrings": ["GITLEAKS_VERSION:\\s*\"?(?<currentValue>\\d+\\.\\d+\\.\\d+)\"?"],
+      "depNameTemplate": "gitleaks",
+      "packageNameTemplate": "gitleaks/gitleaks",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    }
+  ],
+  "packageRules": [
+    {
+      "groupName": "wrangler",
+      "matchDepNames": ["wrangler"],
+      "matchManagers": ["bun", "mise"]
+    },
+    {
+      "groupName": "bun",
+      "matchDepNames": ["bun", "@types/bun"],
+      "matchManagers": ["bun", "mise"]
+    },
+    {
+      "groupName": "gitleaks",
+      "matchDepNames": ["gitleaks"],
+      "matchManagers": ["custom.regex", "mise"]
+    }
+  ]
 }

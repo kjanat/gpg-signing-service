@@ -1,21 +1,15 @@
 #!/usr/bin/env bash
-# Drive .github/scripts/check-commit-provenance.sh over the identities the
-# merge paths actually produce.
-#
-# The guard is what turns the Aug 30 failure from silent into loud: those
-# twenty commits were only noticed once the branch was signed and GitHub
-# reported the signatures against identities that had never written anything.
-# The cases below are the shapes that must stay refused, and — just as
-# important — the ordinary ones that must not start failing every merge.
+# Drive .github/scripts/check-commit-provenance.sh over AI agent credits and the
+# ordinary commits, bots and merges that must keep passing.
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
 check_script="${repo_root}/.github/scripts/check-commit-provenance.sh"
 
 # GIT_DIR and GIT_WORK_TREE would aim the fixture at the caller's repository,
-# and GIT_AUTHOR_*/GIT_COMMITTER_* — which GitHub Actions exports — would
-# overwrite the identities under test, which is the whole subject here.
-unset "${!GIT_@}"
+# and GIT_AUTHOR_*/GIT_COMMITTER_* (which GitHub Actions exports) would
+# overwrite the identities under test.
+unset "${!GIT_@}" PROVENANCE_ALLOW
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_SYSTEM=/dev/null
 
@@ -27,7 +21,7 @@ mkdir -p "${test_repo}"
 git -C "${test_repo}" init --quiet --initial-branch=master
 git -C "${test_repo}" config commit.gpgsign false
 
-# add <file> <author name> <author email> <committer name> <committer email> [trailer]
+# add <file> <author name> <author email> <committer name> <committer email> [body]
 add() {
 	local message=(-m "add $1")
 	if [[ -n "${6-}" ]]; then
@@ -41,163 +35,141 @@ add() {
 	git -C "${test_repo}" rev-parse HEAD
 }
 
-# accepts <description> <range>
+# human <file> [body]
+human() {
+	add "$1" 'Kaj Kowalski' info@kajkowalski.nl 'Kaj Kowalski' info@kajkowalski.nl "${2-}"
+}
+
+# accepts <description> <sha> [ENV=value ...]
 accepts() {
-	local description="$1" range="$2" output
-	if ! output="$(cd "${test_repo}" && "${check_script}" "${range}" 2>&1)"; then
+	local description="$1" sha="$2" output
+	shift 2
+	if ! output="$(cd "${test_repo}" && env "$@" "${check_script}" "${sha}^..${sha}" 2>&1)"; then
 		printf 'expected the guard to accept: %s\n%s\n' "${description}" "${output}" >&2
 		exit 1
 	fi
 }
 
-# refuses <description> <needle> <range>
+# refuses <description> <needle> <sha>
 refuses() {
-	local description="$1" needle="$2" range="$3" output
-	if output="$(cd "${test_repo}" && "${check_script}" "${range}" 2>&1)"; then
+	local description="$1" needle="$2" sha="$3" output
+	if output="$(cd "${test_repo}" && "${check_script}" "${sha}^..${sha}" 2>&1)"; then
 		printf 'expected the guard to refuse: %s\n%s\n' "${description}" "${output}" >&2
 		exit 1
 	fi
-	if ! grep -Fq "${needle}" <<<"${output}"; then
+	if ! grep -Fq -- "${needle}" <<<"${output}"; then
 		printf 'the refusal for %s does not mention %q:\n%s\n' "${description}" "${needle}" "${output}" >&2
 		exit 1
 	fi
 }
 
-base="$(add base.txt 'Kaj Kowalski' info@kajkowalski.nl 'Kaj Kowalski' info@kajkowalski.nl)"
+base="$(human base.txt)"
 
-# An ordinary merge: a person authored it, a person committed it. This is the
-# case that must never start failing, because a guard that cries wolf on every
-# merge gets turned off and then the real one lands unnoticed.
-add ordinary.txt 'Kaj Kowalski' info@kajkowalski.nl 'Kaj Kowalski' info@kajkowalski.nl >/dev/null
-accepts 'an ordinary person-authored commit' "${base}..HEAD"
+# --- what passes ---------------------------------------------------------------
+accepts 'an ordinary person-authored commit' "$(human ordinary.txt)"
+accepts 'a human co-author' "$(human coauthor.txt 'Co-authored-by: A Colleague <colleague@example.com>')"
+accepts 'a GitHub account alias co-author' \
+	"$(human alias.txt 'Co-authored-by: Kaj Kowalski <6353477+kjanat@users.noreply.github.com>')"
+accepts 'the #167 squash of a Renovate PR' \
+	"$(add renovate.txt 'renovate[bot]' '29139614+renovate[bot]@users.noreply.github.com' GitHub noreply@github.com \
+		'Co-authored-by: renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>')"
+accepts 'an autofix.ci commit pushed to master' \
+	"$(add autofix.txt 'autofix-ci[bot]' '114827586+autofix-ci[bot]@users.noreply.github.com' GitHub noreply@github.com)"
+accepts 'a web editor commit' "$(add web.txt 'Kaj Kowalski' info@kajkowalski.nl GitHub noreply@github.com)"
+accepts 'a dependabot committer' "$(add dependabot.txt 'Kaj Kowalski' info@kajkowalski.nl 'dependabot[bot]' support@github.com)"
+accepts 'a body that talks about Claude and Codex' \
+	"$(human talk.txt $'Skip the Claude review step when the OAuth token is unavailable.\n\nThe codex config moved.')"
+accepts 'prose that quotes a trailer without being one' \
+	"$(human prose.txt 'The guard now refuses a Co-authored-by: claude[bot] <x@users.noreply.github.com> trailer.')"
+accepts 'a conventional-commit line parsed as a trailer' \
+	"$(human ci-line.txt 'ci: skip Claude review step when the OAuth token is unavailable')"
+accepts 'a Signed-off-by from a person' "$(human signed.txt 'Signed-off-by: Kaj Kowalski <info@kajkowalski.nl>')"
+accepts 'Jean-Claude as author and committer' \
+	"$(add jcvd.txt 'Jean-Claude Van Damme' jcvd@example.com 'Jean-Claude Van Damme' jcvd@example.com)"
+accepts 'a name that contains grok' "$(add grokhovsky.txt 'Anna Grokhovsky' anna@example.com 'Kaj Kowalski' info@kajkowalski.nl)"
+accepts 'an address that contains codex' "$(add codex-team.txt 'Kaj Kowalski' codex-team@corp.example 'Kaj Kowalski' info@kajkowalski.nl)"
 
-# An ordinary co-authored commit: a second person, at an address they write
-# from. This is the half of the trailer rule that has to keep passing, because
-# crediting a colleague is the reason the trailer exists.
-add coauthored.txt 'Kaj Kowalski' info@kajkowalski.nl 'Kaj Kowalski' info@kajkowalski.nl \
-	'Co-authored-by: A Colleague <colleague@example.com>' >/dev/null
-accepts 'a human co-author trailer' "${base}..HEAD"
-human_coauthor="$(git -C "${test_repo}" rev-parse HEAD)"
+# --- AI agents as author or committer --------------------------------------------
+refuses 'claude[bot] as author' 'is authored by claude[bot]' \
+	"$(add a1.txt 'claude[bot]' '209825114+claude[bot]@users.noreply.github.com' 'Kaj Kowalski' info@kajkowalski.nl)"
+refuses 'claude[bot] behind a human address' 'is authored by claude[bot] <info@kajkowalski.nl>' \
+	"$(add a2.txt 'claude[bot]' info@kajkowalski.nl 'Kaj Kowalski' info@kajkowalski.nl)"
+refuses 'Claude at anthropic.com as author' 'is authored by Claude <noreply@anthropic.com>' \
+	"$(add a3.txt Claude noreply@anthropic.com 'Kaj Kowalski' info@kajkowalski.nl)"
+refuses 'a Codex committer' 'is committed by chatgpt-codex-connector[bot]' \
+	"$(add a4.txt 'Kaj Kowalski' info@kajkowalski.nl 'chatgpt-codex-connector[bot]' '199175422+chatgpt-codex-connector[bot]@users.noreply.github.com')"
+refuses 'Grok in any case' 'is authored by GROK' \
+	"$(add a5.txt GROK agent@example.com 'Kaj Kowalski' info@kajkowalski.nl)"
+refuses 'an agent address under a human name' 'is authored by Kaj Kowalski <bot@openai.com>' \
+	"$(add a6.txt 'Kaj Kowalski' bot@openai.com 'Kaj Kowalski' info@kajkowalski.nl)"
+refuses 'an x.ai subdomain address' 'is committed by Kaj Kowalski <bot@mail.x.ai>' \
+	"$(add a7.txt 'Kaj Kowalski' info@kajkowalski.nl 'Kaj Kowalski' bot@mail.x.ai)"
+refuses 'the squash of a PR the Claude app opened (fa4f06e)' \
+	'is authored by claude[bot] <209825114+claude[bot]@users.noreply.github.com>' \
+	"$(add a8.txt 'claude[bot]' '209825114+claude[bot]@users.noreply.github.com' GitHub noreply@github.com \
+		'Co-authored-by: Kaj Kowalski <info@kajkowalski.nl>')"
 
-# --- the trailers ------------------------------------------------------------
-#
-# The gap this closes. Every commit on the branch that introduced this check
-# carried the trailer below, written by the tool rather than by anyone, and
-# every one of them passed a guard that read the four ident fields and stopped.
-# The headers were right; the trailer credited an account alias to a person who
-# had not typed it. These cases are that exact string and its relatives.
-add machine-coauthor.txt 'Kaj Kowalski' info@kajkowalski.nl 'Kaj Kowalski' info@kajkowalski.nl \
-	'Co-authored-by: Kaj Kowalski <6353477+kjanat@users.noreply.github.com>' >/dev/null
-refuses 'a co-author credited by a GitHub account alias' \
-	'account alias a tool fills in' "${human_coauthor}..HEAD"
-refuses 'a co-author credited by a GitHub account alias' \
-	'6353477+kjanat@users.noreply.github.com' "${human_coauthor}..HEAD"
-machine_coauthor="$(git -C "${test_repo}" rev-parse HEAD)"
+# --- AI agents in the message ------------------------------------------------------
+refuses 'Claude Code as co-author' 'credits Claude <noreply@anthropic.com> as a co-author' \
+	"$(human t1.txt 'Co-Authored-By: Claude <noreply@anthropic.com>')"
+refuses 'claude[bot] as co-author' 'credits claude[bot]' \
+	"$(human t2.txt 'Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>')"
+refuses 'Codex as co-author' 'credits Codex <codex@openai.com>' \
+	"$(human t3.txt 'Co-authored-by: Codex <codex@openai.com>')"
+refuses 'a co-author above a later trailer paragraph' 'credits Claude Sonnet <claude@example.com>' \
+	"$(human t5.txt $'Co-authored-by: Claude Sonnet <claude@example.com>\n\nSigned-off-by: Kaj Kowalski <info@kajkowalski.nl>')"
+refuses 'a lowercase co-authored-by line' 'credits Codex' \
+	"$(human t6.txt 'co-authored-by: Codex <codex@openai.com>')"
+refuses 'Grok as co-author among humans' 'credits Grok' \
+	"$(human t4.txt $'Co-authored-by: A Colleague <colleague@example.com>\nCo-authored-by: Grok <grok@x.ai>')"
+refuses 'a Claude Code generated line' 'links an AI agent session' \
+	"$(human s1.txt $'Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: A Colleague <colleague@example.com>')"
+refuses 'a Claude Code web session link' 'links an AI agent session: https://claude.ai/code/session_011abc' \
+	"$(human s2.txt 'https://claude.ai/code/session_011abc')"
+refuses 'a Codex task link' 'links an AI agent session' \
+	"$(human s3.txt 'Task: https://chatgpt.com/codex/tasks/task_e_123')"
+refuses 'a Grok share link' 'links an AI agent session' \
+	"$(human s4.txt 'See https://grok.com/share/abc')"
+refuses 'a trailer named after an agent' 'carries the AI agent trailer Claude-Session-Id: 0123' \
+	"$(human s5.txt 'Claude-Session-Id: 0123')"
+refuses 'a session trailer naming an agent' 'carries the AI agent trailer Session: codex-0123' \
+	"$(human s6.txt 'Session: codex-0123')"
+refuses 'an assisted-by trailer naming an agent' 'carries the AI agent trailer Assisted-by: Claude' \
+	"$(human s7.txt 'Assisted-by: Claude')"
 
-# The escape hatch has to reach the trailers too, or a repository that means it
-# has nowhere to go but deleting the rule.
-accepts_with_allow() {
-	local description="$1" allow="$2" range="$3" output
-	if ! output="$(cd "${test_repo}" && PROVENANCE_ALLOW="${allow}" "${check_script}" "${range}" 2>&1)"; then
-		printf 'expected PROVENANCE_ALLOW to admit: %s\n%s\n' "${description}" "${output}" >&2
-		exit 1
-	fi
+# --- the escape hatch --------------------------------------------------------------
+monet="$(add monet.txt 'Claude Monet' claude@monet.example 'Kaj Kowalski' info@kajkowalski.nl)"
+refuses 'a person named Claude without an allowance' 'is authored by Claude Monet' "${monet}"
+accepts 'a person named Claude with an allowance' "${monet}" 'PROVENANCE_ALLOW=CLAUDE@monet.example'
+accepts 'an allowed co-author address' \
+	"$(human monet-co.txt 'Co-authored-by: Claude Monet <claude@monet.example>')" 'PROVENANCE_ALLOW=claude@monet.example'
+
+# --- ranges ------------------------------------------------------------------------
+output="$(cd "${test_repo}" && "${check_script}" "${base}..HEAD" 2>&1)" && {
+	printf 'a range holding agent commits was accepted:\n%s\n' "${output}" >&2
+	exit 1
 }
-accepts_with_allow 'an explicitly allowed co-author address' \
-	'6353477+kjanat@users.noreply.github.com' "${human_coauthor}..HEAD"
-
-add bot-coauthor.txt 'Kaj Kowalski' info@kajkowalski.nl 'Kaj Kowalski' info@kajkowalski.nl \
-	'Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>' >/dev/null
-refuses 'a bot co-author' 'not a co-author of the change' "${machine_coauthor}..HEAD"
-bot_coauthor="$(git -C "${test_repo}" rev-parse HEAD)"
-
-# A bot at an ordinary address: caught by the name, not by the domain, so the
-# two halves of the trailer rule are each load-bearing on their own.
-add bot-coauthor-own-domain.txt 'Kaj Kowalski' info@kajkowalski.nl 'Kaj Kowalski' info@kajkowalski.nl \
-	'Co-authored-by: renovate[bot] <renovate@example.com>' >/dev/null
-refuses 'a bot co-author at its own domain' 'not a co-author of the change' "${bot_coauthor}..HEAD"
-bot_coauthor="$(git -C "${test_repo}" rev-parse HEAD)"
-
-# The same bot, spelled the way a display name is allowed to be spelled. The
-# `[bot]` suffix is a convention GitHub renders, not one it enforces on the
-# name field, so a case-sensitive test refuses `renovate[bot]` and waves
-# `Renovate[Bot]` through — at an ordinary address, where the domain rule is
-# not there to catch it either. This is that exact bypass.
-add bot-coauthor-mixed-case.txt 'Kaj Kowalski' info@kajkowalski.nl 'Kaj Kowalski' info@kajkowalski.nl \
-	'Co-authored-by: Renovate[Bot] <renovate@example.com>' >/dev/null
-refuses 'a bot co-author spelled [Bot]' 'not a co-author of the change' "${bot_coauthor}..HEAD"
-refuses 'a bot co-author spelled [Bot]' 'Renovate[Bot]' "${bot_coauthor}..HEAD"
-bot_coauthor="$(git -C "${test_repo}" rev-parse HEAD)"
-
-# And the human it must not take with it, immediately after, at the same
-# address shape. The case fold widens the rule; this is what stops it widening
-# past a person who happens to write from a domain a bot also uses.
-add human-beside-mixed-case.txt 'Kaj Kowalski' info@kajkowalski.nl 'Kaj Kowalski' info@kajkowalski.nl \
-	'Co-authored-by: A Colleague <colleague@example.com>' >/dev/null
-accepts 'a human co-author beside the mixed-case bot rule' "${bot_coauthor}..HEAD"
-bot_coauthor="$(git -C "${test_repo}" rev-parse HEAD)"
-
-add gh-coauthor.txt 'Kaj Kowalski' info@kajkowalski.nl 'Kaj Kowalski' info@kajkowalski.nl \
-	'Co-authored-by: GitHub <noreply@github.com>' >/dev/null
-refuses 'a co-author credited to the merge machinery' \
-	'account alias a tool fills in' "${bot_coauthor}..HEAD"
-gh_coauthor="$(git -C "${test_repo}" rev-parse HEAD)"
-
-# The rule is Co-authored-by and nothing else. A sign-off is a different claim
-# with a different meaning, and prose that talks about the rule is prose.
-add signed-off.txt 'Kaj Kowalski' info@kajkowalski.nl 'Kaj Kowalski' info@kajkowalski.nl \
-	'Signed-off-by: Kaj Kowalski <6353477+kjanat@users.noreply.github.com>' >/dev/null
-accepts 'a Signed-off-by at the same address' "${gh_coauthor}..HEAD"
-signed_off="$(git -C "${test_repo}" rev-parse HEAD)"
-
-add prose.txt 'Kaj Kowalski' info@kajkowalski.nl 'Kaj Kowalski' info@kajkowalski.nl \
-	'The guard now refuses a Co-authored-by: claude[bot] <x@users.noreply.github.com> trailer.' >/dev/null
-accepts 'prose that quotes a trailer without being one' "${signed_off}..HEAD"
-prose="$(git -C "${test_repo}" rev-parse HEAD)"
-
-# --- the headers -------------------------------------------------------------
-#
-# The incident itself, header by header.
-add squashed.txt 'claude[bot]' '209825114+claude[bot]@users.noreply.github.com' 'GitHub' noreply@github.com >/dev/null
-refuses 'the REST squash identity' 'identity GitHub stamps on a commit it built itself' "${prose}..HEAD"
-refuses 'a bot author' 'not the author of the change' "${prose}..HEAD"
-squashed="$(git -C "${test_repo}" rev-parse HEAD)"
-
-add web-merge.txt 'Kaj Kowalski' info@kajkowalski.nl 'GitHub' noreply@github.com >/dev/null
-refuses 'a machine committer under a real author' 'GitHub <noreply@github.com>' "${squashed}..HEAD"
-web="$(git -C "${test_repo}" rev-parse HEAD)"
-
-add bot-committer.txt 'Kaj Kowalski' info@kajkowalski.nl 'dependabot[bot]' 'support@github.com' >/dev/null
-refuses 'a bot committer' 'not the committer of the change' "${web}..HEAD"
-bot_committer="$(git -C "${test_repo}" rev-parse HEAD)"
-
-# The same hatch over the headers, or a repository that genuinely wants a bot
-# identity has no way through other than deleting the guard.
-output="$(cd "${test_repo}" && PROVENANCE_ALLOW='support@github.com' "${check_script}" "${web}..HEAD" 2>&1)"
-grep -Fq '1 commit(s)' <<<"${output}"
-
-# The header checks fold case for the same reason the trailer one does, so the
-# mixed-case spelling is refused there too. At an ordinary address, again:
-# `support@github.com` in the case above is caught by neither domain rule, so
-# it is the name doing the work in both.
-add bot-author-mixed-case.txt 'Renovate[Bot]' 'renovate@example.com' 'Kaj Kowalski' info@kajkowalski.nl >/dev/null
-refuses 'a bot author spelled [Bot]' 'not the author of the change' "${bot_committer}..HEAD"
-bot_committer="$(git -C "${test_repo}" rev-parse HEAD)"
-
-# An empty range is not a failure: a push that added nothing has nothing wrong
-# with it.
-accepts 'an empty range' "${bot_committer}..${bot_committer}"
-
-refuses 'a missing range' 'usage:' ''
-
-# A range git cannot resolve is not an empty range. Reading it as one would
-# make every guarded push pass the moment the ref name went stale, which is the
-# quietest way a fail-closed check turns into a fail-open one.
-refuses 'a range git cannot resolve' 'could not resolve the revision range' \
-	'refs/heads/never-existed..HEAD'
+grep -Fq "AI agent credit(s) in ${base}..HEAD" <<<"${output}" || {
+	printf 'the range summary is missing:\n%s\n' "${output}" >&2
+	exit 1
+}
+head_sha="$(git -C "${test_repo}" rev-parse HEAD)"
+output="$(cd "${test_repo}" && "${check_script}" "${head_sha}..${head_sha}" 2>&1)" || {
+	printf 'an empty range was refused:\n%s\n' "${output}" >&2
+	exit 1
+}
+output="$(cd "${test_repo}" && "${check_script}" '' 2>&1)" && {
+	echo 'a missing range was accepted' >&2
+	exit 1
+}
+grep -Fq 'usage:' <<<"${output}"
+output="$(cd "${test_repo}" && "${check_script}" 'refs/heads/never-existed..HEAD' 2>&1)" && {
+	echo 'a range git cannot resolve was accepted' >&2
+	exit 1
+}
+grep -Fq 'could not resolve the revision range' <<<"${output}"
 
 printf 'commit provenance guard: all cases passed\n'
-
 # --- the wiring ---------------------------------------------------------------
 #
 # A guard nothing calls is not a guard. It is wired into .github/workflows/ci.yml

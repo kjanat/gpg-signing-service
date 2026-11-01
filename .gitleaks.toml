@@ -40,10 +40,9 @@
 # releases document -- it honours only the singular `[allowlist]` table. It also
 # ignores `condition = "AND"`, so a `paths` + `regexes` allowlist degrades there
 # into a blanket path exclusion. This file therefore uses the singular table and
-# `regexes` only: no `paths`, no `commits`, no `condition`. `.mise.toml` pins
-# the scanner to 8.24.3 and both workflows pass `GITLEAKS_VERSION: "8.24.3"`
-# explicitly, so nothing here depends on an upstream default;
-# `scripts/test-gitleaks-contract.sh` asserts all three agree.
+# `regexes` only: no `paths`, no `commits`, no `condition`. `.mise.toml` and
+# both workflows' `GITLEAKS_VERSION` pin the scanner, and Renovate updates them
+# together.
 #
 # ## The historical corpus
 #

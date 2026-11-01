@@ -38,8 +38,8 @@ command = "kprint"
 minimum_release_age_excludes        = [
   "github:Microsoft/TypeScript",
   "github:kjanat/actionlint",
-  "github:kjanat/dprint",
   "github:kjanat/kprint",
   "github:kjanat/runner",
+  "github:kjanat/shellcheck-rs",
 ]
 idiomatic_version_file_enable_tools = ["go"]
