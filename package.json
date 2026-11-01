@@ -52,14 +52,14 @@
     "typegen": "wrangler types >/dev/null"
   },
   "dependencies": {
-    "@hono/swagger-ui": "0.6.1",
+    "@hono/swagger-ui": "0.6.2",
     "@hono/zod-openapi": "1.6.3",
     "@sentry/cloudflare": "10.73.0",
-    "hono": "4.13.7",
-    "jose": "6.2.12",
-    "micro509": "0.14.0",
-    "openpgp": "6.3.1",
-    "zod": "4.5.4"
+    "hono": "4.13.14",
+    "jose": "6.2.14",
+    "micro509": "0.17.1",
+    "openpgp": "6.3.2",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.22.0",
