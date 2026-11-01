@@ -4,7 +4,7 @@
 [tools]
 actionlint    = "latest"
 biome         = "2.5.15"
-bun           = "1.4.2"
+bun           = "1.4.4"
 dprint        = { prerelease = true, version = "latest" }
 gitleaks      = "8.24.3"
 go            = "latest"
