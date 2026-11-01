@@ -404,6 +404,7 @@ tasks:
     cmds:
       - bun run generate:oapigen
       - task: client:generate
+      - bunx @kjanat/fmt
 
   generate:key:
     desc: Generate GPG key

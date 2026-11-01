@@ -3,37 +3,43 @@
 
 [tools]
 actionlint    = "latest"
-biome         = "2.5.15"
-bun           = "1.4.2"
-dprint        = { prerelease = true, version = "latest" }
-gitleaks      = "8.24.3"
+biome         = "2.6.4"
+bun           = "1.4.4"
+gitleaks      = "8.30.1"
 go            = "latest"
-golangci-lint = "2.14.0"
+golangci-lint = "2.15.0"
+kprint        = "latest"
 lefthook      = "latest"
+rshellcheck   = "latest"
 runner-run    = "latest"
 shellcheck    = "latest"
 task          = "latest"
-tombi         = "1.7.2"
+tombi         = "1.9.8"
 typescript    = { filter_bins = ["tsc"], version = "latest" }
-uv            = "0.12.23"
+uv            = "0.13.6"
 
 [tools.wrangler]
-version      = "4.147.0"
+version      = "4.156.0"
 allow_builds = ["esbuild", "sharp", "workerd"]
 
 [tool_alias]
-actionlint = "github:kjanat/actionlint"
-dprint     = "github:kjanat/dprint"
-runner-run = "github:kjanat/runner"
-tombi      = "github:tombi-toml/tombi"
-typescript = "github:Microsoft/TypeScript"
-shellcheck = "github:koalaman/shellcheck"
+actionlint  = "github:kjanat/actionlint"
+kprint      = "github:kjanat/kprint"
+runner-run  = "github:kjanat/runner"
+tombi       = "github:tombi-toml/tombi"
+typescript  = "github:Microsoft/TypeScript"
+shellcheck  = "github:koalaman/shellcheck"
+rshellcheck = "github:kjanat/shellcheck-rs"
+
+[wrappers.dprint]
+command = "kprint"
 
 [settings]
 minimum_release_age_excludes        = [
+  "github:Microsoft/TypeScript",
   "github:kjanat/actionlint",
   "github:kjanat/dprint",
+  "github:kjanat/kprint",
   "github:kjanat/runner",
-  "github:Microsoft/TypeScript",
 ]
 idiomatic_version_file_enable_tools = ["go"]
