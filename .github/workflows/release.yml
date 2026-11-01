@@ -40,7 +40,7 @@ jobs:
         run: rm -rf .release-tooling
 
       - name: Install toolchain
-        uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with: { working_directory: client, version: "${{ vars.MISE_VERSION }}" }
 
       - name: Build binaries
