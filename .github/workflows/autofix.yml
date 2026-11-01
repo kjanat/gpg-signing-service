@@ -4,7 +4,7 @@ permissions: { contents: read }
 jobs:
   autofix:
     # An autofix commit pushed to a stacked PR rewrites a layer the merge queue coordinates
-    if: github.event.pull_request.stack == null
+    if: contains(fromJSON('["push", "pull_request"]'), github.event_name) && github.event.pull_request.stack == null
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
