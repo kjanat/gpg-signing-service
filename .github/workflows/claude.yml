@@ -91,7 +91,7 @@ jobs:
       # the expected old branch SHA, or the maintainer's publication policy.
       - name: Preserve trusted input
         id: input
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: claude-input
           path: ${{ runner.temp }}/claude-input
@@ -147,7 +147,7 @@ jobs:
         run: python3 "$RUNNER_TEMP/claude-publication.py" export "$RUNNER_TEMP/claude-input" "$RUNNER_TEMP/claude-candidate"
       - name: Preserve candidate even when editing or export failed
         if: always() && steps.input.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: claude-candidate
           path: ${{ runner.temp }}/claude-candidate
@@ -193,7 +193,7 @@ jobs:
       - name: Check and bundle candidate after tests
         run: python3 "$RUNNER_TEMP/claude-publication.py" seal "$RUNNER_TEMP/claude-input" "$RUNNER_TEMP/claude-verified"
       - name: Preserve verified result
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: claude-verified
           path: ${{ runner.temp }}/claude-verified
