@@ -842,7 +842,6 @@ func NewGetAdminAuditRequest(server string, params *GetAdminAuditParams) (*http.
 		var rawQueryFragments []string
 
 		if params.Limit != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
 				return nil, err
 			} else {
@@ -850,11 +849,9 @@ func NewGetAdminAuditRequest(server string, params *GetAdminAuditParams) (*http.
 					rawQueryFragments = append(rawQueryFragments, qp)
 				}
 			}
-
 		}
 
 		if params.Offset != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
 				return nil, err
 			} else {
@@ -862,11 +859,9 @@ func NewGetAdminAuditRequest(server string, params *GetAdminAuditParams) (*http.
 					rawQueryFragments = append(rawQueryFragments, qp)
 				}
 			}
-
 		}
 
 		if params.Action != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "action", *params.Action, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
@@ -874,11 +869,9 @@ func NewGetAdminAuditRequest(server string, params *GetAdminAuditParams) (*http.
 					rawQueryFragments = append(rawQueryFragments, qp)
 				}
 			}
-
 		}
 
 		if params.Subject != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "subject", *params.Subject, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
@@ -886,11 +879,9 @@ func NewGetAdminAuditRequest(server string, params *GetAdminAuditParams) (*http.
 					rawQueryFragments = append(rawQueryFragments, qp)
 				}
 			}
-
 		}
 
 		if params.StartDate != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "startDate", *params.StartDate, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 				return nil, err
 			} else {
@@ -898,11 +889,9 @@ func NewGetAdminAuditRequest(server string, params *GetAdminAuditParams) (*http.
 					rawQueryFragments = append(rawQueryFragments, qp)
 				}
 			}
-
 		}
 
 		if params.EndDate != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "endDate", *params.EndDate, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: "date-time"}); err != nil {
 				return nil, err
 			} else {
@@ -910,7 +899,6 @@ func NewGetAdminAuditRequest(server string, params *GetAdminAuditParams) (*http.
 					rawQueryFragments = append(rawQueryFragments, qp)
 				}
 			}
-
 		}
 
 		if encoded := queryValues.Encode(); encoded != "" {
@@ -1360,7 +1348,6 @@ func NewGetPublicKeyRequest(server string, params *GetPublicKeyParams) (*http.Re
 		var rawQueryFragments []string
 
 		if params.KeyId != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "keyId", *params.KeyId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
@@ -1368,7 +1355,6 @@ func NewGetPublicKeyRequest(server string, params *GetPublicKeyParams) (*http.Re
 					rawQueryFragments = append(rawQueryFragments, qp)
 				}
 			}
-
 		}
 
 		if encoded := queryValues.Encode(); encoded != "" {
@@ -1425,7 +1411,6 @@ func NewPostSignRequestWithBody(server string, params *PostSignParams, contentTy
 		var rawQueryFragments []string
 
 		if params.KeyId != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "keyId", *params.KeyId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
@@ -1433,7 +1418,6 @@ func NewPostSignRequestWithBody(server string, params *PostSignParams, contentTy
 					rawQueryFragments = append(rawQueryFragments, qp)
 				}
 			}
-
 		}
 
 		if encoded := queryValues.Encode(); encoded != "" {
@@ -1450,7 +1434,6 @@ func NewPostSignRequestWithBody(server string, params *PostSignParams, contentTy
 	req.Header.Add("Content-Type", contentType)
 
 	if params != nil {
-
 		if params.XRequestID != nil {
 			var headerParam0 string
 
@@ -1461,7 +1444,6 @@ func NewPostSignRequestWithBody(server string, params *PostSignParams, contentTy
 
 			req.Header.Set("X-Request-ID", headerParam0)
 		}
-
 	}
 
 	return req, nil

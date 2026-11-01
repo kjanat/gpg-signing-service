@@ -54,7 +54,7 @@
     "npm:dprint-plugin-markup@0.27.3",
     "npm:dprint-plugin-yaml@0.6.0",
     "npm:@dprint/prettier@0.70.0/plugin.json@97c0dccf54ed5b7343e7a3f6418e77bd80afcd2b74beed3a632689d47e392ddc",
-"https://plugins.dprint.dev/kjanat/tombi-0.1.1.wasm",
-"npm:@jakebailey/dprint-plugin-gofumpt@0.0.20"
+    "https://plugins.dprint.dev/kjanat/tombi-0.1.1.wasm",
+    "npm:@jakebailey/dprint-plugin-gofumpt@0.0.20"
   ]
 }
