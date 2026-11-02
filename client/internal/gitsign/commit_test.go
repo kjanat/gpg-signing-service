@@ -670,10 +670,11 @@ func TestUnsignedObjectChangesOnlyParents(t *testing.T) {
 // faithful in the fork carrying go-git/go-git#2328. Swapping back to released
 // go-git is not a build failure — released go-git compiles here — so what it
 // costs is written out row by row: the bytes git wrote, and the bytes a
-// released go-git writes over them instead. Two causes, both fixed in the fork. It decodes the author
-// and committer from their canonical slots alone, so a header interposed before
-// or between them leaves both empty; and it re-renders the idents it did decode
-// from parsed fields rather than replaying them.
+// released go-git writes over them instead. Two causes, both fixed in the
+// fork. It decodes the author and committer from their canonical slots alone,
+// so a header interposed before or between them leaves both empty; and it
+// re-renders the idents it did decode from parsed fields rather than replaying
+// them.
 //
 // git reads every row below without complaint — an interposed gpgsig still
 // reports "an=A U Thor at=1700000000" from git log. "git fsck" does call some
