@@ -322,17 +322,18 @@ describe("Branch Coverage Helpers", () => {
 			expect(header).toHaveBeenCalledWith("WWW-Authenticate", 'Bearer realm="gpg-signing-service"');
 		});
 
-		it("maps jose JWKS error to friendly message", async () => {
-			const { mapJoseError } = await import("#middleware/oidc");
-			const err: any = new Error("no applicable key");
-			err.code = "ERR_JWKS_NO_MATCHING_KEY";
-			expect(() => mapJoseError(err)).toThrow("Key not found");
-
-			const sigErr: any = new Error("signature verification failed");
-			expect(() => mapJoseError(sigErr)).toThrow("Invalid token signature");
-
-			const generic = new Error("other");
-			expect(() => mapJoseError(generic)).toThrow("other");
+		it.each([
+			["key_not_found", "Key not found"],
+			["ambiguous_key", "Key not found"],
+			["key_unsuitable", "Key not intended for signatures"],
+			["invalid_signature", "Invalid token signature"],
+			["expired", "Token expired"],
+			["not_yet_valid", "Token not yet valid"],
+			["audience_mismatch", "Invalid token audience"],
+			["key_resolution_failed", "Invalid token"],
+		] as const)("maps the %s verification failure to %s", async (code, message) => {
+			const { mapVerifyFailure } = await import("#middleware/oidc");
+			expect(() => mapVerifyFailure(code)).toThrow(new Error(message));
 		});
 
 		it("returns 401 for Basic auth", async () => {

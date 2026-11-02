@@ -126,9 +126,12 @@ final published commit.
 
 Before signing, the publisher rejects changes to the exact
 `.github/workflows` path or any descendant, including additions, modifications,
-deletions and renames. This policy is independent of token permissions. The
-candidate remains available for maintainer activation through
-`.github/workflows-pending/`; files are never silently omitted. This restriction
+deletions and renames. This policy is independent of token permissions. A
+workflow change goes to `.github/workflows-pending/<name>.patch` as the git
+diff against `.github/workflows/<name>.yml`, and a maintainer applies it with
+`git apply`. The publisher refuses any other file added or modified under
+`.github/workflows-pending/`: a full copy goes stale and rolls back live edits
+when moved into place. Files are never silently omitted. This restriction
 does not make other candidate code safe: existing workflows may execute changed
 scripts with secrets after publication. Human review remains necessary.
 

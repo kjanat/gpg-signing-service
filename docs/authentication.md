@@ -324,7 +324,7 @@ yours under **Settings → Actions → OIDC configuration**.
 
 The Worker:
 
-1. accepts `RS256`, `RS384`, `RS512`, `ES256`, or `ES384`;
+1. accepts `RS256` only;
 2. checks `iss` against comma-separated `ALLOWED_ISSUERS`;
 3. checks `nbf` and `exp` with 60 seconds of clock tolerance;
 4. checks `aud` against `EXPECTED_AUDIENCE`, which defaults to

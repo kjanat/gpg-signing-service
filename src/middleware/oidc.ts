@@ -1,5 +1,5 @@
 import type { Context, MiddlewareHandler } from "hono";
-import { createLocalJWKSet, jwtVerify } from "jose";
+import { createJwksKeyResolver, parseJwks, type VerifyJwtErrorCode, verifyJwt } from "micro509/jose";
 import { INSUFFICIENT_SCOPE_MESSAGE } from "#lib/openapi";
 import { getRequestId } from "#middleware/request-id";
 import type { Env, LegacyJWKSResponse, OIDCClaims, RateLimitResult, Variables } from "#types";
@@ -204,7 +204,7 @@ function tokenHint(message: string, env: Env): string | undefined {
 		// Named because the reference's table is the caller's only account of what
 		// AUTH_INVALID means, and a fault missing from it reads as a fault the
 		// documentation does not know about.
-		return "The token's `alg` header is not one this service verifies. It accepts RS256, RS384, RS512, ES256 and ES384 — an `alg` of `none`, or a symmetric one, is refused before any key is fetched.";
+		return "The token's `alg` header is not one this service verifies. It accepts RS256 only — any other `alg`, including `none` or a symmetric one, is refused before any key is fetched.";
 	}
 	if (message === "Key not intended for signatures") {
 		return "The issuer's JWKS names this key with `use` set to something other than `sig`, so it is not a signing key. This is the issuer's metadata, not the token's — if it persists, it is one for the issuer's operator.";
@@ -733,8 +733,8 @@ async function timingSafeEqual(a: string, b: string): Promise<boolean> {
 	return bytesEqual && lengthsEqual;
 }
 
-// Allowed JWT signing algorithms
-const ALLOWED_ALGORITHMS = ["RS256", "RS384", "RS512", "ES256", "ES384"];
+// GitHub Actions and GitLab CI both sign OIDC tokens with RS256.
+const ALLOWED_ALGORITHMS = ["RS256"];
 
 async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
 	// Decode JWT header and payload (without verification first)
@@ -792,10 +792,6 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
 	// required key id, getJWKS will refresh from the network.
 	const jwks = await getJWKS(payload.iss, env, header.kid);
 
-	// Pre-flight: make sure a matching key exists and is intended for signatures.
-	// This check prevents jose's internal JWKSNoMatchingKey error from escaping
-	// as an unhandled rejection (jose's createLocalJWKSet throws synchronously
-	// inside its promise chain when no matching key is found).
 	const matchingKey = jwks.keys.find((key) => key.kid === header.kid);
 	if (!matchingKey) {
 		throw new Error("Key not found");
@@ -804,43 +800,47 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
 		throw new Error("Key not intended for signatures");
 	}
 
-	// The `jose.jwtVerify` function handles finding the correct key from the JWKS
-	// based on the `kid` in the token header, so manual key lookup is not needed.
-	const JWKS = createLocalJWKSet(jwks);
-
-	// Verify JWT signature using jose library
-	// Note: jose's createLocalJWKSet can emit unhandled rejections during key lookup
-	// when no matching key is found. The error is still caught here and mapped to
-	// a user-friendly message, but the internal rejection may escape in test environments.
-	try {
-		const { payload: verifiedPayload } = await jwtVerify(token, JWKS, {
-			issuer: allowedIssuers,
-			algorithms: ALLOWED_ALGORITHMS,
-			clockTolerance: "60s",
-		});
-		return verifiedPayload as OIDCClaims;
-	} catch (e) {
-		const err = e as Error & { code?: string };
-		if (err.code === "ERR_JWKS_NO_MATCHING_KEY") {
-			throw new Error("Key not found", { cause: e });
-		}
-		if (err.message?.includes("signature verification failed")) {
-			throw new Error("Invalid token signature", { cause: e });
-		}
-		throw err;
-	}
-}
-
-// Exported for targeted testing of error mapping logic
-export function mapJoseError(err: Error & { code?: string }): never {
-	// Map jose error codes/messages to user-friendly, test-specific messages.
-	if (err.code === "ERR_JWKS_NO_MATCHING_KEY") {
+	const parsed = parseJwks(JSON.stringify(jwks));
+	if (!parsed.ok) {
 		throw new Error("Key not found");
 	}
-	if (err.message?.includes("signature verification failed")) {
-		throw new Error("Invalid token signature");
+
+	const verified = await verifyJwt(token, {
+		algorithms: ["RS256"],
+		key: createJwksKeyResolver(parsed.value),
+		tokenType: { unchecked: true },
+		claims: {
+			issuer: allowedIssuers,
+			audience: expectedAudience,
+			clockToleranceSeconds: CLOCK_SKEW_SECONDS,
+		},
+	});
+	if (!verified.ok) {
+		mapVerifyFailure(verified.code);
 	}
-	throw err;
+
+	return payload;
+}
+
+/** The curated message for a micro509 verification failure. Exported for the branch-coverage suite. */
+export function mapVerifyFailure(code: VerifyJwtErrorCode): never {
+	switch (code) {
+		case "key_not_found":
+		case "ambiguous_key":
+			throw new Error("Key not found");
+		case "key_unsuitable":
+			throw new Error("Key not intended for signatures");
+		case "invalid_signature":
+			throw new Error("Invalid token signature");
+		case "expired":
+			throw new Error("Token expired");
+		case "not_yet_valid":
+			throw new Error("Token not yet valid");
+		case "audience_mismatch":
+			throw new Error("Invalid token audience");
+		default:
+			throw new Error("Invalid token");
+	}
 }
 
 async function getJWKS(issuer: string, env: Env, expectedKid?: string): Promise<LegacyJWKSResponse> {

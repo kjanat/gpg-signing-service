@@ -93,7 +93,7 @@ message names which check failed:
 | `Invalid token signature` / `Key not found`       | The issuer's JWKS does not verify the token. Usually a forged or truncated token; occasionally a key rotation the cache has not caught up with.                                |
 | `Invalid service token`                           | A `gst_` token that is unknown, revoked or expired. `GET /admin/tokens` lists the live ones; mint a replacement with `POST /admin/tokens`.                                     |
 | `Invalid admin token`                             | The bearer did not match the deployment's `ADMIN_TOKEN` secret.                                                                                                                |
-| `Algorithm not allowed: <alg>`                    | The token's `alg` header is not one of RS256, RS384, RS512, ES256, ES384. An `alg` of `none` or a symmetric one is refused before any key is fetched.                          |
+| `Algorithm not allowed: <alg>`                    | The token's `alg` header is not RS256. Any other `alg`, including `none` or a symmetric one, is refused before any key is fetched.                                             |
 | `Key not intended for signatures`                 | The issuer's JWKS names the token's `kid` with a `use` other than `sig`. Issuer-side metadata, not the token's.                                                                |
 
 This code does **not** cover "the token is fine but this identity may not sign"

@@ -22,14 +22,17 @@ uv            = "0.13.6"
 version      = "4.156.0"
 allow_builds = ["esbuild", "sharp", "workerd"]
 
+[tools."github:kjanat/shellcheck-rs"]
+version       = "latest"
+asset_pattern = 'rshellcheck-*-{{ arch(x64="x86_64", arm64="aarch64") }}-{{ os(linux="unknown-linux-musl", macos="apple-darwin", windows="pc-windows-msvc") }}.*'
+
 [tool_alias]
-actionlint  = "github:kjanat/actionlint"
-kprint      = "github:kjanat/kprint"
-runner-run  = "github:kjanat/runner"
-tombi       = "github:tombi-toml/tombi"
-typescript  = "github:Microsoft/TypeScript"
-shellcheck  = "github:koalaman/shellcheck"
-rshellcheck = "github:kjanat/shellcheck-rs"
+actionlint = "github:kjanat/actionlint"
+kprint     = "github:kjanat/kprint"
+runner-run = "github:kjanat/runner"
+tombi      = "github:tombi-toml/tombi"
+typescript = "github:Microsoft/TypeScript"
+shellcheck = "github:koalaman/shellcheck"
 
 [wrappers.dprint]
 command = "kprint"
@@ -43,3 +46,6 @@ minimum_release_age_excludes        = [
   "github:kjanat/shellcheck-rs",
 ]
 idiomatic_version_file_enable_tools = ["go"]
+
+[monorepo]
+config_roots = ["client"]

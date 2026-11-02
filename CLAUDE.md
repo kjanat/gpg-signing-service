@@ -118,6 +118,10 @@ commit, push, create/edit PRs, post comments, rename branches, or change Git
 configuration. The workflow preserves your work, verifies it on a clean runner,
 and service-signs and publishes the accepted result in a separate trusted job.
 
+Never edit `.github/workflows/`. For a workflow change, write
+`.github/workflows-pending/<name>.patch` with `git diff` output against
+`.github/workflows/<name>.yml`. Never put a full workflow copy there.
+
 Follow the trusted input's existing work branch. For an issue, the harness
 selects `issue-<number>-<slug>`; for a PR, it selects that PR's head. Questions
 and reviews may finish without code changes; still write the answer to the

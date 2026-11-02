@@ -67,7 +67,14 @@ class PublicationTests(unittest.TestCase):
         Path("file.txt").write_text("base\n")
         Path(".github/workflows").mkdir(parents=True)
         Path(".github/workflows/existing.yml").write_text("name: Existing\n")
-        guard.git("add", "file.txt", ".github/workflows/existing.yml")
+        Path(".github/workflows-pending").mkdir()
+        Path(".github/workflows-pending/stale.yml").write_text("name: Stale\n")
+        guard.git(
+            "add",
+            "file.txt",
+            ".github/workflows/existing.yml",
+            ".github/workflows-pending/stale.yml",
+        )
         guard.git("commit", "-m", "base")
         self.start = guard.git("rev-parse", "HEAD")
         self.remote = self.root / "remote.git"
@@ -535,13 +542,13 @@ class PublicationTests(unittest.TestCase):
         )
         self.assert_workflow_refused()
 
-    def test_pending_workflow_can_publish_without_changing_active_workflow(self):
-        self.workflow_candidate(added=(".github/workflows-pending/proposed.yml",))
+    def test_pending_workflow_patch_can_publish_without_changing_active_workflow(self):
+        self.workflow_candidate(added=(".github/workflows-pending/proposed.patch",))
         self.publish()
         self.assertTrue(self.remote_head())
         self.assertEqual(
             guard.git(
-                "show", self.remote_head() + ":.github/workflows-pending/proposed.yml"
+                "show", self.remote_head() + ":.github/workflows-pending/proposed.patch"
             ),
             "name: Changed",
         )
@@ -549,6 +556,34 @@ class PublicationTests(unittest.TestCase):
             guard.git("show", self.remote_head() + ":.github/workflows/existing.yml"),
             "name: Existing",
         )
+
+    def test_pending_workflow_copy_is_refused(self):
+        self.workflow_candidate(added=(".github/workflows-pending/proposed.yml",))
+        with self.assertRaisesRegex(
+            guard.PublicationError, "Only .patch files may be added"
+        ):
+            self.publish()
+        self.assertEqual(self.remote_head(), "")
+        self.assertFalse(
+            any(call[0] == "git" and "push" in call for call in self.calls)
+        )
+
+    def test_pending_workflow_copy_edit_is_refused(self):
+        self.workflow_candidate(added=(".github/workflows-pending/stale.yml",))
+        with self.assertRaisesRegex(
+            guard.PublicationError, "Only .patch files may be added"
+        ):
+            self.publish()
+        self.assertEqual(self.remote_head(), "")
+
+    def test_pending_workflow_copy_can_be_deleted(self):
+        self.workflow_candidate(removed=(".github/workflows-pending/stale.yml",))
+        self.publish()
+        self.assertTrue(self.remote_head())
+        with self.assertRaises(Exception):
+            guard.git(
+                "show", self.remote_head() + ":.github/workflows-pending/stale.yml"
+            )
 
     def test_staged_only_work_cannot_be_misclassified_as_nochange(self):
         Path("file.txt").write_text("staged implementation\n")

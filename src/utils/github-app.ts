@@ -34,10 +34,12 @@
  * when it comes back out.
  */
 
-import { importPKCS8, SignJWT } from "jose";
+import { signJwt } from "micro509/jose";
+import { type ImportRsaKeyInput, importPkcs1Pem, importPkcs8Pem } from "micro509/keys";
 import { z } from "zod";
 import type { Env } from "#types";
 import { TIME } from "#types";
+import { PKCS8_PRIVATE_BEGIN, RSA_PRIVATE_BEGIN } from "#utils/armor";
 import { fetchWithTimeout } from "#utils/fetch";
 import { logger } from "#utils/logger";
 
@@ -184,122 +186,39 @@ export function githubApiUrl(path: string): URL {
 	return url;
 }
 
-/** PEM label GitHub's downloaded App key carries. */
-const PKCS1_LABEL = "RSA PRIVATE KEY";
-/** PEM label WebCrypto — and therefore `jose` — can import. */
-const PKCS8_LABEL = "PRIVATE KEY";
+/** RS256: RSASSA-PKCS1-v1_5 with SHA-256, the only App JWT algorithm GitHub accepts. */
+const RS256_KEY: ImportRsaKeyInput = { kind: "rsa", scheme: "pkcs1-v1_5", hash: "SHA-256" };
 
 /**
- * DER for `AlgorithmIdentifier { rsaEncryption, NULL }`, RFC 8017 A.1.
+ * The App private key as a signing `CryptoKey`, whichever form the operator
+ * pasted in.
  *
- * `SEQUENCE { OID 1.2.840.113549.1.1.1, NULL }`. Fixed bytes because there is
- * exactly one algorithm a GitHub App key can be: the App registration page
- * issues RSA and nothing else.
+ * GitHub's "Generate a private key" button downloads a PKCS#1 `BEGIN RSA PRIVATE
+ * KEY` PEM; an operator who ran `openssl pkcs8 -topk8 -nocrypt` has PKCS#8.
+ * Both import directly. Anything else is named as a misconfiguration, and a
+ * failed import never quotes the key back.
  */
-const RSA_ENCRYPTION_ALGORITHM_ID = Uint8Array.from([
-	0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00,
-]);
+async function importAppPrivateKey(pem: string): Promise<CryptoKey> {
+	const imported = pem.includes(PKCS8_PRIVATE_BEGIN)
+		? await importPkcs8Pem(pem, RS256_KEY)
+		: pem.includes(RSA_PRIVATE_BEGIN)
+			? await importPkcs1Pem(pem, RS256_KEY)
+			: null;
 
-/** DER `INTEGER 0` — `PrivateKeyInfo.version` is always v1. */
-const PKCS8_VERSION_ZERO = Uint8Array.from([0x02, 0x01, 0x00]);
-
-/**
- * DER definite-length bytes for `length`.
- *
- * Short form under 128, long form above. A GitHub App key is 2048 bits, so the
- * real inputs land in the two- and three-byte long forms; the short form is
- * here because a length encoder that only handles its expected inputs is how a
- * later reuse produces silently malformed DER.
- */
-function derLength(length: number): Uint8Array {
-	if (length < 0x80) {
-		return Uint8Array.from([length]);
-	}
-
-	const bytes: number[] = [];
-	for (let remaining = length; remaining > 0; remaining >>>= 8) {
-		bytes.unshift(remaining & 0xff);
-	}
-
-	return Uint8Array.from([0x80 | bytes.length, ...bytes]);
-}
-
-/** A DER TLV with the given tag wrapped around `contents`. */
-function derWrap(tag: number, contents: Uint8Array): Uint8Array {
-	const length = derLength(contents.length);
-	const out = new Uint8Array(1 + length.length + contents.length);
-	out[0] = tag;
-	out.set(length, 1);
-	out.set(contents, 1 + length.length);
-	return out;
-}
-
-/** The base64 body of a PEM block, or null when the label is not present. */
-function pemBody(pem: string, label: string): string | null {
-	const match = new RegExp(`-----BEGIN ${label}-----([\\s\\S]*?)-----END ${label}-----`).exec(pem);
-	return match?.[1]?.replace(/\s+/g, "") ?? null;
-}
-
-/** A PEM block, wrapped at 64 columns the way every other producer writes them. */
-function toPem(label: string, der: Uint8Array): string {
-	let base64 = "";
-	for (const byte of der) {
-		base64 += String.fromCharCode(byte);
-	}
-	const body = btoa(base64).replace(/(.{64})/g, "$1\n");
-	return `-----BEGIN ${label}-----\n${body}\n-----END ${label}-----\n`;
-}
-
-/**
- * The App private key as PKCS#8, whichever form the operator pasted in.
- *
- * This exists because of a mismatch nobody chooses: **GitHub hands you a PKCS#1
- * key** — the "Generate a private key" button downloads a `BEGIN RSA PRIVATE
- * KEY` PEM — and **WebCrypto imports only PKCS#8**. So the obvious thing, which
- * is to `wrangler secret put` the file GitHub gave you, fails at the import with
- * an error that names neither of those facts.
- *
- * The conversion is pure structure: PKCS#1 is the bare `RSAPrivateKey`, and
- * PKCS#8 is that same blob inside a `PrivateKeyInfo` that also names the
- * algorithm. So the key material is copied through untouched and only a header
- * is added; nothing here parses, validates or reads the key, and a corrupt input
- * stays corrupt and fails at the import where it should.
- *
- * An operator who has already run `openssl pkcs8 -topk8 -nocrypt` gets the
- * PKCS#8 branch and none of this runs.
- */
-export function toPkcs8Pem(pem: string): string {
-	if (pemBody(pem, PKCS8_LABEL) !== null) {
-		return pem;
-	}
-
-	const pkcs1 = pemBody(pem, PKCS1_LABEL);
-	if (pkcs1 === null) {
+	if (imported === null) {
 		throw new GitHubAppError(
 			"GITHUB_APP_PRIVATE_KEY is not a PEM private key; expected a `BEGIN RSA PRIVATE KEY` block as downloaded from GitHub, or a `BEGIN PRIVATE KEY` block",
 			{ misconfigured: true },
 		);
 	}
-
-	let der: Uint8Array;
-	try {
-		const binary = atob(pkcs1);
-		der = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-	} catch (error) {
-		throw new GitHubAppError("GITHUB_APP_PRIVATE_KEY has a PEM header but its body is not valid base64", {
+	if (!imported.ok) {
+		throw new GitHubAppError("GITHUB_APP_PRIVATE_KEY could not be imported as an RSA private key", {
 			misconfigured: true,
-			cause: error,
+			cause: imported.code,
 		});
 	}
 
-	// PrivateKeyInfo ::= SEQUENCE { version, privateKeyAlgorithm, privateKey }
-	const info = new Uint8Array([
-		...PKCS8_VERSION_ZERO,
-		...RSA_ENCRYPTION_ALGORITHM_ID,
-		...derWrap(0x04, der), // OCTET STRING wrapping the PKCS#1 body
-	]);
-
-	return toPem(PKCS8_LABEL, derWrap(0x30, info));
+	return imported.value;
 }
 
 /**
@@ -313,30 +232,18 @@ export function toPkcs8Pem(pem: string): string {
 export async function mintAppJwt(env: Pick<Env, "GITHUB_APP_ID" | "GITHUB_APP_PRIVATE_KEY">): Promise<string> {
 	const { appId, privateKey } = requireAppConfig(env);
 
-	let key: CryptoKey;
-	try {
-		key = await importPKCS8(toPkcs8Pem(privateKey), "RS256");
-	} catch (error) {
-		if (error instanceof GitHubAppError) {
-			throw error;
-		}
-		// The cause is attached for the tail; the message is not, because a failing
-		// key import is the one place a library is most likely to quote the input
-		// it choked on back at us.
-		throw new GitHubAppError("GITHUB_APP_PRIVATE_KEY could not be imported as an RSA private key", {
-			misconfigured: true,
-			cause: error,
-		});
-	}
-
+	const key = await importAppPrivateKey(privateKey);
 	const nowSeconds = Math.floor(Date.now() / TIME.SECOND);
 
-	return new SignJWT({})
-		.setProtectedHeader({ alg: "RS256" })
-		.setIssuer(appId)
-		.setIssuedAt(nowSeconds - CLOCK_SKEW / TIME.SECOND)
-		.setExpirationTime(nowSeconds + APP_JWT_TTL / TIME.SECOND)
-		.sign(key);
+	return signJwt({
+		privateKey: key,
+		algorithm: "RS256",
+		claims: {
+			iss: appId,
+			iat: nowSeconds - CLOCK_SKEW / TIME.SECOND,
+			exp: nowSeconds + APP_JWT_TTL / TIME.SECOND,
+		},
+	});
 }
 
 /**

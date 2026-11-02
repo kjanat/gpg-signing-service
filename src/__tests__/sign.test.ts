@@ -1,6 +1,5 @@
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import * as jose from "jose";
 import * as openpgp from "openpgp";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "#gpg-signing-service";
@@ -8,6 +7,7 @@ import type { RateLimitResult } from "#types";
 import { logAuditEvent } from "#utils/audit";
 import { logger } from "#utils/logger";
 import { insertOIDCSubject } from "#utils/oidc-subjects";
+import { exportTestJwk, generateTestKeyPair, TestJwt } from "./helpers/jwt";
 import { seedTrustedSubjects } from "./helpers/oidc-subjects";
 
 const parseJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
@@ -108,7 +108,7 @@ describe("Sign Route", () => {
 		await seedTrustedSubjects(env.AUDIT_DB);
 
 		// Generate OIDC keys
-		const keys = await jose.generateKeyPair("ES256");
+		const keys = await generateTestKeyPair();
 		oidcPrivateKey = keys.privateKey;
 		oidcPublicKey = keys.publicKey;
 	});
@@ -126,7 +126,7 @@ describe("Sign Route", () => {
 	});
 
 	async function setupJWKSMock() {
-		const jwk = await jose.exportJWK(oidcPublicKey);
+		const jwk = await exportTestJwk(oidcPublicKey);
 		jwk.kid = kid;
 		jwk.use = "sig";
 
@@ -142,13 +142,13 @@ describe("Sign Route", () => {
 	}
 
 	async function createToken(claims: object = {}) {
-		return new jose.SignJWT({
+		return new TestJwt({
 			iss: issuer,
 			sub: "repo:user/repo:ref:refs/heads/main",
 			aud: "gpg-signing-service",
 			...claims,
 		})
-			.setProtectedHeader({ alg: "ES256", kid })
+			.setProtectedHeader({ alg: "RS256", kid })
 			.setIssuedAt()
 			.setExpirationTime("1h")
 			.sign(oidcPrivateKey);
