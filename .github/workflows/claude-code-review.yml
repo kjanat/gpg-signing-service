@@ -51,7 +51,7 @@ jobs:
       - name: Get the Beepboop token
         id: beepboop
         if: env.HAS_CLAUDE_TOKEN == 'true'
-        uses: kjanat/beepboop/actions/token@fc270aa20279dffcd2bae850d95ab2284573b107
+        uses: kjanat/beepboop/actions/token@40b006edc788eb37b53119691a67866dfbaa590f
       - name: Push as Beepboop
         if: env.HAS_CLAUDE_TOKEN == 'true'
         env:
