@@ -40,9 +40,9 @@ until at least one subject is trusted, which is the intended failure direction.
 
 ```bash
 curl -X POST "$GPG_SIGN_URL/admin/subjects" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{
+	-H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H 'Content-Type: application/json' \
+	-d '{
     "name": "kjanat-repos",
     "issuer": "https://token.actions.githubusercontent.com",
     "subjectPrefix": "repo:kjanat",
@@ -418,11 +418,11 @@ reasoning as step 5 above: the credential was never judged.
 
 ```bash
 created="$(
-  curl --fail-with-body --silent --show-error \
-    --request POST "$GPG_SIGN_URL/admin/tokens" \
-    --header "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN" \
-    --header "Content-Type: application/json" \
-    --data '{
+	curl --fail-with-body --silent --show-error \
+		--request POST "$GPG_SIGN_URL/admin/tokens" \
+		--header "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN" \
+		--header "Content-Type: application/json" \
+		--data '{
       "name": "ci/woodpecker",
       "keyIds": ["AFD5E3EC68371856"],
       "expiresInDays": 90
@@ -450,12 +450,12 @@ printf 'data to sign' | gpg-sign sign --key-id AFD5E3EC68371856
 
 ```bash
 curl --fail-with-body --silent --show-error \
-  "$GPG_SIGN_URL/admin/tokens" \
-  --header "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN"
+	"$GPG_SIGN_URL/admin/tokens" \
+	--header "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN"
 
 curl --fail-with-body --silent --show-error \
-  --request DELETE "$GPG_SIGN_URL/admin/tokens/TOKEN_UUID" \
-  --header "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN"
+	--request DELETE "$GPG_SIGN_URL/admin/tokens/TOKEN_UUID" \
+	--header "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN"
 ```
 
 Revocation is immediate. A token's name becomes its audit subject and

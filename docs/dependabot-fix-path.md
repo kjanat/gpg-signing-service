@@ -271,7 +271,7 @@ is unaffected.
 ## Verifying a change to any of this
 
 ```bash
-task test:dependabot-fix   # alias: task dbf
+task test:dependabot-fix # alias: task dbf
 task test:review-gate
 ```
 

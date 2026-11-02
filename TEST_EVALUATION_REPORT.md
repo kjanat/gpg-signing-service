@@ -464,9 +464,9 @@ describe("Input Validation - Boundary Tests", () => {
 
 ```bash
 # Add performance tests using vitest bench
-bun run bench:load          # Concurrent signing operations
-bun run bench:oidc          # Token validation throughput
-bun run bench:rate-limit    # Rate limiter throughput
+bun run bench:load       # Concurrent signing operations
+bun run bench:oidc       # Token validation throughput
+bun run bench:rate-limit # Rate limiter throughput
 ```
 
 ### Latency Profiling: NOT IMPLEMENTED ❌
@@ -695,8 +695,8 @@ src/__tests__/
 ### Current Status
 
 ```bash
-bun run test:coverage          # 226 tests, 93.6% coverage
-cd client && go test -cover    # 56 tests, 88.9% coverage
+bun run test:coverage       # 226 tests, 93.6% coverage
+cd client && go test -cover # 56 tests, 88.9% coverage
 ```
 
 ### Post-Recommendations Target
@@ -813,9 +813,9 @@ describe("Feature Name", () => {
 **Running Locally**:
 
 ```bash
-bun run test              # Run all tests
-bun run test:coverage    # With coverage report
-bun run test -- --ui     # Interactive UI
+bun run test          # Run all tests
+bun run test:coverage # With coverage report
+bun run test -- --ui  # Interactive UI
 ```
 
 **CI Integration**:

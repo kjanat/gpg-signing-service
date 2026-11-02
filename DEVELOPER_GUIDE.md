@@ -141,9 +141,9 @@ See `examples/` for platform-specific:
 
 ```bash
 curl -X POST https://gpg.kajkowalski.nl/admin/keys \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
+	-H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H "Content-Type: application/json" \
+	-d '{
     "keyId": "signing-key-prod",
     "armoredPrivateKey": "<the ASCII-armored private key, one JSON string, newlines escaped>"
   }'
@@ -163,7 +163,7 @@ curl https://gpg.kajkowalski.nl/health | jq .
 # All signing operations from last 7 days
 DAYS_AGO=$(date -u -d '7 days ago' +%Y-%m-%dT00:00:00Z)
 curl "https://gpg.kajkowalski.nl/admin/audit?action=sign&startDate=$DAYS_AGO" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" | jq .
+	-H "Authorization: Bearer $ADMIN_TOKEN" | jq .
 ```
 
 See examples/bash/query-audit.sh for advanced queries.
@@ -205,7 +205,7 @@ See examples/python/manage_keys.py rotate command for complete implementation.
 
    ```bash
    curl -H "Authorization: Bearer $ADMIN_TOKEN" \
-     https://gpg.kajkowalski.nl/admin/keys | jq .
+   	https://gpg.kajkowalski.nl/admin/keys | jq .
    ```
 
 ### With Postman
@@ -225,9 +225,9 @@ The deployed service already hosts Swagger UI at
 ```bash
 # Local Swagger UI pointing to client/openapi.json
 docker run -p 8080:8080 \
-  -v $(pwd)/client/openapi.json:/openapi.json:ro \
-  -e SWAGGER_JSON=/openapi.json \
-  swaggerapi/swagger-ui
+	-v $(pwd)/client/openapi.json:/openapi.json:ro \
+	-e SWAGGER_JSON=/openapi.json \
+	swaggerapi/swagger-ui
 ```
 
 ## Troubleshooting

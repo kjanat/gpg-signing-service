@@ -309,26 +309,26 @@ echo "Setting up Cloudflare Workers monitoring..."
 
 # Option 1: Honeycomb (recommended for simplicity)
 if [[ -z "${HONEYCOMB_API_KEY:-}" ]]; then
-  echo "HONEYCOMB_API_KEY not set"
-  echo "Get key from: https://ui.honeycomb.io/account/api_keys"
-  echo "Then run: wrangler secret put HONEYCOMB_API_KEY"
+	echo "HONEYCOMB_API_KEY not set"
+	echo "Get key from: https://ui.honeycomb.io/account/api_keys"
+	echo "Then run: wrangler secret put HONEYCOMB_API_KEY"
 else
-  echo "Honeycomb API key configured"
+	echo "Honeycomb API key configured"
 fi
 
 # Option 2: Datadog
 if [[ -z "${DATADOG_API_KEY:-}" ]]; then
-  echo "DATADOG_API_KEY not set (optional)"
+	echo "DATADOG_API_KEY not set (optional)"
 else
-  echo "Datadog API key configured"
+	echo "Datadog API key configured"
 fi
 
 # Verify Analytics Engine binding
 echo "Verifying Analytics Engine binding..."
 if wrangler types | grep -q "AnalyticsEngineDataset"; then
-  echo "Analytics Engine binding found"
+	echo "Analytics Engine binding found"
 else
-  echo "Analytics Engine binding not configured"
+	echo "Analytics Engine binding not configured"
 fi
 
 echo "Monitoring setup complete"
@@ -515,14 +515,14 @@ post-checkout:
 For work-in-progress commits:
 
 ```bash
-git commit --no-verify  # Skips all hooks
+git commit --no-verify # Skips all hooks
 ```
 ````
 
 For specific hook skip (post-check):
 
 ```bash
-SKIP=lint git commit    # Skip lint hook
+SKIP=lint git commit # Skip lint hook
 ```
 
 Use sparingly - hooks exist to catch issues early!
@@ -646,11 +646,11 @@ migrations/
 
 # Recommended structure:
 migrations/
-├─ 0001_initial.sql           # Current schema
-├─ 0002_add_feature.sql        # Future: add column
-├─ 0003_optimize_indexes.sql   # Future: performance
+├─ 0001_initial.sql          # Current schema
+├─ 0002_add_feature.sql      # Future: add column
+├─ 0003_optimize_indexes.sql # Future: performance
 └─ rollback/
-    └─ 0001_initial.rollback.sql  # Rollback procedure
+└─ 0001_initial.rollback.sql # Rollback procedure
 ```
 
 ### Create migration template

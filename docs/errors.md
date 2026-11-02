@@ -142,15 +142,15 @@ Check and fix:
 ```bash
 # What is trusted now. `active: false` is a revoked or expired rule.
 curl --fail-with-body --silent \
-  -H "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN" \
-  "$GPG_SIGN_URL/admin/subjects" | jq '.subjects[] | {name, subjectPrefix, active}'
+	-H "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN" \
+	"$GPG_SIGN_URL/admin/subjects" | jq '.subjects[] | {name, subjectPrefix, active}'
 
 # Authorize one.
 curl --fail-with-body --silent \
-  -H "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"kjanat/kjanat","issuer":"https://token.actions.githubusercontent.com","subjectPrefix":"repo:kjanat/kjanat","keyIds":[]}' \
-  "$GPG_SIGN_URL/admin/subjects"
+	-H "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN" \
+	-H 'Content-Type: application/json' \
+	-d '{"name":"kjanat/kjanat","issuer":"https://token.actions.githubusercontent.com","subjectPrefix":"repo:kjanat/kjanat","keyIds":[]}' \
+	"$GPG_SIGN_URL/admin/subjects"
 ```
 
 The `hint` separates the two situations a caller can act on differently. **No

@@ -181,9 +181,9 @@ the original, not the backup.
 
 ```bash
 bash scripts/key-handoff.sh verify-backup \
-  --private-backup   /mnt/restored/replacement-secret.asc \
-  --passphrase-backup /mnt/restored-elsewhere/passphrase.txt \
-  --preserved-backup /mnt/restored/preserved-D8BC04E534E7706F.asc
+	--private-backup /mnt/restored/replacement-secret.asc \
+	--passphrase-backup /mnt/restored-elsewhere/passphrase.txt \
+	--preserved-backup /mnt/restored/preserved-D8BC04E534E7706F.asc
 ```
 
 All three paths are required, and all three are checked before anything is
@@ -243,7 +243,7 @@ When it passes, publish:
 
 ```bash
 bash scripts/key-handoff.sh publish-revocation \
-  --handoff .keys/rotation-20260908 --confirm-publish
+	--handoff .keys/rotation-20260908 --confirm-publish
 ```
 
 The default targets are the ones [ADR-004] names:

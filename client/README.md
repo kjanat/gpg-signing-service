@@ -47,31 +47,31 @@ echo "commit data" | gpg-sign sign
 package main
 
 import (
-    "context"
-    "fmt"
-    "log"
-    "os"
+	"context"
+	"fmt"
+	"log"
+	"os"
 
-    "github.com/kjanat/gpg-signing-service/client/pkg/client"
+	"github.com/kjanat/gpg-signing-service/client/pkg/client"
 )
 
 func main() {
-    // Initialize client with base URL
-    c, err := client.New(
-        "https://gpg.kajkowalski.nl",
-        client.WithOIDCToken(os.Getenv("GPG_SIGN_TOKEN")),
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
+	// Initialize client with base URL
+	c, err := client.New(
+		"https://gpg.kajkowalski.nl",
+		client.WithOIDCToken(os.Getenv("GPG_SIGN_TOKEN")),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-    // Sign data
-    result, err := c.Sign(context.Background(), "commit data", "")
-    if err != nil {
-        log.Fatal(err)
-    }
+	// Sign data
+	result, err := c.Sign(context.Background(), "commit data", "")
+	if err != nil {
+		log.Fatal(err)
+	}
 
-    fmt.Println(result.Signature)
+	fmt.Println(result.Signature)
 }
 ```
 

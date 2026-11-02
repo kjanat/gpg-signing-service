@@ -229,10 +229,10 @@ client/cmd/gpg-sign/
 
 ```bash
 src/__tests__/perf/
-├── load.bench.ts                NEW - Concurrent requests
-├── oidc.bench.ts                NEW - Token validation
-├── database.bench.ts            NEW - D1 queries
-└── rate-limit.bench.ts          NEW - Rate limiter throughput
+├── load.bench.ts NEW - Concurrent requests
+├── oidc.bench.ts NEW - Token validation
+├── database.bench.ts NEW - D1 queries
+└── rate-limit.bench.ts NEW - Rate limiter throughput
 ```
 
 ---
@@ -277,8 +277,8 @@ src/__tests__/perf/
 ### Run Current Tests
 
 ```bash
-bun run test              # All tests (226 tests, ~9.6s)
-bun run test:coverage    # With coverage report
+bun run test          # All tests (226 tests, ~9.6s)
+bun run test:coverage # With coverage report
 ```
 
 ### After Implementing Phase 1

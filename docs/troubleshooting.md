@@ -27,8 +27,8 @@ first.
 
 ```bash
 gpg-sign --json health
-curl --fail-with-body --silent --show-error "$GPG_SIGN_URL/doc" |
-  jq '.info, .paths | keys'
+curl --fail-with-body --silent --show-error "$GPG_SIGN_URL/doc" \
+	| jq '.info, .paths | keys'
 ```
 
 `health` checks the key-storage Durable Object and D1. It does not validate a

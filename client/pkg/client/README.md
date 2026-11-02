@@ -26,41 +26,41 @@ go get github.com/kjanat/gpg-signing-service/client/pkg/client
 package main
 
 import (
-    "context"
-    "fmt"
-    "log"
-    "os"
-    "time"
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"time"
 
-    "github.com/kjanat/gpg-signing-service/client/pkg/client"
+	"github.com/kjanat/gpg-signing-service/client/pkg/client"
 )
 
 func main() {
-    // Create client with OIDC token
-    c, err := client.New("https://gpg.kajkowalski.nl",
-        client.WithOIDCToken(os.Getenv("OIDC_TOKEN")),
-        client.WithTimeout(30*time.Second),
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
+	// Create client with OIDC token
+	c, err := client.New("https://gpg.kajkowalski.nl",
+		client.WithOIDCToken(os.Getenv("OIDC_TOKEN")),
+		client.WithTimeout(30*time.Second),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-    ctx := context.Background()
+	ctx := context.Background()
 
-    // Sign commit data
-    result, err := c.Sign(ctx, "commit data", "")
-    if err != nil {
-        if client.IsRateLimitError(err) {
-            log.Printf("Rate limited: %v", err)
-            return
-        }
-        log.Fatal(err)
-    }
+	// Sign commit data
+	result, err := c.Sign(ctx, "commit data", "")
+	if err != nil {
+		if client.IsRateLimitError(err) {
+			log.Printf("Rate limited: %v", err)
+			return
+		}
+		log.Fatal(err)
+	}
 
-    fmt.Printf("Signature: %s\n", result.Signature)
-    if result.RateLimitRemaining != nil {
-        fmt.Printf("Rate limit remaining: %d\n", *result.RateLimitRemaining)
-    }
+	fmt.Printf("Signature: %s\n", result.Signature)
+	if result.RateLimitRemaining != nil {
+		fmt.Printf("Rate limit remaining: %d\n", *result.RateLimitRemaining)
+	}
 }
 ```
 

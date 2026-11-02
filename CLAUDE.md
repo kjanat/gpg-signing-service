@@ -20,44 +20,44 @@ Uses [Taskfile](https://taskfile.dev/). Run `task --list-all` for full list.
 ### Core Tasks
 
 ```bash
-task dev             # Start development server (alias: d)
-task test            # Run tests (alias: t)
-task lint            # Lint code (alias: l)
-task lint:fix        # Lint and fix (alias: lf)
-task format          # Format code (aliases: fmt, f)
-task typecheck       # Typecheck (aliases: ts, type, tsc, tsgo)
-task deploy          # Deploy to Cloudflare Workers
+task dev       # Start development server (alias: d)
+task test      # Run tests (alias: t)
+task lint      # Lint code (alias: l)
+task lint:fix  # Lint and fix (alias: lf)
+task format    # Format code (aliases: fmt, f)
+task typecheck # Typecheck (aliases: ts, type, tsc, tsgo)
+task deploy    # Deploy to Cloudflare Workers
 ```
 
 ### Testing
 
 ```bash
-task test            # Run tests (alias: t)
-task test:coverage   # Run with coverage (alias: tc)
-task test:watch      # Watch mode (alias: tw)
+task test          # Run tests (alias: t)
+task test:coverage # Run with coverage (alias: tc)
+task test:watch    # Watch mode (alias: tw)
 ```
 
 ### Go Client (`client/` directory)
 
 ```bash
-task client:build    # Build CLI (aliases: c:b, gpg-sign:build)
-task client:test     # Run Go tests (aliases: c:t, gpg-sign:t)
-task client:test:coverage  # Go tests with coverage (alias: c:tc)
-task client:lint     # Lint Go code (alias: c:l)
-task client:lint:fix # Lint and fix Go (alias: c:lf)
-task client:generate # Generate Go client from OpenAPI (alias: c:g)
+task client:build         # Build CLI (aliases: c:b, gpg-sign:build)
+task client:test          # Run Go tests (aliases: c:t, gpg-sign:t)
+task client:test:coverage # Go tests with coverage (alias: c:tc)
+task client:lint          # Lint Go code (alias: c:l)
+task client:lint:fix      # Lint and fix Go (alias: c:lf)
+task client:generate      # Generate Go client from OpenAPI (alias: c:g)
 ```
 
 ### Database & Infrastructure
 
 ```bash
-task db:migrate      # Migrate D1 database
+task db:migrate       # Migrate D1 database
 task db:migrate:local # Migrate local D1
-task db:create       # Create D1 database
-task kv:create       # Create KV namespace
-task typegen         # Generate Worker types (alias: tg)
-task generate:api    # Generate OpenAPI spec and client (alias: gen)
-task generate:key    # Generate GPG key (alias: gpg)
+task db:create        # Create D1 database
+task kv:create        # Create KV namespace
+task typegen          # Generate Worker types (alias: tg)
+task generate:api     # Generate OpenAPI spec and client (alias: gen)
+task generate:key     # Generate GPG key (alias: gpg)
 ```
 
 ## Project Structure
@@ -100,12 +100,12 @@ src/
 **USE TASK COMMANDS. DO NOT USE `bun run` OR `bunx` DIRECTLY.**
 
 ```bash
-task tc              # Tests with coverage (preferred)
-task t               # Tests
-task lf              # Lint and fix
-task typecheck       # Typecheck
-task c:t             # Go client tests
-task c:tc            # Go client tests with coverage
+task tc        # Tests with coverage (preferred)
+task t         # Tests
+task lf        # Lint and fix
+task typecheck # Typecheck
+task c:t       # Go client tests
+task c:tc      # Go client tests with coverage
 ```
 
 Read the full output. Don't filter/grep it to save tokens.

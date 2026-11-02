@@ -158,7 +158,7 @@ Key Elements:
 **Current Process**:
 
 ```bash
-task deploy  # Prompts for confirmation
+task deploy # Prompts for confirmation
 # Runs: bunx wrangler deploy
 ```
 
@@ -427,9 +427,9 @@ KEY_ID          = "62E75E54497815DD"
 
 ```bash
 # Create
-.env.example                # Template for developers
-.env.local                  # Git-ignored local overrides
-scripts/setup-secrets.sh    # Semi-automated secret setup
+.env.example             # Template for developers
+.env.local               # Git-ignored local overrides
+scripts/setup-secrets.sh # Semi-automated secret setup
 ```
 
 ---
@@ -717,10 +717,10 @@ PR → (CI checks only) → Manual: task deploy (direct to production!)
 
 ```bash
 # Create environment-specific wrangler configs
-wrangler.dev.toml       # Local development
-wrangler.preview.toml   # Preview deployments
-wrangler.staging.toml   # Staging environment
-wrangler.prod.toml      # Production (current)
+wrangler.dev.toml     # Local development
+wrangler.preview.toml # Preview deployments
+wrangler.staging.toml # Staging environment
+wrangler.prod.toml    # Production (current)
 ```
 
 ---
@@ -880,9 +880,9 @@ cp wrangler.toml wrangler.preview.toml
 ```bash
 # Add to CI workflow post-deploy
 - name: Health Check
-  run: |
-    curl -f https://gpg.kajkowalski.nl/health
-    curl -f https://gpg.kajkowalski.nl/admin/status -H "Authorization: Bearer $ADMIN_TOKEN"
+run: \
+	| curl -f https://gpg.kajkowalski.nl/health
+curl -f https://gpg.kajkowalski.nl/admin/status -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
 **Expected Benefit**: Catch deployment issues immediately
@@ -1094,7 +1094,7 @@ cp wrangler.toml wrangler.preview.toml
 
 ```bash
 npm audit
-go list -json -m all | nancy sleuth  # Go vulnerability scanning
+go list -json -m all | nancy sleuth # Go vulnerability scanning
 ```
 
 #### 3. Implement Deployment Approvals
@@ -1110,7 +1110,7 @@ environments:
 #### 4. Add SBOM Generation
 
 ```bash
-bun sbom --format=cyclonedx > sbom.json
+bun sbom --format=cyclonedx >sbom.json
 ```
 
 ---
