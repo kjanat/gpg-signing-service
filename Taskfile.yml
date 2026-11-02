@@ -383,14 +383,14 @@ tasks:
     desc: Typecheck code
     aliases: [ts, type, tsc, tsgo]
     deps: [typegen]
-    sources: ["**/*.ts"]
+    sources: ["**/*.ts", bun.lock]
     cmd: mise exec -- run typecheck
 
   typegen:
     desc: Generate Worker types
     aliases: [tg]
     deps: [install:noscripts]
-    sources: ["**/*.ts"]
+    sources: ["**/*.ts", wrangler.toml, bun.lock]
     generates: [worker-configuration.d.ts]
     # Spelled through the package.json script, not `mise exec -- wrangler`, so
     # that this and the `prepare` hook are the same command. They were not, and

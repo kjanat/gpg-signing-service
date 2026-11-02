@@ -115,8 +115,8 @@ if [[ -z ${typegen_recipe} ]]; then
 	fail 'no typegen task found in Taskfile.yml'
 fi
 
-# Comments in the recipe describe the trap; they are not what runs.
-typegen_cmds="$(grep -vE '^[[:space:]]*#' <<<"${typegen_recipe}")"
+# Comments describe the trap and sources name the inputs; neither is what runs.
+typegen_cmds="$(grep -vE '^[[:space:]]*(#|sources:)' <<<"${typegen_recipe}")"
 if grep -q 'wrangler' <<<"${typegen_cmds}"; then
 	fail "the typegen task invokes wrangler directly -- that resolves .mise.toml's tool rather than the bun.lock pin, and the two are equal only for as long as someone keeps them equal"
 fi
