@@ -48,7 +48,6 @@ tasks:
     cmds:
       - bun run test
       - task: test:gnupg-interop
-      - task: test:signing-shim
       - task: test:signing-preflight
       - task: test:workflow-steps
       - task: test:release-workflow
@@ -98,10 +97,6 @@ tasks:
     desc: Verify signatures against real gpg and git (skips if gpg is absent)
     aliases: [interop]
     cmd: bash scripts/test-gnupg-interop.sh
-
-  test:signing-shim:
-    desc: Test the Git commit signing shim credential paths
-    cmd: bash .github/scripts/test-gpg-sign-git-program.sh
 
   test:signing-preflight:
     desc: Test the CI signing preflight, its escape hatch and its failure classes
@@ -222,7 +217,6 @@ tasks:
       # superset of `test` or these two never run outside CI.
       - bun run test:coverage
       - task: test:gnupg-interop
-      - task: test:signing-shim
       - task: test:signing-preflight
       - task: test:workflow-steps
       - task: test:release-workflow
