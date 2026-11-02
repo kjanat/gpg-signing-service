@@ -1,23 +1,27 @@
 {
   "$schema": "https://beepboop.kjanat.dev/schema/v1.json",
-  "managers": ["github-release", "npm", "workflow"],
+  "managers": ["github-release", "workflow"],
   "streams": {
     "main": {
-      "versioning": "workspace",
+      "versionSource": {
+        "kind": "tags",
+        "prefix": "v"
+      },
       "prepare": {
         "version": "manual"
-      },
-      "promote": {
-        "approval": "required"
       },
       "workflows": {
         "release": {
           "file": "release.yml",
           "mode": "observe",
-          "ref": "refs/tags/*"
+          "ref": "refs/tags/v*"
+        },
+        "retry": {
+          "file": "release.yml",
+          "mode": "observe",
+          "required": false
         }
-      },
-      "required": []
+      }
     }
   }
 }
