@@ -64,6 +64,7 @@ jobs:
         if: env.HAS_CLAUDE_TOKEN == 'true'
         uses: anthropics/claude-code-action/base-action@d535f5172dec02b204866b393d6b20b9b2aaf98d # v1.0.266
         env:
+          NODE_VERSION: 24.x
           GH_TOKEN: ${{ steps.beepboop.outputs.token }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           # env beats the action's hardcoded bot git config — see claude.yml
