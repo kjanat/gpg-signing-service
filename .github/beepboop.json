@@ -1,0 +1,27 @@
+{
+  "$schema": "https://beepboop.kjanat.dev/schema/v1.json",
+  "managers": [
+    "github-release",
+    "npm",
+    "workflow"
+  ],
+  "streams": {
+    "main": {
+      "versioning": "workspace",
+      "prepare": {
+        "version": "manual"
+      },
+      "promote": {
+        "approval": "required"
+      },
+      "workflows": {
+        "release": {
+          "file": "release.yml",
+          "mode": "observe",
+          "ref": "refs/tags/*"
+        }
+      },
+      "required": []
+    }
+  }
+}
