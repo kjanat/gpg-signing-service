@@ -410,7 +410,7 @@ tasks:
     desc: Generate OpenAPI spec and client
     aliases: [gapi, gen]
     deps: [install:noscripts]
-    sources: ["**/*.ts"]
+    sources: ["**/*.ts", client/go.mod, client/go.sum, client/oapi-codegen.yaml]
     generates: [client/openapi.json]
     cmds:
       - bun run generate:oapigen
