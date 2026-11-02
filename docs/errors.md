@@ -90,6 +90,7 @@ message names which check failed:
 | `Invalid token audience`                          | Request the token with the audience this deployment expects — `EXPECTED_AUDIENCE`, default `gpg-signing-service`. In GitHub Actions, `core.getIDToken("gpg-signing-service")`. |
 | `Issuer not allowed: <iss>`                       | The `iss` is not in this deployment's `ALLOWED_ISSUERS`.                                                                                                                       |
 | `Invalid token format` / `Invalid token encoding` | The header did not carry a JWT.                                                                                                                                                |
+| `Invalid token claims`                            | A claim has the wrong JSON type or is missing. `iss` and `sub` are strings, `aud` is a string or an array of strings, and `exp` and `iat` are numbers.                         |
 | `Invalid token signature` / `Key not found`       | The issuer's JWKS does not verify the token. Usually a forged or truncated token; occasionally a key rotation the cache has not caught up with.                                |
 | `Invalid service token`                           | A `gst_` token that is unknown, revoked or expired. `GET /admin/tokens` lists the live ones; mint a replacement with `POST /admin/tokens`.                                     |
 | `Invalid admin token`                             | The bearer did not match the deployment's `ADMIN_TOKEN` secret.                                                                                                                |
@@ -361,7 +362,8 @@ further in: the limiter itself was away.
 | `OIDC configuration at … was not readable JSON` | A 200 that was not the document — a captive portal, a proxy's error page.                                                        |
 | `Could not reach the JWKS at …`                 | Same, one hop further in.                                                                                                        |
 | `Failed to fetch JWKS from … (status)`          | The issuer answered its JWKS endpoint with a non-2xx.                                                                            |
-| `JWKS at … was not readable JSON`               | Same.                                                                                                                            |
+| `Could not read the JWKS at …`                  | The JWKS response body broke off before it was read.                                                                             |
+| `JWKS at … was not a readable JWK Set (<code>)` | A 200 whose body is not a JWK Set with a `keys` array.                                                                           |
 | `Authorization store unavailable`               | The D1 lookup of the caller's trust failed — trusted subjects, or service tokens. Check `task db:migrate` and `gpg-sign health`. |
 
 Every row carries a `Retry-After`, and the JWKS is cached for five minutes once

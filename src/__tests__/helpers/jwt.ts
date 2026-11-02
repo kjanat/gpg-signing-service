@@ -1,4 +1,4 @@
-import { type JsonObject, signJwt } from "micro509/jose";
+import { SignJWT } from "jose";
 
 /** An RS256 signing key pair for minting OIDC test tokens. */
 export interface TestKeyPair {
@@ -56,9 +56,9 @@ function base64url(text: string): string {
 /**
  * A JWT builder with the call shape of jose's `SignJWT`.
  *
- * RS256 tokens carry a real micro509 signature. Any other `alg` gets a
- * placeholder signature: the middleware refuses those on the header before a
- * signature is ever checked.
+ * RS256 tokens are signed by jose, an implementation independent of the
+ * micro509 verifier under test. Any other `alg` gets a placeholder signature:
+ * the middleware refuses those on the header before a signature is checked.
  */
 export class TestJwt {
 	private readonly claims: Record<string, unknown>;
@@ -90,17 +90,11 @@ export class TestJwt {
 	}
 
 	async sign(privateKey: CryptoKey): Promise<string> {
-		const claims: JsonObject = JSON.parse(JSON.stringify(this.claims));
 		if (this.header.alg === "RS256") {
-			return signJwt({
-				privateKey,
-				algorithm: "RS256",
-				claims,
-				...(this.header.kid !== undefined && { header: { kid: this.header.kid } }),
-			});
+			return new SignJWT(this.claims).setProtectedHeader(this.header).sign(privateKey);
 		}
 		const header = base64url(JSON.stringify(this.header));
-		const payload = base64url(JSON.stringify(claims));
+		const payload = base64url(JSON.stringify(this.claims));
 		return `${header}.${payload}.${base64url("unsigned")}`;
 	}
 }

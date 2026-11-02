@@ -11,6 +11,12 @@ import { clearTrustedSubjects, seedTrustedSubjects } from "./helpers/oidc-subjec
 
 const parseJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
 
+const base64url = (text: string) => btoa(text).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+
+/** A well-formed JWT whose signature segment is a placeholder that verifies against no key. */
+const unsignedJwt = (header: object, claims: object) =>
+	`${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(claims))}.${base64url("not-a-signature")}`;
+
 // Mock fetch for JWKS
 const { middlewareFetchMock, validateUrlMock } = vi.hoisted(() => ({
 	middlewareFetchMock: vi.fn(),
@@ -336,18 +342,15 @@ describe("Security Headers Middleware", () => {
 			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
 			// Unsigned on purpose: the discovery fetch happens before the signature
 			// is verified, so this reaches the degraded branch without a key.
-			const encode = (value: unknown) =>
-				btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
-			const token = [
-				encode({ alg: "RS256", kid: "unreachable" }),
-				encode({
+			const token = unsignedJwt(
+				{ alg: "RS256", kid: "unreachable" },
+				{
 					iss: "https://token.actions.githubusercontent.com",
 					sub: "repo:test/expose:ref:refs/heads/main",
 					aud: "gpg-signing-service",
 					exp: Math.floor(Date.now() / 1000) + 3600,
-				}),
-				"signature",
-			].join(".");
+				},
+			);
 			middlewareFetchMock.mockRejectedValue(new Error("connection timed out"));
 
 			const response = await makeRequest("/sign", {
@@ -1377,7 +1380,33 @@ describe("Security Headers Middleware", () => {
 					}
 					return new Response("not json at all");
 				},
-				expected: "was not readable JSON",
+				expected: "was not a readable JWK Set (jwks_malformed)",
+			},
+			{
+				name: "a JWKS response that is JSON without a keys array",
+				impl: async (url: string) => {
+					if (url.endsWith("/.well-known/openid-configuration")) {
+						return new Response(JSON.stringify({ jwks_uri: "https://token.actions.githubusercontent.com/jwks" }));
+					}
+					return new Response(JSON.stringify({ keys: "none" }));
+				},
+				expected: "was not a readable JWK Set (jwks_malformed)",
+			},
+			{
+				name: "a JWKS response whose body breaks off",
+				impl: async (url: string) => {
+					if (url.endsWith("/.well-known/openid-configuration")) {
+						return new Response(JSON.stringify({ jwks_uri: "https://token.actions.githubusercontent.com/jwks" }));
+					}
+					return new Response(
+						new ReadableStream({
+							start(controller) {
+								controller.error(new Error("connection reset"));
+							},
+						}),
+					);
+				},
+				expected: "Could not read the JWKS at https://token.actions.githubusercontent.com/jwks",
 			},
 		])("answers 503 for $name", async ({ impl, expected }) => {
 			const issuer = "https://token.actions.githubusercontent.com";
@@ -1408,6 +1437,174 @@ describe("Security Headers Middleware", () => {
 			// guess or to give up.
 			expect(Number(response.headers.get("Retry-After"))).toBeGreaterThan(0);
 			expect(body.hint).toContain("Nothing about the token is wrong");
+		});
+
+		it("decodes a base64url payload and keeps non-ASCII claims intact", async () => {
+			const { publicKey, privateKey } = await generateTestKeyPair();
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "unicode-key";
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const subject = "repo:café/🦊-signer:ref:refs/heads/~~~???";
+			const token = await new TestJwt({ iss: issuer, sub: subject, aud: "gpg-signing-service" })
+				.setProtectedHeader({ alg: "RS256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+			const payload = token.split(".")[1];
+			expect(payload).toMatch(/-/);
+			expect(payload).toMatch(/_/);
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(401);
+			const body = await parseJson<{ code: string; subject: string }>(response);
+			expect(body.code).toBe("AUTH_SUBJECT_UNTRUSTED");
+			expect(body.subject).toBe(subject);
+		});
+
+		it("refuses a correctly signed token without a subject", async () => {
+			const { publicKey, privateKey } = await generateTestKeyPair();
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "no-sub-key";
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const token = await new TestJwt({ iss: issuer, aud: "gpg-signing-service" })
+				.setProtectedHeader({ alg: "RS256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(401);
+			const body = await parseJson<{ code: string; error: string }>(response);
+			expect(body.code).toBe("AUTH_INVALID");
+			expect(body.error).toBe("Invalid token claims");
+			expect(middlewareFetchMock).toHaveBeenCalled();
+		});
+
+		it("refuses a token whose exp is a string before fetching any key", async () => {
+			const { privateKey } = await generateTestKeyPair();
+			const token = await new TestJwt({
+				iss: "https://token.actions.githubusercontent.com",
+				sub: "repo:test/svc",
+				aud: "gpg-signing-service",
+				exp: "9999999999",
+			})
+				.setProtectedHeader({ alg: "RS256", kid: "string-exp" })
+				.setIssuedAt()
+				.sign(privateKey);
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(401);
+			expect((await parseJson<{ error: string }>(response)).error).toBe("Invalid token claims");
+			expect(middlewareFetchMock).not.toHaveBeenCalled();
+		});
+
+		it("caches the issuer's JWK Set text verbatim and serves the next request from it", async () => {
+			const { publicKey, privateKey } = await generateTestKeyPair();
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "cached-key";
+			const jwk = await exportTestJwk(publicKey);
+			jwk.kid = kid;
+			jwk.use = "sig";
+			const served = JSON.stringify({ keys: [jwk] }, null, 2);
+			middlewareFetchMock.mockImplementation(async (url: string) =>
+				url === `${issuer}/.well-known/openid-configuration`
+					? new Response(JSON.stringify({ jwks_uri: `${issuer}/jwks` }))
+					: new Response(served),
+			);
+			const token = await new TestJwt({
+				iss: issuer,
+				sub: "repo:user/repo:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "RS256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+			const send = () =>
+				makeRequest("/sign", {
+					method: "POST",
+					headers: { Authorization: `Bearer ${token}` },
+					body: "commit data",
+				});
+
+			expect((await send()).status).toBe(404);
+			expect(await env.JWKS_CACHE.get(`jwks:${issuer}`, "text")).toBe(served);
+
+			middlewareFetchMock.mockReset();
+			middlewareFetchMock.mockRejectedValue(new Error("issuer unreachable"));
+			expect((await send()).status).toBe(404);
+			expect(middlewareFetchMock).not.toHaveBeenCalled();
+		});
+
+		it("serves a token without kid from a cached set holding one key", async () => {
+			const { publicKey, privateKey } = await generateTestKeyPair();
+			const issuer = "https://token.actions.githubusercontent.com";
+			const jwk = await exportTestJwk(publicKey);
+			jwk.use = "sig";
+			await env.JWKS_CACHE.put(`jwks:${issuer}`, JSON.stringify({ keys: [jwk] }));
+
+			const token = await new TestJwt({
+				iss: issuer,
+				sub: "repo:user/repo:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "RS256" })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(404);
+			expect(middlewareFetchMock).not.toHaveBeenCalled();
+		});
+
+		it("refetches when the cached entry is not a JWK Set", async () => {
+			const { publicKey, privateKey } = await generateTestKeyPair();
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "recovered-key";
+			await env.JWKS_CACHE.put(`jwks:${issuer}`, "not a jwk set");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const token = await new TestJwt({
+				iss: issuer,
+				sub: "repo:user/repo:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "RS256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(404);
+			expect(middlewareFetchMock).toHaveBeenCalledWith(`${issuer}/jwks`, {}, 10000);
 		});
 
 		it("should handle cache put failure", async () => {
@@ -1591,6 +1788,44 @@ describe("Security Headers Middleware", () => {
 			expect(body.error).toContain("Invalid token signature");
 		});
 
+		it("rejects a token whose payload changed after signing, and accepts the original", async () => {
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			const { privateKey, publicKey } = await generateTestKeyPair();
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "tamper-key";
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const token = await new TestJwt({
+				iss: issuer,
+				sub: "repo:user/repo:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "RS256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const [header, payload, signature] = token.split(".");
+			const claims: Record<string, unknown> = JSON.parse(atob((payload ?? "").replace(/-/g, "+").replace(/_/g, "/")));
+			claims.sub = "repo:attacker/repo:ref:refs/heads/main";
+			const forged = base64url(JSON.stringify(claims));
+			const tampered = `${header}.${forged}.${signature}`;
+
+			const send = (bearer: string) =>
+				makeRequest("/sign", {
+					method: "POST",
+					headers: { Authorization: `Bearer ${bearer}` },
+					body: "commit data",
+				});
+
+			const refused = await send(tampered);
+			expect(refused.status).toBe(401);
+			expect((await parseJson<{ error: string }>(refused)).error).toBe("Invalid token signature");
+
+			// 404 means OIDC passed and the request reached the route.
+			expect((await send(token)).status).toBe(404);
+		});
+
 		it("should reject token with disallowed algorithm", async () => {
 			const { privateKey } = await generateTestKeyPair();
 			const token = await new TestJwt({
@@ -1648,9 +1883,15 @@ describe("Security Headers Middleware", () => {
 			// which makes the hint the weakest possible disclosure gate: naming
 			// every issuer this deployment accepts would hand a self-hoster's
 			// internal Keycloak hostname to anyone who can reach the worker.
-			const unsigned = `${btoa(JSON.stringify({ alg: "RS256", kid: "x" }))}.${btoa(
-				JSON.stringify({ iss: "https://whatever.example", sub: "repo:x/y", aud: "gpg-signing-service" }),
-			)}.not-a-signature`;
+			const unsigned = unsignedJwt(
+				{ alg: "RS256", kid: "x" },
+				{
+					iss: "https://whatever.example",
+					sub: "repo:x/y",
+					aud: "gpg-signing-service",
+					exp: Math.floor(Date.now() / 1000) + 3600,
+				},
+			);
 
 			const response = await makeRequest("/sign", {
 				method: "POST",
@@ -1670,9 +1911,15 @@ describe("Security Headers Middleware", () => {
 		});
 
 		it("names the accepted issuers only where the deployment opted in", async () => {
-			const unsigned = `${btoa(JSON.stringify({ alg: "RS256", kid: "x" }))}.${btoa(
-				JSON.stringify({ iss: "https://whatever.example", sub: "repo:x/y", aud: "gpg-signing-service" }),
-			)}.not-a-signature`;
+			const unsigned = unsignedJwt(
+				{ alg: "RS256", kid: "x" },
+				{
+					iss: "https://whatever.example",
+					sub: "repo:x/y",
+					aud: "gpg-signing-service",
+					exp: Math.floor(Date.now() / 1000) + 3600,
+				},
+			);
 
 			const response = await makeRequest(
 				"/sign",
@@ -1688,9 +1935,15 @@ describe("Security Headers Middleware", () => {
 		it("has nothing to name when the opted-in deployment accepts no issuers", async () => {
 			// An empty ALLOWED_ISSUERS refuses everyone, and "It currently accepts:
 			// ." is a worse sentence than the one that names only the knob.
-			const unsigned = `${btoa(JSON.stringify({ alg: "RS256", kid: "x" }))}.${btoa(
-				JSON.stringify({ iss: "https://whatever.example", sub: "repo:x/y", aud: "gpg-signing-service" }),
-			)}.not-a-signature`;
+			const unsigned = unsignedJwt(
+				{ alg: "RS256", kid: "x" },
+				{
+					iss: "https://whatever.example",
+					sub: "repo:x/y",
+					aud: "gpg-signing-service",
+					exp: Math.floor(Date.now() / 1000) + 3600,
+				},
+			);
 
 			const response = await makeRequest(
 				"/sign",

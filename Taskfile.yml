@@ -177,6 +177,11 @@ tasks:
     aliases: [tgp]
     cmd: bash scripts/test-typegen-pin.sh
 
+  test:mutants:
+    desc: Mutation-test the OIDC and GitHub App credential checks; every mutant must fail its suites
+    aliases: [mut]
+    cmd: bash scripts/test-auth-mutants.sh
+
   test:tool-pins:
     desc: Test that every tool which rewrites a committed file is explicit and pinned
     aliases: [tp, pins]

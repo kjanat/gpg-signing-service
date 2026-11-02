@@ -19,8 +19,8 @@
  */
 
 import { env } from "cloudflare:workers";
-import { decodeJwtUnverified, verifyJwt } from "micro509/jose";
-import { exportPkcs1Pem, exportPkcs8Pem, exportSpkiPem, importSpkiPemOrThrow } from "micro509/keys";
+import { decodeProtectedHeader, importSPKI, jwtVerify } from "jose";
+import { exportPkcs1Pem, exportPkcs8Pem, exportSpkiPem } from "micro509/keys";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env as ServiceEnv } from "#types";
 import { TIME } from "#types";
@@ -60,18 +60,13 @@ let keys: {
 	publicSpkiPem: string;
 };
 
-/** Verifies an App JWT against the fixture's public key, or fails the test with the micro509 code. */
+/** Verifies an App JWT with jose, independently of the micro509 code that minted it. */
 async function verifyAppJwt(jwt: string) {
-	const result = await verifyJwt(jwt, {
+	const { payload } = await jwtVerify(jwt, await importSPKI(keys.publicSpkiPem, "RS256"), {
 		algorithms: ["RS256"],
-		key: await importSpkiPemOrThrow(keys.publicSpkiPem, { kind: "rsa" }),
-		tokenType: "JWT",
-		claims: { issuer: APP_ID, audience: { unchecked: true } },
+		issuer: APP_ID,
 	});
-	if (!result.ok) {
-		throw new Error(`App JWT did not verify: ${result.code}`);
-	}
-	return result.value.registered;
+	return payload;
 }
 
 beforeEach(async () => {
@@ -247,11 +242,10 @@ describe("the App JWT", () => {
 		// with the right claims and a wrong signature is what a broken key import
 		// silently produces.
 		const jwt = await mintAppJwt(configured());
-		const registered = await verifyAppJwt(jwt);
-		const decoded = decodeJwtUnverified(jwt);
+		const payload = await verifyAppJwt(jwt);
 
-		expect(decoded.ok && decoded.value.header.alg).toBe("RS256");
-		expect(registered.iss).toBe(APP_ID);
+		expect(decodeProtectedHeader(jwt).alg).toBe("RS256");
+		expect(payload.iss).toBe(APP_ID);
 	});
 
 	it("backdates iat and stays inside GitHub's ten-minute ceiling", async () => {

@@ -1,8 +1,16 @@
 import type { Context, MiddlewareHandler } from "hono";
-import { createJwksKeyResolver, parseJwks, type VerifyJwtErrorCode, verifyJwt } from "micro509/jose";
+import {
+	createJwksKeyResolver,
+	decodeJwtUnverified,
+	type Jwks,
+	parseJwks,
+	type VerifyJwtErrorCode,
+	verifyJwt,
+} from "micro509/jose";
+import { z } from "zod";
 import { INSUFFICIENT_SCOPE_MESSAGE } from "#lib/openapi";
 import { getRequestId } from "#middleware/request-id";
-import type { Env, LegacyJWKSResponse, OIDCClaims, RateLimitResult, Variables } from "#types";
+import type { Env, OIDCClaims, RateLimitResult, Variables } from "#types";
 import { createIdentity, HEADERS, HTTP, markClaimsAsValidated, TIME } from "#types";
 import { logAuditEvent } from "#utils/audit";
 import { CACHE_TTL } from "#utils/constants";
@@ -736,22 +744,41 @@ async function timingSafeEqual(a: string, b: string): Promise<boolean> {
 // GitHub Actions and GitLab CI both sign OIDC tokens with RS256.
 const ALLOWED_ALGORITHMS = ["RS256"];
 
+const RoutingClaimsSchema = z.looseObject({
+	iss: z.string(),
+	aud: z.union([z.string(), z.array(z.string())]),
+	exp: z.number(),
+	nbf: z.number().exactOptional(),
+});
+
+const OIDCClaimsSchema = RoutingClaimsSchema.extend({
+	sub: z.string(),
+	iat: z.number(),
+	repository: z.string().exactOptional(),
+	repository_owner: z.string().exactOptional(),
+	workflow: z.string().exactOptional(),
+	ref: z.string().exactOptional(),
+	project_path: z.string().exactOptional(),
+	namespace_path: z.string().exactOptional(),
+	pipeline_source: z.string().exactOptional(),
+}) satisfies z.ZodType<OIDCClaims>;
+
 async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
-	// Decode JWT header and payload (without verification first)
 	const parts = token.split(".");
 	if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) {
 		throw new Error("Invalid token format");
 	}
 
-	// Parse header and payload with explicit error handling
-	let header: { kid: string; alg: string };
-	let payload: OIDCClaims;
-	try {
-		header = JSON.parse(atob(parts[0])) as { kid: string; alg: string };
-		payload = JSON.parse(atob(parts[1])) as OIDCClaims;
-	} catch {
+	const decoded = decodeJwtUnverified(token);
+	if (!decoded.ok) {
 		throw new Error("Invalid token encoding");
 	}
+	const { header } = decoded.value;
+	const routing = RoutingClaimsSchema.safeParse(decoded.value.claims);
+	if (!routing.success) {
+		throw new Error("Invalid token claims");
+	}
+	const payload = routing.data;
 
 	// Validate algorithm against whitelist
 	if (!ALLOWED_ALGORITHMS.includes(header.alg)) {
@@ -800,14 +827,9 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
 		throw new Error("Key not intended for signatures");
 	}
 
-	const parsed = parseJwks(JSON.stringify(jwks));
-	if (!parsed.ok) {
-		throw new Error("Key not found");
-	}
-
 	const verified = await verifyJwt(token, {
 		algorithms: ["RS256"],
-		key: createJwksKeyResolver(parsed.value),
+		key: createJwksKeyResolver(jwks),
 		tokenType: { unchecked: true },
 		claims: {
 			issuer: allowedIssuers,
@@ -819,7 +841,11 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
 		mapVerifyFailure(verified.code);
 	}
 
-	return payload;
+	const claims = OIDCClaimsSchema.safeParse(verified.value.claims);
+	if (!claims.success) {
+		throw new Error("Invalid token claims");
+	}
+	return claims.data;
 }
 
 /** The curated message for a micro509 verification failure. Exported for the branch-coverage suite. */
@@ -843,19 +869,14 @@ export function mapVerifyFailure(code: VerifyJwtErrorCode): never {
 	}
 }
 
-async function getJWKS(issuer: string, env: Env, expectedKid?: string): Promise<LegacyJWKSResponse> {
+async function getJWKS(issuer: string, env: Env, expectedKid?: string): Promise<Jwks> {
 	const cacheKey = `jwks:${issuer}`;
 
-	// Check cache first
-	const cached = await env.JWKS_CACHE.get(cacheKey, "json");
-	if (cached) {
-		const cachedJWKS = cached as LegacyJWKSResponse;
-		// If an expected kid is provided and it's not in the cached JWKS, refresh
-		// from the origin to pick up key rotations.
-		if (expectedKid && !cachedJWKS.keys?.some((k: { kid?: string }) => k.kid === expectedKid)) {
-			// fall through to network fetch below
-		} else {
-			return cachedJWKS;
+	const cachedText = await env.JWKS_CACHE.get(cacheKey, "text");
+	if (cachedText !== null) {
+		const cached = parseJwks(cachedText);
+		if (cached.ok && (!expectedKid || cached.value.keys.some((key) => key.kid === expectedKid))) {
+			return cached.value;
 		}
 	}
 
@@ -942,16 +963,20 @@ async function getJWKS(issuer: string, env: Env, expectedKid?: string): Promise<
 		);
 	}
 
-	let jwks: LegacyJWKSResponse;
+	let jwksText: string;
 	try {
-		jwks = (await jwksResponse.json()) as LegacyJWKSResponse;
+		jwksText = await jwksResponse.text();
 	} catch (error) {
-		throw new IssuerUnavailableError(`JWKS at ${config.jwks_uri} was not readable JSON`, true, { cause: error });
+		throw new IssuerUnavailableError(`Could not read the JWKS at ${config.jwks_uri}`, true, { cause: error });
+	}
+	const jwks = parseJwks(jwksText);
+	if (!jwks.ok) {
+		throw new IssuerUnavailableError(`JWKS at ${config.jwks_uri} was not a readable JWK Set (${jwks.code})`, true);
 	}
 
 	// Cache for 5 minutes (non-critical, don't fail on cache errors)
 	try {
-		await env.JWKS_CACHE.put(cacheKey, JSON.stringify(jwks), {
+		await env.JWKS_CACHE.put(cacheKey, jwksText, {
 			expirationTtl: CACHE_TTL.JWKS / TIME.SECOND,
 		});
 	} catch (error) {
@@ -962,5 +987,5 @@ async function getJWKS(issuer: string, env: Env, expectedKid?: string): Promise<
 		// Continue - caching is optimization, not critical path
 	}
 
-	return jwks;
+	return jwks.value;
 }
