@@ -23,12 +23,8 @@ runs:
         # diagnosed from a bare red status instead of from its own diff.
         # `|| EXIT_CODE=$?` is what makes the non-zero survive into the report.
         #
-        # `--text` for the second half of the same problem: .gitattributes marks
-        # worker-configuration.d.ts `-diff`, and that file is exactly what drifts
-        # here, so an unforced patch would only ever say "Binary files differ".
-        # It is a ~500 KB generated file, hence the cap -- GITHUB_STEP_SUMMARY is
-        # capped at 1 MiB and silently drops the whole step's summary when it is
-        # exceeded, which would put us back at a red status with no diff.
+        # GITHUB_STEP_SUMMARY is capped at 1 MiB and silently drops the whole
+        # step's summary when it is exceeded, hence the cap on the patch below.
         EXIT_CODE=0
         CHANGED="$(git diff --stat-graph-width=40 --exit-code)" || EXIT_CODE=$?
         # `|| true` because head(1) closing the pipe early hands git a SIGPIPE,

@@ -376,7 +376,7 @@ tasks:
   typecheck:
     desc: Typecheck code
     aliases: [ts, type, tsc, tsgo]
-    deps: [install:noscripts]
+    deps: [typegen]
     sources: ["**/*.ts"]
     cmd: mise exec -- run typecheck
 
