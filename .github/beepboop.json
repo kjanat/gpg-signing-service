@@ -1,10 +1,6 @@
 {
   "$schema": "https://beepboop.kjanat.dev/schema/v1.json",
-  "managers": [
-    "github-release",
-    "npm",
-    "workflow"
-  ],
+  "managers": ["github-release", "npm", "workflow"],
   "streams": {
     "main": {
       "versioning": "workspace",
