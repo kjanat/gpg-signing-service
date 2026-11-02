@@ -43,6 +43,10 @@
     {
       "groupName": "eslint",
       "matchPackageNames": ["eslint", "typescript-eslint", "@typescript-eslint/**"]
+    },
+    {
+      "matchUpdateTypes": ["major"],
+      "automerge": false
     }
   ]
 }
