@@ -6,7 +6,7 @@
 #   * `.mise.toml`'s, which reaches checkouts that have no node_modules --
 #     .github/workflows/d1-migrate.yml and scripts/cf.sh's WORKERS_CI branch
 #   * node_modules/.bin/wrangler, pinned by bun.lock and now a *direct*
-#     devDependency rather than a hoisted transitive of vitest-pool-workers
+#     devDependency rather than a hoisted transitive of vitest-plugin
 #
 # #125 pinned the first to the version the second resolves, so the two channels
 # ship one workerd; scripts/test-tool-pins.sh is what holds that down. This file
@@ -25,7 +25,7 @@
 # depends on `install:noscripts` and never fires `prepare`.
 #
 # The lockfile wrangler is the correct producer, because its workerd is the one
-# the vitest-pool-workers suite actually executes on; types describing a
+# the vitest-plugin suite actually executes on; types describing a
 # different runtime than the tests run against are wrong even when CI is green.
 # So the two assertions below are: the header records the lockfile's workerd,
 # and no task regenerates the file through the mise tool. Both fail on

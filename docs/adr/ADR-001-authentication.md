@@ -36,7 +36,7 @@ Implement OIDC (OpenID Connect) JWT validation as the primary authentication mec
 
 **Algorithm Whitelist** (`src/middleware/oidc.ts:93-94`):
 
-- Allow only asymmetric algorithms: `RS256`, `RS384`, `RS512`, `ES256`, `ES384`
+- Allow only `RS256`, the algorithm GitHub Actions and GitLab CI sign with
 - Reject symmetric algorithms (HS256) that enable key confusion attacks
 - Validate algorithm claim before JWKS fetch to prevent SSRF amplification
 
@@ -61,7 +61,7 @@ Implement OIDC (OpenID Connect) JWT validation as the primary authentication mec
 **Signature Verification** (`src/middleware/oidc.ts:162-184`):
 
 - Fetch JWKS from issuer's `.well-known/openid-configuration` endpoint
-- Use `jose` library for cryptographic verification with `createLocalJWKSet`
+- Use `micro509/jose` (`verifyJwt` with `createJwksKeyResolver`) for cryptographic verification
 - Pre-flight validation: Check key exists and `use: "sig"` before verification
 - Prevents unhandled rejections from missing keys in JWKS
 

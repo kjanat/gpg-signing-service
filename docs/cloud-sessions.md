@@ -200,9 +200,9 @@ curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh || true
 # hook report a missing tool instead of installing it.)
 session_user="$(stat -c %U /home/* 2>/dev/null | grep -v '^root$' | head -1)"
 if [ -n "$session_user" ]; then
-  chown -R "$session_user" "$MISE_DATA_DIR" || true
+	chown -R "$session_user" "$MISE_DATA_DIR" || true
 else
-  chmod -R a+rwX "$MISE_DATA_DIR" || true
+	chmod -R a+rwX "$MISE_DATA_DIR" || true
 fi
 
 # Fallbacks, in case the mise install above did not take. Harmless when it did.
@@ -221,15 +221,15 @@ command -v task >/dev/null 2>&1 || npm install -g @go-task/cli || true
 # rebuild is pointless, because go install would use golangci-lint's own older
 # toolchain.
 (cd "$repo/client" && golangci-lint config path --config=.golangci.yml) \
-  >/dev/null 2>&1 \
-  || GOBIN=/usr/local/bin go install \
-    github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2 || true
+	>/dev/null 2>&1 \
+	|| GOBIN=/usr/local/bin go install \
+		github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2 || true
 
 # Optional: the released gpg-sign CLI. Use the direct download URL — the
 # releases API returns 403 through the proxy, but the asset URL itself is fine.
 curl -sSLf -o /usr/local/bin/gpg-sign \
-  https://github.com/kjanat/gpg-signing-service/releases/latest/download/gpg-sign-linux-amd64 \
-  && chmod +x /usr/local/bin/gpg-sign || true
+	https://github.com/kjanat/gpg-signing-service/releases/latest/download/gpg-sign-linux-amd64 \
+	&& chmod +x /usr/local/bin/gpg-sign || true
 
 exit 0
 ```
@@ -290,10 +290,10 @@ Ask the agent to run these; all three should pass in a correctly configured
 session:
 
 ```bash
-mise where task            # under $MISE_DATA_DIR, not under $HOME
-task --version             # Taskfile present
-task c:l                   # Go lint — fails loudly if the toolchain mismatch is back
-task t                     # test suite
+mise where task # under $MISE_DATA_DIR, not under $HOME
+task --version  # Taskfile present
+task c:l        # Go lint — fails loudly if the toolchain mismatch is back
+task t          # test suite
 ```
 
 The first one is the check that catches a half-configured environment. If it

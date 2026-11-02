@@ -133,16 +133,16 @@ curl https://gpg.kajkowalski.nl/public-key
 OIDC_TOKEN="..." # From GitHub Actions or GitLab CI
 COMMIT=$(git cat-file commit HEAD)
 curl -X POST \
-  -H "Authorization: Bearer $OIDC_TOKEN" \
-  --data-raw "$COMMIT" \
-  https://gpg.kajkowalski.nl/sign
+	-H "Authorization: Bearer $OIDC_TOKEN" \
+	--data-raw "$COMMIT" \
+	https://gpg.kajkowalski.nl/sign
 ```
 
 ### List Keys (Admin)
 
 ```bash
 curl -H "Authorization: Bearer $ADMIN_TOKEN" \
-  https://gpg.kajkowalski.nl/admin/keys | jq .
+	https://gpg.kajkowalski.nl/admin/keys | jq .
 ```
 
 See **API.md** and **examples/** for complete examples.

@@ -1,8 +1,8 @@
-/// <reference types="@cloudflare/vitest-pool-workers/types" />
+/// <reference types="@cloudflare/vitest-plugin/types" />
 
-// `import("cloudflare:test").env` is typed as `Cloudflare.Env` since
-// vitest-pool-workers 0.18; augment it with the test vars and secrets from
-// wrangler.test.toml that the generated worker-configuration.d.ts lacks.
+// `import("cloudflare:test").env` is typed as `Cloudflare.Env`; augment it with
+// the test vars and secrets from wrangler.test.toml that the generated
+// worker-configuration.d.ts lacks.
 declare namespace Cloudflare {
 	interface Env {
 		/** Token for admin endpoints */

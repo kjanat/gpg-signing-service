@@ -110,9 +110,9 @@ host the checked-in contract yourself:
 ```bash
 # Using Docker
 docker run -p 8080:8080 \
-  -v $(pwd)/client/openapi.json:/openapi.json:ro \
-  -e SWAGGER_JSON=/openapi.json \
-  swaggerapi/swagger-ui
+	-v $(pwd)/client/openapi.json:/openapi.json:ro \
+	-e SWAGGER_JSON=/openapi.json \
+	swaggerapi/swagger-ui
 
 # Using custom HTML
 # Create index.html that loads client/openapi.json with SwaggerUI
@@ -163,21 +163,21 @@ Generate client libraries in multiple languages:
 ```bash
 # Using openapi-generator-cli
 bunx @openapitools/openapi-generator-cli generate \
-  -i client/openapi.json \
-  -g python \
-  -o ./python-client
+	-i client/openapi.json \
+	-g python \
+	-o ./python-client
 
 # JavaScript/TypeScript
 bunx @openapitools/openapi-generator-cli generate \
-  -i client/openapi.json \
-  -g typescript-fetch \
-  -o ./typescript-client
+	-i client/openapi.json \
+	-g typescript-fetch \
+	-o ./typescript-client
 
 # Go
 bunx @openapitools/openapi-generator-cli generate \
-  -i client/openapi.json \
-  -g go \
-  -o ./go-client
+	-i client/openapi.json \
+	-g go \
+	-o ./go-client
 ```
 
 ## Common Use Cases
@@ -225,7 +225,7 @@ curl https://gpg.kajkowalski.nl/health | jq .
 
 # Alert if degraded
 curl -s https://gpg.kajkowalski.nl/health \
-  | jq 'if .status != "healthy" then "ALERT: Service degraded" else "OK" end'
+	| jq 'if .status != "healthy" then "ALERT: Service degraded" else "OK" end'
 ```
 
 ### Audit Key Operations
@@ -234,13 +234,13 @@ curl -s https://gpg.kajkowalski.nl/health \
 # Get all key uploads in last 7 days
 DAYS_AGO="$(date -u -d '7 days ago' +%Y-%m-%dT00:00:00Z)"
 curl "https://gpg.kajkowalski.nl/admin/audit?action=key_upload&startDate=${DAYS_AGO}" \
-  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
-  | jq '.logs'
+	-H "Authorization: Bearer ${ADMIN_TOKEN}" \
+	| jq '.logs'
 
 # Get failed signing attempts
 curl "https://gpg.kajkowalski.nl/admin/audit?action=sign" \
-  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
-  | jq '.logs | map(select(.success == false))'
+	-H "Authorization: Bearer ${ADMIN_TOKEN}" \
+	| jq '.logs | map(select(.success == false))'
 ```
 
 ### Rotate Signing Keys
@@ -255,14 +255,14 @@ NEW_KEY_ID="signing-key-v2"
 # Upload new key
 NEW_KEY="$(cat new-key.asc)" # Armored private key
 curl -X POST \
-  https://gpg.kajkowalski.nl/admin/keys \
-  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
-  -H 'Content-Type: application/json' \
-  -d "{'keyId': \"${NEW_KEY_ID}\", 'armoredPrivateKey': \"${NEW_KEY}\"}"
+	https://gpg.kajkowalski.nl/admin/keys \
+	-H "Authorization: Bearer ${ADMIN_TOKEN}" \
+	-H 'Content-Type: application/json' \
+	-d "{'keyId': \"${NEW_KEY_ID}\", 'armoredPrivateKey': \"${NEW_KEY}\"}"
 
 # Verify new key works
 curl "https://gpg.kajkowalski.nl/public-key?keyId=${NEW_KEY_ID}" \
-  | gpg --import
+	| gpg --import
 
 # Update CI/CD to use new key
 # ... (update workflows to use keyId=$NEW_KEY_ID) ...
@@ -270,8 +270,8 @@ curl "https://gpg.kajkowalski.nl/public-key?keyId=${NEW_KEY_ID}" \
 # Delete old key after transition period
 sleep 86400 # Wait 24 hours
 curl -X DELETE \
-  "https://gpg.kajkowalski.nl/admin/keys/${OLD_KEY_ID}" \
-  -H "Authorization: Bearer ${ADMIN_TOKEN}"
+	"https://gpg.kajkowalski.nl/admin/keys/${OLD_KEY_ID}" \
+	-H "Authorization: Bearer ${ADMIN_TOKEN}"
 ```
 
 ## Error Handling
@@ -307,26 +307,26 @@ MAX_RETRIES=3
 RETRY_COUNT=0
 
 while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-  RESPONSE=$(curl -w "\n%{http_code}" -X POST \
-    -H "Authorization: Bearer $TOKEN" \
-    --data-raw "$DATA" \
-    https://gpg.kajkowalski.nl/sign)
+	RESPONSE=$(curl -w "\n%{http_code}" -X POST \
+		-H "Authorization: Bearer $TOKEN" \
+		--data-raw "$DATA" \
+		https://gpg.kajkowalski.nl/sign)
 
-  HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-  BODY=$(echo "$RESPONSE" | head -n -1)
+	HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+	BODY=$(echo "$RESPONSE" | head -n -1)
 
-  if [[ "$HTTP_CODE" = "200" ]]; then
-    echo "$BODY"
-    exit 0
-  elif [[ "$HTTP_CODE" = "429" ]]; then
-    RETRY_AFTER=$(echo "$BODY" | jq .retryAfter)
-    echo "Rate limited, waiting ${RETRY_AFTER}s..."
-    sleep $RETRY_AFTER
-    RETRY_COUNT=$((RETRY_COUNT + 1))
-  else
-    echo "Error: $BODY"
-    exit 1
-  fi
+	if [[ "$HTTP_CODE" = "200" ]]; then
+		echo "$BODY"
+		exit 0
+	elif [[ "$HTTP_CODE" = "429" ]]; then
+		RETRY_AFTER=$(echo "$BODY" | jq .retryAfter)
+		echo "Rate limited, waiting ${RETRY_AFTER}s..."
+		sleep $RETRY_AFTER
+		RETRY_COUNT=$((RETRY_COUNT + 1))
+	else
+		echo "Error: $BODY"
+		exit 1
+	fi
 done
 
 echo "Failed after $MAX_RETRIES retries"
@@ -370,14 +370,14 @@ exit 1
 ```bash
 # For OIDC
 OIDC_TOKEN=$(
-  curl -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-    "$ACTIONS_ID_TOKEN_REQUEST_URL" \
-    | jq -r '.token'
+	curl -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+		"$ACTIONS_ID_TOKEN_REQUEST_URL" \
+		| jq -r '.token'
 )
 
 # For Admin
 curl -X POST https://gpg.kajkowalski.nl/admin/keys \
-  -H "Authorization: Bearer $ADMIN_TOKEN"
+	-H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
 ### `429 Rate Limited`
@@ -411,8 +411,8 @@ curl -X POST https://gpg.kajkowalski.nl/admin/keys \
 ```bash
 # List all available keys
 curl https://gpg.kajkowalski.nl/admin/keys \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  | jq '.keys[].keyId'
+	-H "Authorization: Bearer $ADMIN_TOKEN" \
+	| jq '.keys[].keyId'
 ```
 
 ## API Versioning

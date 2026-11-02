@@ -385,7 +385,27 @@ def publish_result(directory, destination):
             path == b".github/workflows" or path.startswith(b".github/workflows/")
             for path in touched
         ),
-        "Workflow changes need maintainer activation via .github/workflows-pending/",
+        "Workflow changes need maintainer activation: add .github/workflows-pending/<name>.patch "
+        "holding the git diff against .github/workflows/<name>.yml",
+    )
+    written = run(
+        "git",
+        "diff",
+        "--name-only",
+        "--no-renames",
+        "--diff-filter=AMT",
+        "-z",
+        request["start"],
+        tree,
+    ).split(b"\0")
+    require(
+        not any(
+            path.startswith(b".github/workflows-pending/")
+            and not path.endswith(b".patch")
+            for path in written
+        ),
+        "Only .patch files may be added under .github/workflows-pending/; "
+        "a full workflow copy goes stale and rolls back live edits",
     )
     response = response_file(destination)
     # Trusted guard from workflow_sha, never from the candidate.

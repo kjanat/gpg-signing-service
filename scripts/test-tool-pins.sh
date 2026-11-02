@@ -23,7 +23,7 @@
 #
 # The other half of the same hole was resolution by accident:
 # node_modules/.bin/wrangler existed only because bun hoisted a transitive
-# dependency of @cloudflare/vitest-pool-workers, while thirteen package.json
+# dependency of @cloudflare/vitest-plugin, while thirteen package.json
 # scripts spelled it as though it were ours. #124 then made that binary the
 # single producer of a committed artifact, so it had to become a real
 # devDependency rather than a hoist that a resolver change could take away.
@@ -355,7 +355,7 @@ check_root() {
 	locked_wrangler="$(lock_resolved "${root}" wrangler)"
 
 	if [[ -z ${declared_wrangler} ]]; then
-		note "package.json invokes wrangler but does not depend on it -- node_modules/.bin/wrangler then exists only while bun keeps hoisting it out of @cloudflare/vitest-pool-workers, and it is the producer of a committed artifact"
+		note "package.json invokes wrangler but does not depend on it -- node_modules/.bin/wrangler then exists only while bun keeps hoisting it out of @cloudflare/vitest-plugin, and it is the producer of a committed artifact"
 	elif ! is_exact_version "${declared_wrangler}"; then
 		note "package.json depends on wrangler '${declared_wrangler}' -- the producer of worker-configuration.d.ts has to be an exact version"
 	fi
@@ -535,6 +535,16 @@ else
 	elif ! biome_out="$(cd "${repo_root}" && mise exec -- biome check 2>&1)"; then
 		fail "biome ${pinned_biome} wants to change the checked-out tree, so the pre-commit lint:fix will rewrite it:"$'\n'"${biome_out}"
 	fi
+fi
+
+# jdx/mise-action runs `mise install --monorepo` whenever .mise.toml has a
+# [monorepo] table, and mise refuses that flag unless the root config sets
+# monorepo_root = true.
+new_case 'the install every CI job starts with resolves'
+if ! command -v mise >/dev/null 2>&1; then
+	printf '    skip: no mise\n'
+elif ! install_out="$(cd "${repo_root}" && mise install --monorepo --dry-run 2>&1)"; then
+	fail "mise install --monorepo, the first step of every CI job, fails:"$'\n'"${install_out}"
 fi
 
 # --- the mutants --------------------------------------------------------------

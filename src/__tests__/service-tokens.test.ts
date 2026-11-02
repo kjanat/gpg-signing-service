@@ -1,4 +1,4 @@
-// These imports are provided by @cloudflare/vitest-pool-workers
+// These imports are provided by @cloudflare/vitest-plugin
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";

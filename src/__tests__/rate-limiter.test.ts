@@ -98,7 +98,7 @@ describe("RateLimiter Durable Object", () => {
 				return { status: response.status, result: (await response.json()) as RateLimitResult };
 			};
 
-			const [wide, narrow] = await runInDurableObject(stub, async (instance, state) => {
+			const [wide, narrow] = await runInDurableObject(stub, async (instance: RateLimiter, state) => {
 				await state.storage.put("bucket:wide", { tokens: 0, lastRefill: Date.now(), capacity: 1000 });
 				await state.storage.put("bucket:narrow", { tokens: 0, lastRefill: Date.now(), capacity: 100 });
 

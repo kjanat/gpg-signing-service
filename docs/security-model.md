@@ -562,7 +562,7 @@ in force. `middleware.test.ts` proves the Worker emits
 about the wire. The delivered value can only be read off a live response:
 
 ```bash
-task verify:hsts             # or: task verify:hsts -- https://your-deployment
+task verify:hsts # or: task verify:hsts -- https://your-deployment
 ```
 
 That compares the header every probed route actually returns against the

@@ -332,10 +332,9 @@ export interface Env {
 	 * Optional: the GitHub App's RSA private key, PEM-encoded.
 	 *
 	 * Accepted in either PKCS#1 (`BEGIN RSA PRIVATE KEY`, which is what GitHub's
-	 * download button produces) or PKCS#8 (`BEGIN PRIVATE KEY`) form;
-	 * `toPkcs8Pem` converts the first into the second, because WebCrypto imports
-	 * only the second. Holding it *is* being the App, so it is a secret in the
-	 * strongest sense: it mints credentials for every installation.
+	 * download button produces) or PKCS#8 (`BEGIN PRIVATE KEY`) form. Holding it
+	 * *is* being the App, so it is a secret in the strongest sense: it mints
+	 * credentials for every installation.
 	 */
 	GITHUB_APP_PRIVATE_KEY?: string;
 	/**

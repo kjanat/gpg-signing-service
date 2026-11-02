@@ -20,6 +20,7 @@
 
 import { env } from "cloudflare:workers";
 import { decodeProtectedHeader, importSPKI, jwtVerify } from "jose";
+import { exportPkcs1Pem, exportPkcs8Pem, exportSpkiPem } from "micro509/keys";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Env as ServiceEnv } from "#types";
 import { TIME } from "#types";
@@ -32,7 +33,6 @@ import {
 	installationTokenCacheKey,
 	mintAppJwt,
 	requireAppConfig,
-	toPkcs8Pem,
 } from "#utils/github-app";
 import { verifyWebhookSignature } from "#utils/github-webhook";
 import { collectEnvSecrets, scrubValue } from "#utils/sentry";
@@ -56,60 +56,17 @@ const APP_ID = "123456";
  */
 let keys: {
 	pkcs8Pem: string;
-	pkcs8Der: Uint8Array;
 	pkcs1Pem: string;
 	publicSpkiPem: string;
 };
 
-/** PEM-wrap `der` at 64 columns, the way every producer of these files does. */
-function toPem(label: string, der: Uint8Array): string {
-	const base64 = btoa(String.fromCharCode(...der)).replace(/(.{64})/g, "$1\n");
-	return `-----BEGIN ${label}-----\n${base64}\n-----END ${label}-----\n`;
-}
-
-function fromPem(pem: string): Uint8Array {
-	const body = pem.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "");
-	return Uint8Array.from(atob(body), (character) => character.charCodeAt(0));
-}
-
-/**
- * The PKCS#1 `RSAPrivateKey` inside a PKCS#8 `PrivateKeyInfo`.
- *
- * WebCrypto exports only PKCS#8, and GitHub only hands out PKCS#1, so the
- * fixture has to be produced by unwrapping rather than by exporting. This walks
- * the outer SEQUENCE to the final OCTET STRING and returns its contents — the
- * exact inverse of what `toPkcs8Pem` does, which is what makes the round-trip
- * test below a real round trip rather than two copies of one mistake.
- */
-function pkcs1FromPkcs8(der: Uint8Array): Uint8Array {
-	// Skip the outer SEQUENCE header, then `INTEGER 0` (3 bytes) and the
-	// AlgorithmIdentifier SEQUENCE, landing on the OCTET STRING.
-	let offset = skipHeader(der, 0) + 3;
-	offset = skipHeader(der, offset) + contentLength(der, offset);
-	const contentStart = skipHeader(der, offset);
-
-	return der.slice(contentStart, contentStart + contentLength(der, offset));
-}
-
-/** Offset of the first content byte of the TLV starting at `start`. */
-function skipHeader(der: Uint8Array, start: number): number {
-	const first = der[start + 1] as number;
-	return first < 0x80 ? start + 2 : start + 2 + (first & 0x7f);
-}
-
-/** Content length of the TLV starting at `start`. */
-function contentLength(der: Uint8Array, start: number): number {
-	const first = der[start + 1] as number;
-	if (first < 0x80) {
-		return first;
-	}
-
-	let length = 0;
-	for (let index = 0; index < (first & 0x7f); index++) {
-		length = (length << 8) | (der[start + 2 + index] as number);
-	}
-
-	return length;
+/** Verifies an App JWT with jose, independently of the micro509 code that minted it. */
+async function verifyAppJwt(jwt: string) {
+	const { payload } = await jwtVerify(jwt, await importSPKI(keys.publicSpkiPem, "RS256"), {
+		algorithms: ["RS256"],
+		issuer: APP_ID,
+	});
+	return payload;
 }
 
 beforeEach(async () => {
@@ -119,16 +76,11 @@ beforeEach(async () => {
 			true,
 			["sign", "verify"],
 		)) as CryptoKeyPair;
-		// `exportKey` is declared as `Promise<ArrayBuffer | JsonWebKey>` in the
-		// generated runtime types, so the format literal does not narrow it.
-		const pkcs8Der = new Uint8Array((await crypto.subtle.exportKey("pkcs8", pair.privateKey)) as ArrayBuffer);
-		const spkiDer = new Uint8Array((await crypto.subtle.exportKey("spki", pair.publicKey)) as ArrayBuffer);
 
 		keys = {
-			pkcs8Der,
-			pkcs8Pem: toPem("PRIVATE KEY", pkcs8Der),
-			pkcs1Pem: toPem("RSA PRIVATE KEY", pkcs1FromPkcs8(pkcs8Der)),
-			publicSpkiPem: toPem("PUBLIC KEY", spkiDer),
+			pkcs8Pem: await exportPkcs8Pem(pair.privateKey),
+			pkcs1Pem: await exportPkcs1Pem(pair.privateKey),
+			publicSpkiPem: await exportSpkiPem(pair.publicKey),
 		};
 	}
 });
@@ -268,67 +220,19 @@ describe("destination pinning", () => {
 });
 
 describe("private key handling", () => {
-	it("passes a PKCS#8 key through untouched", () => {
-		expect(toPkcs8Pem(keys.pkcs8Pem)).toBe(keys.pkcs8Pem);
-	});
-
-	it("converts the PKCS#1 key GitHub actually hands you", () => {
-		// The footgun this function exists for: GitHub's "Generate a private key"
-		// button downloads `BEGIN RSA PRIVATE KEY`, and WebCrypto imports only
-		// PKCS#8. Asserted against the *bytes* of the original export, so the
-		// conversion is proven to reconstruct the real structure rather than
-		// something that merely imports.
-		const converted = toPkcs8Pem(keys.pkcs1Pem);
-
-		expect(fromPem(converted)).toEqual(keys.pkcs8Der);
-	});
-
-	it("produces a key WebCrypto can actually import", async () => {
-		await expect(
-			crypto.subtle.importKey(
-				"pkcs8",
-				fromPem(toPkcs8Pem(keys.pkcs1Pem)).buffer as ArrayBuffer,
-				{ name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-				false,
-				["sign"],
-			),
-		).resolves.toBeDefined();
-	});
-
 	it.each([
 		["a value with no PEM block", "not a key at all"],
 		["an encrypted PKCS#8 block", `${PKCS8_ENCRYPTED_BEGIN}\nAAAA\n${PKCS8_ENCRYPTED_END}`],
 		["a certificate", "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----"],
-	])("refuses %s as a misconfiguration", (_name, pem) => {
+		["a PKCS#1 header whose body is not base64", `${RSA_PRIVATE_BEGIN}\n!!!!\n${RSA_PRIVATE_END}`],
+	])("refuses %s as a misconfiguration", async (_name, pem) => {
 		try {
-			toPkcs8Pem(pem);
+			await mintAppJwt(configured({ GITHUB_APP_PRIVATE_KEY: pem }));
 			expect.unreachable("expected a throw");
 		} catch (error) {
 			expect(error).toBeInstanceOf(GitHubAppError);
 			expect((error as GitHubAppError).misconfigured).toBe(true);
 		}
-	});
-
-	it("encodes a short DER length as well as a long one", () => {
-		// A 2048-bit key puts every length in DER's long form, so the short form —
-		// contents under 128 bytes — is not reached by any real input. A length
-		// encoder that only handles its expected inputs is how a later reuse
-		// produces silently malformed DER, so the branch is exercised directly.
-		//
-		// Nothing here parses the body: `toPkcs8Pem` copies the key material
-		// through untouched and only adds a header, which is exactly what makes a
-		// synthetic body a valid probe of the wrapping.
-		const tiny = new Uint8Array(8).fill(0x2a);
-		const wrapped = fromPem(toPkcs8Pem(toPem("RSA PRIVATE KEY", tiny)));
-
-		// SEQUENCE, then a single-byte length: 3 (version) + 15 (algorithm) + 2 + 8.
-		expect(wrapped[0]).toBe(0x30);
-		expect(wrapped[1]).toBe(28);
-		expect(wrapped.slice(-8)).toEqual(tiny);
-	});
-
-	it("refuses a PKCS#1 header whose body is not base64", () => {
-		expect(() => toPkcs8Pem(`${RSA_PRIVATE_BEGIN}\n!!!!\n${RSA_PRIVATE_END}`)).toThrow(/not valid base64/);
 	});
 });
 
@@ -338,7 +242,7 @@ describe("the App JWT", () => {
 		// with the right claims and a wrong signature is what a broken key import
 		// silently produces.
 		const jwt = await mintAppJwt(configured());
-		const { payload } = await jwtVerify(jwt, await importSPKI(keys.publicSpkiPem, "RS256"));
+		const payload = await verifyAppJwt(jwt);
 
 		expect(decodeProtectedHeader(jwt).alg).toBe("RS256");
 		expect(payload.iss).toBe(APP_ID);
@@ -350,10 +254,10 @@ describe("the App JWT", () => {
 		// key, and is the reason the backdate exists.
 		const before = Math.floor(Date.now() / TIME.SECOND);
 		const jwt = await mintAppJwt(configured());
-		const { payload } = await jwtVerify(jwt, await importSPKI(keys.publicSpkiPem, "RS256"));
-
-		const iat = payload.iat as number;
-		const exp = payload.exp as number;
+		const { iat, exp } = await verifyAppJwt(jwt);
+		if (iat === undefined || exp === undefined) {
+			throw new Error("App JWT carries no iat or exp");
+		}
 
 		expect(iat).toBeLessThanOrEqual(before - 59);
 		expect(exp - iat).toBeLessThanOrEqual(600);
@@ -363,7 +267,7 @@ describe("the App JWT", () => {
 	it("mints from the PKCS#1 form as readily as the PKCS#8 one", async () => {
 		const jwt = await mintAppJwt(configured({ GITHUB_APP_PRIVATE_KEY: keys.pkcs1Pem }));
 
-		await expect(jwtVerify(jwt, await importSPKI(keys.publicSpkiPem, "RS256"))).resolves.toBeDefined();
+		await expect(verifyAppJwt(jwt)).resolves.toMatchObject({ iss: APP_ID });
 	});
 
 	it("reports an unimportable key without quoting it", async () => {
@@ -383,7 +287,7 @@ describe("the App JWT", () => {
 	});
 
 	it("keeps the conversion's own diagnosis rather than replacing it", async () => {
-		// `toPkcs8Pem` already says precisely what is wrong with a key that is not
+		// The importer already says precisely what is wrong with a key that is not
 		// a PEM block at all. Wrapping that in the generic "could not be imported"
 		// message would throw away the only sentence that names the fix.
 		await expect(mintAppJwt(configured({ GITHUB_APP_PRIVATE_KEY: "not a key at all" }))).rejects.toThrow(
@@ -482,8 +386,7 @@ describe("minting an installation token", () => {
 		// The bearer really is the App JWT — not, say, a token left over from
 		// somewhere else — so the credential exchange is proven end to end.
 		const bearer = (request.headers.get("Authorization") as string).slice("Bearer ".length);
-		const { payload } = await jwtVerify(bearer, await importSPKI(keys.publicSpkiPem, "RS256"));
-		expect(payload.iss).toBe(APP_ID);
+		expect((await verifyAppJwt(bearer)).iss).toBe(APP_ID);
 	});
 
 	it.each([

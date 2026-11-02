@@ -228,7 +228,7 @@ Before each command migration:
 # Test command still works
 go build ./cmd/gpg-sign
 ./gpg-sign health
-./gpg-sign sign < test-data.txt
+./gpg-sign sign <test-data.txt
 ./gpg-sign admin list
 ```
 

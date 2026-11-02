@@ -6,8 +6,9 @@ jobs:
     # An autofix commit pushed to a stacked PR rewrites a layer the merge queue coordinates
     if: contains(fromJSON('["push", "pull_request"]'), github.event_name) && github.event.pull_request.stack == null
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
       - uses: kjanat/actions@fmt
       - uses: autofix-ci/action@v1

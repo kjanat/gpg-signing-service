@@ -64,10 +64,10 @@ The helper uses an isolated keyring under `.keys/`:
 
 ```bash
 bash scripts/generate-key.sh \
-  "Example Company" \
-  "signing@example.com" \
-  "Production signing key" \
-  "strong-passphrase"
+	"Example Company" \
+	"signing@example.com" \
+	"Production signing key" \
+	"strong-passphrase"
 ```
 
 Record the generated 16-character hexadecimal key ID. Keep
@@ -305,8 +305,8 @@ export GPG_SIGN_URL="https://your-worker.example"
 export GPG_SIGN_ADMIN_TOKEN="..."
 
 gpg-sign admin upload \
-  --key-id A1B2C3D4E5F67890 \
-  --file .keys/private-key.asc
+	--key-id A1B2C3D4E5F67890 \
+	--file .keys/private-key.asc
 ```
 
 The uploaded `--key-id` must match the `KEY_ID` value when it is the default
@@ -316,19 +316,19 @@ The HTTP API also supports X.509 keys:
 
 ```bash
 jq --null-input \
-  --arg keyId "0123456789ABCDEF" \
-  --rawfile privateKeyPem private-key.pem \
-  --rawfile certificatePem certificate.pem \
-  '{
+	--arg keyId "0123456789ABCDEF" \
+	--rawfile privateKeyPem private-key.pem \
+	--rawfile certificatePem certificate.pem \
+	'{
     keyId: $keyId,
     privateKeyPem: $privateKeyPem,
     certificatePem: $certificatePem
-  }' |
-  curl --fail-with-body --silent --show-error \
-    --request POST "$GPG_SIGN_URL/admin/keys/x509" \
-    --header "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN" \
-    --header "Content-Type: application/json" \
-    --data-binary @-
+  }' \
+	| curl --fail-with-body --silent --show-error \
+		--request POST "$GPG_SIGN_URL/admin/keys/x509" \
+		--header "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN" \
+		--header "Content-Type: application/json" \
+		--data-binary @-
 ```
 
 The private key must be PKCS#8 PEM and match the certificate.
@@ -338,22 +338,22 @@ The private key must be PKCS#8 PEM and match the certificate.
 ```bash
 gpg-sign health
 gpg-sign admin list
-gpg-sign public-key --key-id A1B2C3D4E5F67890 > public-key.asc
+gpg-sign public-key --key-id A1B2C3D4E5F67890 >public-key.asc
 ```
 
 Create a service token or configure OIDC, then request a test signature:
 
 ```bash
 export GPG_SIGN_TOKEN="gst_..."
-printf 'smoke test' |
-  gpg-sign sign --key-id A1B2C3D4E5F67890 > smoke-test.asc
+printf 'smoke test' \
+	| gpg-sign sign --key-id A1B2C3D4E5F67890 >smoke-test.asc
 ```
 
 Verify a PGP result:
 
 ```bash
-printf 'smoke test' |
-  gpg --verify smoke-test.asc -
+printf 'smoke test' \
+	| gpg --verify smoke-test.asc -
 ```
 
 ## 9. Key expiry monitoring

@@ -1,15 +1,21 @@
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import * as jose from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import app from "#gpg-signing-service";
 import { varyOnOrigin } from "#middleware/security";
 import { logAuditEvent } from "#utils/audit";
 import { logger } from "#utils/logger";
 import { insertOIDCSubject, revokeOIDCSubject } from "#utils/oidc-subjects";
+import { exportTestJwk, generateTestKeyPair, TestJwt, type TestKeyPair } from "./helpers/jwt";
 import { clearTrustedSubjects, seedTrustedSubjects } from "./helpers/oidc-subjects";
 
 const parseJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
+
+const base64url = (text: string) => btoa(text).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+
+/** A well-formed JWT whose signature segment is a placeholder that verifies against no key. */
+const unsignedJwt = (header: object, claims: object) =>
+	`${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(claims))}.${base64url("not-a-signature")}`;
 
 // Mock fetch for JWKS
 const { middlewareFetchMock, validateUrlMock } = vi.hoisted(() => ({
@@ -59,7 +65,7 @@ async function makeRequest(path: string, options: RequestInit = {}, customEnv?: 
 	const response = await app.fetch(request, customEnv ? { ...env, ...customEnv } : env, ctx);
 	await waitOnExecutionContext(ctx);
 	// Additional waits to ensure all microtasks, promise chains, and timers complete
-	// This handles edge cases where libraries like jose might create floating promises
+	// This handles edge cases where a library creates floating promises
 	await new Promise((resolve) => setImmediate(resolve));
 	await new Promise((resolve) => setTimeout(resolve, 10));
 	return response;
@@ -336,18 +342,15 @@ describe("Security Headers Middleware", () => {
 			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
 			// Unsigned on purpose: the discovery fetch happens before the signature
 			// is verified, so this reaches the degraded branch without a key.
-			const encode = (value: unknown) =>
-				btoa(JSON.stringify(value)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
-			const token = [
-				encode({ alg: "RS256", kid: "unreachable" }),
-				encode({
+			const token = unsignedJwt(
+				{ alg: "RS256", kid: "unreachable" },
+				{
 					iss: "https://token.actions.githubusercontent.com",
 					sub: "repo:test/expose:ref:refs/heads/main",
 					aud: "gpg-signing-service",
 					exp: Math.floor(Date.now() / 1000) + 3600,
-				}),
-				"signature",
-			].join(".");
+				},
+			);
 			middlewareFetchMock.mockRejectedValue(new Error("connection timed out"));
 
 			const response = await makeRequest("/sign", {
@@ -447,7 +450,7 @@ describe("Security Headers Middleware", () => {
 		});
 
 		async function setupJWKSMock(issuer: string, kid: string, publicKey: CryptoKey) {
-			const jwk = await jose.exportJWK(publicKey);
+			const jwk = await exportTestJwk(publicKey);
 			jwk.kid = kid;
 			jwk.use = "sig";
 
@@ -467,13 +470,13 @@ describe("Security Headers Middleware", () => {
 			// /admin/subjects trims before deciding an issuer is acceptable. If this
 			// side did not, a padded entry would be trustable at create time and
 			// refused here — a row that lists as trusted and can never match.
-			const { privateKey } = await jose.generateKeyPair("ES256");
-			const token = await new jose.SignJWT({
+			const { privateKey } = await generateTestKeyPair();
+			const token = await new TestJwt({
 				iss: "https://gitlab.com",
 				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid: "test" })
+				.setProtectedHeader({ alg: "RS256", kid: "test" })
 				.setIssuedAt()
 				.setExpirationTime("1h")
 				.sign(privateKey);
@@ -501,15 +504,15 @@ describe("Security Headers Middleware", () => {
 
 			const issuer = "https://token.actions.githubusercontent.com";
 			const kid = "store-down-key";
-			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			const { privateKey, publicKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, kid, publicKey);
 
-			const token = await new jose.SignJWT({
+			const token = await new TestJwt({
 				iss: issuer,
 				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid })
+				.setProtectedHeader({ alg: "RS256", kid })
 				.setIssuedAt()
 				.setExpirationTime("1h")
 				.sign(privateKey);
@@ -579,15 +582,15 @@ describe("Security Headers Middleware", () => {
 
 			const issuer = "https://token.actions.githubusercontent.com";
 			const kid = "untrusted-key";
-			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			const { privateKey, publicKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, kid, publicKey);
 
-			const token = await new jose.SignJWT({
+			const token = await new TestJwt({
 				iss: issuer,
 				sub: "repo:attacker/evil:ref:refs/heads/main",
 				aud: "gpg-signing-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid })
+				.setProtectedHeader({ alg: "RS256", kid })
 				.setIssuedAt()
 				.setExpirationTime("1h")
 				.sign(privateKey);
@@ -631,15 +634,15 @@ describe("Security Headers Middleware", () => {
 
 			const issuer = "https://token.actions.githubusercontent.com";
 			const kid = "near-miss-key";
-			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			const { privateKey, publicKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, kid, publicKey);
 
-			const token = await new jose.SignJWT({
+			const token = await new TestJwt({
 				iss: issuer,
 				sub: "repo:test/other-svc:ref:refs/heads/main",
 				aud: "gpg-signing-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid })
+				.setProtectedHeader({ alg: "RS256", kid })
 				.setIssuedAt()
 				.setExpirationTime("1h")
 				.sign(privateKey);
@@ -677,15 +680,15 @@ describe("Security Headers Middleware", () => {
 
 			const issuer = "https://token.actions.githubusercontent.com";
 			const kid = "disclosing-key";
-			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			const { privateKey, publicKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, kid, publicKey);
 
-			const token = await new jose.SignJWT({
+			const token = await new TestJwt({
 				iss: issuer,
 				sub: "repo:test/other-svc:ref:refs/heads/main",
 				aud: "gpg-signing-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid })
+				.setProtectedHeader({ alg: "RS256", kid })
 				.setIssuedAt()
 				.setExpirationTime("1h")
 				.sign(privateKey);
@@ -721,15 +724,15 @@ describe("Security Headers Middleware", () => {
 			await revokeOIDCSubject(env.AUDIT_DB, id);
 
 			const kid = "all-dead-key";
-			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			const { privateKey, publicKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, kid, publicKey);
 
-			const token = await new jose.SignJWT({
+			const token = await new TestJwt({
 				iss: issuer,
 				sub: "repo:test/svc:ref:refs/heads/main",
 				aud: "gpg-signing-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid })
+				.setProtectedHeader({ alg: "RS256", kid })
 				.setIssuedAt()
 				.setExpirationTime("1h")
 				.sign(privateKey);
@@ -756,15 +759,15 @@ describe("Security Headers Middleware", () => {
 
 			const issuer = "https://token.actions.githubusercontent.com";
 			const kid = "wrong-audience-key";
-			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			const { privateKey, publicKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, kid, publicKey);
 
-			const token = await new jose.SignJWT({
+			const token = await new TestJwt({
 				iss: issuer,
 				sub: "repo:test/svc:ref:refs/heads/main",
 				aud: "some-other-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid })
+				.setProtectedHeader({ alg: "RS256", kid })
 				.setIssuedAt()
 				.setExpirationTime("1h")
 				.sign(privateKey);
@@ -793,7 +796,7 @@ describe("Security Headers Middleware", () => {
 
 			const issuer = "https://token.actions.githubusercontent.com";
 			const kid = "revoked-key";
-			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			const { privateKey, publicKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			const subjectId = await insertOIDCSubject(env.AUDIT_DB, {
@@ -806,8 +809,8 @@ describe("Security Headers Middleware", () => {
 			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toMatchObject({ name: "ci/killed", stillCoveredBy: [] });
 
 			const mint = async (sub: string) =>
-				new jose.SignJWT({ iss: issuer, sub, aud: "gpg-signing-service" })
-					.setProtectedHeader({ alg: "ES256", kid })
+				new TestJwt({ iss: issuer, sub, aud: "gpg-signing-service" })
+					.setProtectedHeader({ alg: "RS256", kid })
 					.setIssuedAt()
 					.setExpirationTime("1h")
 					.sign(privateKey);
@@ -905,7 +908,7 @@ describe("Security Headers Middleware", () => {
 				await env.JWKS_CACHE.delete(`jwks:${issuer}`);
 				await clearTrustedSubjects(env.AUDIT_DB);
 
-				const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+				const { privateKey, publicKey } = await generateTestKeyPair();
 				await setupJWKSMock(issuer, kid, publicKey);
 
 				// Several live rules plus a dead one, so the two counts are distinct
@@ -929,12 +932,12 @@ describe("Security Headers Middleware", () => {
 				});
 				await revokeOIDCSubject(env.AUDIT_DB, revokedId);
 
-				const token = await new jose.SignJWT({
+				const token = await new TestJwt({
 					iss: issuer,
 					sub: "repo:stranger/thing:ref:refs/heads/main",
 					aud: "gpg-signing-service",
 				})
-					.setProtectedHeader({ alg: "ES256", kid })
+					.setProtectedHeader({ alg: "RS256", kid })
 					.setIssuedAt()
 					.setExpirationTime("1h")
 					.sign(privateKey);
@@ -992,7 +995,7 @@ describe("Security Headers Middleware", () => {
 
 			const issuer = "https://token.actions.githubusercontent.com";
 			const kid = "forged-id-key";
-			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			const { privateKey, publicKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			const subjectId = await insertOIDCSubject(env.AUDIT_DB, {
@@ -1004,12 +1007,12 @@ describe("Security Headers Middleware", () => {
 			});
 			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toMatchObject({ name: "ci/forged", stillCoveredBy: [] });
 
-			const token = await new jose.SignJWT({
+			const token = await new TestJwt({
 				iss: issuer,
 				sub: "repo:forged/svc:ref:refs/heads/main",
 				aud: "gpg-signing-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid })
+				.setProtectedHeader({ alg: "RS256", kid })
 				.setIssuedAt()
 				.setExpirationTime("1h")
 				.sign(privateKey);
@@ -1058,7 +1061,7 @@ describe("Security Headers Middleware", () => {
 
 			const issuer = "https://token.actions.githubusercontent.com";
 			const kid = "flood-key";
-			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			const { privateKey, publicKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			const subjectId = await insertOIDCSubject(env.AUDIT_DB, {
@@ -1085,8 +1088,8 @@ describe("Security Headers Middleware", () => {
 
 			try {
 				for (const sub of ["repo:flood/one:ref:refs/heads/main", "repo:flood/two:ref:refs/heads/anything-i-like"]) {
-					const token = await new jose.SignJWT({ iss: issuer, sub, aud: "gpg-signing-service" })
-						.setProtectedHeader({ alg: "ES256", kid })
+					const token = await new TestJwt({ iss: issuer, sub, aud: "gpg-signing-service" })
+						.setProtectedHeader({ alg: "RS256", kid })
 						.setIssuedAt()
 						.setExpirationTime("1h")
 						.sign(privateKey);
@@ -1117,7 +1120,7 @@ describe("Security Headers Middleware", () => {
 
 			const issuer = "https://token.actions.githubusercontent.com";
 			const kid = "revoked-unmetered-key";
-			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			const { privateKey, publicKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			const subjectId = await insertOIDCSubject(env.AUDIT_DB, {
@@ -1132,12 +1135,12 @@ describe("Security Headers Middleware", () => {
 				stillCoveredBy: [],
 			});
 
-			const token = await new jose.SignJWT({
+			const token = await new TestJwt({
 				iss: issuer,
 				sub: "repo:unmetered/svc:ref:refs/heads/main",
 				aud: "gpg-signing-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid })
+				.setProtectedHeader({ alg: "RS256", kid })
 				.setIssuedAt()
 				.setExpirationTime("1h")
 				.sign(privateKey);
@@ -1183,7 +1186,7 @@ describe("Security Headers Middleware", () => {
 
 			const issuer = "https://token.actions.githubusercontent.com";
 			const kid = "expired-key";
-			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			const { privateKey, publicKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			const expiresAt = new Date(Date.now() - 1000).toISOString();
@@ -1195,12 +1198,12 @@ describe("Security Headers Middleware", () => {
 				expiresAt,
 			});
 
-			const token = await new jose.SignJWT({
+			const token = await new TestJwt({
 				iss: issuer,
 				sub: "repo:lapsed/svc:ref:refs/heads/main",
 				aud: "gpg-signing-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid })
+				.setProtectedHeader({ alg: "RS256", kid })
 				.setIssuedAt()
 				.setExpirationTime("1h")
 				.sign(privateKey);
@@ -1234,12 +1237,12 @@ describe("Security Headers Middleware", () => {
 			// Clean up cache to ensure no pollution
 			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
 
-			const { publicKey } = await jose.generateKeyPair("ES256");
+			const { publicKey } = await generateTestKeyPair();
 			const issuer = "https://token.actions.githubusercontent.com";
 			const kid = "enc-key";
 
 			// Setup mock with use: "enc"
-			const jwk = await jose.exportJWK(publicKey);
+			const jwk = await exportTestJwk(publicKey);
 			jwk.kid = kid;
 			jwk.use = "enc";
 
@@ -1253,13 +1256,13 @@ describe("Security Headers Middleware", () => {
 				return new Response("Not Found", { status: 404 });
 			});
 
-			const { privateKey } = await jose.generateKeyPair("ES256");
-			const token = await new jose.SignJWT({
+			const { privateKey } = await generateTestKeyPair();
+			const token = await new TestJwt({
 				iss: issuer,
 				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid })
+				.setProtectedHeader({ alg: "RS256", kid })
 				.setIssuedAt()
 				.setExpirationTime("1h")
 				.sign(privateKey);
@@ -1278,13 +1281,13 @@ describe("Security Headers Middleware", () => {
 		it("should handle OIDC config fetch failure", async () => {
 			middlewareFetchMock.mockResolvedValue(new Response("Error", { status: 500 }));
 
-			const { privateKey } = await jose.generateKeyPair("ES256");
-			const token = await new jose.SignJWT({
+			const { privateKey } = await generateTestKeyPair();
+			const token = await new TestJwt({
 				iss: "https://token.actions.githubusercontent.com",
 				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid: "test" })
+				.setProtectedHeader({ alg: "RS256", kid: "test" })
 				.setIssuedAt()
 				.setExpirationTime("1h")
 				.sign(privateKey);
@@ -1315,13 +1318,13 @@ describe("Security Headers Middleware", () => {
 				return new Response("Error", { status: 500 });
 			});
 
-			const { privateKey } = await jose.generateKeyPair("ES256");
-			const token = await new jose.SignJWT({
+			const { privateKey } = await generateTestKeyPair();
+			const token = await new TestJwt({
 				iss: issuer,
 				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid: "test" })
+				.setProtectedHeader({ alg: "RS256", kid: "test" })
 				.setIssuedAt()
 				.setExpirationTime("1h")
 				.sign(privateKey);
@@ -1377,16 +1380,42 @@ describe("Security Headers Middleware", () => {
 					}
 					return new Response("not json at all");
 				},
-				expected: "was not readable JSON",
+				expected: "was not a readable JWK Set (jwks_malformed)",
+			},
+			{
+				name: "a JWKS response that is JSON without a keys array",
+				impl: async (url: string) => {
+					if (url.endsWith("/.well-known/openid-configuration")) {
+						return new Response(JSON.stringify({ jwks_uri: "https://token.actions.githubusercontent.com/jwks" }));
+					}
+					return new Response(JSON.stringify({ keys: "none" }));
+				},
+				expected: "was not a readable JWK Set (jwks_malformed)",
+			},
+			{
+				name: "a JWKS response whose body breaks off",
+				impl: async (url: string) => {
+					if (url.endsWith("/.well-known/openid-configuration")) {
+						return new Response(JSON.stringify({ jwks_uri: "https://token.actions.githubusercontent.com/jwks" }));
+					}
+					return new Response(
+						new ReadableStream({
+							start(controller) {
+								controller.error(new Error("connection reset"));
+							},
+						}),
+					);
+				},
+				expected: "Could not read the JWKS at https://token.actions.githubusercontent.com/jwks",
 			},
 		])("answers 503 for $name", async ({ impl, expected }) => {
 			const issuer = "https://token.actions.githubusercontent.com";
 			await env.JWKS_CACHE.delete(`jwks:${issuer}`);
 			middlewareFetchMock.mockImplementation(impl);
 
-			const { privateKey } = await jose.generateKeyPair("ES256");
-			const token = await new jose.SignJWT({ iss: issuer, sub: "repo:test/svc", aud: "gpg-signing-service" })
-				.setProtectedHeader({ alg: "ES256", kid: "unreachable-key" })
+			const { privateKey } = await generateTestKeyPair();
+			const token = await new TestJwt({ iss: issuer, sub: "repo:test/svc", aud: "gpg-signing-service" })
+				.setProtectedHeader({ alg: "RS256", kid: "unreachable-key" })
 				.setIssuedAt()
 				.setExpirationTime("1h")
 				.sign(privateKey);
@@ -1410,8 +1439,241 @@ describe("Security Headers Middleware", () => {
 			expect(body.hint).toContain("Nothing about the token is wrong");
 		});
 
+		it("decodes a base64url payload and keeps non-ASCII claims intact", async () => {
+			const { publicKey, privateKey } = await generateTestKeyPair();
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "unicode-key";
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const subject = "repo:café/🦊-signer:ref:refs/heads/~~~???";
+			const token = await new TestJwt({ iss: issuer, sub: subject, aud: "gpg-signing-service" })
+				.setProtectedHeader({ alg: "RS256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+			const payload = token.split(".")[1];
+			expect(payload).toMatch(/-/);
+			expect(payload).toMatch(/_/);
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(401);
+			const body = await parseJson<{ code: string; subject: string }>(response);
+			expect(body.code).toBe("AUTH_SUBJECT_UNTRUSTED");
+			expect(body.subject).toBe(subject);
+		});
+
+		it("refuses a correctly signed token without a subject", async () => {
+			const { publicKey, privateKey } = await generateTestKeyPair();
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "no-sub-key";
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const token = await new TestJwt({ iss: issuer, aud: "gpg-signing-service" })
+				.setProtectedHeader({ alg: "RS256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(401);
+			const body = await parseJson<{ code: string; error: string }>(response);
+			expect(body.code).toBe("AUTH_INVALID");
+			expect(body.error).toBe("Invalid token claims");
+			expect(middlewareFetchMock).toHaveBeenCalled();
+		});
+
+		it("refuses a token whose exp is a string before fetching any key", async () => {
+			const { privateKey } = await generateTestKeyPair();
+			const token = await new TestJwt({
+				iss: "https://token.actions.githubusercontent.com",
+				sub: "repo:test/svc",
+				aud: "gpg-signing-service",
+				exp: "9999999999",
+			})
+				.setProtectedHeader({ alg: "RS256", kid: "string-exp" })
+				.setIssuedAt()
+				.sign(privateKey);
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(401);
+			expect((await parseJson<{ error: string }>(response)).error).toBe("Invalid token claims");
+			expect(middlewareFetchMock).not.toHaveBeenCalled();
+		});
+
+		it("caches the issuer's JWK Set text verbatim and serves the next request from it", async () => {
+			const { publicKey, privateKey } = await generateTestKeyPair();
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "cached-key";
+			const jwk = await exportTestJwk(publicKey);
+			jwk.kid = kid;
+			jwk.use = "sig";
+			const served = JSON.stringify({ keys: [jwk] }, null, 2);
+			middlewareFetchMock.mockImplementation(async (url: string) =>
+				url === `${issuer}/.well-known/openid-configuration`
+					? new Response(JSON.stringify({ jwks_uri: `${issuer}/jwks` }))
+					: new Response(served),
+			);
+			const token = await new TestJwt({
+				iss: issuer,
+				sub: "repo:user/repo:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "RS256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+			const send = () =>
+				makeRequest("/sign", {
+					method: "POST",
+					headers: { Authorization: `Bearer ${token}` },
+					body: "commit data",
+				});
+
+			expect((await send()).status).toBe(404);
+			expect(await env.JWKS_CACHE.get(`jwks:${issuer}`, "text")).toBe(served);
+
+			middlewareFetchMock.mockReset();
+			middlewareFetchMock.mockRejectedValue(new Error("issuer unreachable"));
+			expect((await send()).status).toBe(404);
+			expect(middlewareFetchMock).not.toHaveBeenCalled();
+		});
+
+		it.each([
+			{ name: "an unnamed key", kid: undefined },
+			{ name: "a named key", kid: "sole-issuer-key" },
+		])("serves a token without kid from a cached set holding only $name", async ({ kid }) => {
+			const { publicKey, privateKey } = await generateTestKeyPair();
+			const issuer = "https://token.actions.githubusercontent.com";
+			const jwk = await exportTestJwk(publicKey);
+			jwk.use = "sig";
+			if (kid !== undefined) {
+				jwk.kid = kid;
+			}
+			await env.JWKS_CACHE.put(`jwks:${issuer}`, JSON.stringify({ keys: [jwk] }));
+
+			const token = await new TestJwt({
+				iss: issuer,
+				sub: "repo:user/repo:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "RS256" })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(404);
+			expect(middlewareFetchMock).not.toHaveBeenCalled();
+		});
+
+		it("refuses a token without kid when the set holds two usable keys", async () => {
+			const first = await generateTestKeyPair();
+			const second = await generateTestKeyPair();
+			const issuer = "https://token.actions.githubusercontent.com";
+			const keys = await Promise.all(
+				[first, second].map(async ({ publicKey }, index) => ({
+					...(await exportTestJwk(publicKey)),
+					kid: `rotation-${index}`,
+					use: "sig",
+				})),
+			);
+			await env.JWKS_CACHE.put(`jwks:${issuer}`, JSON.stringify({ keys }));
+
+			const token = await new TestJwt({
+				iss: issuer,
+				sub: "repo:user/repo:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "RS256" })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(first.privateKey);
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(401);
+			expect((await parseJson<{ error: string }>(response)).error).toBe("Key not found");
+		});
+
+		it.each([
+			{ name: "a numeric sub", claims: { sub: 42, iat: Math.floor(Date.now() / 1000) } },
+			{ name: "a string iat", claims: { sub: "repo:user/repo:ref:refs/heads/main", iat: "123" } },
+		])("refuses a correctly signed token with $name as invalid claims", async ({ claims }) => {
+			const { publicKey, privateKey } = await generateTestKeyPair();
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "typed-claims-key";
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const token = await new TestJwt({ iss: issuer, aud: "gpg-signing-service", ...claims })
+				.setProtectedHeader({ alg: "RS256", kid })
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(401);
+			const body = await parseJson<{ code: string; error: string }>(response);
+			expect(body.code).toBe("AUTH_INVALID");
+			expect(body.error).toBe("Invalid token claims");
+		});
+
+		it("refetches when the cached entry is not a JWK Set", async () => {
+			const { publicKey, privateKey } = await generateTestKeyPair();
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "recovered-key";
+			await env.JWKS_CACHE.put(`jwks:${issuer}`, "not a jwk set");
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const token = await new TestJwt({
+				iss: issuer,
+				sub: "repo:user/repo:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "RS256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(404);
+			expect(middlewareFetchMock).toHaveBeenCalledWith(`${issuer}/jwks`, {}, 10000);
+		});
+
 		it("should handle cache put failure", async () => {
-			const { publicKey, privateKey } = await jose.generateKeyPair("ES256");
+			const { publicKey, privateKey } = await generateTestKeyPair();
 			const issuer = "https://token.actions.githubusercontent.com";
 			const kid = "test-key";
 
@@ -1421,12 +1683,12 @@ describe("Security Headers Middleware", () => {
 			const putSpy = vi.spyOn(env.JWKS_CACHE, "put").mockRejectedValue(new Error("Cache error"));
 
 			try {
-				const token = await new jose.SignJWT({
+				const token = await new TestJwt({
 					iss: issuer,
 					sub: "repo:test/svc",
 					aud: "gpg-signing-service",
 				})
-					.setProtectedHeader({ alg: "ES256", kid })
+					.setProtectedHeader({ alg: "RS256", kid })
 					.setIssuedAt()
 					.setExpirationTime("1h")
 					.sign(privateKey);
@@ -1493,18 +1755,18 @@ describe("Security Headers Middleware", () => {
 		});
 
 		it("should validate a correct token", async () => {
-			const { publicKey, privateKey } = await jose.generateKeyPair("ES256");
+			const { publicKey, privateKey } = await generateTestKeyPair();
 			const issuer = "https://token.actions.githubusercontent.com/unique-test-issuer";
 			const kid = "test-key";
 
 			await setupJWKSMock(issuer, kid, publicKey);
 
-			const token = await new jose.SignJWT({
+			const token = await new TestJwt({
 				iss: issuer,
 				sub: "repo:user/repo:ref:refs/heads/main",
 				aud: "gpg-signing-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid })
+				.setProtectedHeader({ alg: "RS256", kid })
 				.setIssuedAt()
 				.setExpirationTime("1h")
 				.sign(privateKey);
@@ -1529,19 +1791,19 @@ describe("Security Headers Middleware", () => {
 			validateUrlMock.mockReset();
 			validateUrlMock.mockResolvedValue(undefined);
 
-			const { privateKey } = await jose.generateKeyPair("ES256");
+			const { privateKey } = await generateTestKeyPair();
 			const issuer = "https://token.actions.githubusercontent.com";
 
 			// Setup mock with DIFFERENT key
-			const { publicKey: otherKey } = await jose.generateKeyPair("ES256");
+			const { publicKey: otherKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, "other-key", otherKey);
 
-			const token = await new jose.SignJWT({
+			const token = await new TestJwt({
 				iss: issuer,
 				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid: "unknown-key" })
+				.setProtectedHeader({ alg: "RS256", kid: "unknown-key" })
 				.setIssuedAt()
 				.setExpirationTime("1h")
 				.sign(privateKey);
@@ -1562,20 +1824,20 @@ describe("Security Headers Middleware", () => {
 		});
 
 		it("should reject token with invalid signature", async () => {
-			const { publicKey } = await jose.generateKeyPair("ES256");
-			const { privateKey: otherKey } = await jose.generateKeyPair("ES256");
+			const { publicKey } = await generateTestKeyPair();
+			const { privateKey: otherKey } = await generateTestKeyPair();
 			const issuer = "https://token.actions.githubusercontent.com";
 			const kid = "test-key";
 
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			// Sign with WRONG private key but claim it's the correct kid
-			const token = await new jose.SignJWT({
+			const token = await new TestJwt({
 				iss: issuer,
 				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid })
+				.setProtectedHeader({ alg: "RS256", kid })
 				.setIssuedAt()
 				.setExpirationTime("1h")
 				.sign(otherKey);
@@ -1591,12 +1853,47 @@ describe("Security Headers Middleware", () => {
 			expect(body.error).toContain("Invalid token signature");
 		});
 
+		it("rejects a token whose payload changed after signing, and accepts the original", async () => {
+			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			const { privateKey, publicKey } = await generateTestKeyPair();
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "tamper-key";
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const token = await new TestJwt({
+				iss: issuer,
+				sub: "repo:user/repo:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "RS256", kid })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const [header, payload, signature] = token.split(".");
+			const claims: Record<string, unknown> = JSON.parse(atob((payload ?? "").replace(/-/g, "+").replace(/_/g, "/")));
+			claims.sub = "repo:attacker/repo:ref:refs/heads/main";
+			const forged = base64url(JSON.stringify(claims));
+			const tampered = `${header}.${forged}.${signature}`;
+
+			const send = (bearer: string) =>
+				makeRequest("/sign", {
+					method: "POST",
+					headers: { Authorization: `Bearer ${bearer}` },
+					body: "commit data",
+				});
+
+			const refused = await send(tampered);
+			expect(refused.status).toBe(401);
+			expect((await parseJson<{ error: string }>(refused)).error).toBe("Invalid token signature");
+
+			// 404 means OIDC passed and the request reached the route.
+			expect((await send(token)).status).toBe(404);
+		});
+
 		it("should reject token with disallowed algorithm", async () => {
-			// Generate RS256 key (allowed) but we'll try to use HS256 (disallowed)
-			// Note: jose won't let us sign HS256 with RSA key easily, so we just mock the token structure
-			// or use a separate HS256 key
-			const secret = new TextEncoder().encode("secret");
-			const token = await new jose.SignJWT({
+			const { privateKey } = await generateTestKeyPair();
+			const token = await new TestJwt({
 				iss: "https://token.actions.githubusercontent.com",
 				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
@@ -1604,7 +1901,7 @@ describe("Security Headers Middleware", () => {
 				.setProtectedHeader({ alg: "HS256", kid: "test" })
 				.setIssuedAt()
 				.setExpirationTime("1h")
-				.sign(secret);
+				.sign(privateKey);
 
 			const response = await makeRequest("/sign", {
 				method: "POST",
@@ -1622,13 +1919,13 @@ describe("Security Headers Middleware", () => {
 		});
 
 		it("should reject token from disallowed issuer", async () => {
-			const { privateKey } = await jose.generateKeyPair("ES256");
-			const token = await new jose.SignJWT({
+			const { privateKey } = await generateTestKeyPair();
+			const token = await new TestJwt({
 				iss: "https://malicious-issuer.com",
 				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid: "test" })
+				.setProtectedHeader({ alg: "RS256", kid: "test" })
 				.setIssuedAt()
 				.setExpirationTime("1h")
 				.sign(privateKey);
@@ -1651,9 +1948,15 @@ describe("Security Headers Middleware", () => {
 			// which makes the hint the weakest possible disclosure gate: naming
 			// every issuer this deployment accepts would hand a self-hoster's
 			// internal Keycloak hostname to anyone who can reach the worker.
-			const unsigned = `${btoa(JSON.stringify({ alg: "RS256", kid: "x" }))}.${btoa(
-				JSON.stringify({ iss: "https://whatever.example", sub: "repo:x/y", aud: "gpg-signing-service" }),
-			)}.not-a-signature`;
+			const unsigned = unsignedJwt(
+				{ alg: "RS256", kid: "x" },
+				{
+					iss: "https://whatever.example",
+					sub: "repo:x/y",
+					aud: "gpg-signing-service",
+					exp: Math.floor(Date.now() / 1000) + 3600,
+				},
+			);
 
 			const response = await makeRequest("/sign", {
 				method: "POST",
@@ -1673,9 +1976,15 @@ describe("Security Headers Middleware", () => {
 		});
 
 		it("names the accepted issuers only where the deployment opted in", async () => {
-			const unsigned = `${btoa(JSON.stringify({ alg: "RS256", kid: "x" }))}.${btoa(
-				JSON.stringify({ iss: "https://whatever.example", sub: "repo:x/y", aud: "gpg-signing-service" }),
-			)}.not-a-signature`;
+			const unsigned = unsignedJwt(
+				{ alg: "RS256", kid: "x" },
+				{
+					iss: "https://whatever.example",
+					sub: "repo:x/y",
+					aud: "gpg-signing-service",
+					exp: Math.floor(Date.now() / 1000) + 3600,
+				},
+			);
 
 			const response = await makeRequest(
 				"/sign",
@@ -1691,9 +2000,15 @@ describe("Security Headers Middleware", () => {
 		it("has nothing to name when the opted-in deployment accepts no issuers", async () => {
 			// An empty ALLOWED_ISSUERS refuses everyone, and "It currently accepts:
 			// ." is a worse sentence than the one that names only the knob.
-			const unsigned = `${btoa(JSON.stringify({ alg: "RS256", kid: "x" }))}.${btoa(
-				JSON.stringify({ iss: "https://whatever.example", sub: "repo:x/y", aud: "gpg-signing-service" }),
-			)}.not-a-signature`;
+			const unsigned = unsignedJwt(
+				{ alg: "RS256", kid: "x" },
+				{
+					iss: "https://whatever.example",
+					sub: "repo:x/y",
+					aud: "gpg-signing-service",
+					exp: Math.floor(Date.now() / 1000) + 3600,
+				},
+			);
 
 			const response = await makeRequest(
 				"/sign",
@@ -1707,13 +2022,13 @@ describe("Security Headers Middleware", () => {
 		});
 
 		it("should reject expired token", async () => {
-			const { privateKey } = await jose.generateKeyPair("ES256");
-			const token = await new jose.SignJWT({
+			const { privateKey } = await generateTestKeyPair();
+			const token = await new TestJwt({
 				iss: "https://token.actions.githubusercontent.com",
 				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid: "test" })
+				.setProtectedHeader({ alg: "RS256", kid: "test" })
 				.setIssuedAt()
 				.setExpirationTime("-1h") // Expired
 				.sign(privateKey);
@@ -1730,13 +2045,13 @@ describe("Security Headers Middleware", () => {
 		});
 
 		it("should reject token not yet valid (nbf)", async () => {
-			const { privateKey } = await jose.generateKeyPair("ES256");
-			const token = await new jose.SignJWT({
+			const { privateKey } = await generateTestKeyPair();
+			const token = await new TestJwt({
 				iss: "https://token.actions.githubusercontent.com",
 				sub: "repo:test/svc",
 				aud: "gpg-signing-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid: "test" })
+				.setProtectedHeader({ alg: "RS256", kid: "test" })
 				.setIssuedAt()
 				.setNotBefore("1h") // Not valid yet
 				.setExpirationTime("2h")
@@ -1755,14 +2070,14 @@ describe("Security Headers Middleware", () => {
 
 		async function createToken(
 			claims: object = {},
-			keyPair?: jose.GenerateKeyPairResult,
-			alg: string = "ES256",
+			keyPair?: TestKeyPair,
+			alg: string = "RS256",
 			kid: string = "test-key",
 		) {
 			if (!keyPair) {
-				keyPair = await jose.generateKeyPair(alg);
+				keyPair = await generateTestKeyPair();
 			}
-			return new jose.SignJWT({
+			return new TestJwt({
 				iss: "https://token.actions.githubusercontent.com",
 				sub: "repo:user/repo:ref:refs/heads/main",
 				aud: "gpg-signing-service",
@@ -1775,9 +2090,9 @@ describe("Security Headers Middleware", () => {
 		}
 
 		it("should use cached JWKS", async () => {
-			const keyPair = await jose.generateKeyPair("RS256");
+			const keyPair = await generateTestKeyPair();
 			const token = await createToken({}, keyPair, "RS256", "test-key-RS256");
-			const jwk = await jose.exportJWK(keyPair.publicKey);
+			const jwk = await exportTestJwk(keyPair.publicKey);
 			jwk.kid = "test-key-RS256";
 			jwk.use = "sig";
 
@@ -1814,7 +2129,7 @@ describe("Security Headers Middleware", () => {
 			// Clean up cache to ensure no pollution
 			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
 
-			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			const { privateKey, publicKey } = await generateTestKeyPair();
 			const issuer = "https://token.actions.githubusercontent.com";
 			const kid = "test-key";
 
@@ -1823,7 +2138,7 @@ describe("Security Headers Middleware", () => {
 			const token = await createToken(
 				{ aud: ["other-service", "gpg-signing-service"] },
 				{ privateKey, publicKey },
-				"ES256",
+				"RS256",
 				kid,
 			);
 
@@ -1837,7 +2152,7 @@ describe("Security Headers Middleware", () => {
 		});
 
 		it("should handle non-Error exceptions during validation", async () => {
-			const { privateKey, publicKey } = await jose.generateKeyPair("ES256");
+			const { privateKey, publicKey } = await generateTestKeyPair();
 			const token = await createToken({}, { privateKey, publicKey });
 
 			// Mock JWKS_CACHE to throw a string
@@ -1855,56 +2170,56 @@ describe("Security Headers Middleware", () => {
 		});
 
 		describe("Algorithm Support", () => {
-			const algorithms = ["RS256", "RS384", "RS512", "ES384"];
+			async function requestWithAlg(alg: string) {
+				await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
 
-			for (const alg of algorithms) {
-				it(`should support ${alg} algorithm`, async () => {
-					// Clean up cache from previous iteration
-					await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+				const { privateKey, publicKey } = await generateTestKeyPair();
+				const jwk = await exportTestJwk(publicKey);
+				jwk.kid = `test-key-${alg}`;
+				jwk.use = "sig";
 
-					// Generate key pair for the algorithm
-					const { privateKey, publicKey } = await jose.generateKeyPair(alg);
-					const jwk = await jose.exportJWK(publicKey);
-					jwk.kid = `test-key-${alg}`;
-					jwk.use = "sig";
+				middlewareFetchMock.mockImplementation(async (url) => {
+					if (url === "https://token.actions.githubusercontent.com/.well-known/openid-configuration") {
+						return new Response(JSON.stringify({ jwks_uri: "https://token.actions.githubusercontent.com/jwks" }));
+					}
+					if (url === "https://token.actions.githubusercontent.com/jwks") {
+						return new Response(JSON.stringify({ keys: [jwk] }));
+					}
+					return new Response("Not Found", { status: 404 });
+				});
 
-					// Mock JWKS response
-					// Mock JWKS response
-					middlewareFetchMock.mockImplementation(async (url) => {
-						if (url === "https://token.actions.githubusercontent.com/.well-known/openid-configuration") {
-							return new Response(
-								JSON.stringify({
-									jwks_uri: "https://token.actions.githubusercontent.com/jwks",
-								}),
-							);
-						}
-						if (url === "https://token.actions.githubusercontent.com/jwks") {
-							return new Response(JSON.stringify({ keys: [jwk] }));
-						}
-						return new Response("Not Found", { status: 404 });
-					});
+				const token = await new TestJwt({
+					iss: "https://token.actions.githubusercontent.com",
+					sub: "repo:user/repo:ref:refs/heads/main",
+					aud: "gpg-signing-service",
+				})
+					.setProtectedHeader({ alg, kid: jwk.kid })
+					.setIssuedAt()
+					.setExpirationTime("1h")
+					.sign(privateKey);
 
-					// Create token
-					const token = await new jose.SignJWT({
-						iss: "https://token.actions.githubusercontent.com",
-						sub: "repo:user/repo:ref:refs/heads/main",
-						aud: "gpg-signing-service",
-					})
-						.setProtectedHeader({ alg, kid: jwk.kid })
-						.setIssuedAt()
-						.setExpirationTime("1h")
-						.sign(privateKey);
-
-					const response = await makeRequest("/sign", {
-						method: "POST",
-						headers: { Authorization: `Bearer ${token}` },
-						body: "commit data",
-					});
-
-					// 404 means OIDC passed and it reached the route (which failed to find key)
-					expect(response.status).toBe(404);
+				return makeRequest("/sign", {
+					method: "POST",
+					headers: { Authorization: `Bearer ${token}` },
+					body: "commit data",
 				});
 			}
+
+			it("accepts RS256", async () => {
+				// 404 means OIDC passed and the request reached the route.
+				expect((await requestWithAlg("RS256")).status).toBe(404);
+			});
+
+			it.each(["RS384", "RS512", "PS256", "ES256", "ES384", "none"])(
+				"refuses %s before fetching a key",
+				async (alg) => {
+					const response = await requestWithAlg(alg);
+
+					expect(response.status).toBe(401);
+					expect((await parseJson<{ error: string }>(response)).error).toBe(`Algorithm not allowed: ${alg}`);
+					expect(middlewareFetchMock).not.toHaveBeenCalled();
+				},
+			);
 		});
 	});
 
@@ -2000,13 +2315,13 @@ describe("Security Headers Middleware", () => {
 			// First call to validateUrl (wellKnown URL) throws Error
 			validateUrlMock.mockRejectedValueOnce(new Error("Access to private IP range 10.0.0.0/8 is forbidden"));
 
-			const { privateKey } = await jose.generateKeyPair("ES256");
-			const token = await new jose.SignJWT({
+			const { privateKey } = await generateTestKeyPair();
+			const token = await new TestJwt({
 				iss: "https://10.0.0.1",
 				sub: "repo:test-subject/svc",
 				aud: "gpg-signing-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid: "test-key" })
+				.setProtectedHeader({ alg: "RS256", kid: "test-key" })
 				.setExpirationTime("1h")
 				.sign(privateKey);
 
@@ -2050,14 +2365,14 @@ describe("Security Headers Middleware", () => {
 			// First call throws non-Error object
 			validateUrlMock.mockRejectedValueOnce("String error");
 
-			const token = await new jose.SignJWT({
+			const token = await new TestJwt({
 				iss: "https://malicious.example.com",
 				sub: "repo:test-subject/svc",
 				aud: "gpg-signing-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid: "test-key" })
+				.setProtectedHeader({ alg: "RS256", kid: "test-key" })
 				.setExpirationTime("1h")
-				.sign((await jose.generateKeyPair("ES256")).privateKey);
+				.sign((await generateTestKeyPair()).privateKey);
 
 			const response = await makeRequest(
 				"/sign",
@@ -2092,14 +2407,14 @@ describe("Security Headers Middleware", () => {
 				),
 			);
 
-			const token = await new jose.SignJWT({
+			const token = await new TestJwt({
 				iss: "https://token.actions.githubusercontent.com",
 				sub: "repo:test-subject/svc",
 				aud: "gpg-signing-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid: "test-key" })
+				.setProtectedHeader({ alg: "RS256", kid: "test-key" })
 				.setExpirationTime("1h")
-				.sign((await jose.generateKeyPair("ES256")).privateKey);
+				.sign((await generateTestKeyPair()).privateKey);
 
 			const response = await makeRequest("/sign", {
 				method: "POST",
@@ -2122,14 +2437,14 @@ describe("Security Headers Middleware", () => {
 				new Response(JSON.stringify({ jwks_uri: "https://internal-service/jwks" })),
 			);
 
-			const token = await new jose.SignJWT({
+			const token = await new TestJwt({
 				iss: "https://token.actions.githubusercontent.com",
 				sub: "repo:test-subject/svc",
 				aud: "gpg-signing-service",
 			})
-				.setProtectedHeader({ alg: "ES256", kid: "test-key" })
+				.setProtectedHeader({ alg: "RS256", kid: "test-key" })
 				.setExpirationTime("1h")
-				.sign((await jose.generateKeyPair("ES256")).privateKey);
+				.sign((await generateTestKeyPair()).privateKey);
 
 			const response = await makeRequest("/sign", {
 				method: "POST",

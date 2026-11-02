@@ -1,6 +1,5 @@
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import * as jose from "jose";
 import {
 	createSelfSignedCertificate,
 	exportEncryptedPkcs8Pem,
@@ -12,6 +11,7 @@ import app from "#gpg-signing-service";
 import type { StoredX509Key } from "#schemas/keys";
 import { StoredX509KeySchema } from "#schemas/keys";
 import { parseAndValidateX509Key, signCommitDataX509 } from "#utils/x509";
+import { exportTestJwk, generateTestKeyPair, TestJwt } from "./helpers/jwt";
 import { seedTrustedSubjects } from "./helpers/oidc-subjects";
 
 // Mock fetch for JWKS
@@ -409,7 +409,7 @@ describe("X.509 sign route", () => {
 		// The OIDC path now requires a trusted-subject row.
 		await seedTrustedSubjects(env.AUDIT_DB);
 		fixture = await generateX509Fixture("x509-sign-test");
-		const keys = await jose.generateKeyPair("ES256");
+		const keys = await generateTestKeyPair();
 		oidcPrivateKey = keys.privateKey;
 		oidcPublicKey = keys.publicKey;
 	});
@@ -420,7 +420,7 @@ describe("X.509 sign route", () => {
 	});
 
 	async function setupJWKSMock() {
-		const jwk = await jose.exportJWK(oidcPublicKey);
+		const jwk = await exportTestJwk(oidcPublicKey);
 		jwk.kid = kid;
 		jwk.use = "sig";
 
@@ -436,12 +436,12 @@ describe("X.509 sign route", () => {
 	}
 
 	async function createToken(): Promise<string> {
-		return new jose.SignJWT({
+		return new TestJwt({
 			iss: issuer,
 			sub: "repo:user/repo:ref:refs/heads/main",
 			aud: "gpg-signing-service",
 		})
-			.setProtectedHeader({ alg: "ES256", kid })
+			.setProtectedHeader({ alg: "RS256", kid })
 			.setIssuedAt()
 			.setExpirationTime("1h")
 			.sign(oidcPrivateKey);

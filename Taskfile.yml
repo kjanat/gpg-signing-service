@@ -58,7 +58,6 @@ tasks:
       - task: test:sign-commit-example
       - task: test:review-gate
       - task: test:security-license-policy
-      - task: test:pending-workflows
       - task: test:dependabot-fix
       - task: test:agent-harness
       - task: test:claude-publication
@@ -149,11 +148,6 @@ tasks:
     aliases: [tslp]
     cmd: bash .github/scripts/test-security-license-policy.sh
 
-  test:pending-workflows:
-    desc: Test the staged autofix and security workflows and their one activation commit
-    aliases: [tpw]
-    cmd: bash .github/scripts/test-pending-workflows.sh
-
   test:dependabot-fix:
     desc: Test the trusted Dependabot write path's authorization, allowlist and privilege boundary
     aliases: [dbf]
@@ -182,6 +176,11 @@ tasks:
     desc: Test that worker-configuration.d.ts has one pinned producer
     aliases: [tgp]
     cmd: bash scripts/test-typegen-pin.sh
+
+  test:mutants:
+    desc: Mutation-test the OIDC and GitHub App credential checks; every mutant must fail its suites
+    aliases: [mut]
+    cmd: bash scripts/test-auth-mutants.sh
 
   test:tool-pins:
     desc: Test that every tool which rewrites a committed file is explicit and pinned
@@ -234,7 +233,6 @@ tasks:
       - task: test:sign-commit-example
       - task: test:review-gate
       - task: test:security-license-policy
-      - task: test:pending-workflows
       - task: test:dependabot-fix
       - task: test:agent-harness
       - task: test:claude-publication
@@ -400,10 +398,10 @@ tasks:
     # where `task generate:api` itself is clean (#123).
     #
     # #125 closed the other half: wrangler is now a direct devDependency rather
-    # than a hoisted transitive of @cloudflare/vitest-pool-workers, and the mise
+    # than a hoisted transitive of @cloudflare/vitest-plugin, and the mise
     # tool is pinned to the same version instead of "latest". This call site
     # still names the lockfile binary rather than either -- that is the producer
-    # whose workerd the vitest-pool-workers suite actually executes on, so it is
+    # whose workerd the vitest-plugin suite actually executes on, so it is
     # the one whose types belong in the tree, and it stays correct even if the
     # two pins are ever allowed to drift apart again.
     # scripts/test-typegen-pin.sh and scripts/test-tool-pins.sh hold that down.

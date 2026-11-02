@@ -7,7 +7,6 @@
  * - github: GitHub App integration shapes
  * - headers: HTTP header names
  * - http: HTTP status code constants
- * - jwks: JSON Web Key Set types
  * - media-types: IANA media types
  * - oidc: OpenID Connect authentication types
  * - rate-limit: Rate limiting types
@@ -25,8 +24,6 @@ export * from "#types/github";
 export { HEADERS } from "#types/headers";
 // HTTP status codes
 export { HTTP } from "#types/http";
-// JWKS types
-export * from "#types/jwks";
 // Media types (IANA registry)
 export { MediaType } from "#types/media-types";
 // OIDC types

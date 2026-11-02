@@ -573,8 +573,8 @@ openssl pkcs8 -topk8 -nocrypt -in downloaded.pem -out app-key.pem
 ### 3. Configure the deployment
 
 ```bash
-wrangler secret put GITHUB_APP_PRIVATE_KEY   # paste the whole PEM, headers included
-wrangler secret put GITHUB_WEBHOOK_SECRET    # the value from step 1
+wrangler secret put GITHUB_APP_PRIVATE_KEY # paste the whole PEM, headers included
+wrangler secret put GITHUB_WEBHOOK_SECRET  # the value from step 1
 ```
 
 Then in `wrangler.toml`, under `[vars]`:

@@ -7,18 +7,18 @@ jobs:
     runs-on: &Ubuntu ubuntu-latest,
     steps: [
       &Check { uses: &CheckoutAction actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 }, # v7.0.1
-      { uses: $/.github/actions/check-api-changes, with: &WithMiseVer { mise-version: &MiseVer "${{ vars.MISE_VERSION }}" } },
+      { uses: $/.github/actions/check-api-changes },
     ],
   }
 
-  format: { name: Format check, runs-on: *Ubuntu, steps: [*Check, { uses: $/.github/actions/check-formatting, with: *WithMiseVer }] }
+  format: { name: Format check, runs-on: *Ubuntu, steps: [*Check, { uses: $/.github/actions/check-formatting }] }
 
   typecheck: {
     name: Typecheck,
     runs-on: *Ubuntu,
     steps: [
       *Check,
-      &Mise { uses: &MiseAction jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195, with: { version: *MiseVer } }, # v5.2.5
+      &Mise { uses: &MiseAction jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 }, # v5.2.5
       &Bun { uses: $/.github/actions/setup-bun },
       run: task typecheck,
     ],
@@ -29,7 +29,7 @@ jobs:
     runs-on: *Ubuntu,
     steps: [
       *Check,
-      &MiseGo { uses: *MiseAction, with: { working_directory: client, version: *MiseVer } },
+      &MiseGo { uses: *MiseAction, with: { working_directory: client } },
       *Bun,
       { uses: kjanat/dprint-check@v3, with: { install-only: true } },
       run: task lint,

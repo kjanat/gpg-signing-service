@@ -13,8 +13,8 @@ jobs:
     strategy: { fail-fast: false, matrix: { language: [javascript-typescript, go], include: [{ language: go, build-dir: client }] } }
     steps: [
       { uses: actions/checkout@v7, with: { fetch-depth: 0 } },
-      { name: Setup dependencies (Go), if: matrix.language == 'go', uses: &mise jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195, with: { working_directory: client, version: "${{ vars.MISE_VERSION }}" } },
-      { name: Setup tooling (JS/TS), if: matrix.language == 'javascript-typescript', uses: *mise, with: { version: "${{ vars.MISE_VERSION }}" } },
+      { name: Setup dependencies (Go), if: matrix.language == 'go', uses: &mise jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195, with: { working_directory: client } },
+      { name: Setup tooling (JS/TS), if: matrix.language == 'javascript-typescript', uses: *mise },
       { name: Setup dependencies (JS/TS), if: matrix.language == 'javascript-typescript', uses: $/.github/actions/setup-bun },
       { uses: github/codeql-action/init@v4, with: { languages: "${{ matrix.language }}", queries: security-and-quality } },
       { name: Build project (JS/TS), if: matrix.language == 'javascript-typescript', run: bun install --frozen-lockfile },
@@ -29,14 +29,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/dependency-review-action@v5.0.0
-        with: { fail-on-severity: high, deny-licenses: "GPL-2.0, GPL-3.0, LGPL-2.0, LGPL-2.1, LGPL-3.0" }
+        with: { fail-on-severity: high, deny-licenses: "GPL-2.0, GPL-3.0, LGPL-2.0, LGPL-2.1, LGPL-3.0", allow-dependencies-licenses: "pkg:npm/openpgp" }
 
   bun-audit:
     name: Bun Audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - { uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195, with: { version: "${{ vars.MISE_VERSION }}" } }
+      - { uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 }
       - uses: $/.github/actions/setup-bun
       - run: bun install --frozen-lockfile
       - run: bun audit --audit-level=critical

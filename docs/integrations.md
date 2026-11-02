@@ -140,8 +140,8 @@ Use an operator-minted `gst_` token:
 export GPG_SIGN_URL="https://your-worker.example"
 export GPG_SIGN_TOKEN="$GPG_SIGN_SERVICE_TOKEN"
 
-git cat-file commit HEAD |
-  gpg-sign sign --key-id AFD5E3EC68371856 > commit.sig
+git cat-file commit HEAD \
+	| gpg-sign sign --key-id AFD5E3EC68371856 >commit.sig
 ```
 
 Prefer an expiration and key allowlist when the token is created. See

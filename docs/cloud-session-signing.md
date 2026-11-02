@@ -96,9 +96,9 @@ Mint one scoped and expiring, rather than reusing the admin token:
 
 ```bash
 curl -X POST "$GPG_SIGN_URL/admin/tokens" \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"cloud-agent-<who>","keyIds":["<key-id>"],"expiresInDays":30}'
+	-H "Authorization: Bearer $ADMIN_TOKEN" \
+	-H 'Content-Type: application/json' \
+	-d '{"name":"cloud-agent-<who>","keyIds":["<key-id>"],"expiresInDays":30}'
 ```
 
 The plaintext token comes back exactly once. Revoke it with
@@ -131,7 +131,7 @@ person or per purpose. That way revocation is precise.
 Ask the agent to make a throwaway commit, then:
 
 ```bash
-git log -1 --format='%an <%ae>'   # expect your identity, not Claude
+git log -1 --format='%an <%ae>' # expect your identity, not Claude
 git cat-file commit HEAD | grep -A1 gpgsig
 ```
 

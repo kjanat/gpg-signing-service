@@ -306,22 +306,22 @@ LEGEND: ✅ Implemented | ⚠️ Partial | ❌ Missing | 🔄 In Progress
 
 ```bash
 # Development
-task dev              # Start local server
+task dev # Start local server
 
 # Testing
-task test             # Run tests
-task test:coverage    # Run with coverage report
-task test:watch       # Watch mode
+task test          # Run tests
+task test:coverage # Run with coverage report
+task test:watch    # Watch mode
 
 # Code Quality
-task lint             # Run linting
-task lint:fix         # Auto-fix lint issues
-task format           # Format code
-task typecheck        # TypeScript type check
+task lint      # Run linting
+task lint:fix  # Auto-fix lint issues
+task format    # Format code
+task typecheck # TypeScript type check
 
 # Code Generation
-task generate:api     # Generate OpenAPI client
-task typegen          # Generate Worker types
+task generate:api # Generate OpenAPI client
+task typegen      # Generate Worker types
 
 # Infrastructure
 task db:create        # Create D1 database
@@ -330,12 +330,12 @@ task db:migrate:local # Run migrations (local)
 task kv:create        # Create KV namespace
 
 # Deployment
-task deploy           # Deploy to production (with prompt)
-task deploy:staging   # Deploy to staging [NEW - to implement]
-task deploy:prod      # Deploy to production [NEW - to implement]
+task deploy         # Deploy to production (with prompt)
+task deploy:staging # Deploy to staging [NEW - to implement]
+task deploy:prod    # Deploy to production [NEW - to implement]
 
 # Git
-git commit --no-verify  # Skip pre-commit hooks (use sparingly)
+git commit --no-verify # Skip pre-commit hooks (use sparingly)
 ```
 
 ---
