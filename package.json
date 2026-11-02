@@ -52,7 +52,7 @@
     "typegen": "wrangler types >/dev/null"
   },
   "dependencies": {
-    "@hono/swagger-ui": "0.6.1",
+    "@hono/swagger-ui": "0.6.2",
     "@hono/zod-openapi": "1.6.3",
     "@kjanat/fmt": "0.60.6",
     "@sentry/cloudflare": "10.73.0",
