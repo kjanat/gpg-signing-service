@@ -101,4 +101,4 @@ tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 // One more consequence to know about: "go install pkg@version" refuses a
 // module that carries a replace, so tagging client/v* would not on its own
 // make the CLI go-installable.
-replace github.com/go-git/go-git/v6 => github.com/kjanat/go-git/v6 v6.0.0-kjanat.1
+replace github.com/go-git/go-git/v6 => github.com/kjanat/go-git/v6 v6.0.0-kjanat.2
