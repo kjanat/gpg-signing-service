@@ -185,7 +185,7 @@ Secrets never travel: `KEY_PASSPHRASE`, `ADMIN_TOKEN`, armored or PEM private
 key material, raw OIDC JWTs, `gst_` service tokens, `Bearer` credentials and the
 `Authorization` header are redacted by name _and_ by value shape before an
 event leaves the Worker, request bodies are never collected at all, and
-`sendDefaultPii` is off. The values you configured are also swept out by literal
+every Sentry `dataCollection` category is off. The values you configured are also swept out by literal
 value with no minimum length, so a short `ADMIN_TOKEN` is covered like any
 other. Key ids, fingerprints, issuers and subjects do travel — they are already
 public through `/public-key`, `GET /admin/subjects` and the audit trail, and

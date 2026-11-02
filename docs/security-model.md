@@ -494,7 +494,8 @@ a document that enumerates what leaves the Worker should name it:
 Traces are sampled at `SENTRY_TRACES_SAMPLE_RATE`, default `0.1`. Setting it to
 `0` keeps error events and drops all of the above.
 
-`sendDefaultPii` is `false`, so no IP address or cookie-derived user is attached.
+Every `dataCollection` category is off, so no IP address, cookie, header, query
+parameter, body or local variable is attached.
 Key ids, fingerprints, issuers, subjects and subject-policy names _are_ reported:
 each is already readable through `/public-key`, `GET /admin/subjects` or the
 audit trail, and they are what makes an event worth having.

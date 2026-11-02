@@ -10,10 +10,12 @@ import {
 	captureRefusalEvent,
 	collectEnvSecrets,
 	DEFAULT_TRACES_SAMPLE_RATE,
+	HONO_INTEGRATION_OPTIONS,
 	isDeniedKey,
 	isSentryConfigured,
 	REDACTED,
 	redactString,
+	SENTRY_DATA_COLLECTION,
 	scrubBreadcrumb,
 	scrubEvent,
 	scrubValue,
@@ -210,8 +212,8 @@ describe("Sentry option construction", () => {
 	});
 
 	it("never sends default PII, configured or not", () => {
-		expect(buildSentryOptions(configuredEnv).sendDefaultPii).toBe(false);
-		expect(buildSentryOptions(unconfiguredEnv).sendDefaultPii).toBe(false);
+		expect(buildSentryOptions(configuredEnv).dataCollection).toEqual(SENTRY_DATA_COLLECTION);
+		expect(buildSentryOptions(unconfiguredEnv).dataCollection).toEqual(SENTRY_DATA_COLLECTION);
 	});
 
 	it("pins spotlight off so a stray variable cannot enable forwarding", () => {
@@ -270,10 +272,10 @@ describe("Sentry option construction", () => {
 		// Request bodies carry armored key material on the admin upload route.
 		expect(httpServer.maxRequestBodySize).toBe("none");
 
-		const hono = resolved.find((integration) => integration.name === "Hono") as {
-			handleHonoException?: (error: unknown, context?: unknown) => void;
-		};
-		expect(typeof hono.handleHonoException).toBe("function");
+		// `logger.error` is the single capture point; the Hono integration captures nothing.
+		for (const error of [new Error("boom"), Object.assign(new Error("teapot"), { status: 418 }), "thrown"]) {
+			expect(HONO_INTEGRATION_OPTIONS.shouldHandleError?.(error)).toBe(false);
+		}
 	});
 
 	it("installs the scrubbing hooks on both branches", () => {
@@ -816,7 +818,20 @@ describe("outgoing envelopes", () => {
 
 	it("never sets user data the caller did not ask for", async () => {
 		await withRecordingClient(configuredEnv, async (envelopes, client) => {
-			expect(client.getOptions().sendDefaultPii).toBe(false);
+			expect(client.getDataCollectionOptions()).toEqual({
+				userInfo: false,
+				cookies: false,
+				httpHeaders: { request: false, response: false },
+				httpBodies: [],
+				urlQueryParams: false,
+				graphQL: { document: false, variables: false },
+				genAI: { inputs: false, outputs: false },
+				mcp: { inputs: false, outputs: false },
+				databaseQueryData: false,
+				queues: false,
+				stackFrameVariables: false,
+				frameContextLines: 5,
+			});
 
 			captureError("boom", new Error("boom"), { requestId: "req-1" });
 			await new Promise((resolve) => setTimeout(resolve, 0));

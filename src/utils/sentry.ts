@@ -45,6 +45,24 @@ export const REDACTED = "[redacted]";
 /** Fraction of requests traced when a DSN is configured and no override is set. */
 export const DEFAULT_TRACES_SAMPLE_RATE = 0.1;
 
+export const SENTRY_DATA_COLLECTION = {
+	userInfo: false,
+	cookies: false,
+	httpHeaders: false,
+	httpBodies: [],
+	urlQueryParams: false,
+	graphQL: { document: false, variables: false },
+	genAI: { inputs: false, outputs: false },
+	mcp: { inputs: false, outputs: false },
+	databaseQueryData: false,
+	queues: false,
+	stackFrameVariables: false,
+} satisfies NonNullable<CloudflareOptions["dataCollection"]>;
+
+export const HONO_INTEGRATION_OPTIONS: NonNullable<Parameters<typeof Sentry.honoIntegration>[0]> = {
+	shouldHandleError: () => false,
+};
+
 /** Depth at which the recursive scrubber stops descending. */
 const MAX_SCRUB_DEPTH = 12;
 
@@ -397,7 +415,8 @@ export function buildSentryOptions(env: Partial<Env>): CloudflareOptions {
 		// Never the caller's IP, headers-as-user, or cookies. The identities this
 		// service handles are CI workloads, and the parts of them worth having —
 		// issuer, subject, key id — are attached explicitly as tags instead.
-		sendDefaultPii: false,
+		// Sentry 11 collects every category below unless it is switched off.
+		dataCollection: SENTRY_DATA_COLLECTION,
 		tracesSampleRate: enabled ? tracesSampleRate(env) : 0,
 		...(env.ENVIRONMENT ? { environment: env.ENVIRONMENT } : {}),
 		// Development-only event forwarding, and it bypasses the DSN check. Pinned
@@ -427,7 +446,7 @@ export function buildSentryOptions(env: Partial<Env>): CloudflareOptions {
 						// is what knows the `requestId`, `action` and `errorCode` — so the
 						// automatic one is turned off rather than left to emit a second,
 						// untagged event for every 500.
-						Sentry.honoIntegration({ shouldHandleError: () => false }),
+						Sentry.honoIntegration(HONO_INTEGRATION_OPTIONS),
 					],
 				}
 			: // No DSN, no integrations: no console wrapping, no fetch patching, no
