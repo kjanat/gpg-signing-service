@@ -25,10 +25,11 @@ run_gate() {
 		-u CLAUDE_CODE_OAUTH_TOKEN \
 		-u PR_HEAD_REPO \
 		-u GITHUB_ACTOR \
+		-u GITHUB_REPOSITORY_OWNER \
 		-u GITHUB_WORKSPACE \
-		-u REVIEW_WORKFLOW_FILE \
-		REVIEW_WORKFLOW_FILE="${repo_root}/.github/workflows/claude-code-review.yml" \
 		GITHUB_REPOSITORY='kjanat/gpg-signing-service' \
+		GITHUB_REPOSITORY_OWNER='kjanat' \
+		GITHUB_ACTOR='kjanat' \
 		GITHUB_ENV="${tmp_dir}/github_env" \
 		GITHUB_STEP_SUMMARY="${tmp_dir}/summary" \
 		"$@" \
@@ -125,13 +126,10 @@ expect_stdout '::notice title=Claude review skipped (fork pull request)::'
 
 # --- the Renovate pull request -------------------------------------------------
 #
-# claude-code-action fails -- not skips -- a run started by a bot that is not in
-# its allowed_bots: "Workflow initiated by non-human actor: renovate (type:
-# Bot)". Renovate pull requests are same-repo and Renovate runs read the
-# ordinary Actions secrets, so the token IS present and the step used to run and
-# go red. The gate has to decide that run is a no-op, even with the token.
-grep -qF 'allowed_bots: dependabot[bot],github-actions[bot],claude[bot]' "${repo_root}/.github/workflows/claude-code-review.yml" \
-	|| fail 'the live review workflow no longer has the allowed_bots line this suite reasons about'
+# Renovate pull requests auto-merge on their required checks and are not
+# reviewed. They are same-repo and Renovate runs read the ordinary Actions
+# secrets, so the token IS present: the gate has to decide the run is a no-op
+# even with it.
 rc="$(run_gate CLAUDE_CODE_OAUTH_TOKEN='t' PR_HEAD_REPO='kjanat/gpg-signing-service' GITHUB_ACTOR='renovate[bot]')"
 expect_rc 0 "${rc}"
 expect_env 'HAS_CLAUDE_TOKEN='
@@ -153,41 +151,33 @@ rc="$(run_gate CLAUDE_CODE_OAUTH_TOKEN='t' GITHUB_ACTOR='Renovate[Bot]')"
 expect_rc 0 "${rc}"
 expect_env 'HAS_CLAUDE_TOKEN='
 
-# If the workflow ever lists renovate[bot], this branch must stand down and the
-# review runs as it does for any allowed bot.
-printf '          allowed_bots: dependabot[bot],renovate[bot]\n' >"${tmp_dir}/allows-renovate.yml"
-rc="$(run_gate REVIEW_WORKFLOW_FILE="${tmp_dir}/allows-renovate.yml" CLAUDE_CODE_OAUTH_TOKEN='t' GITHUB_ACTOR='renovate[bot]')"
-expect_rc 0 "${rc}"
-expect_env 'HAS_CLAUDE_TOKEN=true'
-printf '          allowed_bots: "*"\n' >"${tmp_dir}/allows-all.yml"
-rc="$(run_gate REVIEW_WORKFLOW_FILE="${tmp_dir}/allows-all.yml" CLAUDE_CODE_OAUTH_TOKEN='t' GITHUB_ACTOR='renovate[bot]')"
-expect_rc 0 "${rc}"
-# YAML quotes are syntax, not part of the value: the action receives `*`.
-expect_env 'HAS_CLAUDE_TOKEN=true'
-
-# An unreadable workflow cannot be reasoned about: decline the skip and behave
-# exactly as before, rather than silently disabling reviews.
-rc="$(run_gate REVIEW_WORKFLOW_FILE="${tmp_dir}/does-not-exist.yml" CLAUDE_CODE_OAUTH_TOKEN='t' GITHUB_ACTOR='renovate[bot]')"
-expect_rc 0 "${rc}"
-expect_env 'HAS_CLAUDE_TOKEN=true'
-
-# Human reviews are not disabled: a person's pull request, and one whose login
-# merely contains the bot's name, still run Claude.
-for human in kjanat renovate renovate-bot 'not-renovate[bot]x' 'renovate[bot]-fan'; do
-	rc="$(run_gate CLAUDE_CODE_OAUTH_TOKEN='t' PR_HEAD_REPO='kjanat/gpg-signing-service' GITHUB_ACTOR="${human}")"
+# --- runs the owner did not start ---------------------------------------------
+#
+# Beepboop issues the review token only to runs the repository owner starts.
+# Anyone else's run, a Beepboop fix push included, is a deliberate no-op rather
+# than a review that fails to get its token.
+for actor in kjanat KJANAT; do
+	rc="$(run_gate CLAUDE_CODE_OAUTH_TOKEN='t' PR_HEAD_REPO='kjanat/gpg-signing-service' GITHUB_ACTOR="${actor}")"
 	expect_rc 0 "${rc}"
 	expect_env 'HAS_CLAUDE_TOKEN=true'
 done
+for actor in 'beepboop[bot]' 'github-actions[bot]' 'dependabot[bot]' renovate renovate-bot 'kjanat-fan' 'not-kjanat'; do
+	rc="$(run_gate CLAUDE_CODE_OAUTH_TOKEN='t' PR_HEAD_REPO='kjanat/gpg-signing-service' GITHUB_ACTOR="${actor}")"
+	expect_rc 0 "${rc}"
+	expect_env 'HAS_CLAUDE_TOKEN='
+	expect_stdout '::notice title=Claude review skipped (run not started by the owner)::'
+	refute_stdout '::warning'
+	grep -qF 'not started by the owner' "${tmp_dir}/summary" || fail 'the owner skip should reach the job summary'
+done
 
-# Other bots are not Renovate. An allowed one proceeds, and Dependabot keeps its
-# own skip reason.
-rc="$(run_gate CLAUDE_CODE_OAUTH_TOKEN='t' GITHUB_ACTOR='github-actions[bot]')"
-expect_rc 0 "${rc}"
-expect_env 'HAS_CLAUDE_TOKEN=true'
+# An owner the gate cannot read is not the actor, whoever the actor is.
+rc="$(run_gate CLAUDE_CODE_OAUTH_TOKEN='t' GITHUB_REPOSITORY_OWNER='')"
+expect_env 'HAS_CLAUDE_TOKEN='
+expect_stdout '::notice title=Claude review skipped (run not started by the owner)::'
+
+# Dependabot without the token keeps its own skip reason.
 rc="$(run_gate PR_HEAD_REPO='kjanat/gpg-signing-service' GITHUB_ACTOR='dependabot[bot]')"
 expect_stdout '::notice title=Claude review skipped (Dependabot secrets store)::'
-rc="$(run_gate CLAUDE_CODE_OAUTH_TOKEN='t' GITHUB_ACTOR='dependabot[bot]')"
-expect_env 'HAS_CLAUDE_TOKEN=true'
 
 # --- the missing secret on a trusted run -------------------------------------
 #
@@ -298,8 +288,8 @@ signing = index_of(
     lambda s: s.get("uses", "").endswith("setup-claude-signing"), "signing setup step"
 )
 review = index_of(
-    lambda s: s.get("uses", "").startswith("anthropics/claude-code-action"),
-    "claude-code-action step",
+    lambda s: s.get("uses", "").startswith("anthropics/claude-code-action/base-action@"),
+    "claude-code-action base-action step",
 )
 checkout = index_of(
     lambda s: s.get("uses", "").startswith("actions/checkout"), "checkout step"
@@ -574,6 +564,48 @@ review_mutate 'prompt-drops-trusted-path' \
 review_mutate 'prompt-drops-write-authority' \
 	's|read-only GITHUB_TOKEN|GITHUB_TOKEN|g; s|holds no write authority over|should not modify|g' \
 	'no longer says this run has no write authority'
+
+# --- the workflow posts the review, and fails without one ---------------------
+#
+# The base action reports success whenever the session ends cleanly, so the post
+# step is what turns "no review" into a red run. Its script is covered by
+# test-claude-review-post.py; this asserts the workflow runs it on the review
+# step's structured output.
+python3 - "${repo_root}/.github/workflows/claude-code-review.yml" <<'POST' || exit 1
+import sys, pathlib, yaml
+steps = yaml.safe_load(pathlib.Path(sys.argv[1]).read_text())["jobs"]["claude-review"]["steps"]
+review = next(i for i, s in enumerate(steps) if s.get("id") == "claude-review")
+assert "--json-schema" in steps[review]["with"]["claude_args"], "the review step no longer asks for structured output"
+post = next(i for i, s in enumerate(steps) if s.get("name") == "Post the review")
+assert post > review, "the review is posted before Claude runs"
+assert steps[post].get("if") == steps[review].get("if"), "the post step and the review step no longer share a condition"
+assert steps[post]["run"].strip() == "python3 .github/scripts/claude-review-post.py", "the post step no longer runs claude-review-post.py"
+assert steps[post]["env"]["OUTPUT"] == "${{ steps.claude-review.outputs.structured_output }}", (
+    "the post step no longer reads the review step's structured output"
+)
+POST
+printf '  post step: wired to the structured output\n'
+
+# --- pushes and the review use the Beepboop App token -------------------------
+python3 - "${repo_root}/.github/workflows/claude-code-review.yml" <<'APP' || exit 1
+import sys, pathlib, yaml
+steps = yaml.safe_load(pathlib.Path(sys.argv[1]).read_text())["jobs"]["claude-review"]["steps"]
+index = {s.get("id") or s.get("name") or s.get("uses") or s.get("run"): i for i, s in enumerate(steps)}
+mint, push = index["beepboop"], index["Push as Beepboop"]
+token = "${{ steps.beepboop.outputs.token }}"
+assert steps[mint]["uses"].startswith("kjanat/beepboop/actions/token@"), "the token no longer comes from Beepboop"
+assert steps[push]["env"]["TOKEN"] == token and "extraheader" in steps[push]["run"], "pushes no longer use the Beepboop App token"
+condition = steps[index["claude-review"]].get("if")
+assert steps[mint].get("if") == condition and steps[push].get("if") == condition, (
+    "the token steps and the review step no longer share a condition"
+)
+assert index["Check for Claude token"] < mint < push < index["claude-review"] < index["Post the review"], (
+    "the Beepboop App token has to be in place after the gate and before Claude runs"
+)
+for name in ("claude-review", "Post the review"):
+    assert steps[index[name]]["env"].get("GH_TOKEN") == token, f"{name} no longer acts as the Beepboop App"
+APP
+printf '  beepboop token: issued, used to push, post and run gh\n'
 
 # --- the deferred activation failure ------------------------------------------
 #
