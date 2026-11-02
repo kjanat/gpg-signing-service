@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Assert the properties that decide whether a release publishes what it claims:
 # every external action in the release workflow is pinned to an immutable ref,
-# the job holds exactly the permissions it needs, the tag it publishes under is the tag it
+# the job holds exactly one permission, the tag it publishes under is the tag it
 # validated, and that tag is the commit it built.
 #
 #   task test:release-workflow
@@ -34,7 +34,12 @@ validate_script="${repo_root}/.github/scripts/validate-release-tag.sh"
 # permissions it is held to. Written out here rather than derived, because a
 # contract derived from the file it judges is a contract the file can move.
 readonly RELEASE_JOB=release
-readonly RELEASE_PERMISSIONS='{"attestations":"write","contents":"write","id-token":"write"}'
+readonly RELEASE_PERMISSIONS='{"contents":"write"}'
+# The attest job is the only holder of an OIDC token. It checks nothing out,
+# builds nothing and publishes nothing, so no code from the release tag runs
+# where `id-token: write` is granted.
+readonly ATTEST_JOB=attest
+readonly ATTEST_PERMISSIONS='{"attestations":"write","id-token":"write"}'
 # The tag check runs from the TOOLING checkout, not from the tree the requested
 # tag supplies. `run:` executes in $GITHUB_WORKSPACE and the release checkout
 # replaced $GITHUB_WORKSPACE with the tag's tree, so `.github/scripts/...` there
@@ -80,13 +85,13 @@ readonly TOOLING_CHECKOUT_WITH='{"path":".release-tooling","persist-credentials"
 # skipping verification`, not as a refusal. `draft:` decides whether any of it
 # is published at all. None of that is visible in `tag_name:`.
 # shellcheck disable=SC2016  # GitHub expressions, literal on purpose
-readonly PUBLISHER_WITH='{"draft":false,"files":"dist/gpg-sign-linux-amd64\ndist/gpg-sign-linux-arm64\ndist/gpg-sign-darwin-amd64\ndist/gpg-sign-darwin-arm64\ndist/gpg-sign-windows-amd64.exe\ndist/gpg-sign-windows-arm64.exe\ndist/checksums.txt","generate_release_notes":true,"prerelease":false,"tag_name":"${{ inputs.tag || github.ref_name }}"}'
+readonly PUBLISHER_WITH='{"draft":false,"files":"dist/gpg-sign-linux-amd64\ndist/gpg-sign-linux-arm64\ndist/gpg-sign-darwin-amd64\ndist/gpg-sign-darwin-arm64\ndist/gpg-sign-windows-amd64.exe\ndist/gpg-sign-windows-arm64.exe\ndist/checksums.txt\ndist/gpg-sign.spdx.json","generate_release_notes":true,"prerelease":false,"tag_name":"${{ inputs.tag || github.ref_name }}"}'
 # The job set is part of the contract because every assertion past the pin check
 # is scoped to RELEASE_JOB. A second job is a second publisher -- its own
 # `permissions:`, its own `tag_name:`, its own checkout -- that a reading scoped
 # to one job id is structurally unable to see, and it needs no unpinned action to
 # get there. One job is the cheapest way to say nothing else publishes from here.
-readonly RELEASE_JOBS='["release"]'
+readonly RELEASE_JOBS='["attest","release"]'
 # WHERE the job runs, pinned whole. `runs-on:`, `container:`, `services:` and
 # `defaults:` are not arguments to anything the assertions above read, and each
 # of them decides what every `run:` in this job actually executes under.
@@ -322,15 +327,32 @@ release_contract_violations() {
 	fi
 
 	# Privilege. The job mints the artifacts every consumer installs; anything
-	# past `contents: write` and the `id-token:`/`attestations:` pair the build
-	# provenance attestation needs — `packages:` for the registry — is a
-	# capability the publish step inherits for free.
+	# past `contents: write` — `id-token:` for an OIDC token, `packages:` for the
+	# registry — is a capability the publish step inherits for free.
 	local permissions granted_by
 	permissions="$(jq -cS '.permissions' <<<"${shape}")"
 	granted_by="$(jq -r '.permissionsSource' <<<"${shape}")"
 	if [[ "${permissions}" != "${RELEASE_PERMISSIONS}" ]]; then
 		printf '%s: job %s runs with %s (from the %s permissions:), not exactly %s\n' \
 			"${label}" "${RELEASE_JOB}" "${permissions}" "${granted_by}" "${RELEASE_PERMISSIONS}"
+	fi
+
+	local attest
+	if ! attest="$(release_shape "${file}" "${ATTEST_JOB}" 2>&1)"; then
+		printf '%s: its %s job could not be read — %s\n' "${label}" "${ATTEST_JOB}" "${attest//$'\n'/ }"
+	else
+		local attest_permissions attest_source attest_code
+		attest_permissions="$(jq -cS '.permissions' <<<"${attest}")"
+		attest_source="$(jq -r '.permissionsSource' <<<"${attest}")"
+		if [[ "${attest_permissions}" != "${ATTEST_PERMISSIONS}" || "${attest_source}" != job ]]; then
+			printf '%s: job %s runs with %s (from the %s permissions:), not exactly %s from its own permissions:\n' \
+				"${label}" "${ATTEST_JOB}" "${attest_permissions}" "${attest_source}" "${ATTEST_PERMISSIONS}"
+		fi
+		attest_code="$(jq -c '[.checkout.count, .build.count, .publisher.count]' <<<"${attest}")"
+		if [[ "${attest_code}" != '[0,0,0]' ]]; then
+			printf '%s: job %s checks out, builds or publishes (%s) while it holds id-token: write\n' \
+				"${label}" "${ATTEST_JOB}" "${attest_code}"
+		fi
 	fi
 
 	# Where it runs, which no pin, permission or argument assertion covers.
@@ -1019,8 +1041,18 @@ tree_case 'extra write permissions fail' \
 	'"id-token":"write"'
 
 tree_case 'a job-level permissions: that widens the workflow-level one fails' \
-	"$(release_tree '' '{ print } /^ +runs-on:/ { print "    permissions: { contents: write, packages: write }" }')" \
+	"$(release_tree '' '{ print } /^ +runs-on:/ && !done { print "    permissions: { contents: write, packages: write }"; done = 1 }')" \
 	'from the job permissions:'
+
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'an attest job that also writes contents fails' \
+	"$(release_tree '' '/permissions: \{ attestations: write, id-token: write \}/ { $0 = "    permissions: { attestations: write, contents: write, id-token: write }" } { print }')" \
+	'job attest runs with'
+
+# shellcheck disable=SC2016  # $0 is awk's whole line, not a shell parameter
+tree_case 'an attest job that checks out code fails' \
+	"$(release_tree '' '{ print } /name: Write attestation subjects/ { print "        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1"; print "      - name: Run tag code" }')" \
+	'checks out, builds or publishes'
 
 # --- where the job runs --------------------------------------------------------
 #
@@ -1063,7 +1095,7 @@ tree_case 'a second job that publishes on its own terms fails' \
 	    print "      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3";
 	    print "        with: { tag_name: v9.9.9 }";
 	  }')" \
-	'has jobs ["publish-extra","release"], not exactly ["release"]'
+	'has jobs ["attest","publish-extra","release"], not exactly ["attest","release"]'
 
 tree_case 'dropping permissions: entirely fails rather than inheriting the default token' \
 	"$(release_tree '' '/^permissions:/ { next } { print }')" \

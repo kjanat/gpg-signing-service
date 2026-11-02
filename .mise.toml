@@ -19,6 +19,7 @@ task          = "latest"
 tombi         = "1.9.8"
 typescript    = { filter_bins = ["tsc"], version = "latest" }
 uv            = "0.13.6"
+syft          = "latest"
 
 [tools.wrangler]
 version      = "4.156.1"

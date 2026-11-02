@@ -10,12 +10,14 @@ on:
         type: string
         required: true
 
-permissions: { attestations: write, contents: write, id-token: write }
+permissions: { contents: write }
 
 jobs:
   release:
     name: Build and Release
     runs-on: ubuntu-latest
+    outputs:
+      checksums: ${{ steps.subjects.outputs.checksums }}
     steps:
       - name: Checkout release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -62,14 +64,26 @@ jobs:
         working-directory: dist
         run: chmod +x gpg-sign-*
 
-      - name: Create checksums
+      - name: Generate SBOM
         working-directory: dist
-        run: sha256sum ./* > checksums.txt
+        env:
+          SBOM_TAG: "${{ inputs.tag || github.ref_name }}"
+          SYFT_GOLANG_SEARCH_REMOTE_LICENSES: "true"
+        run: syft scan dir:. --source-name gpg-sign --source-version "${SBOM_TAG#v}" -o spdx-json=gpg-sign.spdx.json
 
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: dist/gpg-sign-*
+      - name: Upload SBOM for attestation
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: { name: sbom, path: dist/gpg-sign.spdx.json, if-no-files-found: error }
+
+      - name: Create checksums
+        id: subjects
+        working-directory: dist
+        run: |
+          {
+            echo 'checksums<<SUBJECTS'
+            sha256sum gpg-sign-* | tee checksums.txt
+            echo SUBJECTS
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Create Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
@@ -83,6 +97,7 @@ jobs:
             dist/gpg-sign-windows-amd64.exe
             dist/gpg-sign-windows-arm64.exe
             dist/checksums.txt
+            dist/gpg-sign.spdx.json
           generate_release_notes: true
           draft: false
           prerelease: false
@@ -126,3 +141,28 @@ jobs:
           gh api \
             --method PATCH "repos/${GH_REPO}/releases/${release_id}" \
             --raw-field body="${normalized}" >/dev/null
+
+  attest:
+    name: Attest build provenance
+    needs: release
+    runs-on: ubuntu-latest
+    permissions: { attestations: write, id-token: write }
+    steps:
+      - name: Download SBOM
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: { name: sbom }
+
+      - name: Write attestation subjects
+        env: { SUBJECTS: "${{ needs.release.outputs.checksums }}" }
+        run: printf '%s\n' "${SUBJECTS}" > checksums.txt
+
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: checksums.txt
+
+      - name: Attest SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: checksums.txt
+          sbom-path: gpg-sign.spdx.json
