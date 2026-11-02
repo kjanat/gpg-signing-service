@@ -3,7 +3,7 @@ description: Setup Bun with caching and install dependencies
 
 inputs:
   setup-node: { description: Setup Node.js, required: false, default: true }
-  node-version: { description: Node.js version, required: false, default: latest }
+  node-version: { description: Node.js version, required: false, default: "26" }
   skip-install: { description: Skip bun install, required: false, default: false }
 
 outputs:
