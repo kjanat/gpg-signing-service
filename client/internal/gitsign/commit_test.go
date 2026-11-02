@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/kjanat/go-git/v6/plumbing/object"
 )
 
 const (
@@ -602,10 +602,10 @@ func withoutParents(lines []string) []string {
 // wrote, with its parent lines replaced by the requested ones, sitting where
 // git requires them — directly after the tree line and before everything else.
 //
-// This is also what holds go.mod's replace directive down. unsignedObject
-// reparents by mutating a decoded commit and re-encoding it, so every row here
-// runs through go-git's struct encoder, and most of them come back wrong
-// against a released go-git. Dropping the directive still compiles;
+// This is also what holds the go-git fork down. unsignedObject reparents by
+// mutating a decoded commit and re-encoding it, so every row here runs through
+// go-git's struct encoder, and most of them come back wrong against a released
+// go-git. Swapping the fork for released go-git still compiles;
 // TestUnsignedObjectNeedsThePinnedFork names what breaks.
 func TestUnsignedObjectChangesOnlyParents(t *testing.T) {
 	for _, shape := range historicalShapes() {
@@ -663,13 +663,14 @@ func TestUnsignedObjectChangesOnlyParents(t *testing.T) {
 	}
 }
 
-// The go.mod replace directive is the subject here, not this package's logic.
+// Which go-git this module builds against is the subject here, not this
+// package's logic.
 //
 // unsignedObject reparents through go-git's struct encoder, which is only
-// faithful in the fork carrying go-git/go-git#2328. Losing the directive is not
-// a build failure — released go-git compiles here — so what it costs is written
-// out row by row: the bytes git wrote, and the bytes a released go-git writes
-// over them instead. Two causes, both fixed in the fork. It decodes the author
+// faithful in the fork carrying go-git/go-git#2328. Swapping back to released
+// go-git is not a build failure — released go-git compiles here — so what it
+// costs is written out row by row: the bytes git wrote, and the bytes a
+// released go-git writes over them instead. Two causes, both fixed in the fork. It decodes the author
 // and committer from their canonical slots alone, so a header interposed before
 // or between them leaves both empty; and it re-renders the idents it did decode
 // from parsed fields rather than replaying them.
@@ -789,14 +790,14 @@ func TestUnsignedObjectNeedsThePinnedFork(t *testing.T) {
 
 			for _, keep := range tt.keeps {
 				if !strings.Contains(got, "\n"+keep+"\n") {
-					t.Errorf("reparenting lost a header go.mod's replace directive is what keeps: "+
+					t.Errorf("reparenting lost a header only the go-git fork keeps: "+
 						"expected %q in\n%q", keep, got)
 				}
 			}
 			for _, rewrite := range tt.rewrites {
 				if strings.Contains(got, "\n"+rewrite+"\n") {
 					t.Errorf("reparenting wrote %q, which is what a released go-git does and the "+
-						"pinned fork does not — check go.mod still carries the replace directive:\n%q",
+						"pinned fork does not — check go.mod still requires github.com/kjanat/go-git/v6:\n%q",
 						rewrite, got)
 				}
 			}

@@ -57,6 +57,7 @@ tasks:
       - task: test:commit-provenance
       - task: test:sign-commit-example
       - task: test:review-gate
+      - task: test:review-post
       - task: test:security-license-policy
       - task: test:dependabot-fix
       - task: test:agent-harness
@@ -142,6 +143,10 @@ tasks:
   test:review-gate:
     desc: Test the Claude review job's no-token gate and its fork path
     cmd: bash .github/scripts/test-claude-review-gate.sh
+
+  test:review-post:
+    desc: Test that the Claude review step's output posts as one inline review
+    cmd: python3 .github/scripts/test-claude-review-post.py
 
   test:security-license-policy:
     desc: Test the staged Security workflow exempts only openpgp from the licence deny list
@@ -232,6 +237,7 @@ tasks:
       - task: test:commit-provenance
       - task: test:sign-commit-example
       - task: test:review-gate
+      - task: test:review-post
       - task: test:security-license-policy
       - task: test:dependabot-fix
       - task: test:agent-harness
@@ -376,7 +382,7 @@ tasks:
   typecheck:
     desc: Typecheck code
     aliases: [ts, type, tsc, tsgo]
-    deps: [install:noscripts]
+    deps: [typegen]
     sources: ["**/*.ts"]
     cmd: mise exec -- run typecheck
 

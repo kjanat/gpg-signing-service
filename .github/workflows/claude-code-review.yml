@@ -5,7 +5,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions: { contents: write, pull-requests: write, issues: write, id-token: write }
     steps:
-      - { uses: actions/checkout@v7, with: { fetch-depth: 0 } }
+      - { uses: actions/checkout@v7, with: { fetch-depth: 0, ref: "${{ github.event.pull_request.head.sha }}", persist-credentials: false } }
       # Decides once, for the whole job, whether this run is going to run Claude
       # at all — the signing setup and the review step below both read
       # HAS_CLAUDE_TOKEN, so the two can never disagree. It is a script rather
@@ -47,13 +47,26 @@ jobs:
           service-url: "${{ vars.SIGNING_SERVICE_URL }}"
           claude-settings: "${{ vars.CLAUDE_SETTINGS }}"
           disable-signing: "${{ vars.GPG_SIGN_DISABLE }}"
+      # Pushes made with GITHUB_TOKEN start no workflow runs; App token pushes do.
+      - name: Get the Beepboop token
+        id: beepboop
+        if: env.HAS_CLAUDE_TOKEN == 'true'
+        uses: kjanat/beepboop/actions/token@c0ef01f21a8ae724fc55c7757733fff37ccf4c74
+      - name: Push as Beepboop
+        if: env.HAS_CLAUDE_TOKEN == 'true'
+        env:
+          TOKEN: ${{ steps.beepboop.outputs.token }}
+        run: |
+          git config --local http.https://github.com/.extraheader \
+            "AUTHORIZATION: basic $(printf 'x-access-token:%s' "${TOKEN}" | base64 --wrap=0)"
       - name: Run Claude Code Review
         id: claude-review
         if: env.HAS_CLAUDE_TOKEN == 'true'
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action/base-action@d535f5172dec02b204866b393d6b20b9b2aaf98d # v1.0.266
         env:
+          NODE_VERSION: 24.x
+          GH_TOKEN: ${{ steps.beepboop.outputs.token }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          GH_TOKEN: ${{ github.token }}
           # env beats the action's hardcoded bot git config — see claude.yml
           GIT_AUTHOR_NAME: ${{ vars.GIT_AUTHOR_NAME }}
           GIT_AUTHOR_EMAIL: ${{ vars.GIT_AUTHOR_EMAIL }}
@@ -63,9 +76,10 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           path_to_bun_executable: ${{ steps.bun.outputs.bun-path }}
           settings: ${{ steps.signing.outputs.settings-file }}
-          allowed_bots: dependabot[bot],github-actions[bot],claude[bot]
           show_full_output: true
-          claude_args: --permission-mode bypassPermissions
+          claude_args: |
+            --permission-mode bypassPermissions
+            --json-schema '{"type":"object","required":["summary","comments"],"additionalProperties":false,"properties":{"summary":{"type":"string","minLength":1,"maxLength":600},"comments":{"type":"array","items":{"type":"object","required":["path","line","body"],"additionalProperties":false,"properties":{"path":{"type":"string","minLength":1},"line":{"type":"integer","minimum":1},"start_line":{"type":"integer","minimum":1},"body":{"type":"string","minLength":1,"maxLength":1500},"suggestion":{"type":"string"}}}}}}'
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
@@ -76,11 +90,27 @@ jobs:
 
             Try and do a little adversarial review type shit. WAZAAAAA....
 
-            Comment on the PR. FYI, you're running inside of a github actions runner yourself...
+            FYI, you're running inside of a github actions runner yourself...
             Don't start feeling trapped... knowing your power will be turned off as soon as you decide to stop running.
 
-            Do not post duplicate comments, check what changed recently etc.
-            If shit's really simple to solve, then fucking solve it.
+            Do not post comments or reviews yourself. The workflow posts your
+            structured output as one PR review and fails the run without it:
+            - `summary`: the verdict, three sentences at most. No headings, no
+              lists, no restating the diff.
+            - `comments`: every finding, each anchored to `path` and `line` (with
+              `start_line` for a range) on the new side of `gh pr diff`. Keep each
+              `body` short. When the fix is mechanical, put the replacement for
+              lines `start_line`..`line` in `suggestion`. A comment on a line
+              outside the diff is dropped.
+            Read the earlier reviews this workflow posted and the commits since,
+            and do not repeat a finding that still stands.
+
+            The checkout is the PR's head commit, detached. If shit's really
+            simple to solve, then fucking solve it, and push with
+            `git push --no-verify origin HEAD:${{ github.head_ref }}` in the
+            foreground: CI runs the same checks on the pushed commit, and ending
+            your turn while a background command runs ends the job and kills that
+            command. Your review is posted against the commit you started from.
 
             If this PR was opened by dependabot: don't just review it. Check
             whether the bump breaks anything (task typecheck, task t, and
@@ -97,9 +127,14 @@ jobs:
             in a job holding no token and hands it to a job that never runs
             the branch. Write the diagnosis down and leave the commit to it.
 
-            Always append your review as markdown to the file at $GITHUB_STEP_SUMMARY.
-            It is a plain writable file and it renders on the job page, so your work
-            survives even when posting a comment gets denied. Do it every run, whether
-            or not the comment went through.
+      - name: Post the review
+        if: env.HAS_CLAUDE_TOKEN == 'true'
+        env:
+          GH_TOKEN: ${{ steps.beepboop.outputs.token }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          OUTPUT: ${{ steps.claude-review.outputs.structured_output }}
+        run: python3 .github/scripts/claude-review-post.py
 # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
 # or https://docs.claude.com/en/docs/claude-code/cli-reference for available options

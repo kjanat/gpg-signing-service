@@ -488,8 +488,7 @@ pre-commit:
       run: |
         git add \
           client/openapi.json \
-          client/pkg/api/api.gen.go \
-          worker-configuration.d.ts
+          client/pkg/api/api.gen.go
 
 pre-push:
   jobs:

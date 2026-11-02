@@ -1,6 +1,11 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
+  "minimumReleaseAge": "3 days",
+  "automerge": true,
+  "rebaseWhen": "conflicted",
+  "gitIgnoredAuthors": ["114827586+autofix-ci[bot]@users.noreply.github.com"],
+  "assignees": ["kjanat"],
   "customManagers": [
     {
       "customType": "regex",
@@ -28,6 +33,16 @@
       "groupName": "gitleaks",
       "matchDepNames": ["gitleaks"],
       "matchManagers": ["custom.regex", "mise"]
+    },
+    {
+      "groupName": "Go modules",
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "matchPackageNames": ["!github.com/kjanat/go-git/v6"]
+    },
+    {
+      "groupName": "eslint",
+      "matchPackageNames": ["eslint", "typescript-eslint", "@typescript-eslint/**"]
     }
   ]
 }

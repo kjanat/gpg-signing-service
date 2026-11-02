@@ -616,18 +616,11 @@ expect_caught 'mutant: a floating wrangler range is rejected' "${root}" 'has to 
 
 # --- and the typegen gate has to read a resolution, not a declaration ---------
 #
-# scripts/test-typegen-pin.sh compares the workerd in the generated header
-# against bun.lock. Which workerd it reads is the whole question. Reading the
-# one inside wrangler's own dependency map is reading what wrangler *asked for*;
-# the fixtures below are built so that the asked-for and the installed versions
-# differ, which is the only condition under which the two readers disagree.
-#
-# The fixture is a real git repository because the gate reads the committed blob
-# out of the index rather than the worktree -- that is #124's fix, and it is
-# preserved here rather than worked around.
+# scripts/test-typegen-pin.sh reads the resolved workerd out of bun.lock, and a
+# lockfile without one is an error rather than a pass.
 
 typegen_fixture() {
-	local name="$1" declared_workerd="$2" resolved_workerd="$3" header_workerd="$4"
+	local name="$1" declared_workerd="$2" resolved_workerd="$3"
 	local root="${tmp_dir}/typegen/${name}"
 	mkdir -p "${root}/scripts"
 
@@ -651,11 +644,6 @@ typegen_fixture() {
 }
 EOF
 
-	printf '// Runtime types generated with workerd@%s 2026-07-12 nodejs_compat\n' "${header_workerd}" \
-		>"${root}/worker-configuration.d.ts"
-
-	git -C "${root}" init -q
-	git -C "${root}" add -A
 	printf '%s' "${root}"
 }
 
@@ -663,41 +651,9 @@ run_typegen_gate() {
 	TYPEGEN_PIN_ROOT="$1" bash "${repo_root}/scripts/test-typegen-pin.sh" >"$2" 2>&1
 }
 
-new_case 'typegen gate: a fixture whose header matches the resolution passes'
-root="$(typegen_fixture agreeing 1.20260811.1 1.20260811.1 1.20260811.1)"
-if ! run_typegen_gate "${root}" "${tmp_dir}/agreeing.log"; then
-	fail "the gate failed on a consistent fixture: $(cat "${tmp_dir}/agreeing.log")"
-fi
-
-new_case 'typegen gate: a header from another workerd is caught'
-root="$(typegen_fixture drifted 1.20260811.1 1.20260811.1 1.20260101.9)"
-if run_typegen_gate "${root}" "${tmp_dir}/drifted.log"; then
-	fail 'the gate passed a tree whose committed types came from a different workerd'
-elif ! grep -q 'regenerate with' "${tmp_dir}/drifted.log"; then
-	fail "the gate failed for some other reason: $(cat "${tmp_dir}/drifted.log")"
-fi
-
-# The regression this file was extended for. Everything installed is consistent
-# -- workerd 1.20260811.1 is what bun resolved and what wrote the header -- and
-# the only oddity is that wrangler declares a range. A gate reading that range
-# reports "committed with 1.20260811.1 but the lockfile says ^1.20260811.0",
-# which is not a fact about anything: the caret is not a build, no wrangler ever
-# stamped it into a header, and there is nothing the reader could do to make it
-# agree. Worse in the other direction, a range wide enough to spell a version
-# that is not installed would let a genuinely stale artifact through.
-new_case 'typegen gate: a declared range does not manufacture a mismatch'
-root="$(typegen_fixture ranged '^1.20260811.0' 1.20260811.1 1.20260811.1)"
-declared="$(grep -E '^[[:space:]]*"wrangler": \[' "${root}/bun.lock" | sed -nE 's/.*"workerd": ?"([^"]+)".*/\1/p')"
-if [[ ${declared} != '^1.20260811.0' ]]; then
-	fail "the fixture does not actually distinguish the two readers (declared '${declared}')"
-elif ! run_typegen_gate "${root}" "${tmp_dir}/ranged.log"; then
-	fail "the gate read wrangler's declared workerd spec rather than the resolved entry: $(cat "${tmp_dir}/ranged.log")"
-fi
-
 new_case 'typegen gate: a lockfile with no resolved workerd is an error, not a pass'
-root="$(typegen_fixture no-workerd 1.20260811.1 1.20260811.1 1.20260811.1)"
+root="$(typegen_fixture no-workerd 1.20260811.1 1.20260811.1)"
 sed -i -E '/^[[:space:]]*"workerd": \[/d' "${root}/bun.lock"
-git -C "${root}" add -A
 if run_typegen_gate "${root}" "${tmp_dir}/no-workerd.log"; then
 	fail 'the gate passed a lockfile it could not read a workerd out of'
 elif ! grep -q 'no resolved top-level "workerd" entry' "${tmp_dir}/no-workerd.log"; then
