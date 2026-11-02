@@ -305,6 +305,6 @@ describe("API Documentation Routes", () => {
 		// Left at its default, Swagger UI loads an <img> from validator.swagger.io,
 		// which the docs CSP blocks into a broken "Error" image — and which would
 		// hand the spec URL to a third party if it were allowed.
-		expect(await response.text()).toContain("validatorUrl: 'none'");
+		expect(await response.text()).toMatch(/validatorUrl:\s*(["'])none\1/);
 	});
 });

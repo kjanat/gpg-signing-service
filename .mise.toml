@@ -21,7 +21,7 @@ typescript    = { filter_bins = ["tsc"], version = "latest" }
 uv            = "0.13.6"
 
 [tools.wrangler]
-version      = "4.156.0"
+version      = "4.156.1"
 allow_builds = ["esbuild", "sharp", "workerd"]
 
 [tools."github:kjanat/shellcheck-rs"]
