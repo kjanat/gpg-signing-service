@@ -474,7 +474,7 @@ security-scanning:
 
 **2. Dependency Scanning**
 
-- ✅ Dependabot configured (monthly checks)
+- ✅ Renovate configured (3-day release age)
 - ❌ No advisory scanning in CI
 - ❌ No license compliance checking
 
@@ -795,30 +795,26 @@ Deployment: deploy (with prompt)
 
 **Status**: **Implemented (Good)**
 
-**Dependabot Configuration** (`.github/dependabot.yml`):
+**Renovate Configuration** (`renovate.json`):
 
 ```yaml
 Updates:
-├─ bun packages (monthly)
-│  ├─ Dev dependencies grouped
-│  └─ Production dependencies grouped by update type
-├─ Go modules (monthly, /client)
-│  └─ Minor/patch grouped
-└─ GitHub Actions (monthly)
+├─ bun, mise, Go modules, GitHub Actions, gitleaks
+├─ 3-day minimum release age
+├─ Groups: wrangler, bun, gitleaks, Go minor/patch, eslint
+└─ Automerge, except major updates
 ```
 
 **Strengths**:
 
-- ✅ All ecosystems covered (bun, go, actions)
-- ✅ Monthly schedule prevents update fatigue
-- ✅ Intelligent grouping (dev vs prod)
-- ✅ Auto-rebasing enabled
-- ✅ Single open PR per ecosystem
+- ✅ All ecosystems covered (bun, mise, go, actions)
+- ✅ Release age backs off from fast-moving packages
+- ✅ Related packages grouped
+- ✅ Rebased when conflicted
+- ✅ Minor and patch updates automerge
 
 **Gaps**:
 
-- ⚠️ No priority policy for security updates
-- ⚠️ No auto-merge configuration for minor/patch
 - ⚠️ No license compliance checking
 
 ---
@@ -833,7 +829,7 @@ Updates:
 | **Formatting/Linting**        | Implemented | 4/5   | Pre-commit and CI integration solid                        |
 | **Type Safety**               | Implemented | 5/5   | TypeScript strict mode throughout                          |
 | **Secret Scanning**           | Implemented | 4/5   | Gitleaks integrated with good configuration                |
-| **Dependency Management**     | Implemented | 4/5   | Dependabot configured, auto-merge missing                  |
+| **Dependency Management**     | Implemented | 5/5   | Renovate with automerge for minor/patch                    |
 | **Deployment Automation**     | Partial     | 2/5   | Manual safeguards present but basic                        |
 | **Environment Separation**    | Missing     | 0/5   | Critical gap - no staging environment                      |
 | **Pre-Deployment Validation** | Missing     | 0/5   | No health checks or compatibility validation               |
@@ -990,7 +986,7 @@ curl -f https://gpg.kajkowalski.nl/admin/status -H "Authorization: Bearer $ADMIN
 
 **Actions**:
 
-- Enable Dependabot auto-merge for minor/patch
+- Enable Renovate automerge for minor/patch
 - Add security update priority
 
 #### 11. Environment Variable Documentation
@@ -1042,19 +1038,19 @@ curl -f https://gpg.kajkowalski.nl/admin/status -H "Authorization: Bearer $ADMIN
 
 ## Current State vs Best Practices
 
-| Practice                  | Current                | Best Practice                    | Gap              |
-| ------------------------- | ---------------------- | -------------------------------- | ---------------- |
-| CI triggers               | PR + push              | PR + push + scheduled            | Minor            |
-| Job parallelization       | 5 jobs parallel        | Excellent                        | None             |
-| Test coverage enforcement | 95% threshold          | Good                             | Minor (1.4% gap) |
-| Type checking             | TypeScript strict      | Excellent                        | None             |
-| Secret scanning           | Gitleaks only          | + CodeQL, dependency scan        | Major            |
-| Deployment stages         | 1 (production)         | 3+ (preview/staging/prod)        | Major            |
-| Pre-deploy validation     | None                   | Health checks required           | Major            |
-| Post-deploy monitoring    | Minimal                | APM + error tracking             | Major            |
-| Rollback capability       | Manual                 | Automated                        | Major            |
-| Environment separation    | Minimal                | Config per environment           | Major            |
-| Dependency updates        | Monthly via Dependabot | Auto-merge + fast-track security | Minor            |
+| Practice                  | Current            | Best Practice                    | Gap              |
+| ------------------------- | ------------------ | -------------------------------- | ---------------- |
+| CI triggers               | PR + push          | PR + push + scheduled            | Minor            |
+| Job parallelization       | 5 jobs parallel    | Excellent                        | None             |
+| Test coverage enforcement | 95% threshold      | Good                             | Minor (1.4% gap) |
+| Type checking             | TypeScript strict  | Excellent                        | None             |
+| Secret scanning           | Gitleaks only      | + CodeQL, dependency scan        | Major            |
+| Deployment stages         | 1 (production)     | 3+ (preview/staging/prod)        | Major            |
+| Pre-deploy validation     | None               | Health checks required           | Major            |
+| Post-deploy monitoring    | Minimal            | APM + error tracking             | Major            |
+| Rollback capability       | Manual             | Automated                        | Major            |
+| Environment separation    | Minimal            | Config per environment           | Major            |
+| Dependency updates        | Renovate automerge | Auto-merge + fast-track security | Minor            |
 
 ---
 

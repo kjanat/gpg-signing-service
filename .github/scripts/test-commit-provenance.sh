@@ -76,7 +76,6 @@ accepts 'the #167 squash of a Renovate PR' \
 accepts 'an autofix.ci commit pushed to master' \
 	"$(add autofix.txt 'autofix-ci[bot]' '114827586+autofix-ci[bot]@users.noreply.github.com' GitHub noreply@github.com)"
 accepts 'a web editor commit' "$(add web.txt 'Kaj Kowalski' info@kajkowalski.nl GitHub noreply@github.com)"
-accepts 'a dependabot committer' "$(add dependabot.txt 'Kaj Kowalski' info@kajkowalski.nl 'dependabot[bot]' support@github.com)"
 accepts 'a body that talks about Claude and Codex' \
 	"$(human talk.txt $'Skip the Claude review step when the OAuth token is unavailable.\n\nThe codex config moved.')"
 accepts 'prose that quotes a trailer without being one' \
@@ -358,7 +357,7 @@ gate_case refused "github.event_name == 'push' || github.event.deleted == false"
 # part that no longer has to hold. Splitting on `&&` finds A and B here and
 # would accept; refusing a disjunction outright is what catches it, which is
 # why that arm is a refusal rather than a tidiness rule.
-gate_case refused "github.event_name == 'push' && github.event.deleted == false && github.ref_name == 'master' || github.actor == 'dependabot[bot]'"
+gate_case refused "github.event_name == 'push' && github.event.deleted == false && github.ref_name == 'master' || github.actor == 'renovate[bot]'"
 gate_case refused "github.event_name == 'push'"
 gate_case refused 'github.event.deleted == false'
 gate_case refused "github.event_name == 'push' && github.event.deleted != true"

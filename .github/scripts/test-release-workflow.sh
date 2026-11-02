@@ -600,10 +600,8 @@ release_contract_violations() {
 #
 # A GitHub App token has no `workflows` permission, so a hardened file arrives in
 # .github/workflows-pending/ and a human activates it with one `git mv`.
-# Activation is that RENAME — .github/scripts/dependabot-activation.sh already
-# refuses the state where a workflow is live and a copy is still pending, for the
-# reason this function exists: while both files are on disk, only one of them
-# runs, and both look authoritative in review.
+# Activation is that RENAME. While a workflow is live and a copy is still
+# pending, only one of them runs, and both look authoritative in review.
 #
 # A guard that picked the pending copy would report the release path clean while
 # the live publisher — the file that runs if anyone pushes v1.2.1 tomorrow —

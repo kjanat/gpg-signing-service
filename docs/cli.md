@@ -530,7 +530,7 @@ are the jobs that hold `contents: write`, mint OIDC tokens for real signatures,
 and check the provenance of what lands on the default branch; an action
 resolved through a tag is a step someone else can repoint into that position.
 The rest of `.github/workflows/` still uses tags and is not this change's to
-re-pin. Dependabot's `github-actions` ecosystem bumps a SHA-and-comment pin the
+re-pin. Renovate's `github-actions` manager bumps a SHA-and-comment pin the
 same way it bumps a tag.
 
 #### How those assertions read a workflow

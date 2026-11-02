@@ -18,11 +18,6 @@ The deployment operator and Cloudflare infrastructure are trusted with:
 
 There is no HSM, external KMS, per-tenant vault, or operator role model.
 
-This section is about the deployed service. The repository's CI carries a second
-and unrelated trust boundary, between a job that executes a Dependabot pull
-request and a job that can push to its branch. It is described in
-[the Dependabot fix path](dependabot-fix-path.md).
-
 A deployment that opts into the [GitHub App webhook](github-app.md) accepts a
 third: `POST /github/webhook` takes an untrusted JSON payload from an
 unauthenticated network peer, and `X-Hub-Signature-256` is the only thing that

@@ -35,7 +35,7 @@ jobs:
       # OIDC token that mints real signatures, and every step below runs after
       # these: an action whose tag is repointed runs first and with all of it.
       # A tag is a mutable pointer in someone else's repository; a commit is
-      # not. The trailing comment is the readable version and what Dependabot
+      # not. The trailing comment is the readable version and what Renovate
       # bumps — it is a comment, so a step that carries one cannot also be
       # written in the `{ uses: ..., with: ... }` flow form, where the `#`
       # would swallow the rest of the line.

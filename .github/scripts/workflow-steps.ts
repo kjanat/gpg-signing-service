@@ -236,7 +236,7 @@ function runsScript(file: string, only: string | null, scripts: string[]): strin
  * A tag is a mutable pointer in a repository nobody here controls, and these
  * workflows hand the steps that run first `contents: write` and an OIDC token
  * that mints real signatures. `# v7.0.1` after the SHA is what makes it
- * readable and what Dependabot bumps; the SHA is what runs.
+ * readable and what Renovate bumps; the SHA is what runs.
  *
  * `./` resolves in the checked-out workspace. `$/` resolves in the running
  * workflow or action's repository at its own commit and cannot carry a ref

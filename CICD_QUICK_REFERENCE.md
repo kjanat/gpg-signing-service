@@ -29,7 +29,7 @@ LEGEND: ✅ Implemented | ⚠️ Partial | ❌ Missing | 🔄 In Progress
 | ------------------------------------- | ------ | -------------------------------------- | -------- |
 | **Secret Scanning**                   | ✅     | gitleaks with test allowlists          | -        |
 | **Commit Message Validation**         | ✅     | commitlint for conventional commits    | -        |
-| **Dependency Updates**                | ✅     | Dependabot monthly (bun, go, actions)  | -        |
+| **Dependency Updates**                | ✅     | Renovate (bun, mise, go, actions)      | -        |
 | **Code Pattern Analysis (SAST)**      | ❌     | No CodeQL or Snyk                      | **HIGH** |
 | **Dependency Vulnerability Scanning** | ❌     | No npm audit or Go vulnerability check | **HIGH** |
 | **License Compliance Checking**       | ❌     | Not configured                         | Medium   |
@@ -291,7 +291,7 @@ LEGEND: ✅ Implemented | ⚠️ Partial | ❌ Missing | 🔄 In Progress
 - **Production Config**: `wrangler.toml`
 - **Test Config**: `wrangler.test.toml`
 - **Task Automation**: `Taskfile.yml`, `client/Taskfile.yml`
-- **Dependencies**: `.github/dependabot.yml`
+- **Dependencies**: `renovate.json`
 - **Go Linting**: `.golangci.yml`, `client/.golangci.yml`
 
 ### Utilities

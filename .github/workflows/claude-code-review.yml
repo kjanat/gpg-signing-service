@@ -112,21 +112,6 @@ jobs:
             your turn while a background command runs ends the job and kills that
             command. Your review is posted against the commit you started from.
 
-            If this PR was opened by dependabot: don't just review it. Check
-            whether the bump breaks anything (task typecheck, task t, and
-            task c:t if the Go client is affected) and say exactly what broke
-            and what the mechanical repair would be — a renamed API, a changed
-            type, lockfile drift, a client that needs regenerating.
-
-            Diagnose only. This run holds no write authority over a Dependabot
-            branch and never did: GitHub gives a Dependabot-triggered
-            `pull_request` run a read-only GITHUB_TOKEN whatever this file's
-            `permissions:` block says. The repair is made by the separate
-            trusted `workflow_run` path in
-            .github/workflows/claude-dependabot-fix.yml, which computes a fix
-            in a job holding no token and hands it to a job that never runs
-            the branch. Write the diagnosis down and leave the commit to it.
-
       - name: Post the review
         if: env.HAS_CLAUDE_TOKEN == 'true'
         env:

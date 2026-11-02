@@ -37,8 +37,7 @@ live_workflow="${repo_root}/.github/workflows/repair-history.yml"
 # the `dry_run` and `push` defaults, the pinned actions, the `run:` wiring —
 # would go on being made against the staged copy while GitHub dispatches the
 # live one, and each mutation regression would judge a file nobody runs. The
-# sign-commits and dependabot activations both treat this as an error; so does
-# this one. Activation is a rename, not a copy.
+# sign-commits activation treats this as an error; so does this one. Activation is a rename, not a copy.
 if [[ -f "${pending_workflow}" && -f "${live_workflow}" ]]; then
 	echo 'FAIL: repair-history.yml is active AND a copy is still staged in .github/workflows-pending/.' >&2
 	echo '      Everything below would be asserted against the staged copy, not the one that runs.' >&2

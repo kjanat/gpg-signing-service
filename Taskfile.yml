@@ -59,7 +59,6 @@ tasks:
       - task: test:review-gate
       - task: test:review-post
       - task: test:security-license-policy
-      - task: test:dependabot-fix
       - task: test:agent-harness
       - task: test:claude-publication
       - task: test:session-start
@@ -153,11 +152,6 @@ tasks:
     aliases: [tslp]
     cmd: bash .github/scripts/test-security-license-policy.sh
 
-  test:dependabot-fix:
-    desc: Test the trusted Dependabot write path's authorization, allowlist and privilege boundary
-    aliases: [dbf]
-    cmd: bash .github/scripts/test-dependabot-fix.sh
-
   test:agent-harness:
     desc: Test the @claude agent-mode harness's owner gate, ref selection and publishing guards
     aliases: [ah]
@@ -239,7 +233,6 @@ tasks:
       - task: test:review-gate
       - task: test:review-post
       - task: test:security-license-policy
-      - task: test:dependabot-fix
       - task: test:agent-harness
       - task: test:claude-publication
       - task: test:session-start

@@ -28,7 +28,7 @@ The GPG Signing Service has **solid foundational CI/CD** with:
    - gitleaks scanning prevents secret commits
    - Proper OIDC token usage for CI/CD
    - Test file allowlists for intentional fixtures
-   - Dependabot configured for all ecosystems
+   - Renovate configured for all ecosystems
 
 4. **Solid Infrastructure Foundation**
    - Cloudflare Workers with Durable Objects

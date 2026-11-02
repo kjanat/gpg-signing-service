@@ -114,7 +114,7 @@ parts.
 
 **It runs no code it has not pinned.** Every external action is resolved by
 full commit SHA, with the version as a trailing comment for readability and for
-Dependabot. A tag would be a mutable pointer in a repository this project does
+Renovate. A tag would be a mutable pointer in a repository this project does
 not control, one repoint away from running inside the artifact publisher.
 
 **It holds exactly `contents: write`.** Not `id-token:`, not `packages:` — a
