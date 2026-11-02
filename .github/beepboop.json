@@ -15,11 +15,6 @@
           "file": "release.yml",
           "mode": "observe",
           "ref": "refs/tags/v*"
-        },
-        "retry": {
-          "file": "release.yml",
-          "mode": "observe",
-          "required": false
         }
       }
     }
