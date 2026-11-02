@@ -171,8 +171,9 @@ func committerEmail(raw []byte) (string, error) {
 // Both edits are go-git's own: EncodeWithoutSignature drops every signature
 // spelling, and the parents move by mutating ParentHashes ahead of it. That is
 // only a faithful rewrite because this module builds against
-// github.com/kjanat/go-git/v6, the fork carrying go-git/go-git#2328, which decodes a commit's headers wherever they sit and
-// replays the bytes it did not change. Released go-git does neither: it reads
+// github.com/kjanat/go-git/v6, the fork carrying go-git/go-git#2328, which
+// decodes a commit's headers wherever they sit and replays the bytes it did
+// not change. Released go-git does neither: it reads
 // the author and committer from their canonical slots alone, so any header
 // interposed before or between them re-encodes as "author  <> 0 +0000", and it
 // normalizes what it did decode — an ident with no space before the date loses

@@ -32,10 +32,10 @@
 // That keeps every byte git wrote and this run did not deliberately change,
 // but only against github.com/kjanat/go-git/v6, the go-git fork carrying
 // go-git/go-git#2328, which decodes headers wherever git put them and replays
-// the ones a rewrite did not touch. Released go-git normalizes idents it re-encodes and reads an
-// author or committer outside its canonical slot as empty, so the same rewrite
-// there would move dates and drop names git itself reads back without
-// complaint.
+// the ones a rewrite did not touch. Released go-git normalizes idents it
+// re-encodes and reads an author or committer outside its canonical slot as
+// empty, so the same rewrite there would move dates and drop names git itself
+// reads back without complaint.
 //
 // The Go library this repository publishes is
 // [github.com/kjanat/gpg-signing-service/client/pkg/client], which asks nothing
