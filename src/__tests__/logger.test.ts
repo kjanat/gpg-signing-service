@@ -1,25 +1,28 @@
 import type { Context } from "hono";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { HEADERS } from "#types";
+import { Logger, logger } from "#utils/logger";
 
 // Tests for development mode logging
 describe("Logger - Development Mode", () => {
 	let consoleLogSpy: ReturnType<typeof vi.spyOn>;
-	let devLogger: typeof import("#utils/logger").logger;
+	let devLogger: Logger;
 
-	beforeEach(async () => {
-		// Set development mode before importing
+	beforeAll(() => {
 		process.env.NODE_ENV = "development";
-		// Clear module cache to reload with new environment
-		vi.resetModules();
+		devLogger = new Logger();
+	});
+
+	afterAll(() => {
+		process.env.NODE_ENV = "test";
+	});
+
+	beforeEach(() => {
 		consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-		({ logger: devLogger } = await import("#utils/logger"));
 	});
 
 	afterEach(() => {
 		consoleLogSpy.mockRestore();
-		vi.resetModules();
-		process.env.NODE_ENV = "test";
 	});
 
 	it("should log debug messages in development mode", async () => {
@@ -120,12 +123,8 @@ describe("Logger - Development Mode", () => {
 // Tests for production mode logging
 describe("Logger", () => {
 	let consoleLogSpy: ReturnType<typeof vi.spyOn>;
-	let logger: typeof import("#utils/logger").logger;
 
-	beforeEach(async () => {
-		// Import in production mode
-		const loggerModule = await import("#utils/logger");
-		logger = loggerModule.logger;
+	beforeEach(() => {
 		consoleLogSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 	});
 
