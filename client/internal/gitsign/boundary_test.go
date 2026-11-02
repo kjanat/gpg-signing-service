@@ -19,30 +19,18 @@ import (
 	"testing"
 )
 
-// This package is only byte-faithful against the go-git the module's replace
-// directive selects, and a replace directive stops at the module that writes
-// it: Go ignores the directives of a module it merely depends on. An external
-// module importing this package would therefore resolve the stock go-git named
-// on the require line and reparent through the encoder that empties idents and
-// moves dates — the exact damage TestUnsignedObjectNeedsThePinnedFork spells
-// out, except silently, in someone else's history.
-//
-// Nothing in a comment prevents that. What prevents it is the directory: Go
-// refuses an import of a path with an "internal" element from outside the
-// subtree rooted at its parent, and refuses it in the compiler rather than in a
-// review. These tests hold the parts of that arrangement the compiler cannot
-// hold on its own — the path that makes the rule apply, the absence of a
-// documented package that would hand the same code out anyway, and the absence
-// of one that skips this package and reaches for go-git itself.
+// This package is only byte-faithful against github.com/kjanat/go-git/v6, the
+// go-git fork carrying go-git/go-git#2328. Released go-git compiles against the
+// same code and reparents through the encoder that empties idents and moves
+// dates, the damage TestUnsignedObjectNeedsThePinnedFork spells out. These tests
+// keep released go-git out of go.mod and out of every published package.
 
-// The module the replace directive redirects, named once for the two guards
-// that turn on it: the one that keeps it out of the published packages, and the
-// one that reads the directive out of go.mod.
+// Released go-git, named once for the guards that keep it out.
 const goGitModule = "github.com/go-git/go-git/v6"
 
-// moduleRoot returns the client module's directory and its module path, found
-// by walking up from this file to the go.mod that declares it.
-func moduleRoot(t *testing.T) (dir, module string) {
+// moduleRoot returns the client module's directory, found by walking up from
+// this file to the go.mod that declares it.
+func moduleRoot(t *testing.T) string {
 	t.Helper()
 
 	_, file, _, ok := runtime.Caller(0)
@@ -57,8 +45,8 @@ func moduleRoot(t *testing.T) (dir, module string) {
 		raw, err := os.ReadFile(manifest)
 		if err == nil {
 			for line := range strings.Lines(string(raw)) {
-				if path, found := strings.CutPrefix(strings.TrimSpace(line), "module "); found {
-					return at, strings.TrimSpace(path)
+				if strings.HasPrefix(strings.TrimSpace(line), "module ") {
+					return at
 				}
 			}
 			t.Fatalf("%s declares no module path", manifest)
@@ -69,31 +57,6 @@ func moduleRoot(t *testing.T) (dir, module string) {
 			t.Fatalf("no go.mod above %s", file)
 		}
 		at = parent
-	}
-}
-
-// The import path has to carry an "internal" element, because that element is
-// the whole mechanism. Moving this package back under pkg/ would compile, pass
-// every other test in this file's directory, and reopen the hole in one commit.
-func TestGitsignIsImportableOnlyInsideThisModule(t *testing.T) {
-	dir, module := moduleRoot(t)
-
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller could not name this test file")
-	}
-	relative, err := filepath.Rel(dir, filepath.Dir(file))
-	if err != nil {
-		t.Fatalf("locating this package under %s: %v", dir, err)
-	}
-
-	path := module + "/" + filepath.ToSlash(relative)
-	elements := strings.Split(path, "/")
-	if !slices.Contains(elements, "internal") {
-		t.Errorf("this package is importable as %q, which any module may import; "+
-			"it is faithful only under the go.mod replace directive, which does not "+
-			"reach a module that depends on this one, so it belongs beneath an "+
-			"\"internal\" directory where the compiler refuses that import", path)
 	}
 }
 
@@ -160,77 +123,45 @@ func eachPublishedImport(t *testing.T, dir string, check func(where, imported st
 	}
 }
 
-// An internal package that a documented one re-exports is not internal in any
-// sense that matters. pkg/ is what this repository publishes as a Go library —
-// pkg/client is the SDK the docs point at, pkg/api the generated transport —
-// and neither has any business reaching in here.
-func TestNoPublishedPackageReExportsGitsign(t *testing.T) {
-	dir, module := moduleRoot(t)
-	forbidden := module + "/internal/gitsign"
-
-	eachPublishedImport(t, dir, func(where, imported string) {
-		if imported != forbidden {
-			return
-		}
-		t.Errorf("%s imports %s; a package under pkg/ is part of this "+
-			"repository's published Go surface, and re-exporting the "+
-			"reparenting code through it hands a downstream build the "+
-			"stock go-git this package cannot be trusted on", where, forbidden)
-	})
-}
-
-// The import cycle and the internal rule between them make the re-export above
-// hard to write by accident. Going around this package is not: a published
-// pkg/rewrite that imports plumbing/object and reparents commits itself needs
-// nothing from here, compiles against the fork inside this module because the
-// replace directive is this module's, and resolves the stock go-git named on
-// the require line for everyone who depends on this one. Same lost idents, same
-// moved dates, no internal path anywhere in the failure.
-//
-// So the guard is on the dependency rather than on the route to it: no
-// published package imports go-git, at the module root or any path beneath it.
-// The fork is a private build detail of this module, and pkg/client — the SDK
-// the docs point at — asks nothing of go-git to begin with.
+// A published pkg/rewrite that imports released go-git's plumbing/object and
+// reparents commits itself would compile and lose idents and dates for everyone
+// who uses it. No published package imports released go-git, at the module root
+// or any path beneath it.
 func TestNoPublishedPackageImportsGoGit(t *testing.T) {
-	dir, _ := moduleRoot(t)
+	dir := moduleRoot(t)
 
 	eachPublishedImport(t, dir, func(where, imported string) {
 		if !namesGoGit(imported) {
 			return
 		}
-		t.Errorf("%s imports %s; go-git is byte-faithful here only through the "+
-			"go.mod replace directive, which a module depending on this one "+
-			"does not inherit, so a published package that names go-git "+
-			"directly builds against stock go-git downstream — move the code "+
-			"that needs it under internal/, where the compiler keeps it in", where, imported)
+		t.Errorf("%s imports %s, released go-git, which re-encodes commits "+
+			"unfaithfully; import github.com/kjanat/go-git/v6 instead", where, imported)
 	})
 }
 
-// The replace directive itself, named rather than inferred.
-//
-// TestUnsignedObjectNeedsThePinnedFork catches its loss through the damage that
-// follows, which is the check that matters and the one that would survive a
-// rename. This one is cheaper and blunter: it reads the manifest and says which
-// line is missing, so a directive dropped while editing go.mod fails as itself
-// instead of as twelve rewritten commit headers.
-func TestGoModReplacesGoGitWithTheFork(t *testing.T) {
-	dir, _ := moduleRoot(t)
+// TestUnsignedObjectNeedsThePinnedFork catches a swap back to released go-git
+// through the damage that follows. This one reads the manifest and names the
+// line, so an edit to go.mod fails as itself instead of as twelve rewritten
+// commit headers.
+func TestGoModRequiresTheFork(t *testing.T) {
+	dir := moduleRoot(t)
 
 	// #nosec G304 -- dir is the module root moduleRoot just walked to.
 	raw, err := os.ReadFile(filepath.Join(dir, "go.mod"))
 	if err != nil {
 		t.Fatalf("reading go.mod: %v", err)
 	}
+	manifest := string(raw)
 
-	// The version is deliberately not asserted: rebasing the fork onto a newer
-	// upstream go-git moves it, and that is maintenance rather than regression.
-	// Which module the build takes go-git from is the invariant.
 	const fork = "github.com/kjanat/go-git/v6"
-	directive := "replace " + goGitModule + " => " + fork + " "
-	if !strings.Contains(string(raw), directive) {
-		t.Errorf("go.mod no longer carries %q; without it this package reparents "+
+	if !strings.Contains(manifest, "\t"+fork+" ") {
+		t.Errorf("go.mod no longer requires %s; without it this package reparents "+
 			"through released go-git, which empties idents it cannot place and "+
-			"re-renders the ones it can", strings.TrimSpace(directive))
+			"re-renders the ones it can", fork)
+	}
+	if strings.Contains(manifest, goGitModule) {
+		t.Errorf("go.mod names %s, released go-git; this module builds against %s alone",
+			goGitModule, fork)
 	}
 }
 
@@ -397,7 +328,7 @@ func hostTarget() releaseTarget {
 func repoRoot(t *testing.T) string {
 	t.Helper()
 
-	dir, _ := moduleRoot(t)
+	dir := moduleRoot(t)
 	for at := dir; ; {
 		if _, err := os.Stat(filepath.Join(at, releaseWorkflow)); err == nil {
 			return at
@@ -498,10 +429,10 @@ func workflowTargets(workflow string) (built, uploaded []string) {
 // TestNoPublishedPackageImportsGoGit above reads the import lines of the files
 // under pkg/ and nothing else, which is one edge of the graph. The hazard is
 // the whole path: a published pkg/client importing an internal wrapper that
-// imports plumbing/object hands a downstream build the stock go-git just as
-// surely as naming it outright, and no file under pkg/ mentions go-git anywhere
-// in that arrangement. So the invariant is on reachability — nothing the
-// published packages can reach, at any depth, is go-git — and it is read out of
+// imports released go-git's plumbing/object reaches it just as surely as
+// naming it outright, and no file under pkg/ mentions go-git anywhere in that
+// arrangement. So the invariant is on reachability — nothing the published
+// packages can reach, at any depth, is released go-git — and it is read out of
 // `go list`, which resolves build tags, cgo, generated files and the module
 // graph the way the build does, rather than out of a second import walker
 // written here that would agree with the compiler only by luck.
@@ -700,21 +631,12 @@ func chainTo(node string, from map[string]string) []string {
 }
 
 // The invariant the direct-import guard states one edge of: nothing reachable
-// from a published package is go-git, and nothing reachable from one is this
-// package either.
-//
-// Both halves matter for the same reason. go-git reached at any depth is stock
-// go-git downstream, because the replace directive that makes it faithful is
-// this module's and stops here. This package reached at any depth is the same
-// dependency wearing an internal path, and an internal wrapper between it and
-// pkg/ changes nothing about what a downstream build resolves — it only moves
-// the evidence out of the files the AST walk reads.
+// from a published package is released go-git, at any depth.
 // Once per released target, because one target's answer is only about that
 // target. Each runs as its own subtest so a failure names the platform in its
 // own right rather than leaving a reader to infer it from a chain.
 func TestNoPublishedPackageDependsOnGoGit(t *testing.T) {
-	dir, module := moduleRoot(t)
-	gitsign := module + "/internal/gitsign"
+	dir := moduleRoot(t)
 
 	for _, target := range releaseTargets {
 		t.Run(target.String(), func(t *testing.T) {
@@ -723,9 +645,7 @@ func TestNoPublishedPackageDependsOnGoGit(t *testing.T) {
 				t.Fatalf("resolving the dependency closure under pkg/ for %s: %v", target, err)
 			}
 
-			chains, unresolved := reaches(roots, graph, func(node string) bool {
-				return namesGoGit(node) || compiledInto(node) == gitsign
-			})
+			chains, unresolved := reaches(roots, graph, namesGoGit)
 			if len(unresolved) > 0 {
 				t.Fatalf("go list described no imports for %d package(s) reachable from pkg/ "+
 					"when built for %s (%s); a graph this search could not finish walking is "+
@@ -735,11 +655,10 @@ func TestNoPublishedPackageDependsOnGoGit(t *testing.T) {
 
 			for _, chain := range chains {
 				t.Errorf("a published package reaches %s when the client is built for %s:\n\t%s\n"+
-					"go-git is byte-faithful here only through the go.mod replace directive, "+
-					"which a module depending on this one does not inherit, so anything under "+
-					"pkg/ that can reach it — through an internal wrapper as much as directly, "+
-					"on one release target as much as on all six — builds against stock go-git "+
-					"downstream",
+					"that is released go-git, which re-encodes commits unfaithfully; anything "+
+					"under pkg/ that can reach it, through an internal wrapper as much as "+
+					"directly, on one release target as much as on all six, needs "+
+					"github.com/kjanat/go-git/v6 instead",
 					chain[len(chain)-1], target, strings.Join(chain, "\n\t  -> "))
 			}
 		})
