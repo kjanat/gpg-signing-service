@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Assert the properties that decide whether a release publishes what it claims:
 # every external action in the release workflow is pinned to an immutable ref,
-# the job holds exactly one permission, the tag it publishes under is the tag it
+# the job holds exactly the permissions it needs, the tag it publishes under is the tag it
 # validated, and that tag is the commit it built.
 #
 #   task test:release-workflow
@@ -34,7 +34,7 @@ validate_script="${repo_root}/.github/scripts/validate-release-tag.sh"
 # permissions it is held to. Written out here rather than derived, because a
 # contract derived from the file it judges is a contract the file can move.
 readonly RELEASE_JOB=release
-readonly RELEASE_PERMISSIONS='{"contents":"write"}'
+readonly RELEASE_PERMISSIONS='{"attestations":"write","contents":"write","id-token":"write"}'
 # The tag check runs from the TOOLING checkout, not from the tree the requested
 # tag supplies. `run:` executes in $GITHUB_WORKSPACE and the release checkout
 # replaced $GITHUB_WORKSPACE with the tag's tree, so `.github/scripts/...` there
@@ -322,8 +322,9 @@ release_contract_violations() {
 	fi
 
 	# Privilege. The job mints the artifacts every consumer installs; anything
-	# past `contents: write` — `id-token:` for an OIDC token, `packages:` for the
-	# registry — is a capability the publish step inherits for free.
+	# past `contents: write` and the `id-token:`/`attestations:` pair the build
+	# provenance attestation needs — `packages:` for the registry — is a
+	# capability the publish step inherits for free.
 	local permissions granted_by
 	permissions="$(jq -cS '.permissions' <<<"${shape}")"
 	granted_by="$(jq -r '.permissionsSource' <<<"${shape}")"
