@@ -37,6 +37,9 @@
       },
     },
   },
+  "trustedDependencies": [
+    "@kprint/kprint",
+  ],
   "overrides": {
     "typescript": "<7",
   },

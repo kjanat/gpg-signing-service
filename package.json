@@ -87,5 +87,6 @@
       ".": "<7"
     }
   },
-  "packageManager": "bun@1.4.4"
+  "packageManager": "bun@1.4.4",
+  "trustedDependencies": ["@kprint/kprint"]
 }
