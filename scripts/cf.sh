@@ -13,6 +13,7 @@ if [ "${WORKERS_CI}" = "1" ]; then
 	mise trust .mise.toml
 	mise install
 	mise exec -- bun install --frozen-lockfile
+	mise exec -- bun run typegen
 else
 	if ! command -v mise >/dev/null 2>&1; then
 		echo "Error: no mise on PATH"

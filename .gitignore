@@ -65,3 +65,4 @@ _*.md
 
 # Python virtual environments
 .venv/
+worker-configuration.d.ts
