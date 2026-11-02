@@ -47,6 +47,11 @@
     {
       "matchUpdateTypes": ["major"],
       "automerge": false
+    },
+    {
+      "matchPackageNames": ["typescript"],
+      "matchManagers": ["bun"],
+      "allowedVersions": "<7"
     }
   ]
 }
