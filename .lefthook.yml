@@ -14,7 +14,7 @@ pre-commit:
 pre-push:
   jobs:
     - { name: typecheck, run: task typecheck }
-    - { name: test coverage, run: "task test:coverage" }
+    - { name: test coverage, run: "env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE task test:coverage" }
 # Validate commit messages
 commit-msg:
   commands: { "lint commit message": { run: "bunx commitlint --edit {1}" } }
