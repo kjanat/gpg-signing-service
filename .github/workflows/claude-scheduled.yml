@@ -16,7 +16,7 @@ jobs:
     permissions: { contents: write, pull-requests: write, issues: write, id-token: write, actions: read }
     steps:
       - { uses: actions/checkout@v7, with: { fetch-depth: 0 } }
-      - { uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195, with: { version: "${{ vars.MISE_VERSION }}" } }
+      - { uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 }
       - { uses: kjanat/install-dprint@v2 }
       - { uses: $/.github/actions/setup-bun, id: bun }
       - { run: runner install }

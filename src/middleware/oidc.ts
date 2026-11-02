@@ -819,14 +819,6 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
 	// required key id, getJWKS will refresh from the network.
 	const jwks = await getJWKS(payload.iss, env, header.kid);
 
-	const matchingKey = jwks.keys.find((key) => key.kid === header.kid);
-	if (!matchingKey) {
-		throw new Error("Key not found");
-	}
-	if (matchingKey.use && matchingKey.use !== "sig") {
-		throw new Error("Key not intended for signatures");
-	}
-
 	const verified = await verifyJwt(token, {
 		algorithms: ["RS256"],
 		key: createJwksKeyResolver(jwks),
@@ -864,6 +856,9 @@ export function mapVerifyFailure(code: VerifyJwtErrorCode): never {
 			throw new Error("Token not yet valid");
 		case "audience_mismatch":
 			throw new Error("Invalid token audience");
+		case "missing_claim":
+		case "invalid_claim":
+			throw new Error("Invalid token claims");
 		default:
 			throw new Error("Invalid token");
 	}

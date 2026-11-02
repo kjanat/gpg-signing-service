@@ -1,15 +1,11 @@
 ---
 name: Check API Changes
 description: Check if the API has changed after running the code generation task
-inputs:
-  mise-version:
-    description: Mise version to install
-    required: true
 runs:
   using: composite
   steps:
     - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
-      with: { working_directory: client, version: "${{ inputs.mise-version }}" }
+      with: { working_directory: client }
     - uses: $/.github/actions/setup-bun
     - shell: bash
       run: task generate:api

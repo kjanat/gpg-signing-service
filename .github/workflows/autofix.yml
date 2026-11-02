@@ -10,6 +10,5 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
-        with: { version: "${{ vars.MISE_VERSION }}" }
       - uses: kjanat/actions@fmt
       - uses: autofix-ci/action@v1

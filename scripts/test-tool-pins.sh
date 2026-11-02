@@ -537,6 +537,16 @@ else
 	fi
 fi
 
+# jdx/mise-action runs `mise install --monorepo` whenever .mise.toml has a
+# [monorepo] table, and mise refuses that flag unless the root config sets
+# monorepo_root = true.
+new_case 'the install every CI job starts with resolves'
+if ! command -v mise >/dev/null 2>&1; then
+	printf '    skip: no mise\n'
+elif ! install_out="$(cd "${repo_root}" && mise install --monorepo --dry-run 2>&1)"; then
+	fail "mise install --monorepo, the first step of every CI job, fails:"$'\n'"${install_out}"
+fi
+
 # --- the mutants --------------------------------------------------------------
 #
 # Each one is the repository with a single deliberate regression applied, and

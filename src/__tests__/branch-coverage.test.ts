@@ -330,6 +330,8 @@ describe("Branch Coverage Helpers", () => {
 			["expired", "Token expired"],
 			["not_yet_valid", "Token not yet valid"],
 			["audience_mismatch", "Invalid token audience"],
+			["missing_claim", "Invalid token claims"],
+			["invalid_claim", "Invalid token claims"],
 			["key_resolution_failed", "Invalid token"],
 		] as const)("maps the %s verification failure to %s", async (code, message) => {
 			const { mapVerifyFailure } = await import("#middleware/oidc");

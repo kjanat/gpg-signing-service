@@ -1553,11 +1553,17 @@ describe("Security Headers Middleware", () => {
 			expect(middlewareFetchMock).not.toHaveBeenCalled();
 		});
 
-		it("serves a token without kid from a cached set holding one key", async () => {
+		it.each([
+			{ name: "an unnamed key", kid: undefined },
+			{ name: "a named key", kid: "sole-issuer-key" },
+		])("serves a token without kid from a cached set holding only $name", async ({ kid }) => {
 			const { publicKey, privateKey } = await generateTestKeyPair();
 			const issuer = "https://token.actions.githubusercontent.com";
 			const jwk = await exportTestJwk(publicKey);
 			jwk.use = "sig";
+			if (kid !== undefined) {
+				jwk.kid = kid;
+			}
 			await env.JWKS_CACHE.put(`jwks:${issuer}`, JSON.stringify({ keys: [jwk] }));
 
 			const token = await new TestJwt({
@@ -1578,6 +1584,65 @@ describe("Security Headers Middleware", () => {
 
 			expect(response.status).toBe(404);
 			expect(middlewareFetchMock).not.toHaveBeenCalled();
+		});
+
+		it("refuses a token without kid when the set holds two usable keys", async () => {
+			const first = await generateTestKeyPair();
+			const second = await generateTestKeyPair();
+			const issuer = "https://token.actions.githubusercontent.com";
+			const keys = await Promise.all(
+				[first, second].map(async ({ publicKey }, index) => ({
+					...(await exportTestJwk(publicKey)),
+					kid: `rotation-${index}`,
+					use: "sig",
+				})),
+			);
+			await env.JWKS_CACHE.put(`jwks:${issuer}`, JSON.stringify({ keys }));
+
+			const token = await new TestJwt({
+				iss: issuer,
+				sub: "repo:user/repo:ref:refs/heads/main",
+				aud: "gpg-signing-service",
+			})
+				.setProtectedHeader({ alg: "RS256" })
+				.setIssuedAt()
+				.setExpirationTime("1h")
+				.sign(first.privateKey);
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(401);
+			expect((await parseJson<{ error: string }>(response)).error).toBe("Key not found");
+		});
+
+		it.each([
+			{ name: "a numeric sub", claims: { sub: 42, iat: Math.floor(Date.now() / 1000) } },
+			{ name: "a string iat", claims: { sub: "repo:user/repo:ref:refs/heads/main", iat: "123" } },
+		])("refuses a correctly signed token with $name as invalid claims", async ({ claims }) => {
+			const { publicKey, privateKey } = await generateTestKeyPair();
+			const issuer = "https://token.actions.githubusercontent.com";
+			const kid = "typed-claims-key";
+			await setupJWKSMock(issuer, kid, publicKey);
+
+			const token = await new TestJwt({ iss: issuer, aud: "gpg-signing-service", ...claims })
+				.setProtectedHeader({ alg: "RS256", kid })
+				.setExpirationTime("1h")
+				.sign(privateKey);
+
+			const response = await makeRequest("/sign", {
+				method: "POST",
+				headers: { Authorization: `Bearer ${token}` },
+				body: "commit data",
+			});
+
+			expect(response.status).toBe(401);
+			const body = await parseJson<{ code: string; error: string }>(response);
+			expect(body.code).toBe("AUTH_INVALID");
+			expect(body.error).toBe("Invalid token claims");
 		});
 
 		it("refetches when the cached entry is not a JWK Set", async () => {

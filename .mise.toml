@@ -1,6 +1,8 @@
 #:schema https://mise.jdx.dev/schema/mise.json
 #:tombi toml-version = "v1.1.0"
 
+monorepo_root = true
+
 [tools]
 actionlint    = "latest"
 biome         = "2.6.4"
