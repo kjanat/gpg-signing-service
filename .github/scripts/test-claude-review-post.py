@@ -88,6 +88,32 @@ class BuildReview(unittest.TestCase):
             ],
         )
 
+    def test_suggestion_holding_a_fence_gets_a_longer_one(self):
+        review, _ = self.build({
+            "summary": "Fence.",
+            "comments": [
+                {
+                    "path": "src/a.ts",
+                    "line": 3,
+                    "body": "Doc.",
+                    "suggestion": "```ts\nx\n```",
+                }
+            ],
+        })
+        self.assertEqual(
+            review["comments"][0]["body"],
+            "Doc.\n\n````suggestion\n```ts\nx\n```\n````",
+        )
+
+    def test_empty_suggestion_deletes_the_lines(self):
+        review, _ = self.build({
+            "summary": "Drop.",
+            "comments": [
+                {"path": "src/a.ts", "line": 3, "body": "Remove.", "suggestion": ""}
+            ],
+        })
+        self.assertEqual(review["comments"][0]["body"], "Remove.\n\n```suggestion\n```")
+
     def test_multi_line_range(self):
         review, _ = self.build({
             "summary": "Range.",

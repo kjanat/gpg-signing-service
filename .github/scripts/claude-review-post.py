@@ -33,7 +33,10 @@ def comment_body(comment):
     suggestion = comment.get("suggestion")
     if suggestion is None:
         return body
-    return f"{body}\n\n```suggestion\n{suggestion.rstrip(chr(10))}\n```"
+    suggestion = suggestion.rstrip("\n")
+    fence = "`" * max([3, *(len(run) + 1 for run in re.findall(r"`+", suggestion))])
+    lines = f"{suggestion}\n" if suggestion else ""
+    return f"{body}\n\n{fence}suggestion\n{lines}{fence}"
 
 
 def build_review(output, files, head):
