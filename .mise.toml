@@ -50,4 +50,4 @@ minimum_release_age_excludes        = [
 idiomatic_version_file_enable_tools = ["go"]
 
 [monorepo]
-config_roots = ["client"]
+config_roots = ["."]
