@@ -5,7 +5,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions: { contents: write, pull-requests: write, issues: write, id-token: write }
     steps:
-      - { uses: actions/checkout@v7, with: { fetch-depth: 0 } }
+      - { uses: actions/checkout@v7, with: { fetch-depth: 0, ref: "${{ github.event.pull_request.head.sha }}", persist-credentials: false } }
       # Decides once, for the whole job, whether this run is going to run Claude
       # at all — the signing setup and the review step below both read
       # HAS_CLAUDE_TOKEN, so the two can never disagree. It is a script rather
@@ -51,13 +51,12 @@ jobs:
       - name: Get the Beepboop token
         id: beepboop
         if: env.HAS_CLAUDE_TOKEN == 'true'
-        uses: kjanat/beepboop/actions/token@40b006edc788eb37b53119691a67866dfbaa590f
+        uses: kjanat/beepboop/actions/token@c0ef01f21a8ae724fc55c7757733fff37ccf4c74
       - name: Push as Beepboop
         if: env.HAS_CLAUDE_TOKEN == 'true'
         env:
           TOKEN: ${{ steps.beepboop.outputs.token }}
         run: |
-          git config --local --unset-all http.https://github.com/.extraheader || true
           git config --local http.https://github.com/.extraheader \
             "AUTHORIZATION: basic $(printf 'x-access-token:%s' "${TOKEN}" | base64 --wrap=0)"
       - name: Run Claude Code Review
@@ -105,10 +104,12 @@ jobs:
             Read the earlier reviews this workflow posted and the commits since,
             and do not repeat a finding that still stands.
 
-            If shit's really simple to solve, then fucking solve it. Push with
-            `git push --no-verify` in the foreground: CI runs the same checks on
-            the pushed commit, and ending your turn while a background command
-            runs ends the job and kills that command.
+            The checkout is the PR's head commit, detached. If shit's really
+            simple to solve, then fucking solve it, and push with
+            `git push --no-verify origin HEAD:${{ github.head_ref }}` in the
+            foreground: CI runs the same checks on the pushed commit, and ending
+            your turn while a background command runs ends the job and kills that
+            command. Your review is posted against the commit you started from.
 
             If this PR was opened by dependabot: don't just review it. Check
             whether the bump breaks anything (task typecheck, task t, and
@@ -130,6 +131,8 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.beepboop.outputs.token }}
           PR: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           OUTPUT: ${{ steps.claude-review.outputs.structured_output }}
         run: python3 .github/scripts/claude-review-post.py
 # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md

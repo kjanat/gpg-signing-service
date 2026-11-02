@@ -132,9 +132,7 @@ class Main(unittest.TestCase):
                 "payload = sys.stdin.read() if '--input' in args else None\n"
                 "with open(os.environ['GH_LOG'], 'a') as log:\n"
                 "    log.write(json.dumps({'args': args, 'payload': payload}) + '\\n')\n"
-                "if args[-3:] == ['repos/o/r/pulls/7', '--jq', '.head.sha']:\n"
-                "    print('headsha')\n"
-                "elif 'repos/o/r/pulls/7/files' in args:\n"
+                "if 'repos/o/r/compare/basesha...headsha' in args:\n"
                 f"    print({json.dumps(json.dumps(FILES[0]))})\n"
                 + (
                     "elif '--input' in args:\n    sys.stderr.write('HTTP 422: line must be part of the diff')\n    sys.exit(1)\n"
@@ -152,6 +150,8 @@ class Main(unittest.TestCase):
                 "GH_LOG": str(log),
                 "OUTPUT": output,
                 "PR": "7",
+                "BASE_SHA": "basesha",
+                "HEAD_SHA": "headsha",
                 "GITHUB_REPOSITORY": "o/r",
                 "GITHUB_STEP_SUMMARY": str(summary),
             }
@@ -183,6 +183,21 @@ class Main(unittest.TestCase):
         self.assertIn("repos/o/r/pulls/7/reviews", posts[0]["args"])
         review = json.loads(posts[0]["payload"])
         self.assertEqual(review["commit_id"], "headsha")
+        reads = [c for c in calls if "--input" not in c["args"]]
+        self.assertEqual(
+            reads,
+            [
+                {
+                    "args": [
+                        "api",
+                        "repos/o/r/compare/basesha...headsha",
+                        "--jq",
+                        ".files[]",
+                    ],
+                    "payload": None,
+                }
+            ],
+        )
         self.assertEqual(review["event"], "COMMENT")
         self.assertEqual([c["line"] for c in review["comments"]], [3])
         self.assertIn("::warning::dropped a comment on src/a.ts:10", done.stdout)

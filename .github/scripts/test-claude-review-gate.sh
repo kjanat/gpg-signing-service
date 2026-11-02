@@ -604,6 +604,16 @@ assert index["Check for Claude token"] < mint < push < index["claude-review"] < 
 )
 for name in ("claude-review", "Post the review"):
     assert steps[index[name]]["env"].get("GH_TOKEN") == token, f"{name} no longer acts as the Beepboop App"
+checkout = next(s for s in steps if s.get("uses", "").startswith("actions/checkout"))
+assert checkout["with"].get("persist-credentials") is False, (
+    "checkout persists GITHUB_TOKEN through an includeIf file, so pushes would send it beside the Beepboop token"
+)
+assert checkout["with"].get("ref") == "${{ github.event.pull_request.head.sha }}", (
+    "the review no longer checks out the PR head it posts against"
+)
+post_env = steps[index["Post the review"]]["env"]
+assert post_env.get("HEAD_SHA") == "${{ github.event.pull_request.head.sha }}", "the review is not posted against the commit Claude reviewed"
+assert post_env.get("BASE_SHA") == "${{ github.event.pull_request.base.sha }}", "the review's diff is not the reviewed commit's"
 APP
 printf '  beepboop token: issued, used to push, post and run gh\n'
 

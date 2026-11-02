@@ -78,13 +78,13 @@ def gh(*args, payload=None):
 
 def main():
     repo, pr = os.environ["GITHUB_REPOSITORY"], os.environ["PR"]
+    base, head = os.environ["BASE_SHA"], os.environ["HEAD_SHA"]
     try:
         output = json.loads(os.environ.get("OUTPUT") or "{}")
-        head = gh("api", f"repos/{repo}/pulls/{pr}", "--jq", ".head.sha").strip()
         files = [
             json.loads(row)
             for row in gh(
-                "api", "--paginate", f"repos/{repo}/pulls/{pr}/files", "--jq", ".[]"
+                "api", f"repos/{repo}/compare/{base}...{head}", "--jq", ".files[]"
             ).splitlines()
             if row
         ]
