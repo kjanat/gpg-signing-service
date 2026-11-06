@@ -22,7 +22,7 @@ uv            = "0.13.7"
 syft          = "latest"
 
 [tools.wrangler]
-version      = "4.156.1"
+version      = "4.156.2"
 allow_builds = ["esbuild", "sharp", "workerd"]
 
 [tools."github:kjanat/shellcheck-rs"]
