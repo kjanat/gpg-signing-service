@@ -417,6 +417,8 @@ export function buildSentryOptions(env: Partial<Env>): CloudflareOptions {
 		// issuer, subject, key id — are attached explicitly as tags instead.
 		// Sentry 11 collects every category below unless it is switched off.
 		dataCollection: SENTRY_DATA_COLLECTION,
+		// Keep transaction events on the path protected by beforeSendTransaction.
+		traceLifecycle: "static",
 		tracesSampleRate: enabled ? tracesSampleRate(env) : 0,
 		...(env.ENVIRONMENT ? { environment: env.ENVIRONMENT } : {}),
 		// Development-only event forwarding, and it bypasses the DSN check. Pinned

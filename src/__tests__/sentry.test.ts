@@ -267,10 +267,11 @@ describe("Sentry option construction", () => {
 		expect(names.filter((name) => name === "Hono")).toHaveLength(1);
 
 		const httpServer = resolved.find((integration) => integration.name === "HttpServer") as {
-			maxRequestBodySize?: string;
+			requestOptions?: { maxRequestBodySize?: string };
 		};
 		// Request bodies carry armored key material on the admin upload route.
-		expect(httpServer.maxRequestBodySize).toBe("none");
+		expect(httpServer.requestOptions?.maxRequestBodySize).toBe("none");
+		expect(buildSentryOptions(configuredEnv).traceLifecycle).toBe("static");
 
 		// `logger.error` is the single capture point; the Hono integration captures nothing.
 		for (const error of [new Error("boom"), Object.assign(new Error("teapot"), { status: 418 }), "thrown"]) {

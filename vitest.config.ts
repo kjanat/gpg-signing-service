@@ -8,6 +8,7 @@ export default defineConfig({
 		}),
 	],
 	test: {
+		setupFiles: ["./src/__tests__/helpers/workerd-vitest-compat.ts"],
 		sequence: { concurrent: false },
 		isolate: true,
 		reporters: process.env.GITHUB_ACTIONS ? ["github-actions", "dot", "junit", "json"] : ["default"], // "dot",
