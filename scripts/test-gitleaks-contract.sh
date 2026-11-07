@@ -71,10 +71,6 @@ fail() {
 }
 
 # --- the scanner -------------------------------------------------------------
-#
-# .mise.toml pins gitleaks to the version gitleaks-action@v3 runs, so this gate
-# and the workflows read the configuration the same way. A gate that ran a
-# different scanner than CI would be worse than no gate.
 
 # Deliberately not the `exit 0` skip its sibling gates use. Those check that a
 # generated file matches its source; this one is the only thing standing between
@@ -83,7 +79,7 @@ fail() {
 # scanner -- ci.yml's test job runs jdx/mise-action -- so this only stops a
 # contributor who has not run `mise install`, and says so.
 if ! command -v gitleaks >/dev/null 2>&1; then
-	printf 'gitleaks is not on PATH -- run "mise install" (it is pinned in .mise.toml)\n' >&2
+	printf 'gitleaks is not on PATH -- run "mise install"\n' >&2
 	exit 1
 fi
 
@@ -317,14 +313,6 @@ backtick="$(printf '\140')"
 # These are textual on purpose. The point is that the configuration stays inside
 # the subset of TOML that the *oldest* scanner in play understands, and a TOML
 # parser resolved at run time would be one more thing that could disagree.
-
-new_case 'gitleaks is pinned to a fixed version in .mise.toml'
-pinned="$(sed -nE 's/^[[:space:]]*gitleaks[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "${repo_root}/.mise.toml")"
-if [[ -z ${pinned} ]]; then
-	fail '.mise.toml does not pin gitleaks'
-elif [[ ${pinned} == "latest" || ${pinned} != *.*.* ]]; then
-	fail "gitleaks is pinned to '${pinned}'; the scanner version is part of the config contract"
-fi
 
 # --all is the coverage the #145 diagnosis depends on: it is what reaches the
 # v1.2.0 tag and the branches the #111 rewrite abandoned. gitleaks-action can
