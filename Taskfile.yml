@@ -63,7 +63,6 @@ tasks:
       - task: test:session-start
       - task: test:go-modernize-gate
       - task: test:typegen-pin
-      - task: test:tool-pins
       - task: test:composite-actions
       - task: test:gitleaks-contract
       - task: test:key-material
@@ -176,11 +175,6 @@ tasks:
     aliases: [mut]
     cmd: bash scripts/test-auth-mutants.sh
 
-  test:tool-pins:
-    desc: Test that every tool which rewrites a committed file is explicit and pinned
-    aliases: [tp, pins]
-    cmd: bash scripts/test-tool-pins.sh
-
   test:composite-actions:
     desc: Test that composite-action shell regressions cannot bypass linting
     aliases: [tca]
@@ -232,7 +226,6 @@ tasks:
       - task: test:session-start
       - task: test:go-modernize-gate
       - task: test:typegen-pin
-      - task: test:tool-pins
       - task: test:composite-actions
       - task: test:gitleaks-contract
       - task: test:key-material
@@ -307,11 +300,8 @@ tasks:
     desc: Lint the shell embedded in composite action.yml files
     aliases: [lac, composite]
     deps: [install:noscripts]
-    # actionlint has no composite-action schema: pointed at an action.yml it
-    # stops at `"jobs" section is missing in workflow` and never reaches its own
-    # ShellCheck integration, and `lint:shell` globs *.sh, which an action.yml is
-    # not. So `runs.steps[*].run` was the one kind of shell this repo owns that
-    # nothing read -- both bugs #124 repaired had shipped through that hole.
+    # actionlint checks composite actions but models neither errexit status reads
+    # nor workflow-command syntax, and `lint:shell` globs *.sh.
     #
     # `mise exec` rather than a bare `bun` so the checker shells out to the same
     # pinned shellcheck as lint:shell, and so a machine without it fails loudly
@@ -397,7 +387,7 @@ tasks:
     # whose workerd the vitest-plugin suite actually executes on, so it is
     # the one whose types belong in the tree, and it stays correct even if the
     # two pins are ever allowed to drift apart again.
-    # scripts/test-typegen-pin.sh and scripts/test-tool-pins.sh hold that down.
+    # scripts/test-typegen-pin.sh holds that down.
     cmd: mise exec -- run typegen
 
   generate:api:

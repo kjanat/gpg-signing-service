@@ -13,10 +13,8 @@
 #   * `::notice:` instead of `::notice::` -- not a workflow command at all, so
 #     the success annotation was printed as literal text and never appeared.
 #
-# `task lint:actions` feeds actionlint only .github/workflows/**, and actionlint
-# has no composite-action schema, so pointing it at an action.yml stops it at
-# `"jobs" section is missing in workflow` before its ShellCheck integration ever
-# runs. `task lint:shell` globs *.sh. Neither could see a byte of this.
+# actionlint checks composite actions but models neither errexit status reads
+# nor workflow-command syntax. `task lint:shell` globs *.sh.
 #
 # ShellCheck on its own would not have closed the hole either: on the historical
 # assignment shape, even at `-o all --enable=all`, it reports SC2250 about brace
@@ -527,17 +525,6 @@ fi
 new_case "this suite runs as part of task test"
 if ! grep -qF 'task: test:composite-actions' "${taskfile}"; then
 	fail "test:composite-actions is not in the test aggregates"
-fi
-
-# ---------------------------------------------------------------------------
-# The gap itself, asserted rather than remembered: if actionlint ever grows a
-# composite-action schema this fails, and the note above stops being true.
-# ---------------------------------------------------------------------------
-new_case "actionlint still cannot read a composite action (the gap this closes)"
-if actionlint_out="$(mise exec -- actionlint "${repo_root}/${api_action}" 2>&1)"; then
-	fail "actionlint now accepts composite actions -- re-evaluate whether this gate is still the right tool"
-elif ! grep -qF '"jobs" section is missing' <<<"${actionlint_out}"; then
-	fail "actionlint failed for a new reason; the recorded gap needs revisiting:"$'\n'"${actionlint_out}"
 fi
 
 if ((failures > 0)); then

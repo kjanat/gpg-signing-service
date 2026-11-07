@@ -8,11 +8,8 @@
 #   * node_modules/.bin/wrangler, pinned by bun.lock and now a *direct*
 #     devDependency rather than a hoisted transitive of vitest-plugin
 #
-# #125 pinned the first to the version the second resolves, so the two channels
-# ship one workerd; scripts/test-tool-pins.sh is what holds that down. This file
-# stays as it was written for #123/#124 -- it does not care what `.mise.toml`
-# says, only that no task regenerates the artifact through anything but the
-# lockfile binary.
+# This file does not care what `.mise.toml` says, only that no task regenerates
+# the artifact through anything but the lockfile binary.
 #
 # `wrangler types` stamps its own workerd into the header of the generated file,
 # so whichever one ran last decides what is in the tree. That is #123: the
@@ -32,11 +29,7 @@
 # needs a network or a wrangler run.
 set -euo pipefail
 
-# A fixture root so the gate itself is testable: scripts/test-tool-pins.sh
-# assembles mutated bun.lock/Taskfile/artifact trees under a temporary git repo
-# and asserts this script actually goes red on each of them. Unset -- which is
-# every real invocation -- it is the repository.
-repo_root="${TYPEGEN_PIN_ROOT:-$(git rev-parse --show-toplevel)}"
+repo_root="$(git rev-parse --show-toplevel)"
 
 failures=0
 case_name=""

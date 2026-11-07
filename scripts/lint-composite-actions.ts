@@ -2,13 +2,9 @@
 /**
  * Lints the shell embedded in composite GitHub Actions (`runs.steps[*].run`).
  *
- * Nothing else in this repo reads that shell. `task lint:actions` feeds
- * actionlint only `.github/workflows/**`, and actionlint has no composite-action
- * schema -- pointed at an `action.yml` it stops at `"jobs" section is missing in
- * workflow` and therefore never reaches its own ShellCheck integration.
- * `task lint:shell` globs `*.sh`, which an `action.yml` is not. So every
- * `run:` block under `.github/actions/` was unchecked, which is how both #124
- * bugs shipped.
+ * actionlint checks composite actions but models neither errexit status reads
+ * nor workflow-command syntax. `task lint:shell` globs `*.sh`, which an
+ * `action.yml` is not.
  *
  * ShellCheck alone would not have caught either of them, which is why this is a
  * checker and not a two-line glob change:
