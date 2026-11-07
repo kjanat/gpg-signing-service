@@ -16,7 +16,7 @@ node          = "26"
 runner-run    = "latest"
 shellcheck    = "latest"
 task          = "latest"
-tombi         = "1.9.9"
+tombi         = "1.10.0"
 typescript    = { filter_bins = ["tsc"], version = "latest" }
 uv            = "0.13.7"
 syft          = "latest"
