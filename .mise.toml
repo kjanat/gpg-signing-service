@@ -4,25 +4,31 @@
 monorepo_root = true
 
 [tools]
-actionlint    = "latest"
-biome         = "2.6.4"
-bun           = "1.4.4"
-gitleaks      = "8.30.1"
+biome         = { prefix = "2.6" }
+bun           = { prefix = "1.4" }
+gitleaks      = { prefix = "8" }
 go            = "latest"
-golangci-lint = "2.15.0"
+golangci-lint = { prefix = "2.15" }
 kprint        = "latest"
 lefthook      = "latest"
 node          = "26"
 runner-run    = "latest"
 shellcheck    = "latest"
 task          = "latest"
-tombi         = "1.10.0"
+tombi         = { prefix = "1" }
 typescript    = { filter_bins = ["tsc"], version = "latest" }
-uv            = "0.13.7"
+uv            = { prefix = "0.13" }
 syft          = "latest"
 
+[tools."http:actionlint"]
+version          = "343"
+url              = 'https://pkg.pr.new/kjanat/actionlint/@kjanat-actionlint/actionlint-{{ os(macos="darwin", windows="win32") }}-{{ arch() }}@{{ version }}'
+format           = "tar.gz"
+strip_components = 1
+bin_path         = "bin"
+
 [tools.wrangler]
-version      = "4.157.0"
+version      = "4.158.0"
 allow_builds = ["esbuild", "sharp", "workerd"]
 
 [tools."github:kjanat/shellcheck-rs"]
@@ -30,7 +36,6 @@ version       = "latest"
 asset_pattern = 'rshellcheck-*-{{ arch(x64="x86_64", arm64="aarch64") }}-{{ os(linux="unknown-linux-musl", macos="apple-darwin", windows="pc-windows-msvc") }}.*'
 
 [tool_alias]
-actionlint = "github:kjanat/actionlint"
 kprint     = "github:kjanat/kprint"
 runner-run = "github:kjanat/runner"
 tombi      = "github:tombi-toml/tombi"
@@ -43,7 +48,6 @@ command = "kprint"
 [settings]
 minimum_release_age_excludes        = [
   "github:Microsoft/TypeScript",
-  "github:kjanat/actionlint",
   "github:kjanat/kprint",
   "github:kjanat/runner",
   "github:kjanat/shellcheck-rs",
