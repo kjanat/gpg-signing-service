@@ -250,7 +250,7 @@ func TestVersionStringDevelopmentDefaults(t *testing.T) {
 }
 
 // TestVersionStringUsesGoBuildInfo is the shipping path. `.github/workflows/
-// release.yml` injects only main.version, so on a downloaded release binary the
+// publish.yml` injects only main.version, so on a downloaded release binary the
 // commit and the build time have to come from what the toolchain stamped — and
 // on a plain `go build` from a checkout, with no ldflags at all, so does
 // everything except the version.
@@ -558,8 +558,8 @@ var (
 		path     string
 		required map[string]bool
 	}{
-		name:     ".github/workflows/release.yml",
-		path:     "../../../.github/workflows/release.yml",
+		name:     ".github/workflows/publish.yml",
+		path:     "../../../.github/workflows/publish.yml",
 		required: map[string]bool{symbolVersion: true},
 	}
 )
@@ -593,7 +593,7 @@ func TestLdflagsTargetDeclaredSymbols(t *testing.T) {
 // every one of them — otherwise the check is a comment that runs.
 func TestLdflagProblemsDetectsDrift(t *testing.T) {
 	const (
-		release   = `LDFLAGS="-s -w -X main.version=${BUILD_TAG#v}"`
+		release   = `go build -C "${MODULE}" -trimpath -ldflags "-s -w -X main.version=${VERSION}" \`
 		developer = `go build -trimpath -o bin/gpg-sign ` +
 			`-ldflags "-s -w -X main.commitHash={{.COMMIT_HASH}} -X main.buildTime={{.BUILD_TIME}} -X main.version={{.VERSION}}"`
 	)
