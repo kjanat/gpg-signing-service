@@ -147,6 +147,26 @@ git cat-file commit HEAD \
 Prefer an expiration and key allowlist when the token is created. See
 [Authentication](authentication.md#service-tokens).
 
+## Cloudflare Workers with a service binding
+
+A Worker on the same account can bind the `Signer` entrypoint:
+
+```toml
+[[services]]
+binding    = "SIGNER"
+service    = "gpg-signing-service"
+entrypoint = "Signer"
+```
+
+`env.SIGNER.identity()` returns the default key's armored public key and primary
+user ID. `env.SIGNER.sign(data, caller)` returns a detached armored signature
+over the exact bytes of `data`. `caller` is the audit subject and rate-limit
+identity, recorded under the issuer `service-binding`.
+
+The binding is the credential and bypasses trusted OIDC subjects and
+service-token key allowlists. Bind it only into Workers that choose what they
+sign.
+
 ## Applying a PGP signature
 
 `gpg-sign sign-commit` performs the reconstruction locally. It walks the

@@ -32,7 +32,7 @@
     "format": "kfmt",
     "format:check": "kprint check",
     "generate:api": "run -s generate:oapigen generate:oapi",
-    "generate:oapi": "cd client && go tool oapi-codegen -config oapi-codegen.yaml openapi.json",
+    "generate:oapi": "go -C client tool oapi-codegen -config oapi-codegen.yaml openapi.json",
     "generate:oapigen": "bun scripts/generate-openapi.ts",
     "generate-key": "bash scripts/generate-key.sh",
     "prepare": "sh ./scripts/cf.sh",

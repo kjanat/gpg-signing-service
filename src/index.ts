@@ -71,6 +71,8 @@ export type KeyStorage = KeyStorageClass;
 export type RateLimiter = RateLimiterClass;
 export type WebhookDeliveries = WebhookDeliveriesClass;
 
+export { Signer } from "#signer";
+
 const app = createOpenAPIApp();
 
 // Global middleware
