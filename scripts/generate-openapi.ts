@@ -2,8 +2,17 @@
 /// <reference types="bun" />
 
 import path from "node:path";
-import app from "#gpg-signing-service";
-import { openApiConfig } from "#lib/openapi";
+
+// Bun cannot load `cloudflare:workers`, which exists only inside workerd.
+Bun.plugin({
+	name: "cloudflare-workers",
+	setup(build) {
+		build.module("cloudflare:workers", () => ({ exports: { WorkerEntrypoint: class {} }, loader: "object" }));
+	},
+});
+
+const { default: app } = await import("#gpg-signing-service");
+const { openApiConfig } = await import("#lib/openapi");
 
 const doc = app.getOpenAPIDocument(openApiConfig);
 
