@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Turn one of the @claude trigger events into one context file and one ref that
+# Turn one of the /beep trigger events into one context file and one ref that
 # is safe to write, or refuse to run.
 #
 # Called by .github/workflows/claude.yml before the edit-only base action.
@@ -49,7 +49,6 @@
 #           WORKFLOW_GITHUB_TOKEN   optional; github.token, hashed (never
 #                                   stored) so claude-agent-guard.sh can prove
 #                                   the session is NOT using it to open PRs
-#           TRIGGER_PHRASE          optional; defaults to @claude
 #           CLAUDE_HARNESS_DIR      optional; defaults to $RUNNER_TEMP/claude-harness
 #           CLAUDE_HARNESS_GH       optional; the gh binary, overridable in tests
 #
@@ -66,7 +65,8 @@ readonly github_output="${GITHUB_OUTPUT-}"
 readonly github_env="${GITHUB_ENV-}"
 readonly runner_temp="${RUNNER_TEMP-}"
 readonly server_url="${GITHUB_SERVER_URL:-https://github.com}"
-readonly trigger_phrase="${TRIGGER_PHRASE:-@claude}"
+# Longest first: the slug strips them in this order.
+readonly trigger_phrases=(/beepboop /beep /boop)
 readonly gh_bin="${CLAUDE_HARNESS_GH:-gh}"
 
 # Annotations go to stdout because that is the stream the runner parses; the
@@ -154,7 +154,7 @@ case "${event_name}" in
 		request_author="$(payload '.issue.user.login')"
 		# The workflow condition accepts the phrase in the title OR the body for
 		# this event, so this check has to accept both or an issue titled
-		# "@claude do X" starts a job that then refuses itself. The body is still
+		# "/beep do X" starts a job that then refuses itself. The body is still
 		# the request; the title only decides whether there is one.
 		trigger_text="${entity_title}"$'\n'"${request_body}"
 		;;
@@ -212,7 +212,7 @@ case "${event_name}" in
 				refuse 'requester may not start this harness' \
 					"${dispatch_requester} holds '${dispatch_permission:-none}' on ${repository}, not write or admin." \
 					'This job holds contents: write, id-token: write and every repository secret.' \
-					'A read-only collaborator commenting @claude must not be able to spend it.'
+					'A read-only collaborator commenting /beep must not be able to spend it.'
 				;;
 		esac
 
@@ -315,9 +315,21 @@ entity_title="$(printf '%s' "${entity_title}" | tr '\r\n\t' '   ')"
 # condition has no comment to look at, so THIS is the only check that the
 # fetched comment is a request at all. A dispatch naming a comment that never
 # invoked the phrase gets no session.
-if ! grep -qiF -- "${trigger_phrase}" <<<"${trigger_text:-${request_body}}"; then
+# A phrase counts at the start of the text or after a space or newline, the
+# rule the workflow if: and src/utils/comment-dispatch.ts also apply.
+invokes_trigger() {
+	local text=" ${1,,}" phrase
+	for phrase in "${trigger_phrases[@]}"; do
+		if [[ ${text} == *" ${phrase}"* || ${text} == *$'\n'"${phrase}"* ]]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+if ! invokes_trigger "${trigger_text:-${request_body}}"; then
 	refuse 'no trigger phrase' \
-		"The ${request_kind} does not contain ${trigger_phrase}, so there is no request to act on." \
+		"The ${request_kind} does not contain ${trigger_phrases[*]}, so there is no request to act on." \
 		'This check and the workflow if: condition must accept the same events. If they' \
 		'disagree, the job starts and then refuses itself, which reads as a broken' \
 		'workflow rather than as a request nobody made.'
@@ -356,17 +368,17 @@ if [[ "${entity_kind}" == 'issue' ]]; then
 
 	# A branch name derived from the issue: it describes the change rather than
 	# who made it, which is what CLAUDE.md asks for, and it is stable across
-	# re-runs so a second @claude on the same issue continues the same branch
+	# re-runs so a second /beep on the same issue continues the same branch
 	# instead of forking a parallel one. Claude may still rename it to a
 	# conventional feat/ or fix/ name before the first push.
 	#
-	# The phrase is stripped first. An issue titled "@claude add retries" is the
+	# The phrase is stripped first. An issue titled "/beep add retries" is the
 	# ordinary way to ask, and slugging it verbatim produces
-	# issue-12-claude-add-retries — vendor branding in a branch name, which is
-	# the one thing CLAUDE.md's branch rule is about.
+	# issue-12-beep-add-retries.
 	title_for_slug="$(printf '%s' "${entity_title}" | tr '[:upper:]' '[:lower:]')"
-	trigger_lower="$(printf '%s' "${trigger_phrase}" | tr '[:upper:]' '[:lower:]')"
-	title_for_slug="${title_for_slug//"${trigger_lower}"/ }"
+	for phrase in "${trigger_phrases[@]}"; do
+		title_for_slug="${title_for_slug//"${phrase}"/ }"
+	done
 
 	slug="$(
 		printf '%s' "${title_for_slug}" \

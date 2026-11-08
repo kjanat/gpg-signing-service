@@ -37,12 +37,12 @@ concurrency:
           github.event.sender.type == 'User' &&
           (
             (github.event_name == 'issues' &&
-              (contains(github.event.issue.body, '@claude') ||
-               contains(github.event.issue.title, '@claude'))) ||
+              ((contains(format(' {0}', github.event.issue.body), ' /beep') || contains(github.event.issue.body, fromJSON('"\n/beep"')) || contains(format(' {0}', github.event.issue.body), ' /boop') || contains(github.event.issue.body, fromJSON('"\n/boop"'))) ||
+               (contains(format(' {0}', github.event.issue.title), ' /beep') || contains(github.event.issue.title, fromJSON('"\n/beep"')) || contains(format(' {0}', github.event.issue.title), ' /boop') || contains(github.event.issue.title, fromJSON('"\n/boop"'))))) ||
             (github.event_name == 'pull_request_review_comment' &&
-              contains(github.event.comment.body, '@claude')) ||
+              (contains(format(' {0}', github.event.comment.body), ' /beep') || contains(github.event.comment.body, fromJSON('"\n/beep"')) || contains(format(' {0}', github.event.comment.body), ' /boop') || contains(github.event.comment.body, fromJSON('"\n/boop"')))) ||
             (github.event_name == 'pull_request_review' &&
-              contains(github.event.review.body, '@claude'))
+              (contains(format(' {0}', github.event.review.body), ' /beep') || contains(github.event.review.body, fromJSON('"\n/beep"')) || contains(format(' {0}', github.event.review.body), ' /boop') || contains(github.event.review.body, fromJSON('"\n/boop"'))))
           )
         )
       ) &&
@@ -61,12 +61,12 @@ jobs:
         github.event.sender.type == 'User' &&
         (
           (github.event_name == 'issues' &&
-            (contains(github.event.issue.body, '@claude') ||
-             contains(github.event.issue.title, '@claude'))) ||
+            ((contains(format(' {0}', github.event.issue.body), ' /beep') || contains(github.event.issue.body, fromJSON('"\n/beep"')) || contains(format(' {0}', github.event.issue.body), ' /boop') || contains(github.event.issue.body, fromJSON('"\n/boop"'))) ||
+             (contains(format(' {0}', github.event.issue.title), ' /beep') || contains(github.event.issue.title, fromJSON('"\n/beep"')) || contains(format(' {0}', github.event.issue.title), ' /boop') || contains(github.event.issue.title, fromJSON('"\n/boop"'))))) ||
           (github.event_name == 'pull_request_review_comment' &&
-            contains(github.event.comment.body, '@claude')) ||
+            (contains(format(' {0}', github.event.comment.body), ' /beep') || contains(github.event.comment.body, fromJSON('"\n/beep"')) || contains(format(' {0}', github.event.comment.body), ' /boop') || contains(github.event.comment.body, fromJSON('"\n/boop"')))) ||
           (github.event_name == 'pull_request_review' &&
-            contains(github.event.review.body, '@claude'))
+            (contains(format(' {0}', github.event.review.body), ' /beep') || contains(github.event.review.body, fromJSON('"\n/beep"')) || contains(format(' {0}', github.event.review.body), ' /boop') || contains(github.event.review.body, fromJSON('"\n/boop"'))))
         )
       )
     runs-on: ubuntu-latest

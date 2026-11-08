@@ -147,7 +147,7 @@ tasks:
     cmd: bash .github/scripts/test-security-license-policy.sh
 
   test:agent-harness:
-    desc: Test the @claude agent-mode harness's owner gate, ref selection and publishing guards
+    desc: Test the /beep agent-mode harness's owner gate, ref selection and publishing guards
     aliases: [ah]
     cmd: bash .github/scripts/test-claude-agent-harness.sh
 
@@ -282,7 +282,7 @@ tasks:
   lint:actions:
     desc: Static-check the GitHub Actions workflows
     aliases: [la, actions]
-    # The @claude workflow is now a hand-written agent-mode harness whose `if:`
+    # The /beep workflow is now a hand-written agent-mode harness whose `if:`
     # is the only thing standing between a public comment and a job holding
     # contents: write and unrestricted Bash. A typo in that expression is a
     # silently-true condition, and no test run reaches it — actionlint does.

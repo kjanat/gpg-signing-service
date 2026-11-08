@@ -663,7 +663,7 @@ function auditDispatch(
 }
 
 /**
- * Start the configured workflow for an `@claude` comment, or explain why not.
+ * Start the configured workflow for a `/beep` comment, or explain why not.
  *
  * The order is the policy and it is chosen so that the cheapest refusals come
  * first: the flag, then the payload, then the budget, then GitHub. An arbitrary

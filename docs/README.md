@@ -15,7 +15,7 @@ implementation disagree.
 | Integrate a CI job                         | [CI integrations](integrations.md)            |
 | Deploy your own instance                   | [Self-hosting](self-hosting.md)               |
 | Understand the trust boundary              | [Security model](security-model.md)           |
-| Understand how the `@claude` job is gated  | [Agent harness](claude-agent-harness.md)      |
+| Understand how the `/beep` job is gated    | [Agent harness](claude-agent-harness.md)      |
 | Sign pushed commits from a GitHub App      | [GitHub App webhook](github-app.md)           |
 | Look up an endpoint                        | [API guide](api.md)                           |
 | Diagnose a failure                         | [Troubleshooting](troubleshooting.md)         |

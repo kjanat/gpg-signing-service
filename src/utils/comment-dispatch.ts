@@ -1,5 +1,5 @@
 /**
- * Turning an `@claude` comment into a workflow run, and the four things that
+ * Turning a `/beep` comment into a workflow run, and the four things that
  * stand between those two facts.
  *
  * The entrypoint this replaces is a native Actions trigger: GitHub raises
@@ -83,20 +83,19 @@ import type { ActorPermission, RepositoryClient } from "#utils/github-repo";
 import { GitHubApiError, RepositoryNotVisibleError } from "#utils/github-repo";
 
 /**
- * The phrase a comment must contain, matched case-insensitively.
+ * The commands a comment must contain, matched case-insensitively at the start
+ * of the comment or after a space or newline.
  *
- * The same string and the same case rule the workflow's own `if:` used, because
- * the two have to agree about what a request is: GitHub expression `contains()`
- * folds case for strings, and `.github/scripts/claude-agent-harness.sh` greps
- * with `-i`. A dispatch path that were stricter would silently drop requests
- * the old entrypoint accepted, which is the failure nobody reports because it
- * looks like the service being down.
- *
- * A constant rather than a var. It is the trigger for one workflow this
- * repository owns, and a configurable trigger phrase is a way for a
- * misconfiguration to make every comment a request.
+ * The workflow's own `if:` and `.github/scripts/claude-agent-harness.sh` apply
+ * the same rule. GitHub expression `contains()` folds case for strings.
  */
-export const TRIGGER_PHRASE = "@claude";
+export const TRIGGER_PHRASES = ["/beep", "/beepboop", "/boop"] as const;
+
+/** Whether `body` invokes one of {@link TRIGGER_PHRASES}. */
+export function invokesTrigger(body: string): boolean {
+	const text = ` ${body.toLowerCase()}`;
+	return TRIGGER_PHRASES.some((phrase) => text.includes(` ${phrase}`) || text.includes(`\n${phrase}`));
+}
 
 /**
  * Dispatch attempts per minute, per authorized `<installation, repository>`.
@@ -312,7 +311,7 @@ export function planCommentDispatch(payload: unknown): CommentPlan {
 	// changing that is a change to what a request *is*, and it belongs with the
 	// workflow that reads the comment rather than with the transport that
 	// forwards it.
-	if (!body.toLowerCase().includes(TRIGGER_PHRASE)) {
+	if (!invokesTrigger(body)) {
 		return { act: false, reason: "no_trigger_phrase" };
 	}
 

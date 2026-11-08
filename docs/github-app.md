@@ -6,7 +6,7 @@ An opt-in endpoint that lets a GitHub App deliver events to this service.
 binds a signing key has the unsigned commits at its tip signed with that key,
 and the branch moved to them. A deployment that opts into it separately also
 publishes a check run saying what the resulting head's signature turned out to
-be. An `issue_comment` invoking `@claude` — separately opt-in again — starts the
+be. An `issue_comment` invoking `/beep` — separately opt-in again — starts the
 configured Claude workflow, once the comment's **author** has been shown to hold
 write access to that repository. Every other event is acknowledged and
 discarded.
@@ -314,9 +314,9 @@ Nothing secret rides along: no signature, no installation token, no key
 material, and no GitHub response body. The states and reasons are values from
 closed sets in this repository, not text from an API response.
 
-## Dispatching `@claude` from a comment
+## Dispatching `/beep` from a comment
 
-A comment on an issue or a pull request that invokes `@claude` used to start the
+A comment on an issue or a pull request that invokes `/beep` used to start the
 Claude workflow through GitHub's own `issue_comment` Actions trigger. It now
 arrives here first: this service authenticates the delivery, authorizes the
 repository, authorizes **the person who wrote the comment**, spends a budget,
@@ -377,7 +377,7 @@ is also what an installation token gets when it cannot see the repository at all
 token still mints in that case, because the installation itself is fine, so this
 lookup is the first place the difference can surface and there is nowhere later
 that it would. Read as one answer they are catastrophic to conflate: an operator
-who narrows an installation by accident would find every `@claude` — the owner's
+who narrows an installation by accident would find every `/beep` — the owner's
 included — answered "the author is not trusted", with the delivery burned
 non-retryably and the audit row pointing at the commenter. So a 404 is followed
 by an independent read of the repository on the same token, and only a visible
@@ -487,7 +487,7 @@ retention window, before the POST is made.
 
 A per-`<installation, repository>` bucket, ten a minute, spent **before** the
 permission lookup — because the lookup is the first GitHub call an arbitrary
-commenter can cause, one per `@claude`-containing comment on a repository where
+commenter can cause, one per `/beep`-containing comment on a repository where
 anybody may comment. The bucket is built entirely from the authorization
 decision, so a payload cannot move itself into a fresh one. It is disjoint from
 the signing budget and from the per-IP meter in front of the whole route, which
@@ -536,7 +536,7 @@ Settings → Developer settings → GitHub Apps → New GitHub App.
   | Nothing (setup check only)                                      | —                                                                                  | —               |
   | [Push signing](#signing-commits-on-push)                        | `Contents: Read and write`                                                         | `Push`          |
   | [Signature check runs](#reporting-the-signature-as-a-check-run) | `Checks: Read and write`                                                           | `Push`          |
-  | [`@claude` dispatch](#dispatching-claude-from-a-comment)        | `Actions: Read and write`, `Issues: Read`, `Pull requests: Read`, `Metadata: Read` | `Issue comment` |
+  | [`/beep` dispatch](#dispatching-beep-from-a-comment)            | `Actions: Read and write`, `Issues: Read`, `Pull requests: Read`, `Metadata: Read` | `Issue comment` |
 
   `ping` is delivered on registration regardless, which is enough to check the
   setup without any of them.

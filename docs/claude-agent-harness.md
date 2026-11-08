@@ -1,4 +1,4 @@
-# The `@claude` implementation harness
+# The `/beep` implementation harness
 
 The workflow owns publication. Claude edits or answers; separate jobs preserve,
 verify, sign and publish its result. This follows the split used by
@@ -64,7 +64,8 @@ through its response or candidate artifact.
 ## Authorization and routing
 
 Native issue/comment/review events require the repository owner, a human
-sender and `@claude` in the relevant event field. The shell harness repeats
+sender and `/beep`, `/beepboop` or `/boop` in the relevant event field, at
+its start or after a space or newline. The shell harness repeats
 these checks. It derives `issue-<number>-<slug>` for an issue, continuing that
 branch if it already exists. An existing PR uses its existing same-repository
 head. Fork heads, closed PRs, default-branch heads and invalid refs are refused.

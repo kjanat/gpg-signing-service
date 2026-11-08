@@ -3,7 +3,7 @@ description: >-
   Configure git so every commit made in this job (including commits made by
   Claude Code) is GPG-signed by our own gpg-signing-service. Dogfooding: the
   service authenticates the workflow via GitHub OIDC, signs the raw commit
-  object, and git attaches the signature — every @claude run doubles as a live
+  object, and git attaches the signature — every /beep run doubles as a live
   integration test of the /sign endpoint.
 
   Requires `id-token: write` on the calling job (the shim mints a fresh OIDC

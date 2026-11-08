@@ -38,9 +38,10 @@ import {
 	authorizeActor,
 	commentDispatchEnabled,
 	dispatchCommentRequest,
+	invokesTrigger,
 	planCommentDispatch,
 	requireDispatchTarget,
-	TRIGGER_PHRASE,
+	TRIGGER_PHRASES,
 } from "#utils/comment-dispatch";
 import { GITHUB_API_ORIGIN, GitHubAppError } from "#utils/github-app";
 import { RepositoryClient } from "#utils/github-repo";
@@ -104,7 +105,7 @@ function commentPayload(
 		},
 		comment: {
 			id: "commentId" in overrides ? overrides.commentId : 5_479_945_207,
-			body: "body" in overrides ? overrides.body : "@claude please do the thing",
+			body: "body" in overrides ? overrides.body : "/beep please do the thing",
 			user: author,
 			...("viaApp" in overrides ? { performed_via_github_app: overrides.viaApp } : {}),
 		},
@@ -149,8 +150,25 @@ describe("planCommentDispatch", () => {
 		// GitHub expression `contains()` folds case and the harness greps with -i.
 		// A dispatch path that were stricter would silently drop requests the old
 		// trigger accepted.
-		expect(planCommentDispatch(commentPayload({ body: "@CLAUDE do it" })).act).toBe(true);
-		expect(TRIGGER_PHRASE).toBe("@claude");
+		expect(planCommentDispatch(commentPayload({ body: "/BEEP do it" })).act).toBe(true);
+	});
+
+	it.each([...TRIGGER_PHRASES])("accepts %s at the start, after a space and on a later line", (phrase) => {
+		for (const body of [`${phrase} do it`, `please ${phrase}`, `context\r\n${phrase} go`]) {
+			expect(planCommentDispatch(commentPayload({ body })).act).toBe(true);
+		}
+	});
+
+	it("ignores a command inside a word or a URL path", () => {
+		for (const body of [
+			"see https://github.com/apps/beepboop-by-kjanat",
+			"kjanat/beepboop#10",
+			"x/boop",
+			"@claude do it",
+		]) {
+			expect(invokesTrigger(body)).toBe(false);
+			expect(planCommentDispatch(commentPayload({ body }))).toEqual({ act: false, reason: "no_trigger_phrase" });
+		}
 	});
 
 	it("refuses a comment written by a bot", () => {
@@ -1162,7 +1180,7 @@ describe("through the endpoint", () => {
 			payload: commentPayload({
 				author: bot,
 				sender: bot,
-				body: "**Claude finished @kjanat's task** — see @claude above",
+				body: "**Claude finished @kjanat's task** — see /beep above",
 				viaApp: { id: 1, slug: "claude" },
 			}),
 		});
@@ -1455,7 +1473,7 @@ describe("through the endpoint", () => {
 		const bot = { login: "claude", type: "Bot" };
 
 		await deliverComment({
-			payload: commentPayload({ author: bot, sender: bot, body: "@claude done", viaApp: { id: 1, slug: "claude" } }),
+			payload: commentPayload({ author: bot, sender: bot, body: "/beep done", viaApp: { id: 1, slug: "claude" } }),
 		});
 
 		const row = await env.AUDIT_DB.prepare(

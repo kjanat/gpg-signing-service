@@ -705,6 +705,7 @@ class WorkflowTests(unittest.TestCase):
             {
                 "contains": lambda value, search: search.lower() in value.lower(),
                 "format": lambda template, value: template.format(value),
+                "fromJSON": lambda value: json.loads(value, strict=False),
             },
         )
 
@@ -725,7 +726,7 @@ class WorkflowTests(unittest.TestCase):
                 "github.event.sender.type": "User",
                 "github.event_name": "issues",
                 "github.event.issue.number": 163,
-                "github.event.issue.body": "@claude implement",
+                "github.event.issue.body": "/beep implement",
                 "github.run_id": 100,
             }
             self.assertTrue(self.expression(gate, values))
@@ -737,6 +738,11 @@ class WorkflowTests(unittest.TestCase):
                     "github.event.comment.body": "Published abc in #164.",
                 },
                 {"github.event.issue.body": "Question without mention"},
+                {"github.event.issue.body": "@claude implement"},
+                {
+                    "github.event.issue.body": "https://github.com/apps/beepboop-by-kjanat"
+                },
+                {"github.event.issue.body": "kjanat/beepboop#10 x/boop"},
                 {"github.actor": "outsider"},
             ):
                 event = dict(values, **override)
@@ -744,6 +750,25 @@ class WorkflowTests(unittest.TestCase):
                 self.assertEqual(self.expression(group, event), "claude-noop-100")
                 event["github.run_id"] = 101
                 self.assertEqual(self.expression(group, event), "claude-noop-101")
+
+    def test_gate_accepts_each_command_where_the_harness_does(self):
+        for workflow in self.workflows:
+            gate = workflow["jobs"]["edit"]["if"]
+            for body in (
+                "/beep go",
+                "/BEEPBOOP go",
+                "please /boop",
+                "context\r\n/beepboop go",
+            ):
+                with self.subTest(workflow=workflow["name"], body=body):
+                    values = {
+                        "github.actor": "owner",
+                        "github.repository_owner": "owner",
+                        "github.event.sender.type": "User",
+                        "github.event_name": "pull_request_review",
+                        "github.event.review.body": body,
+                    }
+                    self.assertTrue(self.expression(gate, values))
 
     def test_pending_dispatch_uses_requested_entity_queue(self):
         pending = next(

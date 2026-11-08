@@ -47,7 +47,7 @@ against GitHub, by reading its repository permission, and must hold `write` or
 `COLLABORATOR` for a read-only collaborator. Every answer that is not an
 unambiguous grant — including a lookup that could not be made at all, and one
 that answers about a different login — refuses. See
-[dispatching `@claude` from a comment](github-app.md#dispatching-claude-from-a-comment).
+[dispatching `/beep` from a comment](github-app.md#dispatching-beep-from-a-comment).
 
 An allowlisted pair may additionally bind one signing key, and that binding is
 the opt-in for one of the things a delivery can now cause: a `push` to such a
@@ -678,7 +678,7 @@ Before relying on the service for protected production branches, account for:
   independent repository read on the same token. Only a visible repository makes
   it a settled refusal; an invisible or unanswerable one fails closed, stays
   redeliverable, and is audited as `repository_not_visible`. See
-  [dispatching Claude from a comment](github-app.md#dispatching-claude-from-a-comment);
+  [dispatching Claude from a comment](github-app.md#dispatching-beep-from-a-comment);
 - webhook replay protection bounded by a retention window: a delivery captured
   and replayed after it expires from the ledger is accepted again. No
   TTL-based deduplication can prevent that — the signature carries no timestamp
