@@ -1,5 +1,6 @@
 name: CI
 on: { push: &Master { branches: [master] }, pull_request: *Master }
+permissions: { contents: read }
 
 jobs:
   verify-api: {
