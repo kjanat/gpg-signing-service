@@ -74,7 +74,7 @@
     "@vitest/snapshot": "5.1.0",
     "eslint": "10.14.0",
     "jiti": "2.7.0",
-    "jose": "6.2.16",
+    "jose": "6.2.17",
     "typescript": "<7",
     "typescript-eslint": "8.72.1",
     "vitest": "5.1.0",
