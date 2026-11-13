@@ -28,7 +28,7 @@ strip_components = 1
 bin_path         = "bin"
 
 [tools.wrangler]
-version      = "4.159.0"
+version      = "4.160.0"
 allow_builds = ["esbuild", "sharp", "workerd"]
 
 [tools."github:kjanat/shellcheck-rs"]
