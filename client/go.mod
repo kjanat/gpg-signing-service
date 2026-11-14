@@ -6,7 +6,7 @@ require (
 	github.com/ProtonMail/go-crypto v1.5.2
 	github.com/getkin/kin-openapi v0.153.0
 	github.com/kjanat/go-git/v6 v6.0.0-kjanat.2
-	github.com/oapi-codegen/runtime v1.8.0
+	github.com/oapi-codegen/runtime v1.9.0
 	github.com/spf13/cobra v1.10.2
 )
 
