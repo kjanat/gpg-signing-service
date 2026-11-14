@@ -154,12 +154,13 @@ See [CI integrations](integrations.md) for safe boundaries and examples.
 ## Release and install flow
 
 ```text
-v*.*.* tag
-  └─ release workflow cross-builds binaries
+approved Beepboop release
+  └─ publish.yml cross-builds binaries at the approved commit
        ├─ linux: amd64, arm64
        ├─ macOS: amd64, arm64
        ├─ Windows: amd64, arm64
-       └─ checksums.txt
+       ├─ checksums.txt, SBOM, attestations
+       └─ signed v*.*.* tag, then the release is published
 
 consumer workflow
   └─ root composite action

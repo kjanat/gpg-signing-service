@@ -108,53 +108,30 @@ warning-only checksum fallback.
 
 ### How the assets you download are built
 
-The job that produces them is the `release` job of
-`.github/workflows/release.yml`, and the contract it is held to has three
-parts.
+[Beepboop](https://beepboop.kjanat.dev) releases this repository. After the
+maintainer approves a release, Beepboop dispatches
+`.github/workflows/publish.yml` at the approved commit:
 
-**It runs no code it has not pinned.** Every external action is resolved by
-full commit SHA, with the version as a trailing comment for readability and for
-Renovate. A tag would be a mutable pointer in a repository this project does
-not control, one repoint away from running inside the artifact publisher.
+- `build-gpg-sign` builds one asset per platform with `CGO_ENABLED=0`,
+  `-trimpath` and `-X main.version=<version>`.
+- `publish` writes `checksums.txt` and generates
+  `gpg-signing-service.spdx.json`. It attests build provenance and the SBOM for
+  every file in `checksums.txt`, then uploads the files to the draft release.
+- Beepboop signs the version tag with this service's key. `publish-refs` writes
+  the tag and checks it with `git verify-tag`, and `publish-release` publishes
+  the release. Beepboop completes the release only when GitHub reports the tag
+  as verified.
 
-**It holds exactly `contents: write`.** Not `id-token:`, not `packages:` — a
-publish step inherits every permission the job was granted.
+The workflow references most actions by major-version tag, such as
+`actions/checkout@v7`. `anchore/sbom-action` is pinned by commit SHA because it
+downloads and runs syft in the job that holds the release's write tokens.
 
-**It publishes only the commit its tag already names.** The requested tag is
-one expression spent in three places: it selects the checkout `ref`, it is the
-`RELEASE_TAG` that `validate-release-tag.sh` validates, and it is the `tag_name`
-the release is published under. That script runs before the build and refuses
-unless `<tag>^{commit}` equals `HEAD`, which is what makes the manual
-`workflow_dispatch(tag: vX.Y.Z)` path safe: on that path the tag is an operator
-string and nothing else in the job re-reads the object. The step creates, moves
-and fetches nothing — a tag that is not already in the checkout is a refusal.
+Check a downloaded binary and its tag:
 
-**The tag check does not come from the tag.** A `run:` step executes in
-`$GITHUB_WORKSPACE`, and the checkout above it replaced `$GITHUB_WORKSPACE` with
-the requested tag's tree — so a script named there is a file the published tag
-has to supply, and every tag cut before this workflow landed supplies none. The
-job therefore checks out twice: the requested tag into the workspace, and
-`github.workflow_sha` — the commit this workflow file itself came from — into
-`.release-tooling/`, with the same pinned `actions/checkout` and the same
-`persist-credentials: false`. The validator runs as
-`.release-tooling/.github/scripts/validate-release-tag.sh` and reads the objects
-of the release workspace, which is still the working directory. Two consequences,
-both intended: `workflow_dispatch(tag:)` can publish a tag older than the check,
-and the code deciding whether a ref is safe is never code that ref supplied.
-
-A step being present is not the same as a step being effective, so the tag
-check is also held to running: no `if:`, no `continue-on-error:`, after the
-tooling checkout, ahead of the publish step, and executed by the same step that
-is handed `RELEASE_TAG`. Each of those is a shape that parses exactly like a
-working guard and validates nothing.
-
-All of it is asserted rather than reviewed, by `task test:release-workflow`,
-over a real YAML parse rather than a line scan — and over _every_ copy of the
-workflow in the tree, including any staged in `.github/workflows-pending/`
-awaiting a maintainer's `git mv`. Activation is a rename, so while two files
-claim to be the release workflow the suite holds both to the contract and stays
-red until the live one meets it. A hardened copy that has not been activated
-cannot report the file that actually publishes clean.
+```bash
+gh attestation verify gpg-sign-linux-amd64 --repo kjanat/gpg-signing-service
+git verify-tag v1.2.0
+```
 
 ## Supported assets
 

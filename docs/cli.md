@@ -542,9 +542,7 @@ dispatch input default to — is answered by
 `.github/scripts/workflow-steps.ts`, a real YAML parse using the `yaml` package
 this repository already depends on. `.github/scripts/workflow-steps.sh` is the
 shell entry point the suites source, and `task test:workflow-steps` is the
-parser's own adversarial suite. The release suite reads `release.yml` through
-the same parser, so there is one answer to "what does this step run" rather than
-one per suite.
+parser's own adversarial suite.
 
 It is a parse rather than a `grep` because valid workflow spellings defeat a
 line scanner, in the direction that matters:

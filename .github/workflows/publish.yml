@@ -1,0 +1,164 @@
+name: Publish packages
+on:
+  workflow_dispatch:
+    inputs:
+      beepboop_execution_id:
+        description: Beepboop execution
+        required: true
+        type: string
+      beepboop_title:
+        description: Beepboop run title
+        required: false
+        type: string
+jobs:
+  begin:
+    name: Begin promote
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      context: ${{ steps.beepboop.outputs.context }}
+      execution-id: ${{ steps.beepboop.outputs.execution-id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: kjanat/beepboop/actions/begin@v1
+        id: beepboop
+        with:
+          execution-id: ${{ inputs.beepboop_execution_id }}
+          stream: main
+          operation: promote
+  build-gpg-sign:
+    name: Build gpg-sign (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: begin
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            asset: gpg-sign-linux-amd64
+          - goos: linux
+            goarch: arm64
+            asset: gpg-sign-linux-arm64
+          - goos: darwin
+            goarch: amd64
+            asset: gpg-sign-darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            asset: gpg-sign-darwin-arm64
+          - goos: windows
+            goarch: amd64
+            asset: gpg-sign-windows-amd64.exe
+          - goos: windows
+            goarch: arm64
+            asset: gpg-sign-windows-arm64.exe
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ fromJSON(needs.begin.outputs.context).sourceSha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: client/go.mod
+          cache-dependency-path: client/go.sum
+      - id: asset
+        name: Name the release asset
+        shell: bash
+        env:
+          VERSION: ${{ fromJSON(needs.begin.outputs.context).version }}
+          TEMPLATE: ${{ matrix.asset }}
+        run: |
+          mkdir -p dist
+          echo "name=${TEMPLATE//\{version\}/${VERSION}}" >> "${GITHUB_OUTPUT}"
+      - name: Build gpg-sign
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          MODULE: client
+          PACKAGE: ./cmd/gpg-sign
+          VERSION: ${{ fromJSON(needs.begin.outputs.context).version }}
+          ASSET: ${{ steps.asset.outputs.name }}
+        run: |
+          go build -C "${MODULE}" -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
+            -o "${GITHUB_WORKSPACE}/dist/${ASSET}" "${PACKAGE}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.asset.outputs.name }}
+          path: dist/${{ steps.asset.outputs.name }}
+          if-no-files-found: error
+  publish:
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    runs-on: ubuntu-latest
+    needs:
+      - begin
+      - build-gpg-sign
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: kjanat/beepboop/actions/begin@v1
+        id: beepboop
+        with:
+          execution-id: ${{ inputs.beepboop_execution_id }}
+          stream: main
+          operation: promote
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ fromJSON(steps.beepboop.outputs.context).sourceSha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Write checksums
+        shell: bash
+        working-directory: dist
+        run: |
+          sha256sum -- * > checksums.txt
+      - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: dist
+          format: spdx-json
+          output-file: dist/${{ github.event.repository.name }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - uses: actions/attest@v4
+        with:
+          subject-checksums: dist/checksums.txt
+      - uses: actions/attest@v4
+        with:
+          subject-checksums: dist/checksums.txt
+          sbom-path: dist/${{ github.event.repository.name }}.spdx.json
+      - id: beepboop_binaries
+        name: Upload binaries to the draft release
+        shell: bash
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ fromJSON(steps.beepboop.outputs.context).draftRelease.tag }}
+        run: |
+          gh release upload "${TAG}" -- *
+      - uses: kjanat/beepboop/actions/publish-refs@v1
+        with:
+          token: ${{ github.token }}
+      - uses: kjanat/beepboop/actions/publish-release@v1
+        with:
+          execution-id: ${{ steps.beepboop.outputs.execution-id }}
+      - uses: kjanat/beepboop/actions/report@v1
+        if: ${{ !cancelled() && steps.beepboop.outcome == 'success' }}
+        with:
+          execution-id: ${{ steps.beepboop.outputs.execution-id }}
+          publications: "[]"
+run-name: ${{ inputs.beepboop_title || github.workflow }}
