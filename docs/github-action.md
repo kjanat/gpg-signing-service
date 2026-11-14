@@ -122,8 +122,9 @@ maintainer approves a release, Beepboop dispatches
   the release. Beepboop completes the release only when GitHub reports the tag
   as verified.
 
-The workflow references actions by major-version tag, such as
-`actions/checkout@v7`.
+The workflow references most actions by major-version tag, such as
+`actions/checkout@v7`. `anchore/sbom-action` is pinned by commit SHA because it
+downloads and runs syft in the job that holds the release's write tokens.
 
 Check a downloaded binary and its tag:
 
