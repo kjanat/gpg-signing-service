@@ -55,7 +55,7 @@
     "@hono/swagger-ui": "0.6.2",
     "@hono/zod-openapi": "1.6.3",
     "@kjanat/fmt": "latest",
-    "@sentry/cloudflare": "11.11.0",
+    "@sentry/cloudflare": "11.12.0",
     "hono": "4.13.17",
     "micro509": "0.17.1",
     "openpgp": "6.3.2",
