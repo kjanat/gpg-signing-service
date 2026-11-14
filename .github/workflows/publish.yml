@@ -11,12 +11,31 @@ on:
         required: false
         type: string
 jobs:
-  build-gpg-sign:
-    name: Build gpg-sign (${{ matrix.goos }}/${{ matrix.goarch }})
+  begin:
+    name: Begin promote
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
+    outputs:
+      context: ${{ steps.beepboop.outputs.context }}
+      execution-id: ${{ steps.beepboop.outputs.execution-id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: kjanat/beepboop/actions/begin@v1
+        id: beepboop
+        with:
+          execution-id: ${{ inputs.beepboop_execution_id }}
+          stream: main
+          operation: promote
+  build-gpg-sign:
+    name: Build gpg-sign (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: begin
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       fail-fast: true
       matrix:
@@ -42,16 +61,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          persist-credentials: false
-      - uses: kjanat/beepboop/actions/begin@v1
-        id: beepboop
-        with:
-          execution-id: ${{ inputs.beepboop_execution_id }}
-          stream: main
-          operation: promote
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ fromJSON(steps.beepboop.outputs.context).sourceSha }}
+          ref: ${{ fromJSON(needs.begin.outputs.context).sourceSha }}
           persist-credentials: false
       - uses: actions/setup-go@v7
         with:
@@ -61,7 +71,7 @@ jobs:
         name: Name the release asset
         shell: bash
         env:
-          VERSION: ${{ fromJSON(steps.beepboop.outputs.context).version }}
+          VERSION: ${{ fromJSON(needs.begin.outputs.context).version }}
           TEMPLATE: ${{ matrix.asset }}
         run: |
           mkdir -p dist
@@ -74,7 +84,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           MODULE: client
           PACKAGE: ./cmd/gpg-sign
-          VERSION: ${{ fromJSON(steps.beepboop.outputs.context).version }}
+          VERSION: ${{ fromJSON(needs.begin.outputs.context).version }}
           ASSET: ${{ steps.asset.outputs.name }}
         run: |
           go build -C "${MODULE}" -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
@@ -90,6 +100,9 @@ jobs:
       id-token: write
       attestations: write
     runs-on: ubuntu-latest
+    needs:
+      - begin
+      - build-gpg-sign
     steps:
       - uses: actions/checkout@v7
         with:
@@ -113,7 +126,7 @@ jobs:
         working-directory: dist
         run: |
           sha256sum -- * > checksums.txt
-      - uses: anchore/sbom-action@v0
+      - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           path: dist
           format: spdx-json
@@ -148,6 +161,4 @@ jobs:
         with:
           execution-id: ${{ steps.beepboop.outputs.execution-id }}
           publications: "[]"
-    needs:
-      - build-gpg-sign
 run-name: ${{ inputs.beepboop_title || github.workflow }}
