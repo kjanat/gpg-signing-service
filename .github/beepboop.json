@@ -10,11 +10,19 @@
       "prepare": {
         "version": "manual"
       },
-      "workflows": {
-        "release": {
-          "file": "release.yml",
-          "mode": "observe",
-          "ref": "refs/tags/v*"
+      "packages": [],
+      "versioning": "workspace",
+      "required": [],
+      "promote": {
+        "approval": "required",
+        "workflow": {
+          "file": "publish.yml",
+          "ref": "master",
+          "publications": ["github-release:kjanat/gpg-signing-service"],
+          "refs": {
+            "phase": "version",
+            "prefix": "v"
+          }
         }
       }
     }

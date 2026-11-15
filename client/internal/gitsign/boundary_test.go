@@ -289,7 +289,7 @@ func TestImportPathRefusesALiteralItCannotDecode(t *testing.T) {
 
 // releaseWorkflow builds and uploads the client binaries, and is the authority
 // on which platforms this repository is on the hook for.
-const releaseWorkflow = ".github/workflows/release.yml"
+const releaseWorkflow = ".github/workflows/publish.yml"
 
 // releaseTarget is one GOOS/GOARCH pair releaseWorkflow builds the client for.
 type releaseTarget struct {
@@ -298,7 +298,7 @@ type releaseTarget struct {
 
 func (target releaseTarget) String() string { return target.goos + "/" + target.goarch }
 
-// The targets of releaseWorkflow's "Build binaries" step, kept in step with it
+// The targets of releaseWorkflow's build matrix, kept in step with it
 // by TestReleaseTargetsMatchTheReleaseWorkflow. GOARCH is carried as well as
 // GOOS because a constraint can name either, and `_arm64.go` hides an import
 // from an amd64 runner exactly as well as `_windows.go` hides one from Linux.
@@ -324,7 +324,7 @@ func hostTarget() releaseTarget {
 }
 
 // repoRoot walks up from the client module to the directory the workflows live
-// in, so the drift check reads the release.yml a release would run.
+// in, so the drift check reads the publish.yml a release would run.
 func repoRoot(t *testing.T) string {
 	t.Helper()
 
@@ -344,8 +344,8 @@ func repoRoot(t *testing.T) string {
 	}
 }
 
-// release.yml names its targets twice — once in the loop that builds them, once
-// in the list of assets it uploads — and releaseTargets names them a third
+// publish.yml names each target twice — as the goos/goarch pair it builds, and
+// in the asset name it uploads — and releaseTargets names them a third
 // time. All three have to agree. A target the release builds and this file omits
 // is a binary whose published-package closure nothing resolves; one this file
 // carries and the release does not is a check nobody asked for, which is the
@@ -360,17 +360,17 @@ func TestReleaseTargetsMatchTheReleaseWorkflow(t *testing.T) {
 	built, uploaded := workflowTargets(string(raw))
 
 	// Both directions this reader can come back empty are failures, not
-	// agreement: the build step reorganised into a matrix, or the assets
-	// renamed. Either way the drift check has stopped reading the list it
-	// compares against, and the empty set agrees with nothing.
+	// agreement: the matrix reorganised, or the assets renamed. Either way the
+	// drift check has stopped reading the list it compares against, and the
+	// empty set agrees with nothing.
 	if len(built) == 0 {
-		t.Fatalf("no `for target in GOOS/GOARCH ...` loop found in %s; releaseTargets is "+
+		t.Fatalf("no `goos:`/`goarch:` matrix entries found in %s; releaseTargets is "+
 			"unverified, and the closure may be resolved for targets the release no "+
 			"longer builds — or miss ones it does", releaseWorkflow)
 	}
 	if len(uploaded) == 0 {
-		t.Fatalf("no dist/gpg-sign-GOOS-GOARCH assets found in %s; the second list this "+
-			"check reads is no longer where it reads it", releaseWorkflow)
+		t.Fatalf("no `asset: gpg-sign-GOOS-GOARCH` matrix entries found in %s; the second "+
+			"list this check reads is no longer where it reads it", releaseWorkflow)
 	}
 
 	declared := make([]string, 0, len(releaseTargets))
@@ -392,31 +392,31 @@ func TestReleaseTargetsMatchTheReleaseWorkflow(t *testing.T) {
 	}
 }
 
-// workflowTargets reads the two places release.yml names its targets: the
-// `for target in ...` loop of the build step and the asset names of the release
-// step. Deliberately shallow, and deliberately not a YAML parser — it is a
-// drift detector, and anything it cannot read it reports as nothing read, which
-// its one caller fails on.
+// workflowTargets reads the two places publish.yml names its targets: each
+// matrix entry's `goos:` and `goarch:` pair and its `asset:` name.
+// Deliberately shallow, and deliberately not a YAML parser — it is a drift
+// detector, and anything it cannot read it reports as nothing read, which its
+// one caller fails on.
 func workflowTargets(workflow string) (built, uploaded []string) {
 	const (
-		loop  = "for target in "
-		asset = "dist/gpg-sign-"
+		goosKey   = "- goos: "
+		goarchKey = "goarch: "
+		assetKey  = "asset: gpg-sign-"
 	)
 
+	goos := ""
 	for line := range strings.Lines(workflow) {
 		line = strings.TrimSpace(line)
 		switch {
-		case strings.HasPrefix(line, loop):
-			list, _, _ := strings.Cut(strings.TrimPrefix(line, loop), ";")
-			for target := range strings.FieldsSeq(list) {
-				if goos, goarch, ok := strings.Cut(target, "/"); ok {
-					built = append(built, goos+"/"+goarch)
-				}
-			}
-		case strings.HasPrefix(line, asset):
-			name := strings.TrimSuffix(strings.TrimPrefix(line, asset), ".exe")
-			if goos, goarch, ok := strings.Cut(name, "-"); ok {
-				uploaded = append(uploaded, goos+"/"+goarch)
+		case strings.HasPrefix(line, goosKey):
+			goos = strings.TrimPrefix(line, goosKey)
+		case strings.HasPrefix(line, goarchKey) && goos != "":
+			built = append(built, goos+"/"+strings.TrimPrefix(line, goarchKey))
+			goos = ""
+		case strings.HasPrefix(line, assetKey):
+			name := strings.TrimSuffix(strings.TrimPrefix(line, assetKey), ".exe")
+			if assetOS, assetArch, ok := strings.Cut(name, "-"); ok {
+				uploaded = append(uploaded, assetOS+"/"+assetArch)
 			}
 		}
 	}

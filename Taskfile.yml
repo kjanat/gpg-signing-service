@@ -50,7 +50,6 @@ tasks:
       - task: test:gnupg-interop
       - task: test:signing-preflight
       - task: test:workflow-steps
-      - task: test:release-workflow
       - task: test:sign-commits
       - task: test:repair-history
       - task: test:commit-provenance
@@ -108,11 +107,6 @@ tasks:
     # loudly, which is right, but at the cost of a confusing first run.
     deps: [install:noscripts]
     cmd: bash .github/scripts/test-workflow-steps.sh
-
-  test:release-workflow:
-    desc: Test that the release job is pinned and publishes only the commit its tag names
-    deps: [install:noscripts]
-    cmd: bash .github/scripts/test-release-workflow.sh
 
   test:sign-commits:
     desc: Test the routine signing run's flag assembly and the CLI it requires
@@ -213,7 +207,6 @@ tasks:
       - task: test:gnupg-interop
       - task: test:signing-preflight
       - task: test:workflow-steps
-      - task: test:release-workflow
       - task: test:sign-commits
       - task: test:repair-history
       - task: test:commit-provenance

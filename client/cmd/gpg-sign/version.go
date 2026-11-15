@@ -44,8 +44,8 @@ const (
 )
 
 // Build metadata the linker may inject. `client/Taskfile.yml` sets all three
-// for a developer build; `.github/workflows/release.yml` sets only
-// `main.version`, from the tag being published, and leaves the commit and the
+// for a developer build; `.github/workflows/publish.yml` sets only
+// `main.version`, from the version being released, and leaves the commit and the
 // build time to Go's own build info below.
 //
 // They are vars with constant initializers because that is what `-X` needs: it
