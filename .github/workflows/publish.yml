@@ -149,7 +149,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ fromJSON(steps.beepboop.outputs.context).draftRelease.tag }}
         run: |
-          gh release upload "${TAG}" -- *
+          gh release upload "${TAG}" --clobber -- *
       - uses: kjanat/beepboop/actions/publish-refs@v1
         with:
           token: ${{ github.token }}
