@@ -63,7 +63,7 @@ jobs:
       # The toolchain is set up the way .github/workflows/ci.yml sets it up for
       # the Go client: mise resolves the Go version from client/go.mod, and
       # client:build reads the CLI version out of package.json with bun.
-      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      - uses: jdx/mise-action@d5574b52816a478f9d4e6529a3f6ff17a8a36785 # v5.2.8
         if: inputs.build_from_source
         with: { working_directory: client }
       - { uses: $/.github/actions/setup-bun, if: inputs.build_from_source }
