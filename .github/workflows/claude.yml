@@ -101,7 +101,7 @@ jobs:
         id: claude
         continue-on-error: true
         timeout-minutes: 150
-        uses: anthropics/claude-code-action/base-action@f3b070c88125d33dbae5653df5f143101d4ea9dc # v1.0.276
+        uses: anthropics/claude-code-action/base-action@cc98b3ae241b0fcfb6a42a2690751afffecb4452 # v1.0.278
         env:
           # Read-only credentials. No signing OIDC or publication token reaches
           # the model; the base action never provisions a GitHub App token.
