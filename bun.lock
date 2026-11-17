@@ -10,7 +10,7 @@
         "@kjanat/fmt": "latest",
         "@sentry/cloudflare": "11.12.0",
         "hono": "4.13.19",
-        "micro509": "0.17.1",
+        "micro509": "0.18.0",
         "openpgp": "6.3.2",
         "zod": "4.6.7",
       },
@@ -661,7 +661,7 @@
 
     "magicast": ["magicast@0.5.5", "", { "dependencies": { "@babel/parser": "^7.29.7", "@babel/types": "^7.29.7", "source-map-js": "^1.2.1" } }, "sha512-UicdXN8zQ3JHlxVq+28afMXPr1z7WNY6+7EJnzTdQWkTAlMLF5fNCCKxJHBQwGaNGR11581EiQmQzx73+MvszA=="],
 
-    "micro509": ["micro509@0.17.1", "", {}, "sha512-KVrxrbNAkkYxvyfwP73x9c0TbHKm+tJrJB0CZP8vMjGPCM6BZ4Jkf+rv/cLHxAPYKy5Oww96vKfzrVhoGmQmkw=="],
+    "micro509": ["micro509@0.18.0", "", {}, "sha512-qV6CpUEbFVoeyjtTKOMlNb0w2rj59Pa28lq+9L2nwVsfPoc0P6Nu64FeGo8Ir/oGQfjTTcQ1zvZFvQCHZh/OwQ=="],
 
     "miniflare": ["miniflare@5.20261117.0-beta", "", { "dependencies": { "@cspotcode/source-map-support": "0.8.1", "sharp": "0.35.5", "undici": "7.30.1", "workerd": "1.20261117.1", "ws": "8.21.0", "youch": "4.1.0-beta.10" }, "peerDependencies": { "kerberos": "^2.0.0" }, "optionalPeers": ["kerberos"] }, "sha512-D2ygY04wQUmbpwgBhj828piErZoj7UMlXNGr4EWQp/c1PNGHyYOh0dMIyobjwOXiD5Ifl1EaEVAoNuBHK+qtkw=="],
 
