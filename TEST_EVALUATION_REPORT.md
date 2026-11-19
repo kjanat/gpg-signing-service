@@ -325,18 +325,18 @@
 
 ```typescript
 // Test that comparison time doesn't leak token length information
-describe("timingSafeEqual - timing attack resistance", () => {
-	it("should take same time for wrong length tokens", async () => {
+describe('timingSafeEqual - timing attack resistance', () => {
+	it('should take same time for wrong length tokens', async () => {
 		// Measure execution time for different length comparisons
 		// Verify variance is <5% (statistical randomness ok, patterns bad)
 	});
 
-	it("should take same time for wrong position tokens", async () => {
+	it('should take same time for wrong position tokens', async () => {
 		// Measure time for wrong token at different positions
 		// Verify no timing correlation with position
 	});
 
-	it("should compare equal-length values in constant time", async () => {
+	it('should compare equal-length values in constant time', async () => {
 		// Verify crypto.subtle.timingSafeEqual behavior preserved
 	});
 });
@@ -357,8 +357,8 @@ describe("timingSafeEqual - timing attack resistance", () => {
 **Missing Tests**:
 
 ```typescript
-describe("JWKS Fetching - SSRF Prevention", () => {
-	it("should reject internal IP addresses in issuer URL", async () => {
+describe('JWKS Fetching - SSRF Prevention', () => {
+	it('should reject internal IP addresses in issuer URL', async () => {
 		// Test: http://127.0.0.1/.well-known/openid-configuration
 		// Test: http://localhost:8080/.well-known/openid-configuration
 		// Test: http://169.254.169.254/ (AWS metadata)
@@ -366,16 +366,16 @@ describe("JWKS Fetching - SSRF Prevention", () => {
 		// Should reject or at least log warnings
 	});
 
-	it("should enforce HTTPS for production issuers", async () => {
+	it('should enforce HTTPS for production issuers', async () => {
 		// http:// should be rejected except in test mode
 	});
 
-	it("should handle redirect loops gracefully", async () => {
+	it('should handle redirect loops gracefully', async () => {
 		// Issuer points to OIDC config that redirects in a loop
 		// Should timeout, not infinite loop
 	});
 
-	it("should validate jwks_uri response is valid JSON", async () => {
+	it('should validate jwks_uri response is valid JSON', async () => {
 		// HTML error response parsed as JWKS
 		// Should detect invalid JWKS structure early
 	});
@@ -392,23 +392,23 @@ describe("JWKS Fetching - SSRF Prevention", () => {
 **Missing Test Coverage**:
 
 ```typescript
-describe("Input Validation - Boundary Tests", () => {
+describe('Input Validation - Boundary Tests', () => {
 	// Tested in schemas.test.ts for request bodies,
 	// but missing for:
 
-	it("should reject overly long keyId (>16 hex chars)", () => {
+	it('should reject overly long keyId (>16 hex chars)', () => {
 		// POST /sign?keyId=FFFFFFFFFFFFFFFFFFFFFFFF
 	});
 
-	it("should reject non-hex keyId characters", () => {
+	it('should reject non-hex keyId characters', () => {
 		// POST /sign?keyId=ZZZZZZZZZZZZZZZZ (invalid hex)
 	});
 
-	it("should reject armored key >10MB", () => {
+	it('should reject armored key >10MB', () => {
 		// Tests exist but should verify size limits enforced
 	});
 
-	it("should handle metadata field >4KB", () => {
+	it('should handle metadata field >4KB', () => {
 		// Verify D1 doesn't truncate audit metadata
 	});
 });
@@ -795,14 +795,14 @@ Recommended metrics to track:
 
 ```typescript
 // Good pattern from signing.test.ts:
-describe("Feature Name", () => {
-	it("should handle success case", () => {
+describe('Feature Name', () => {
+	it('should handle success case', () => {
 		// Setup
 		// Action
 		// Assert
 	});
 
-	it("should handle error case", () => {
+	it('should handle error case', () => {
 		// Setup
 		// Action
 		// Assert error

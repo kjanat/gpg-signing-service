@@ -1,0 +1,47 @@
+#:schema https://raw.githubusercontent.com/kjanat/kjanat/refs/heads/master/schemas/dprint.schema.json
+
+extends = "https://raw.githubusercontent.com/kjanat/kjanat/refs/heads/master/configs/dprint.biome.json"
+
+lineWidth   = 80
+useTabs     = false
+indentWidth = 2
+newLineKind = "lf"
+incremental = true
+excludes    = ["**/*-lock.json", "**/.keys", "**/.venv", "**/node_modules", "**/openapi.json", "**/worker-configuration.d.ts"]
+
+[shfmt]
+useTabs          = true
+binaryNextLine   = true
+switchCaseIndent = true
+
+[markdown]
+ignoreDirective      = "prettier-ignore"
+ignoreFileDirective  = "prettier-ignore-file"
+ignoreStartDirective = "prettier-ignore-start"
+ignoreEndDirective   = "prettier-ignore-end"
+
+[dockerfile]
+
+[biome]
+lineWidth          = 120
+indentWidth        = 2
+indentStyle        = "tab"
+"json.indentStyle" = "space"
+
+[ruff]
+indentWidth = 4
+lineLength  = 88
+preview     = true
+
+[jupyter]
+
+[malva]
+
+[markup]
+ignoreFileCommentDirective = "prettier-ignore-file"
+ignoreCommentDirective     = "prettier-ignore"
+
+[yaml]
+indentBlockSequenceInMap   = true
+"flowMap.preferSingleLine" = true
+printWidth                 = 300

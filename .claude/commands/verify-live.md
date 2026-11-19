@@ -22,10 +22,10 @@ against `src/index.ts`, the OpenAPI config, and README.md:
 8. `task verify:hsts` (pass `-- $GPG_SIGN_URL` for a non-default deployment) —
    the delivered `Strict-Transport-Security` must match the one the Worker
    sets. Do not verify this by reading `src/middleware/security.ts`: a
-   Cloudflare zone HSTS setting _replaces_ that header at the edge, so the
+   Cloudflare zone HSTS setting *replaces* that header at the edge, so the
    source is a statement of intent and the live response is the only evidence.
    Match means the same policy, not the same spelling: order, casing and the
-   quoted-string form all pass, while a _stronger_ `max-age` is drift like any
+   quoted-string form all pass, while a *stronger* `max-age` is drift like any
    other value the Worker did not write. Exit `1` is drift and is an operator
    action in the Cloudflare dashboard, not a code change; exit `2` means a probe
    could not be judged (unreachable, or a route that no longer answers in the

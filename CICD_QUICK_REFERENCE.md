@@ -16,7 +16,7 @@ LEGEND: ✅ Implemented | ⚠️ Partial | ❌ Missing | 🔄 In Progress
 | ------------------------------- | ------ | ------------------------------------------------------------- | -------- |
 | **Parallel CI Jobs**            | ✅     | 5 concurrent jobs (verify-api, format, typecheck, lint, test) | -        |
 | **API Generation Verification** | ✅     | Prevents stale OpenAPI specs                                  | -        |
-| **Code Formatting**             | ✅     | dprint + ESLint + Biome                                       | -        |
+| **Code Formatting**             | ✅     | kprint + ESLint + Biome                                       | -        |
 | **TypeScript Type Checking**    | ✅     | Strict mode with tsgo                                         | -        |
 | **Linting**                     | ✅     | ESLint + Biome + golangci-lint                                | -        |
 | **Unit Tests**                  | ✅     | vitest with 95% coverage threshold                            | -        |

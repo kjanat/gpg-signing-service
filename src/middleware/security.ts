@@ -1,11 +1,11 @@
-import type { MiddlewareHandler } from "hono";
+import type { MiddlewareHandler } from 'hono';
 
-import type { ErrorCode } from "#schemas/errors";
-import type { Env, RateLimitResult } from "#types";
-import { HEADERS, HTTP, TIME } from "#types";
-import { HSTS_POLICY } from "#utils/hsts";
-import { logger } from "#utils/logger";
-import { rateLimitExceeded, retryAfterSeconds } from "#utils/rate-limit";
+import type { ErrorCode } from '#schemas/errors';
+import type { Env, RateLimitResult } from '#types';
+import { HEADERS, HTTP, TIME } from '#types';
+import { HSTS_POLICY } from '#utils/hsts';
+import { logger } from '#utils/logger';
+import { rateLimitExceeded, retryAfterSeconds } from '#utils/rate-limit';
 
 /**
  * Default CSP: every API route returns JSON, so nothing may be loaded at all.
@@ -33,10 +33,10 @@ export const DOCS_CSP = [
 	// stop an injected <base>/<form> from redirecting the page's requests.
 	"base-uri 'none'",
 	"form-action 'none'",
-].join("; ");
+].join('; ');
 
 /** Paths that render the interactive API documentation. */
-const DOCS_UI_PATHS = new Set(["/ui"]);
+const DOCS_UI_PATHS = new Set(['/ui']);
 
 /**
  * Headers a cross-origin reader may see, when the response actually has them.
@@ -75,29 +75,29 @@ export const securityHeaders: MiddlewareHandler<{ Bindings: Env }> = async (c, n
 	await next();
 
 	// Security headers
-	c.header("X-Content-Type-Options", "nosniff");
-	c.header("X-Frame-Options", "DENY");
-	c.header("Referrer-Policy", "strict-origin-when-cross-origin");
-	c.header("Content-Security-Policy", DOCS_UI_PATHS.has(c.req.path) ? DOCS_CSP : DEFAULT_CSP);
-	c.header("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
+	c.header('X-Content-Type-Options', 'nosniff');
+	c.header('X-Frame-Options', 'DENY');
+	c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+	c.header('Content-Security-Policy', DOCS_UI_PATHS.has(c.req.path) ? DOCS_CSP : DEFAULT_CSP);
+	c.header('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
 	// HSTS: enforce HTTPS for 1 year, include subdomains. What a caller receives
 	// is not necessarily this — see `#utils/hsts` and `task verify:hsts`.
-	c.header("Strict-Transport-Security", HSTS_POLICY);
+	c.header('Strict-Transport-Security', HSTS_POLICY);
 
 	// Remove server identification
-	c.res.headers.delete("Server");
-	c.res.headers.delete("X-Powered-By");
+	c.res.headers.delete('Server');
+	c.res.headers.delete('X-Powered-By');
 
 	// Advertise the always-present headers plus only the conditional ones this
 	// response actually carries. The list used to be hardcoded, so it named
 	// X-RateLimit-Limit — which nothing in the service ever sets — on every
 	// rate-limited response, and named nothing at all on every other response.
 	const exposed = [...ALWAYS_EXPOSED_HEADERS, ...CONDITIONAL_HEADERS.filter((name) => c.res.headers.has(name))];
-	c.header("Access-Control-Expose-Headers", exposed.join(", "));
+	c.header('Access-Control-Expose-Headers', exposed.join(', '));
 };
 
 /** Literal `ALLOWED_ORIGINS` entry opting a deployment into public browser access. */
-const WILDCARD_ORIGIN = "*";
+const WILDCARD_ORIGIN = '*';
 
 /**
  * Origins that are never granted access, whatever the allowlist says.
@@ -107,16 +107,16 @@ const WILDCARD_ORIGIN = "*";
  * every context an attacker can conjure — a weaker position than the wildcard,
  * because the attacker gets to *choose* to present it.
  */
-const FORBIDDEN_ORIGINS = new Set(["null"]);
+const FORBIDDEN_ORIGINS = new Set(['null']);
 
-const CORS_ALLOW_METHODS = "GET, POST, DELETE, OPTIONS";
+const CORS_ALLOW_METHODS = 'GET, POST, DELETE, OPTIONS';
 const CORS_ALLOW_HEADERS = `Authorization, Content-Type, ${HEADERS.REQUEST_ID}`;
 /**
  * 24h. This is a request, not a guarantee: every engine clamps it to its own
  * ceiling — Firefox to this value, Chromium to 2h, WebKit to 10min — so asking
  * for the largest of them just means no engine caches for less than it would.
  */
-const CORS_MAX_AGE = "86400";
+const CORS_MAX_AGE = '86400';
 
 /**
  * Resolve the value for `Access-Control-Allow-Origin`, or `undefined` to send none.
@@ -131,7 +131,7 @@ const CORS_MAX_AGE = "86400";
 function resolveAllowedOrigin(allowedOrigins: string | undefined, origin: string | undefined): string | undefined {
 	// Entries are trimmed the same way ALLOWED_ISSUERS is, so a padded value in a
 	// comma-separated list is not silently un-matchable.
-	const entries = (allowedOrigins?.split(",") ?? []).map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+	const entries = (allowedOrigins?.split(',') ?? []).map((entry) => entry.trim()).filter((entry) => entry.length > 0);
 
 	if (entries.length === 0) {
 		return undefined;
@@ -156,9 +156,9 @@ function resolveAllowedOrigin(allowedOrigins: string | undefined, origin: string
  * the merge paths are unreachable through the app itself.
  */
 export function varyOnOrigin(headers: Headers): void {
-	const tokens = (headers.get("Vary") ?? "").split(",").map((token) => token.trim().toLowerCase());
-	if (!tokens.includes("origin") && !tokens.includes("*")) {
-		headers.append("Vary", "Origin");
+	const tokens = (headers.get('Vary') ?? '').split(',').map((token) => token.trim().toLowerCase());
+	if (!tokens.includes('origin') && !tokens.includes('*')) {
+		headers.append('Vary', 'Origin');
 	}
 }
 
@@ -174,22 +174,22 @@ export function varyOnOrigin(headers: Headers): void {
  * have to add it back to *both* branches deliberately.
  */
 export const productionCors: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
-	const allowOrigin = resolveAllowedOrigin(c.env.ALLOWED_ORIGINS, c.req.header("Origin"));
+	const allowOrigin = resolveAllowedOrigin(c.env.ALLOWED_ORIGINS, c.req.header('Origin'));
 	// The wildcard answer is origin-independent; every other outcome — including a
 	// bare denial and the no-Origin case — is what this request's Origin earned, so
 	// a shared cache must key on it or it will hand one origin another's grant.
 	const varies = allowOrigin !== WILDCARD_ORIGIN;
 
-	if (c.req.method === "OPTIONS") {
+	if (c.req.method === 'OPTIONS') {
 		const headers = new Headers();
 		if (varies) {
 			varyOnOrigin(headers);
 		}
 		if (allowOrigin !== undefined) {
-			headers.set("Access-Control-Allow-Origin", allowOrigin);
-			headers.set("Access-Control-Allow-Methods", CORS_ALLOW_METHODS);
-			headers.set("Access-Control-Allow-Headers", CORS_ALLOW_HEADERS);
-			headers.set("Access-Control-Max-Age", CORS_MAX_AGE);
+			headers.set('Access-Control-Allow-Origin', allowOrigin);
+			headers.set('Access-Control-Allow-Methods', CORS_ALLOW_METHODS);
+			headers.set('Access-Control-Allow-Headers', CORS_ALLOW_HEADERS);
+			headers.set('Access-Control-Max-Age', CORS_MAX_AGE);
 		}
 		return new Response(null, { status: HTTP.NoContent, headers });
 	}
@@ -200,7 +200,7 @@ export const productionCors: MiddlewareHandler<{ Bindings: Env }> = async (c, ne
 		varyOnOrigin(c.res.headers);
 	}
 	if (allowOrigin !== undefined) {
-		c.header("Access-Control-Allow-Origin", allowOrigin);
+		c.header('Access-Control-Allow-Origin', allowOrigin);
 	}
 
 	return;
@@ -213,13 +213,13 @@ export const productionCors: MiddlewareHandler<{ Bindings: Env }> = async (c, ne
 export const adminRateLimit: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
 	// Get client IP from CF headers or fallback
 	const clientIp =
-		c.req.header("CF-Connecting-IP") || c.req.header("X-Forwarded-For")?.split(",")[0]?.trim() || "unknown";
+		c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() || 'unknown';
 
 	// Use IP-based identity for admin rate limiting
 	const identity = `admin:${clientIp}`;
 
 	try {
-		const rateLimiterId = c.env.RATE_LIMITER.idFromName("admin");
+		const rateLimiterId = c.env.RATE_LIMITER.idFromName('admin');
 		const rateLimiter = c.env.RATE_LIMITER.get(rateLimiterId);
 
 		const rateLimitResponse = await rateLimiter.fetch(
@@ -251,15 +251,15 @@ export const adminRateLimit: MiddlewareHandler<{ Bindings: Env }> = async (c, ne
 
 		return next();
 	} catch (error) {
-		logger.error("Admin rate limiter failed", {
+		logger.error('Admin rate limiter failed', {
 			error: error instanceof Error ? error.message : String(error),
 			clientIp,
 		});
 		// FAIL CLOSED - deny request when rate limiting is unavailable
 		return c.json(
 			{
-				error: "Service temporarily unavailable",
-				code: "RATE_LIMIT_ERROR" as const satisfies ErrorCode,
+				error: 'Service temporarily unavailable',
+				code: 'RATE_LIMIT_ERROR' as const satisfies ErrorCode,
 			},
 			HTTP.ServiceUnavailable,
 		);

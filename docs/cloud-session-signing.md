@@ -96,9 +96,9 @@ Mint one scoped and expiring, rather than reusing the admin token:
 
 ```bash
 curl -X POST "$GPG_SIGN_URL/admin/tokens" \
-	-H "Authorization: Bearer $ADMIN_TOKEN" \
-	-H 'Content-Type: application/json' \
-	-d '{"name":"cloud-agent-<who>","keyIds":["<key-id>"],"expiresInDays":30}'
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"cloud-agent-<who>","keyIds":["<key-id>"],"expiresInDays":30}'
 ```
 
 The plaintext token comes back exactly once. Revoke it with
@@ -120,7 +120,7 @@ differ sharply:
   independently revocable `gst_` token is a reasonable trade, and materially
   weaker than CI's per-signature OIDC tokens only in that it is long-lived.
 - **Organization-shared environment** — every member's sessions get the token,
-  and it signs as _you_. Don't. Give each person their own environment and their
+  and it signs as *you*. Don't. Give each person their own environment and their
   own token, so a leak is attributable and revocable without disrupting others.
 
 Scope each token to the key it needs, set an expiry, and give one token per

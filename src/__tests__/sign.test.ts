@@ -1,25 +1,25 @@
-import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { env } from "cloudflare:workers";
-import * as openpgp from "openpgp";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import app from "#gpg-signing-service";
-import type { RateLimitResult } from "#types";
-import { logAuditEvent } from "#utils/audit";
-import { logger } from "#utils/logger";
-import { insertOIDCSubject } from "#utils/oidc-subjects";
-import { exportTestJwk, generateTestKeyPair, TestJwt } from "./helpers/jwt";
-import { seedTrustedSubjects } from "./helpers/oidc-subjects";
+import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import { env } from 'cloudflare:workers';
+import * as openpgp from 'openpgp';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import app from '#gpg-signing-service';
+import type { RateLimitResult } from '#types';
+import { logAuditEvent } from '#utils/audit';
+import { logger } from '#utils/logger';
+import { insertOIDCSubject } from '#utils/oidc-subjects';
+import { exportTestJwk, generateTestKeyPair, TestJwt } from './helpers/jwt';
+import { seedTrustedSubjects } from './helpers/oidc-subjects';
 
 const parseJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
 
 // Mock fetch for JWKS
 const { signFetchMock } = vi.hoisted(() => ({ signFetchMock: vi.fn() }));
 
-vi.mock("#utils/fetch", () => ({ fetchWithTimeout: signFetchMock }));
+vi.mock('#utils/fetch', () => ({ fetchWithTimeout: signFetchMock }));
 
 // Mock audit logging to avoid D1 dependency in tests
-vi.mock("#utils/audit", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("#utils/audit")>();
+vi.mock('#utils/audit', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('#utils/audit')>();
 	return { ...actual, logAuditEvent: vi.fn(async () => undefined) };
 });
 
@@ -41,7 +41,7 @@ async function makeRequest(path: string, options: RequestInit = {}, envOverrides
  * outage passed a suite full of rate-limit assertions.
  */
 function limiterResponse(body: unknown): Response {
-	const denied = typeof body === "object" && body !== null && (body as RateLimitResult).allowed === false;
+	const denied = typeof body === 'object' && body !== null && (body as RateLimitResult).allowed === false;
 	return denied ? Response.json(body, { status: 429 }) : Response.json(body);
 }
 
@@ -57,12 +57,12 @@ function stubRateLimiter(body: unknown): DurableObjectNamespace {
 function erroringRateLimiter(status = 500): DurableObjectNamespace {
 	return {
 		idFromName: () => ({}) as DurableObjectId,
-		get: () => ({ fetch: async () => new Response("boom", { status }) }),
+		get: () => ({ fetch: async () => new Response('boom', { status }) }),
 	} as unknown as DurableObjectNamespace;
 }
 
 /** A RATE_LIMITER binding that fails the way an unreachable one does. */
-function brokenRateLimiter(reason: unknown = new Error("Rate limiter unavailable")): DurableObjectNamespace {
+function brokenRateLimiter(reason: unknown = new Error('Rate limiter unavailable')): DurableObjectNamespace {
 	const fail = () => {
 		throw reason;
 	};
@@ -72,20 +72,20 @@ function brokenRateLimiter(reason: unknown = new Error("Rate limiter unavailable
 // Helper to upload a test key
 async function uploadTestKey(keyId: string) {
 	const { privateKey } = await openpgp.generateKey({
-		type: "ecc",
-		curve: "ed25519Legacy",
-		userIDs: [{ name: "Sign Test", email: "sign@test.com" }],
+		type: 'ecc',
+		curve: 'ed25519Legacy',
+		userIDs: [{ name: 'Sign Test', email: 'sign@test.com' }],
 		passphrase: env.KEY_PASSPHRASE,
-		format: "armored",
+		format: 'armored',
 	});
 
 	const ctx = createExecutionContext();
 	await app.fetch(
-		new Request("http://localhost/admin/keys", {
-			method: "POST",
+		new Request('http://localhost/admin/keys', {
+			method: 'POST',
 			headers: {
 				Authorization: `Bearer ${env.ADMIN_TOKEN}`,
-				"Content-Type": "application/json",
+				'Content-Type': 'application/json',
 			},
 			body: JSON.stringify({ armoredPrivateKey: privateKey, keyId }),
 		}),
@@ -96,11 +96,11 @@ async function uploadTestKey(keyId: string) {
 	return privateKey;
 }
 
-describe("Sign Route", () => {
+describe('Sign Route', () => {
 	let oidcPrivateKey: CryptoKey;
 	let oidcPublicKey: CryptoKey;
-	const issuer = "https://token.actions.githubusercontent.com";
-	const kid = "test-key";
+	const issuer = 'https://token.actions.githubusercontent.com';
+	const kid = 'test-key';
 
 	beforeAll(async () => {
 		// The OIDC path now requires a trusted-subject row; without one every
@@ -116,9 +116,9 @@ describe("Sign Route", () => {
 	beforeEach(() => {
 		vi.resetAllMocks();
 		// Mock cache to return null by default (cache miss)
-		vi.spyOn(env.JWKS_CACHE, "get").mockResolvedValue(null as unknown as Map<string, unknown>);
+		vi.spyOn(env.JWKS_CACHE, 'get').mockResolvedValue(null as unknown as Map<string, unknown>);
 		// Set allowed origins to ensure consistent behavior
-		env.ALLOWED_ORIGINS = "https://allowed.com";
+		env.ALLOWED_ORIGINS = 'https://allowed.com';
 	});
 
 	afterEach(() => {
@@ -128,7 +128,7 @@ describe("Sign Route", () => {
 	async function setupJWKSMock() {
 		const jwk = await exportTestJwk(oidcPublicKey);
 		jwk.kid = kid;
-		jwk.use = "sig";
+		jwk.use = 'sig';
 
 		signFetchMock.mockImplementation(async (url: string) => {
 			if (url === `${issuer}/.well-known/openid-configuration`) {
@@ -137,51 +137,51 @@ describe("Sign Route", () => {
 			if (url === `${issuer}/jwks`) {
 				return new Response(JSON.stringify({ keys: [jwk] }));
 			}
-			return new Response("Not Found", { status: 404 });
+			return new Response('Not Found', { status: 404 });
 		});
 	}
 
 	async function createToken(claims: object = {}) {
 		return new TestJwt({
 			iss: issuer,
-			sub: "repo:user/repo:ref:refs/heads/main",
-			aud: "gpg-signing-service",
+			sub: 'repo:user/repo:ref:refs/heads/main',
+			aud: 'gpg-signing-service',
 			...claims,
 		})
-			.setProtectedHeader({ alg: "RS256", kid })
+			.setProtectedHeader({ alg: 'RS256', kid })
 			.setIssuedAt()
-			.setExpirationTime("1h")
+			.setExpirationTime('1h')
 			.sign(oidcPrivateKey);
 	}
 
-	describe("POST /sign", () => {
-		it("should sign valid commit data", async () => {
+	describe('POST /sign', () => {
+		it('should sign valid commit data', async () => {
 			await setupJWKSMock();
-			await uploadTestKey("A1B2C3D4E5F67890");
+			await uploadTestKey('A1B2C3D4E5F67890');
 			const token = await createToken();
 
-			const commitData = "tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147\nparent ...";
+			const commitData = 'tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147\nparent ...';
 
-			const response = await makeRequest("/sign?keyId=A1B2C3D4E5F67890", {
-				method: "POST",
+			const response = await makeRequest('/sign?keyId=A1B2C3D4E5F67890', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
 				body: commitData,
 			});
 
 			expect(response.status).toBe(200);
 			const signature = await response.text();
-			expect(signature).toContain("-----BEGIN PGP SIGNATURE-----");
+			expect(signature).toContain('-----BEGIN PGP SIGNATURE-----');
 		});
 
-		it("records which trusted subject authorized the signature", async () => {
+		it('records which trusted subject authorized the signature', async () => {
 			await setupJWKSMock();
-			await uploadTestKey("A1B2C3D4E5F67890");
+			await uploadTestKey('A1B2C3D4E5F67890');
 			const token = await createToken();
 
-			const response = await makeRequest("/sign?keyId=A1B2C3D4E5F67890", {
-				method: "POST",
+			const response = await makeRequest('/sign?keyId=A1B2C3D4E5F67890', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(200);
@@ -190,34 +190,34 @@ describe("Sign Route", () => {
 			// and a revoked row leaves no trace in the subject. Without the policy
 			// name, "what did the trust I just revoked sign?" is unanswerable.
 			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
-			const signed = events.find((event) => event.action === "sign" && event.success);
+			const signed = events.find((event) => event.action === 'sign' && event.success);
 			expect(signed).toBeDefined();
-			expect(JSON.parse(signed?.metadata ?? "{}")).toMatchObject({
+			expect(JSON.parse(signed?.metadata ?? '{}')).toMatchObject({
 				subjectPolicy: `${issuer}|repo:user/repo`,
 			});
 		});
 
-		it("records the authorizing subject on a failed signature too", async () => {
+		it('records the authorizing subject on a failed signature too', async () => {
 			await setupJWKSMock();
 			const token = await createToken();
 
-			const response = await makeRequest("/sign?keyId=FFFFFFFFFFFFFFFF", {
-				method: "POST",
+			const response = await makeRequest('/sign?keyId=FFFFFFFFFFFFFFFF', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(404);
 
 			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
-			const failed = events.find((event) => event.action === "sign" && !event.success);
+			const failed = events.find((event) => event.action === 'sign' && !event.success);
 			expect(failed).toBeDefined();
-			expect(JSON.parse(failed?.metadata ?? "{}")).toMatchObject({
+			expect(JSON.parse(failed?.metadata ?? '{}')).toMatchObject({
 				subjectPolicy: `${issuer}|repo:user/repo`,
 			});
 		});
 
-		it("rejects a malformed keyId as a 400, spending no budget and writing no audit row", async () => {
+		it('rejects a malformed keyId as a 400, spending no budget and writing no audit row', async () => {
 			// `createKeyId` throws, and it throws *after* the limiter call has been
 			// started but *before* the Promise.all that reads its verdict — so left
 			// to the route's catch this was a 500 plus an audit write that ignored
@@ -227,19 +227,19 @@ describe("Sign Route", () => {
 			const token = await createToken();
 
 			const response = await makeRequest(
-				"/sign?keyId=NOT-A-HEX-KEYID",
-				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				'/sign?keyId=NOT-A-HEX-KEYID',
+				{ method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: 'commit data' },
 				{ RATE_LIMITER: stubRateLimiter({ allowed: false, remaining: 0, resetAt: Date.now() + 30_000 }) },
 			);
 
 			expect(response.status).toBe(400);
-			expect(await response.json()).toMatchObject({ code: "INVALID_REQUEST" });
+			expect(await response.json()).toMatchObject({ code: 'INVALID_REQUEST' });
 
 			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
 			expect(events).toHaveLength(0);
 		});
 
-		it("treats an empty keyId as absent, the way the fallback below it does", async () => {
+		it('treats an empty keyId as absent, the way the fallback below it does', async () => {
 			// `?keyId=` is what a shell template emits for an unset variable, and
 			// `keyIdQuery || c.env.KEY_ID` already reads "" as not supplied. Refusing
 			// it would make the guard disagree with the line under it, and would make
@@ -248,17 +248,17 @@ describe("Sign Route", () => {
 			await uploadTestKey(env.KEY_ID);
 			const token = await createToken();
 
-			const response = await makeRequest("/sign?keyId=", {
-				method: "POST",
+			const response = await makeRequest('/sign?keyId=', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(200);
-			expect(await response.text()).toContain("-----BEGIN PGP SIGNATURE-----");
+			expect(await response.text()).toContain('-----BEGIN PGP SIGNATURE-----');
 		});
 
-		it("audits the same request id it echoes when the caller sends none", async () => {
+		it('audits the same request id it echoes when the caller sends none', async () => {
 			// The default path: no X-Request-ID on the request. Every site that
 			// re-derives instead of reading the published value mints a *fresh*
 			// UUID, so the caller is handed a correlation key that joins to nothing
@@ -266,30 +266,30 @@ describe("Sign Route", () => {
 			// for. No test covered this because the ones that touch the header
 			// supply one, and then both sites agree.
 			await setupJWKSMock();
-			await uploadTestKey("A1B2C3D4E5F67890");
+			await uploadTestKey('A1B2C3D4E5F67890');
 			const token = await createToken();
 
-			const response = await makeRequest("/sign?keyId=A1B2C3D4E5F67890", {
-				method: "POST",
+			const response = await makeRequest('/sign?keyId=A1B2C3D4E5F67890', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(200);
-			const echoed = response.headers.get("X-Request-ID");
+			const echoed = response.headers.get('X-Request-ID');
 			expect(echoed).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 
 			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
-			const signed = events.find((event) => event.action === "sign" && event.success);
+			const signed = events.find((event) => event.action === 'sign' && event.success);
 			expect(signed?.requestId).toBe(echoed);
 		});
 
-		it("meters signing per trusted row as well as per subject", async () => {
+		it('meters signing per trusted row as well as per subject', async () => {
 			// The per-caller bucket is keyed on `<iss>:<sub>`, and GitHub puts the ref
 			// in `sub`, so branches multiply budgets. The second tier is keyed on the
 			// row id, which the caller cannot vary.
 			await setupJWKSMock();
-			await uploadTestKey("A1B2C3D4E5F67890");
+			await uploadTestKey('A1B2C3D4E5F67890');
 
 			const metered: string[] = [];
 			const recordingLimiter = {
@@ -297,17 +297,17 @@ describe("Sign Route", () => {
 				get: () => ({
 					fetch: async (request: Request) => {
 						const params = new URL(request.url).searchParams;
-						metered.push(`${params.get("identity")}|${params.get("limit") ?? "default"}`);
+						metered.push(`${params.get('identity')}|${params.get('limit') ?? 'default'}`);
 						return Response.json({ allowed: true, remaining: 99, resetAt: Date.now() + 60_000 });
 					},
 				}),
 			} as unknown as DurableObjectNamespace;
 
-			for (const ref of ["refs/heads/main", "refs/heads/anything-i-like"]) {
+			for (const ref of ['refs/heads/main', 'refs/heads/anything-i-like']) {
 				const token = await createToken({ sub: `repo:user/repo:ref:${ref}` });
 				const response = await makeRequest(
-					"/sign?keyId=A1B2C3D4E5F67890",
-					{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+					'/sign?keyId=A1B2C3D4E5F67890',
+					{ method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: 'commit data' },
 					{ RATE_LIMITER: recordingLimiter },
 				);
 				expect(response.status).toBe(200);
@@ -321,20 +321,20 @@ describe("Sign Route", () => {
 			expect(metered).toContain(`${issuer}:repo:user/repo:ref:refs/heads/anything-i-like|default`);
 
 			// The row ceiling is one bucket for both, at the wider limit.
-			const perRow = metered.filter((entry) => entry.startsWith("oidc-subject-row:"));
+			const perRow = metered.filter((entry) => entry.startsWith('oidc-subject-row:'));
 			expect(perRow).toHaveLength(2);
 			expect(new Set(perRow).size).toBe(1);
 			expect(perRow[0]).toMatch(/\|1000$/);
-			expect(perRow.join(" ")).not.toContain("refs/heads");
+			expect(perRow.join(' ')).not.toContain('refs/heads');
 		});
 
-		it("spends no row token on a request its own bucket already refused", async () => {
+		it('spends no row token on a request its own bucket already refused', async () => {
 			// A denied bucket costs itself nothing, so firing both tiers together let
 			// refused traffic drain the bucket every sibling branch shares — and being
 			// refused is what provokes the retry that refuses it again. One branch
 			// looping could hold the whole row at its ceiling without signing once.
 			await setupJWKSMock();
-			await uploadTestKey("A1B2C3D4E5F67890");
+			await uploadTestKey('A1B2C3D4E5F67890');
 			const token = await createToken();
 
 			const metered: string[] = [];
@@ -342,25 +342,25 @@ describe("Sign Route", () => {
 				idFromName: () => ({}) as DurableObjectId,
 				get: () => ({
 					fetch: async (request: Request) => {
-						const identity = new URL(request.url).searchParams.get("identity") ?? "";
+						const identity = new URL(request.url).searchParams.get('identity') ?? '';
 						metered.push(identity);
-						const allowed = identity.startsWith("oidc-subject-row:");
+						const allowed = identity.startsWith('oidc-subject-row:');
 						return limiterResponse({ allowed, remaining: allowed ? 999 : 0, resetAt: Date.now() + 30_000 });
 					},
 				}),
 			} as unknown as DurableObjectNamespace;
 
 			const response = await makeRequest(
-				"/sign?keyId=A1B2C3D4E5F67890",
-				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				'/sign?keyId=A1B2C3D4E5F67890',
+				{ method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: 'commit data' },
 				{ RATE_LIMITER: perCallerExhausted },
 			);
 
 			expect(response.status).toBe(429);
-			expect(metered.filter((identity) => identity.startsWith("oidc-subject-row:"))).toHaveLength(0);
+			expect(metered.filter((identity) => identity.startsWith('oidc-subject-row:'))).toHaveLength(0);
 		});
 
-		it("never hands back a retry hint of zero, however close the token is", async () => {
+		it('never hands back a retry hint of zero, however close the token is', async () => {
 			// A denial's `resetAt` is when the bucket next holds a token, and refill is
 			// proportional to capacity: 60ms on the 1000-wide row bucket, 600ms on the
 			// default. Both are shorter than a Worker-to-Durable-Object round trip can
@@ -370,54 +370,54 @@ describe("Sign Route", () => {
 			// underflowed one is both off-spec and silently dropped for generic
 			// backoff — which is the client retrying faster than it was told to.
 			await setupJWKSMock();
-			await uploadTestKey("A1B2C3D4E5F67890");
+			await uploadTestKey('A1B2C3D4E5F67890');
 			const token = await createToken();
 
 			// Already elapsed: the worst case, a round trip longer than the debt.
 			const response = await makeRequest(
-				"/sign?keyId=A1B2C3D4E5F67890",
-				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				'/sign?keyId=A1B2C3D4E5F67890',
+				{ method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: 'commit data' },
 				{ RATE_LIMITER: stubRateLimiter({ allowed: false, remaining: 0, resetAt: Date.now() - 40 }) },
 			);
 
 			expect(response.status).toBe(429);
 			const body = await parseJson<{ code: string; retryAfter: number }>(response);
-			expect(body.code).toBe("RATE_LIMITED");
+			expect(body.code).toBe('RATE_LIMITED');
 			expect(body.retryAfter).toBeGreaterThan(0);
 			expect(Number.isInteger(body.retryAfter)).toBe(true);
 			// X-RateLimit-Reset is derived from the same floored hint, so it cannot
 			// contradict the body by naming an instant already past — which is exactly
 			// what the raw `resetAt` would have done here, it being 40ms in the past.
-			expect(response.headers.get("X-RateLimit-Remaining")).toBe("0");
-			expect(Number(response.headers.get("X-RateLimit-Reset"))).toBeGreaterThan(Math.floor(Date.now() / 1000));
+			expect(response.headers.get('X-RateLimit-Remaining')).toBe('0');
+			expect(Number(response.headers.get('X-RateLimit-Reset'))).toBeGreaterThan(Math.floor(Date.now() / 1000));
 		});
 
-		it("tells a refused caller when to come back, in headers as well as the body", async () => {
+		it('tells a refused caller when to come back, in headers as well as the body', async () => {
 			// A 429 used to carry no rate-limit headers at all: the one response where
 			// a caller most needs the budget was the only response that omitted it, and
 			// `securityHeaders` therefore had nothing to expose to a browser reader.
 			await setupJWKSMock();
-			await uploadTestKey("A1B2C3D4E5F67890");
+			await uploadTestKey('A1B2C3D4E5F67890');
 			const token = await createToken();
 
 			const response = await makeRequest(
-				"/sign?keyId=A1B2C3D4E5F67890",
-				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				'/sign?keyId=A1B2C3D4E5F67890',
+				{ method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: 'commit data' },
 				{ RATE_LIMITER: stubRateLimiter({ allowed: false, remaining: 0, resetAt: Date.now() + 30_000 }) },
 			);
 
 			expect(response.status).toBe(429);
 			const body = await parseJson<{ retryAfter: number }>(response);
-			expect(response.headers.get("X-RateLimit-Remaining")).toBe("0");
-			expect(Number(response.headers.get("X-RateLimit-Reset"))).toBe(Math.ceil(Date.now() / 1000) + body.retryAfter);
-			expect(response.headers.get("Access-Control-Expose-Headers")).toBe(
-				"X-Request-ID, X-RateLimit-Remaining, X-RateLimit-Reset",
+			expect(response.headers.get('X-RateLimit-Remaining')).toBe('0');
+			expect(Number(response.headers.get('X-RateLimit-Reset'))).toBe(Math.ceil(Date.now() / 1000) + body.retryAfter);
+			expect(response.headers.get('Access-Control-Expose-Headers')).toBe(
+				'X-Request-ID, X-RateLimit-Remaining, X-RateLimit-Reset',
 			);
 		});
 
-		it("refuses with 429 once a trusted row hits its ceiling, even under budget per caller", async () => {
+		it('refuses with 429 once a trusted row hits its ceiling, even under budget per caller', async () => {
 			await setupJWKSMock();
-			await uploadTestKey("A1B2C3D4E5F67890");
+			await uploadTestKey('A1B2C3D4E5F67890');
 			const token = await createToken();
 
 			// Per-caller bucket allows; the row bucket does not.
@@ -425,251 +425,251 @@ describe("Sign Route", () => {
 				idFromName: () => ({}) as DurableObjectId,
 				get: () => ({
 					fetch: async (request: Request) => {
-						const identity = new URL(request.url).searchParams.get("identity") ?? "";
-						const allowed = !identity.startsWith("oidc-subject-row:");
+						const identity = new URL(request.url).searchParams.get('identity') ?? '';
+						const allowed = !identity.startsWith('oidc-subject-row:');
 						return limiterResponse({ allowed, remaining: allowed ? 99 : 0, resetAt: Date.now() + 30_000 });
 					},
 				}),
 			} as unknown as DurableObjectNamespace;
 
 			const response = await makeRequest(
-				"/sign?keyId=A1B2C3D4E5F67890",
-				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				'/sign?keyId=A1B2C3D4E5F67890',
+				{ method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: 'commit data' },
 				{ RATE_LIMITER: tieredLimiter },
 			);
 
 			expect(response.status).toBe(429);
-			expect(await response.json()).toMatchObject({ code: "RATE_LIMITED" });
+			expect(await response.json()).toMatchObject({ code: 'RATE_LIMITED' });
 			// The row ceiling refused, so the headers describe *it*. Reporting the
 			// per-caller bucket that allowed a moment ago would answer 429 while
 			// telling the caller it still had 99 signatures in hand.
-			expect(response.headers.get("X-RateLimit-Remaining")).toBe("0");
-			expect(Number(response.headers.get("X-RateLimit-Reset"))).toBeGreaterThan(Math.floor(Date.now() / 1000));
+			expect(response.headers.get('X-RateLimit-Remaining')).toBe('0');
+			expect(Number(response.headers.get('X-RateLimit-Reset'))).toBeGreaterThan(Math.floor(Date.now() / 1000));
 		});
 
-		it("audits a trusted subject reaching outside its key scope", async () => {
+		it('audits a trusted subject reaching outside its key scope', async () => {
 			// The highest-signal event the service can produce: the credential is
 			// valid and the row is live, but the grant does not cover the key. If
 			// this returns bare, there is no way to tell a misconfigured workflow
 			// from a trust being used by something that should not hold it.
 			await insertOIDCSubject(env.AUDIT_DB, {
-				name: "ci/key-scoped",
+				name: 'ci/key-scoped',
 				issuer,
-				subjectPrefix: "repo:scoped/svc",
-				keyIds: ["AAAAAAAAAAAAAAAA"],
+				subjectPrefix: 'repo:scoped/svc',
+				keyIds: ['AAAAAAAAAAAAAAAA'],
 				expiresAt: null,
 			});
 			await setupJWKSMock();
-			const token = await createToken({ sub: "repo:scoped/svc:ref:refs/heads/main" });
+			const token = await createToken({ sub: 'repo:scoped/svc:ref:refs/heads/main' });
 
-			const response = await makeRequest("/sign?keyId=BBBBBBBBBBBBBBBB", {
-				method: "POST",
+			const response = await makeRequest('/sign?keyId=BBBBBBBBBBBBBBBB', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(403);
 			// Not INVALID_REQUEST: a scope denial has to be filterable apart from a
 			// malformed request.
-			expect(await response.json()).toMatchObject({ code: "KEY_NOT_ALLOWED" });
+			expect(await response.json()).toMatchObject({ code: 'KEY_NOT_ALLOWED' });
 
 			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
-			const denied = events.find((event) => event.errorCode === "KEY_NOT_ALLOWED");
+			const denied = events.find((event) => event.errorCode === 'KEY_NOT_ALLOWED');
 			expect(denied).toMatchObject({
-				action: "sign",
+				action: 'sign',
 				success: false,
-				subject: "repo:scoped/svc:ref:refs/heads/main",
-				keyId: "BBBBBBBBBBBBBBBB",
+				subject: 'repo:scoped/svc:ref:refs/heads/main',
+				keyId: 'BBBBBBBBBBBBBBBB',
 			});
-			expect(JSON.parse(denied?.metadata ?? "{}")).toMatchObject({ subjectPolicy: "ci/key-scoped" });
+			expect(JSON.parse(denied?.metadata ?? '{}')).toMatchObject({ subjectPolicy: 'ci/key-scoped' });
 		});
 
-		it("meters the scope denial, and writes nothing once the caller is over budget", async () => {
+		it('meters the scope denial, and writes nothing once the caller is over budget', async () => {
 			// The denial writes to D1, and audit_logs shares a database with the
 			// authorization table every request reads. Unmetered, one trusted token
 			// could bury the very event operators are told to alert on.
 			await insertOIDCSubject(env.AUDIT_DB, {
-				name: "ci/metered",
+				name: 'ci/metered',
 				issuer,
-				subjectPrefix: "repo:metered/svc",
-				keyIds: ["AAAAAAAAAAAAAAAA"],
+				subjectPrefix: 'repo:metered/svc',
+				keyIds: ['AAAAAAAAAAAAAAAA'],
 				expiresAt: null,
 			});
 			await setupJWKSMock();
-			const token = await createToken({ sub: "repo:metered/svc:ref:refs/heads/main" });
+			const token = await createToken({ sub: 'repo:metered/svc:ref:refs/heads/main' });
 
 			const resetAt = Date.now() + 30_000;
 			const response = await makeRequest(
-				"/sign?keyId=BBBBBBBBBBBBBBBB",
-				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				'/sign?keyId=BBBBBBBBBBBBBBBB',
+				{ method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: 'commit data' },
 				{ RATE_LIMITER: stubRateLimiter({ allowed: false, remaining: 0, resetAt }) },
 			);
 
 			// The limiter's verdict wins over the denial: 429, not 403.
 			expect(response.status).toBe(429);
-			expect(await response.json()).toMatchObject({ code: "RATE_LIMITED" });
+			expect(await response.json()).toMatchObject({ code: 'RATE_LIMITED' });
 
 			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
-			expect(events.some((event) => event.errorCode === "KEY_NOT_ALLOWED")).toBe(false);
+			expect(events.some((event) => event.errorCode === 'KEY_NOT_ALLOWED')).toBe(false);
 		});
 
-		it("refuses the scope denial once the trusted row is at its ceiling", async () => {
+		it('refuses the scope denial once the trusted row is at its ceiling', async () => {
 			// The denial writes to D1, and the per-caller bucket is keyed on `sub` —
 			// so if the row ceiling did not govern this branch, a row that can mint
 			// subjects would still flood `audit_logs` past it. Same multiplication
 			// the second tier exists to stop, on the path that writes.
 			await insertOIDCSubject(env.AUDIT_DB, {
-				name: "ci/row-ceiling",
+				name: 'ci/row-ceiling',
 				issuer,
-				subjectPrefix: "repo:rowceiling/svc",
-				keyIds: ["AAAAAAAAAAAAAAAA"],
+				subjectPrefix: 'repo:rowceiling/svc',
+				keyIds: ['AAAAAAAAAAAAAAAA'],
 				expiresAt: null,
 			});
 			await setupJWKSMock();
-			const token = await createToken({ sub: "repo:rowceiling/svc:ref:refs/heads/main" });
+			const token = await createToken({ sub: 'repo:rowceiling/svc:ref:refs/heads/main' });
 
 			// Per-caller bucket allows; the row bucket does not.
 			const tieredLimiter = {
 				idFromName: () => ({}) as DurableObjectId,
 				get: () => ({
 					fetch: async (request: Request) => {
-						const identity = new URL(request.url).searchParams.get("identity") ?? "";
-						const allowed = !identity.startsWith("oidc-subject-row:");
+						const identity = new URL(request.url).searchParams.get('identity') ?? '';
+						const allowed = !identity.startsWith('oidc-subject-row:');
 						return limiterResponse({ allowed, remaining: allowed ? 99 : 0, resetAt: Date.now() + 30_000 });
 					},
 				}),
 			} as unknown as DurableObjectNamespace;
 
-			const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+			const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
 			const response = await makeRequest(
-				"/sign?keyId=BBBBBBBBBBBBBBBB",
-				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				'/sign?keyId=BBBBBBBBBBBBBBBB',
+				{ method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: 'commit data' },
 				{ RATE_LIMITER: tieredLimiter },
 			);
 
 			expect(response.status).toBe(429);
-			expect(await response.json()).toMatchObject({ code: "RATE_LIMITED" });
+			expect(await response.json()).toMatchObject({ code: 'RATE_LIMITED' });
 
 			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
-			expect(events.some((event) => event.errorCode === "KEY_NOT_ALLOWED")).toBe(false);
+			expect(events.some((event) => event.errorCode === 'KEY_NOT_ALLOWED')).toBe(false);
 
 			// Refusing before the write is correct; refusing *silently* is not.
 			// Anything able to hold the row at its ceiling would otherwise erase the
 			// service's highest-signal event, and the 429 alone does not say a scope
 			// violation happened, let alone against which key.
 			expect(warnSpy).toHaveBeenCalledWith(
-				"Key scope denied while the trusted row was at its signing ceiling",
+				'Key scope denied while the trusted row was at its signing ceiling',
 				expect.objectContaining({
-					keyId: "BBBBBBBBBBBBBBBB",
-					subject: "repo:rowceiling/svc:ref:refs/heads/main",
-					subjectPolicy: "ci/row-ceiling",
+					keyId: 'BBBBBBBBBBBBBBBB',
+					subject: 'repo:rowceiling/svc:ref:refs/heads/main',
+					subjectPolicy: 'ci/row-ceiling',
 				}),
 			);
 			warnSpy.mockRestore();
 		});
 
-		it("survives a non-Error rejection from the limiter", async () => {
+		it('survives a non-Error rejection from the limiter', async () => {
 			await insertOIDCSubject(env.AUDIT_DB, {
-				name: "ci/limiter-nonerror",
+				name: 'ci/limiter-nonerror',
 				issuer,
-				subjectPrefix: "repo:limiternonerror/svc",
-				keyIds: ["AAAAAAAAAAAAAAAA"],
+				subjectPrefix: 'repo:limiternonerror/svc',
+				keyIds: ['AAAAAAAAAAAAAAAA'],
 				expiresAt: null,
 			});
 			await setupJWKSMock();
-			const token = await createToken({ sub: "repo:limiternonerror/svc:ref:refs/heads/main" });
+			const token = await createToken({ sub: 'repo:limiternonerror/svc:ref:refs/heads/main' });
 
-			const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+			const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			const response = await makeRequest(
-				"/sign?keyId=BBBBBBBBBBBBBBBB",
-				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
-				{ RATE_LIMITER: brokenRateLimiter("limiter exploded") },
+				'/sign?keyId=BBBBBBBBBBBBBBBB',
+				{ method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: 'commit data' },
+				{ RATE_LIMITER: brokenRateLimiter('limiter exploded') },
 			);
 			expect(response.status).toBe(403);
 			expect(errorSpy).toHaveBeenCalledWith(
-				"Rate limiter unreachable",
-				expect.objectContaining({ error: "limiter exploded" }),
+				'Rate limiter unreachable',
+				expect.objectContaining({ error: 'limiter exploded' }),
 			);
 			errorSpy.mockRestore();
 		});
 
-		it("treats a rate limiter error status the same as an outage", async () => {
+		it('treats a rate limiter error status the same as an outage', async () => {
 			await insertOIDCSubject(env.AUDIT_DB, {
-				name: "ci/limiter-error",
+				name: 'ci/limiter-error',
 				issuer,
-				subjectPrefix: "repo:limitererror/svc",
-				keyIds: ["AAAAAAAAAAAAAAAA"],
+				subjectPrefix: 'repo:limitererror/svc',
+				keyIds: ['AAAAAAAAAAAAAAAA'],
 				expiresAt: null,
 			});
 			await setupJWKSMock();
-			const token = await createToken({ sub: "repo:limitererror/svc:ref:refs/heads/main" });
+			const token = await createToken({ sub: 'repo:limitererror/svc:ref:refs/heads/main' });
 
 			const response = await makeRequest(
-				"/sign?keyId=BBBBBBBBBBBBBBBB",
-				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				'/sign?keyId=BBBBBBBBBBBBBBBB',
+				{ method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: 'commit data' },
 				{ RATE_LIMITER: erroringRateLimiter() },
 			);
 			expect(response.status).toBe(403);
-			expect(await response.json()).toMatchObject({ code: "KEY_NOT_ALLOWED" });
+			expect(await response.json()).toMatchObject({ code: 'KEY_NOT_ALLOWED' });
 
 			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
-			expect(events.some((event) => event.errorCode === "KEY_NOT_ALLOWED")).toBe(false);
+			expect(events.some((event) => event.errorCode === 'KEY_NOT_ALLOWED')).toBe(false);
 		});
 
-		it("refuses without writing when the rate limiter is unavailable", async () => {
+		it('refuses without writing when the rate limiter is unavailable', async () => {
 			// Cannot meter, so must not write — but the denial still has to leave a
 			// trace and must still be a denial.
 			await insertOIDCSubject(env.AUDIT_DB, {
-				name: "ci/limiter-down",
+				name: 'ci/limiter-down',
 				issuer,
-				subjectPrefix: "repo:limiterdown/svc",
-				keyIds: ["AAAAAAAAAAAAAAAA"],
+				subjectPrefix: 'repo:limiterdown/svc',
+				keyIds: ['AAAAAAAAAAAAAAAA'],
 				expiresAt: null,
 			});
 			await setupJWKSMock();
-			const token = await createToken({ sub: "repo:limiterdown/svc:ref:refs/heads/main" });
+			const token = await createToken({ sub: 'repo:limiterdown/svc:ref:refs/heads/main' });
 
-			const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+			const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 			const response = await makeRequest(
-				"/sign?keyId=BBBBBBBBBBBBBBBB",
-				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				'/sign?keyId=BBBBBBBBBBBBBBBB',
+				{ method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: 'commit data' },
 				{ RATE_LIMITER: brokenRateLimiter() },
 			);
 			expect(response.status).toBe(403);
-			expect(await response.json()).toMatchObject({ code: "KEY_NOT_ALLOWED" });
+			expect(await response.json()).toMatchObject({ code: 'KEY_NOT_ALLOWED' });
 
 			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
-			expect(events.some((event) => event.errorCode === "KEY_NOT_ALLOWED")).toBe(false);
+			expect(events.some((event) => event.errorCode === 'KEY_NOT_ALLOWED')).toBe(false);
 			expect(warnSpy).toHaveBeenCalledWith(
-				"Key scope denied while the rate limiter was unavailable",
-				expect.objectContaining({ keyId: "BBBBBBBBBBBBBBBB" }),
+				'Key scope denied while the rate limiter was unavailable',
+				expect.objectContaining({ keyId: 'BBBBBBBBBBBBBBBB' }),
 			);
 			warnSpy.mockRestore();
 		});
 
-		it("should return 400 if commit data is missing", async () => {
+		it('should return 400 if commit data is missing', async () => {
 			await setupJWKSMock();
 			const token = await createToken();
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "",
+				body: '',
 			});
 
 			expect(response.status).toBe(400);
 			const body = (await response.json()) as { code: string };
-			expect(body.code).toBe("INVALID_REQUEST");
+			expect(body.code).toBe('INVALID_REQUEST');
 		});
 
-		it("should return 404 if key not found", async () => {
+		it('should return 404 if key not found', async () => {
 			await setupJWKSMock();
 			const token = await createToken();
-			const response = await makeRequest("/sign?keyId=FFFFFFFFFFFFFFFF", {
-				method: "POST",
+			const response = await makeRequest('/sign?keyId=FFFFFFFFFFFFFFFF', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(404);
@@ -685,52 +685,52 @@ describe("Sign Route", () => {
 
 			expect(response.status).toBe(404);
 			const body = (await response.json()) as { error: string; code: string };
-			expect(body.code).toBe("KEY_NOT_FOUND");
-			expect(body.error).toContain("Key not found");
+			expect(body.code).toBe('KEY_NOT_FOUND');
+			expect(body.error).toContain('Key not found');
 		});
 
-		it("should use default key ID if not provided", async () => {
+		it('should use default key ID if not provided', async () => {
 			await setupJWKSMock();
 			await uploadTestKey(env.KEY_ID); // Upload default key
 			const token = await createToken();
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(200);
 			const signature = await response.text();
-			expect(signature).toContain("-----BEGIN PGP SIGNATURE-----");
+			expect(signature).toContain('-----BEGIN PGP SIGNATURE-----');
 		});
 
-		it("should return 503 when rate limiter fails", async () => {
+		it('should return 503 when rate limiter fails', async () => {
 			await setupJWKSMock();
 			const token = await createToken();
 
 			// Mock rate limiter to fail
 			const originalIdFromName = env.RATE_LIMITER.idFromName;
 			env.RATE_LIMITER.idFromName = () => {
-				throw new Error("Rate limiter unavailable");
+				throw new Error('Rate limiter unavailable');
 			};
 
 			try {
-				const response = await makeRequest("/sign", {
-					method: "POST",
+				const response = await makeRequest('/sign', {
+					method: 'POST',
 					headers: { Authorization: `Bearer ${token}` },
-					body: "commit data",
+					body: 'commit data',
 				});
 
 				expect(response.status).toBe(503);
 				const body = await parseJson<{ code: string }>(response);
-				expect(body.code).toBe("RATE_LIMIT_ERROR");
+				expect(body.code).toBe('RATE_LIMIT_ERROR');
 			} finally {
 				env.RATE_LIMITER.idFromName = originalIdFromName;
 			}
 		});
 
-		it("should return 503 when rate limiter returns non-OK", async () => {
+		it('should return 503 when rate limiter returns non-OK', async () => {
 			await setupJWKSMock();
 			const token = await createToken();
 
@@ -738,25 +738,25 @@ describe("Sign Route", () => {
 			const originalGet = env.RATE_LIMITER.get;
 			env.RATE_LIMITER.get = () =>
 				({
-					fetch: async () => new Response("Internal Error", { status: 500 }),
+					fetch: async () => new Response('Internal Error', { status: 500 }),
 				}) as unknown as DurableObjectStub;
 
 			try {
-				const response = await makeRequest("/sign", {
-					method: "POST",
+				const response = await makeRequest('/sign', {
+					method: 'POST',
 					headers: { Authorization: `Bearer ${token}` },
-					body: "commit data",
+					body: 'commit data',
 				});
 
 				expect(response.status).toBe(503);
 				const body = await parseJson<{ code: string }>(response);
-				expect(body.code).toBe("RATE_LIMIT_ERROR");
+				expect(body.code).toBe('RATE_LIMIT_ERROR');
 			} finally {
 				env.RATE_LIMITER.get = originalGet;
 			}
 		});
 
-		it("should return 429 when rate limit exceeded", async () => {
+		it('should return 429 when rate limit exceeded', async () => {
 			await setupJWKSMock();
 			const token = await createToken();
 
@@ -771,23 +771,23 @@ describe("Sign Route", () => {
 				}) as unknown as DurableObjectStub;
 
 			try {
-				const response = await makeRequest("/sign", {
-					method: "POST",
+				const response = await makeRequest('/sign', {
+					method: 'POST',
 					headers: { Authorization: `Bearer ${token}` },
-					body: "commit data",
+					body: 'commit data',
 				});
 
 				expect(response.status).toBe(429);
 				const body = await parseJson<{ code: string }>(response);
-				expect(body.code).toBe("RATE_LIMITED");
+				expect(body.code).toBe('RATE_LIMITED');
 			} finally {
 				env.RATE_LIMITER.get = originalGet;
 			}
 		});
 
-		it("should return 500 when signing fails with generic error", async () => {
+		it('should return 500 when signing fails with generic error', async () => {
 			await setupJWKSMock();
-			await uploadTestKey("5555555555555555");
+			await uploadTestKey('5555555555555555');
 			const token = await createToken();
 
 			// Mock signCommitData to throw
@@ -810,48 +810,48 @@ describe("Sign Route", () => {
 			const originalGet = env.KEY_STORAGE.get;
 			env.KEY_STORAGE.get = () =>
 				({
-					fetch: async () => new Response(JSON.stringify({ armoredPrivateKey: "invalid-key-data" })),
+					fetch: async () => new Response(JSON.stringify({ armoredPrivateKey: 'invalid-key-data' })),
 				}) as unknown as DurableObjectStub;
 
 			try {
-				const response = await makeRequest("/sign?keyId=EEEEEEEEEEEEEEEE", {
-					method: "POST",
+				const response = await makeRequest('/sign?keyId=EEEEEEEEEEEEEEEE', {
+					method: 'POST',
 					headers: { Authorization: `Bearer ${token}` },
-					body: "commit data",
+					body: 'commit data',
 				});
 
 				expect(response.status).toBe(500);
 				const body = await parseJson<{ code: string }>(response);
-				expect(body.code).toBe("SIGN_ERROR");
+				expect(body.code).toBe('SIGN_ERROR');
 			} finally {
 				env.KEY_STORAGE.get = originalGet;
 			}
 		});
 
-		it("should handle non-Error exceptions", async () => {
+		it('should handle non-Error exceptions', async () => {
 			await setupJWKSMock();
 			const token = await createToken();
 
 			// Mock KEY_STORAGE to throw a string
 			const originalGet = env.KEY_STORAGE.get;
-			const mockFetch = vi.fn().mockRejectedValue("String error");
+			const mockFetch = vi.fn().mockRejectedValue('String error');
 			env.KEY_STORAGE.get = () => ({ fetch: mockFetch }) as unknown as DurableObjectStub;
 
 			try {
-				const response = await makeRequest("/sign?keyId=8888888888888888", {
-					method: "POST",
+				const response = await makeRequest('/sign?keyId=8888888888888888', {
+					method: 'POST',
 					headers: { Authorization: `Bearer ${token}` },
-					body: "commit data",
+					body: 'commit data',
 				});
 
 				expect(response.status).toBe(500);
 				const body = await parseJson<{ error: string }>(response);
-				expect(body.error).toBe("Signing failed");
+				expect(body.error).toBe('Signing failed');
 			} finally {
 				env.KEY_STORAGE.get = originalGet;
 			}
 		});
-		it("should propagate explicit upstream error", async () => {
+		it('should propagate explicit upstream error', async () => {
 			await setupJWKSMock();
 			const token = await createToken();
 
@@ -860,28 +860,28 @@ describe("Sign Route", () => {
 			env.KEY_STORAGE.get = () =>
 				({
 					fetch: async () =>
-						new Response(JSON.stringify({ error: "Upstream failure" }), {
+						new Response(JSON.stringify({ error: 'Upstream failure' }), {
 							status: 500,
 						}),
 				}) as unknown as DurableObjectStub;
 
 			try {
-				const response = await makeRequest("/sign?keyId=9999999999999999", {
-					method: "POST",
+				const response = await makeRequest('/sign?keyId=9999999999999999', {
+					method: 'POST',
 					headers: { Authorization: `Bearer ${token}` },
-					body: "commit data",
+					body: 'commit data',
 				});
 
 				expect(response.status).toBe(500);
 				const body = await parseJson<{ error: string }>(response);
-				expect(body.error).toBe("Upstream failure");
+				expect(body.error).toBe('Upstream failure');
 			} finally {
 				env.KEY_STORAGE.get = originalGet;
 			}
 		});
 	});
 
-	describe("the 429 contract, on every branch that emits one", () => {
+	describe('the 429 contract, on every branch that emits one', () => {
 		// Four branches answer 429: the per-caller bucket and the row ceiling, each
 		// on the signing path and on the key-scope path. Two of them were written
 		// separately and shipped without the rate-limit headers, so what a caller
@@ -896,8 +896,8 @@ describe("Sign Route", () => {
 				idFromName: () => ({}) as DurableObjectId,
 				get: () => ({
 					fetch: async (request: Request) => {
-						const identity = new URL(request.url).searchParams.get("identity") ?? "";
-						const allowed = identity.startsWith("oidc-subject-row:");
+						const identity = new URL(request.url).searchParams.get('identity') ?? '';
+						const allowed = identity.startsWith('oidc-subject-row:');
 						return limiterResponse({ allowed, remaining: allowed ? 999 : 0, resetAt });
 					},
 				}),
@@ -910,8 +910,8 @@ describe("Sign Route", () => {
 				idFromName: () => ({}) as DurableObjectId,
 				get: () => ({
 					fetch: async (request: Request) => {
-						const identity = new URL(request.url).searchParams.get("identity") ?? "";
-						const allowed = !identity.startsWith("oidc-subject-row:");
+						const identity = new URL(request.url).searchParams.get('identity') ?? '';
+						const allowed = !identity.startsWith('oidc-subject-row:');
 						// 99 remaining on the tier that allowed: if a refusal ever reported
 						// the allowing bucket's budget, this is the number that would
 						// surface, and `X-RateLimit-Remaining: 99` beside a 429 tells the
@@ -962,7 +962,7 @@ describe("Sign Route", () => {
 						name: `ci/${slug}`,
 						issuer,
 						subjectPrefix: `repo:${slug}/svc`,
-						keyIds: ["AAAAAAAAAAAAAAAA"],
+						keyIds: ['AAAAAAAAAAAAAAAA'],
 						expiresAt: null,
 					});
 					await setupJWKSMock();
@@ -974,31 +974,31 @@ describe("Sign Route", () => {
 
 				// The row-ceiling scope denial logs a warn by design; silenced, not
 				// asserted — the branch that owns that line asserts it.
-				const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+				const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 				const resetAt = Date.now() + 30_000;
 				// No key upload: every one of these refusals returns before the key
 				// response is read, which is the point of enforcing the limit first.
-				const keyId = branch.scope ? "BBBBBBBBBBBBBBBB" : "A1B2C3D4E5F67890";
+				const keyId = branch.scope ? 'BBBBBBBBBBBBBBBB' : 'A1B2C3D4E5F67890';
 				const before = Math.ceil(Date.now() / 1000);
 				const response = await makeRequest(
 					`/sign?keyId=${keyId}`,
-					{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+					{ method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: 'commit data' },
 					{ RATE_LIMITER: branch.limiter(resetAt) },
 				);
 				warnSpy.mockRestore();
 
 				expect(response.status).toBe(429);
 				const body = await parseJson<{ code: string; retryAfter: number }>(response);
-				expect(body.code).toBe("RATE_LIMITED");
+				expect(body.code).toBe('RATE_LIMITED');
 				expect(Number.isInteger(body.retryAfter)).toBe(true);
 				expect(body.retryAfter).toBeGreaterThan(0);
 
 				// Zero by definition: whichever tier refused has nothing left, and the
 				// budget of a tier that allowed would read as room to retry.
-				expect(response.headers.get("X-RateLimit-Remaining")).toBe("0");
+				expect(response.headers.get('X-RateLimit-Remaining')).toBe('0');
 				// Derived from the same hint the body carries, so header and body name
 				// the same instant however the two are computed.
-				const reset = Number(response.headers.get("X-RateLimit-Reset"));
+				const reset = Number(response.headers.get('X-RateLimit-Reset'));
 				expect(reset).toBeGreaterThanOrEqual(before + body.retryAfter);
 				expect(reset).toBeLessThanOrEqual(Math.ceil(Date.now() / 1000) + body.retryAfter);
 
@@ -1006,40 +1006,40 @@ describe("Sign Route", () => {
 				// host came from an intermediary, not from the service — it is how they
 				// tell a proxy's refusal from ours. Emitting one for symmetry with the
 				// 503s would take that away, and the wait is already in the body.
-				expect(response.headers.has("Retry-After")).toBe(false);
+				expect(response.headers.has('Retry-After')).toBe(false);
 
 				// The headers being set is only half of it: `securityHeaders` advertises
 				// exactly the ones present, so a browser caller reading the budget
 				// through CORS sees nothing unless they are on the response.
-				expect(response.headers.get("Access-Control-Expose-Headers")).toBe(
-					"X-Request-ID, X-RateLimit-Remaining, X-RateLimit-Reset",
+				expect(response.headers.get('Access-Control-Expose-Headers')).toBe(
+					'X-Request-ID, X-RateLimit-Remaining, X-RateLimit-Reset',
 				);
 			});
 		}
 	});
 
-	describe("Audit Logging Catch Handlers", () => {
-		it("should log audit failures via catch handler on sign success", async () => {
+	describe('Audit Logging Catch Handlers', () => {
+		it('should log audit failures via catch handler on sign success', async () => {
 			await setupJWKSMock();
 			const token = await createToken();
 
 			// Spy on console.error to verify catch handler executes
-			const loggerSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
-			const { logAuditEvent } = await import("#utils/audit");
+			const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+			const { logAuditEvent } = await import('#utils/audit');
 
 			// Upload a key first
-			const keyId = "51617CA7C4123456";
+			const keyId = '51617CA7C4123456';
 			await uploadTestKey(keyId);
 
 			// Mock to reject once to trigger catch
-			vi.mocked(logAuditEvent).mockRejectedValueOnce(new Error("Audit DB connection failed"));
+			vi.mocked(logAuditEvent).mockRejectedValueOnce(new Error('Audit DB connection failed'));
 
 			const ctx = createExecutionContext();
 			await app.fetch(
 				new Request(`http://localhost/sign?keyId=${keyId}`, {
-					method: "POST",
+					method: 'POST',
 					headers: { Authorization: `Bearer ${token}` },
-					body: "commit data for audit catch test",
+					body: 'commit data for audit catch test',
 				}),
 				env,
 				ctx,
@@ -1050,7 +1050,7 @@ describe("Sign Route", () => {
 
 			// Verify catch handler logged the error
 			expect(loggerSpy).toHaveBeenCalledWith(
-				"Background task failed",
+				'Background task failed',
 				expect.objectContaining({
 					requestId: expect.any(String),
 					error: expect.any(String),
@@ -1060,21 +1060,21 @@ describe("Sign Route", () => {
 			loggerSpy.mockRestore();
 		});
 
-		it("should log audit failures via catch handler on sign error", async () => {
+		it('should log audit failures via catch handler on sign error', async () => {
 			await setupJWKSMock();
 			const token = await createToken();
-			const loggerSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
-			const { logAuditEvent } = await import("#utils/audit");
+			const loggerSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
+			const { logAuditEvent } = await import('#utils/audit');
 
 			// Mock to reject for error audit
-			vi.mocked(logAuditEvent).mockRejectedValueOnce(new Error("Audit DB unavailable"));
+			vi.mocked(logAuditEvent).mockRejectedValueOnce(new Error('Audit DB unavailable'));
 
 			const ctx = createExecutionContext();
 			await app.fetch(
-				new Request("http://localhost/sign?keyId=DDDDDDDDDDDDDDDD", {
-					method: "POST",
+				new Request('http://localhost/sign?keyId=DDDDDDDDDDDDDDDD', {
+					method: 'POST',
 					headers: { Authorization: `Bearer ${token}` },
-					body: "commit data",
+					body: 'commit data',
 				}),
 				env,
 				ctx,
@@ -1083,7 +1083,7 @@ describe("Sign Route", () => {
 			await waitOnExecutionContext(ctx);
 
 			expect(loggerSpy).toHaveBeenCalledWith(
-				"Background task failed",
+				'Background task failed',
 				expect.objectContaining({
 					requestId: expect.any(String),
 					error: expect.any(String),

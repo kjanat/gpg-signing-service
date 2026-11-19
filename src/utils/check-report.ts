@@ -55,13 +55,13 @@
  * authenticated calls below are acting on it.
  */
 
-import type { AnyStoredKey } from "#schemas/keys";
-import { isX509Key } from "#schemas/keys";
-import type { Env } from "#types";
-import type { SignatureFinding, SignatureState } from "#utils/commit-signature";
-import { inspectCommitSignature } from "#utils/commit-signature";
-import type { CheckRunInput, RepositoryClient } from "#utils/github-repo";
-import { extractPublicKey } from "#utils/signing";
+import type { AnyStoredKey } from '#schemas/keys';
+import { isX509Key } from '#schemas/keys';
+import type { Env } from '#types';
+import type { SignatureFinding, SignatureState } from '#utils/commit-signature';
+import { inspectCommitSignature } from '#utils/commit-signature';
+import type { CheckRunInput, RepositoryClient } from '#utils/github-repo';
+import { extractPublicKey } from '#utils/signing';
 
 /**
  * The check run's name, and the reason it is a constant.
@@ -72,7 +72,7 @@ import { extractPublicKey } from "#utils/signing";
  * them permanent. It is also the string that appears in a branch protection
  * rule, which an operator writes once by hand.
  */
-export const CHECK_RUN_NAME = "GPG signature";
+export const CHECK_RUN_NAME = 'GPG signature';
 
 /**
  * Is check-run reporting switched on for this deployment?
@@ -84,8 +84,8 @@ export const CHECK_RUN_NAME = "GPG signature";
  * existing flag would mean every deployment that upgraded started making calls
  * its installation had not granted, and answering 403 on each one.
  */
-export function checkRunsEnabled(env: Pick<Env, "GITHUB_APP_CHECK_RUNS">): boolean {
-	return env.GITHUB_APP_CHECK_RUNS === "true";
+export function checkRunsEnabled(env: Pick<Env, 'GITHUB_APP_CHECK_RUNS'>): boolean {
+	return env.GITHUB_APP_CHECK_RUNS === 'true';
 }
 
 /**
@@ -101,35 +101,35 @@ const SHA_PATTERN = /^[0-9a-f]{40}$/;
 /** Why a report was not published. */
 export type CheckReportRefusal =
 	/** `GITHUB_APP_CHECK_RUNS` is not `"true"`. No GitHub call was made. */
-	| "disabled"
+	| 'disabled'
 	/** The bound key is X.509, which signs no `gpgsig` this service can check. */
-	| "unsupported_key"
+	| 'unsupported_key'
 	/** The branch is gone, so there is no head to report on. */
-	| "branch_missing"
+	| 'branch_missing'
 	/** `GITHUB_APP_ID` is not a number, so our own check runs are unidentifiable. */
-	| "app_id_unusable"
+	| 'app_id_unusable'
 	/** The ref, or the commit read back, did not name a usable object id. */
-	| "unusable_sha";
+	| 'unusable_sha';
 
 /** How a reporting attempt ended. */
 export type CheckReportResult =
 	| {
-			outcome: "published";
+			outcome: 'published';
 			sha: string;
 			state: SignatureState;
 			finding: SignatureFinding;
-			conclusion: CheckRunInput["conclusion"];
+			conclusion: CheckRunInput['conclusion'];
 			checkRunId: number;
 			/** Which of the two writes happened, for the audit row and the log. */
-			action: "created" | "updated";
+			action: 'created' | 'updated';
 	  }
-	| { outcome: "skipped"; reason: CheckReportRefusal }
-	| { outcome: "failed"; reason: string };
+	| { outcome: 'skipped'; reason: CheckReportRefusal }
+	| { outcome: 'failed'; reason: string };
 
 /** The conclusion each state earns, and nothing stronger. */
-export function conclusionFor(state: SignatureState): CheckRunInput["conclusion"] {
-	if (state === "service_key_valid") {
-		return "success";
+export function conclusionFor(state: SignatureState): CheckRunInput['conclusion'] {
+	if (state === 'service_key_valid') {
+		return 'success';
 	}
 
 	// `failure` is reserved for the one state that is an accusation: a signature
@@ -138,16 +138,16 @@ export function conclusionFor(state: SignatureState): CheckRunInput["conclusion"
 	// standing to fail a commit over — an unsigned commit beneath a signed one
 	// stays unsigned by design, and somebody else's signature is somebody else's
 	// business.
-	return state === "invalid_signature" ? "failure" : "neutral";
+	return state === 'invalid_signature' ? 'failure' : 'neutral';
 }
 
 /** The one-line title, per state. */
 const TITLES: Record<SignatureState, string> = {
 	service_key_valid: "Signed by this service's key",
-	other_signer: "Signed by another key",
-	unsigned: "Not signed",
-	invalid_signature: "Signature does not verify",
-	unverifiable: "Signature could not be checked",
+	other_signer: 'Signed by another key',
+	unsigned: 'Not signed',
+	invalid_signature: 'Signature does not verify',
+	unverifiable: 'Signature could not be checked',
 };
 
 /**
@@ -168,9 +168,9 @@ const EXPLANATIONS: Record<SignatureState, string> = {
 		"The commit carries an OpenPGP signature naming this deployment's signing key that does not verify under it.",
 	other_signer:
 		"The commit is signed by a key other than the one this deployment binds to this repository. No claim is made about whether that signature is good; GitHub's own verdict is above.",
-	unsigned: "The commit carries no signature.",
+	unsigned: 'The commit carries no signature.',
 	unverifiable:
-		"The bytes GitHub reported for this commit could not be tied back to its own object id, so nothing was established either way. A commit carrying a header this service does not model reaches this state with a perfectly good signature.",
+		'The bytes GitHub reported for this commit could not be tied back to its own object id, so nothing was established either way. A commit carrying a header this service does not model reaches this state with a perfectly good signature.',
 };
 
 /**
@@ -187,16 +187,16 @@ const EXPLANATIONS: Record<SignatureState, string> = {
 export function checkRunSummary(sha: string, keyId: string, finding: SignatureFinding): string {
 	const lines = [
 		`Commit \`${sha}\``,
-		"",
+		'',
 		`- **State:** \`${finding.state}\` (\`${finding.detail}\`)`,
 		`- **Configured signing key:** \`${keyId}\``,
 		`- **GitHub's own verification:** \`${finding.github.reason}\` (verified: ${finding.github.verified})`,
-		"",
+		'',
 	];
 
 	lines.push(EXPLANATIONS[finding.state]);
 
-	return lines.join("\n");
+	return lines.join('\n');
 }
 
 /**
@@ -209,7 +209,7 @@ export function checkRunSummary(sha: string, keyId: string, finding: SignatureFi
  * @param env - The feature flag, and the App id that tells our runs from others'
  */
 export async function reportSignatureCheck(
-	env: Pick<Env, "GITHUB_APP_CHECK_RUNS" | "GITHUB_APP_ID">,
+	env: Pick<Env, 'GITHUB_APP_CHECK_RUNS' | 'GITHUB_APP_ID'>,
 	client: RepositoryClient,
 	branch: string,
 	key: AnyStoredKey,
@@ -218,27 +218,27 @@ export async function reportSignatureCheck(
 	if (!checkRunsEnabled(env)) {
 		// Before anything else, so a deployment that has not opted in makes no
 		// GitHub call at all and behaves exactly as it did before this existed.
-		return { outcome: "skipped", reason: "disabled" };
+		return { outcome: 'skipped', reason: 'disabled' };
 	}
 
 	// Derived here rather than taken as an argument, so there is one place that
 	// decides which runs are ours and no caller can pass a different answer.
 	const appId = Number(env.GITHUB_APP_ID);
 	if (!Number.isSafeInteger(appId) || appId <= 0) {
-		return { outcome: "skipped", reason: "app_id_unusable" };
+		return { outcome: 'skipped', reason: 'app_id_unusable' };
 	}
 
 	if (isX509Key(key)) {
 		// The same refusal `signPushedCommits` makes, for the same reason: an
 		// X.509 key has no OpenPGP public half to verify a `gpgsig` against, so
 		// there is no question this check could answer.
-		return { outcome: "skipped", reason: "unsupported_key" };
+		return { outcome: 'skipped', reason: 'unsupported_key' };
 	}
 
 	try {
 		const ref = await client.getBranch(branch);
 		if (ref === null) {
-			return { outcome: "skipped", reason: "branch_missing" };
+			return { outcome: 'skipped', reason: 'branch_missing' };
 		}
 
 		// **The sha the repository holds**, not the one the delivery claimed. A
@@ -246,7 +246,7 @@ export async function reportSignatureCheck(
 		// back over an installation token from the authorized repository.
 		const sha = ref.sha;
 		if (!SHA_PATTERN.test(sha)) {
-			return { outcome: "skipped", reason: "unusable_sha" };
+			return { outcome: 'skipped', reason: 'unusable_sha' };
 		}
 
 		const reported = await client.getCommitVerification(sha);
@@ -254,7 +254,7 @@ export async function reportSignatureCheck(
 			// GitHub answered about a different object than the one asked for. That
 			// should be impossible; reporting on it anyway would be publishing a
 			// verdict for one commit under another commit's name.
-			return { outcome: "skipped", reason: "unusable_sha" };
+			return { outcome: 'skipped', reason: 'unusable_sha' };
 		}
 
 		const finding = await inspectCommitSignature(reported, await extractPublicKey(key.armoredPrivateKey));
@@ -277,26 +277,26 @@ export async function reportSignatureCheck(
 		if (target !== undefined) {
 			await client.updateCheckRun(target.id, input);
 			return {
-				outcome: "published",
+				outcome: 'published',
 				sha,
 				state: finding.state,
 				finding,
 				conclusion,
 				checkRunId: target.id,
-				action: "updated",
+				action: 'updated',
 			};
 		}
 
 		const created = await client.createCheckRun(input);
 
 		return {
-			outcome: "published",
+			outcome: 'published',
 			sha,
 			state: finding.state,
 			finding,
 			conclusion,
 			checkRunId: created,
-			action: "created",
+			action: 'created',
 		};
 	} catch (error) {
 		// Token failures, 403s from an installation that has not granted
@@ -304,6 +304,6 @@ export async function reportSignatureCheck(
 		// report did not land, none of them means anything about the signing that
 		// happened before it, and the message comes from `GitHubApiError`, which
 		// carries a status and never a response body.
-		return { outcome: "failed", reason: error instanceof Error ? error.message : "Check run reporting failed" };
+		return { outcome: 'failed', reason: error instanceof Error ? error.message : 'Check run reporting failed' };
 	}
 }

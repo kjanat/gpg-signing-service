@@ -38,7 +38,7 @@ of their members. See
 
 There is a third boundary inside that one, and it is new: **an allowlisted
 repository is not an allowlisted commenter.** The pair authorizes what a
-delivery may be _about_; on an `issue_comment` it says nothing about who wrote
+delivery may be *about*; on an `issue_comment` it says nothing about who wrote
 the comment, and comments on a public repository are written by anyone at all —
 arriving under the same installation, about the same repository, with the same
 valid HMAC as the owner's. So the comment's author is authorized separately and
@@ -66,7 +66,7 @@ A deployment may additionally opt into publishing a signature check run, behind
 its own literal `GITHUB_APP_CHECK_RUNS="true"` — separate because it needs a
 `Checks: Read and write` permission an installation has to approve, and because
 with it unset no Checks API call is made at all. It publishes an outward
-_statement_ rather than a change, so what matters here is what the statement is
+*statement* rather than a change, so what matters here is what the statement is
 allowed to claim: `success` requires an OpenPGP signature that names the bound
 key and verifies **here**, over bytes tied back to the commit's own object id
 rather than trusted as GitHub reported them; `failure` is reserved for a
@@ -76,7 +76,7 @@ has no standing to fail a commit over either. GitHub's own verdict is repeated
 alongside, labelled as GitHub's and only from a known set of reasons. See
 [reporting the signature as a check run](github-app.md#reporting-the-signature-as-a-check-run).
 
-Two properties of _when_ it publishes belong here too. It runs off the response
+Two properties of *when* it publishes belong here too. It runs off the response
 path — handed to the runtime after the outcome is decided — so an unreachable
 Checks API costs a report rather than the ten seconds GitHub gives a webhook
 receiver, and a reporting failure still cannot make a signing delivery
@@ -171,7 +171,7 @@ retired key's **id**. That id is public and always was, so this is not a secrecy
 problem — it is that production answers `404 KEY_NOT_FOUND` for it, and an
 example that still passes it hands a new operator a failure to debug. `task
 test:retired-key-refs` fails if any tracked file names that id outside two
-tiers: the files whose subject _is_ the retirement (ADR-004, the
+tiers: the files whose subject *is* the retirement (ADR-004, the
 [key handoff runbook](key-handoff-runbook.md) and its tooling, the key-material
 guard's own retired set) and the unit suites and `wrangler.test.toml`, where the
 id is deterministic historical data. Inside the first tier the id still has to
@@ -262,11 +262,11 @@ sign of one is not every caller failing at once.
 - A verified, authorized delivery is deduplicated on `X-GitHub-Delivery` in a
   Durable Object, so a replayed or redelivered event is a no-op. The claim is
   taken under `blockConcurrencyWhile`, which is what makes two simultaneous
-  copies of one delivery resolve to exactly one winner, and it is taken _after_
+  copies of one delivery resolve to exactly one winner, and it is taken *after*
   both checks above — a request that could consume an id before proving its
   origin and its grant could suppress the real delivery carrying it. A delivery
   with no usable id is refused rather than given a placeholder, because a
-  placeholder is a shared key. The id is _reserved_ before the handler runs and
+  placeholder is a shared key. The id is *reserved* before the handler runs and
   settled after it — released when the delivery caused nothing, committed once
   it has caused something irreversible — so a failure that changed nothing stays
   redeliverable while a repeat still cannot act twice.
@@ -301,7 +301,7 @@ a deliberate trade rather than brevity. It runs one way: a route added later
 that **changes state** is denied to the read-only credential by construction,
 where a path allowlist would grant it to anyone who forgot to edit the list.
 
-It does not run the other way. A route added later that **reads** is _granted_
+It does not run the other way. A route added later that **reads** is *granted*
 to the read-only credential by construction — a future
 `GET /admin/keys/{keyId}/export` would be reachable with the monitoring secret
 the moment it is mounted, without anyone deciding that it should be. Nothing in
@@ -314,7 +314,7 @@ opened by code and closed by review.
 `ADMIN_READONLY_TOKEN` exists for the scheduled key-expiry monitor, which needs
 four `GET`s and nothing else. Without it, a repository secret readable by that
 workflow would also carry the authority to delete the signing key. What it does
-_not_ reduce is read exposure: the credential can enumerate every key id,
+*not* reduce is read exposure: the credential can enumerate every key id,
 fingerprint, trust rule, service-token name and audit record. Treat it as
 sensitive; it is narrower in authority, not in disclosure.
 
@@ -452,7 +452,7 @@ out. What is reported:
   maintenance. Both still ride along on whatever event is raised, which is what
   closes the retention gap the log-only refusals had.
 
-What is never reported, redacted by property name _and_ by value shape,
+What is never reported, redacted by property name *and* by value shape,
 recursively, across request data, extras, contexts, breadcrumbs, exception
 messages and nested values:
 
@@ -496,7 +496,7 @@ Traces are sampled at `SENTRY_TRACES_SAMPLE_RATE`, default `0.1`. Setting it to
 
 Every `dataCollection` category is off, so no IP address, cookie, header, query
 parameter, body or local variable is attached.
-Key ids, fingerprints, issuers, subjects and subject-policy names _are_ reported:
+Key ids, fingerprints, issuers, subjects and subject-policy names *are* reported:
 each is already readable through `/public-key`, `GET /admin/subjects` or the
 audit trail, and they are what makes an event worth having.
 
@@ -521,7 +521,7 @@ host never matches, and the deployment silently grants nothing.
 `Access-Control-Allow-Credentials` is never sent. Authentication is a bearer
 token in `Authorization`, which a browser does not attach ambiently, so there is
 no ambient credential for a cross-origin page to replay. A cookie- or client
-certificate-based flow would have to add the header to the preflight _and_ the
+certificate-based flow would have to add the header to the preflight *and* the
 actual response deliberately.
 
 The `Origin: null` that sandboxed iframes, `data:` URLs and `file://` documents
@@ -548,7 +548,7 @@ caller receives — see [Effective headers at the edge](#effective-headers-at-th
 
 Cloudflare sits between `securityHeaders` and the caller, and for one header it
 does not pass through: a zone with **HTTP Strict Transport Security** enabled
-under SSL/TLS -> Edge Certificates _replaces_ the Worker's
+under SSL/TLS -> Edge Certificates *replaces* the Worker's
 `Strict-Transport-Security`. The reply carries exactly one such header, the
 zone's, with nothing to show a substitution happened.
 
@@ -566,14 +566,14 @@ Worker's policy and reports the difference; the judgement it applies lives in
 `src/utils/hsts.ts` and is unit-tested. `/verify-live` runs it as part of the
 deployment audit.
 
-The question it asks is _is the policy in force the Worker's?_, and only a
+The question it asks is *is the policy in force the Worker's?*, and only a
 header that says so passes. Spelling is not part of the comparison — directive
 order, casing, whitespace and RFC 6797's quoted-string form all describe the
 same policy — but the policy itself is, in both directions:
 
 - a delivered `max-age` shorter than the Worker's, which is a protection window
   narrower than the source and the tests describe;
-- a delivered `max-age` **longer** than the Worker's, which is _stronger_ and
+- a delivered `max-age` **longer** than the Worker's, which is *stronger* and
   still drift: `max-age=63072000` is not this service's policy, and passing it
   would leave the check blind to the very substitution it exists to detect. A
   zone response-header transform rule — which Cloudflare's own HSTS
@@ -586,10 +586,10 @@ same policy — but the policy itself is, in both directions:
   declares an intent the policy cannot support, and is inert;
 - a directive that appears twice. RFC 6797 §6.1 allows each one once and
   requires a user agent to ignore a header that repeats one, so `max-age=300;
-  …; max-age=31536000` puts _no_ policy in force. Read last-wins it would look
+  …; max-age=31536000` puts *no* policy in force. Read last-wins it would look
   like a compliant year, which is the worst reading of the worst header; and
 - more than one `Strict-Transport-Security` on the response, which is what an
-  edge that _appends_ its policy rather than replacing the Worker's produces.
+  edge that *appends* its policy rather than replacing the Worker's produces.
   `fetch` hands those over comma-joined with nothing to say which arrived
   first, so the probe reports the ambiguity instead of naming an effective
   policy it cannot actually establish.
@@ -636,15 +636,15 @@ Before relying on the service for protected production branches, account for:
 - no HSM or external key-management boundary;
 - no private-key backup or restoration workflow;
 - no automated passphrase, admin-token, or key rotation — including
-  `ADMIN_READONLY_TOKEN`, which is rotated by hand like the rest. Key _expiry_
+  `ADMIN_READONLY_TOKEN`, which is rotated by hand like the rest. Key *expiry*
   is monitored (above), but performing the rotation is manual: see
   [Key rotation](self-hosting.md#key-rotation);
 - no enforcement of expiry in the sign path, so a key inside the warning window,
   revoked, or already lapsed is still signed with;
 - no X.509 revocation checking: the monitor reads `notAfter` and performs no CRL
   or OCSP lookup, so a revoked-but-unexpired certificate raises nothing;
-- a read-only admin credential that is narrower in _authority_ than
-  `ADMIN_TOKEN` but not in _disclosure_: it still reads every key id,
+- a read-only admin credential that is narrower in *authority* than
+  `ADMIN_TOKEN` but not in *disclosure*: it still reads every key id,
   trust rule, token name and audit record;
 - no audit retention, and no alerting unless the optional `SENTRY_DSN` is
   configured (see [What Sentry receives](#what-sentry-receives));
@@ -666,10 +666,10 @@ Before relying on the service for protected production branches, account for:
 - **dispatch is at-most-once past the request**: there is no idempotency key on
   GitHub's workflow-dispatch endpoint and a second call starts a second agent
   session, so the delivery id is written to the ledger before the request leaves
-  — a durable _hold_, not a flag settled afterwards, because this is the one
+  — a durable *hold*, not a flag settled afterwards, because this is the one
   handler with no idempotence of its own for a redelivery to meet. A 5xx, a lost
   connection, or an isolate that dies mid-flight is not retried. GitHub
-  answering 4xx _is_ — it created nothing, and said so, and the hold is
+  answering 4xx *is* — it created nothing, and said so, and the hold is
   released. A hold that cannot be written refuses the dispatch. See
   [replay: at-most-once, on purpose](github-app.md#replay-at-most-once-on-purpose);
 - **the author's permission is established, never inferred from one status**: a
@@ -689,7 +689,7 @@ Before relying on the service for protected production branches, account for:
   that was sent and whose answer was lost may have landed, so it is not retried
   — an operator's redelivery is answered `200 {"duplicate": true}` without
   acting, and recovering means pushing again rather than redelivering. Failures
-  _before_ that point release the id and are genuine retries. See
+  *before* that point release the id and are genuine retries. See
   [two phases, and where the line is](github-app.md#two-phases-and-where-the-line-is);
 - **check runs converge rather than being prevented**: a check run is not
   protected by the delivery ledger, because publishing the same verdict twice

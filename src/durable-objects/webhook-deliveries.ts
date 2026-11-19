@@ -45,9 +45,9 @@
  * let a second arrival un-say the first one's action.
  */
 
-import { HTTP, MediaType } from "#types";
-import { logger } from "#utils/logger";
-import { DELIVERY_RESERVATION_MS, DELIVERY_RETENTION_MS } from "#utils/webhook-replay";
+import { HTTP, MediaType } from '#types';
+import { logger } from '#utils/logger';
+import { DELIVERY_RESERVATION_MS, DELIVERY_RETENTION_MS } from '#utils/webhook-replay';
 
 /** What is remembered about a delivery id. */
 interface DeliveryRecord {
@@ -78,7 +78,7 @@ export class WebhookDeliveries implements DurableObject {
 	private state: DurableObjectState;
 
 	/** Prefix for delivery-id records. Nothing else in this object uses it. */
-	private readonly keyPrefix = "d:";
+	private readonly keyPrefix = 'd:';
 
 	// Reaping, shaped exactly like `RateLimiter`'s: a cursor so a pass covers the
 	// whole prefix rather than re-reading its first page forever, a batch so one
@@ -88,7 +88,7 @@ export class WebhookDeliveries implements DurableObject {
 	private readonly sweepBatch = 1000;
 	private readonly deleteChunk = 128;
 	/** Where the last sweep stopped. Outside `keyPrefix`, so the sweep cannot reap its own cursor. */
-	private readonly sweepCursorKey = "sweep:cursor";
+	private readonly sweepCursorKey = 'sweep:cursor';
 
 	constructor(state: DurableObjectState) {
 		this.state = state;
@@ -100,43 +100,43 @@ export class WebhookDeliveries implements DurableObject {
 		try {
 			const operation = url.pathname;
 
-			if (operation !== "/reserve" && operation !== "/commit" && operation !== "/hold" && operation !== "/release") {
-				return new Response("Not found", { status: HTTP.NotFound });
+			if (operation !== '/reserve' && operation !== '/commit' && operation !== '/hold' && operation !== '/release') {
+				return new Response('Not found', { status: HTTP.NotFound });
 			}
 
-			if (request.method !== "POST") {
-				return new Response("Method not allowed", { status: HTTP.MethodNotAllowed });
+			if (request.method !== 'POST') {
+				return new Response('Method not allowed', { status: HTTP.MethodNotAllowed });
 			}
 
-			const id = url.searchParams.get("id");
+			const id = url.searchParams.get('id');
 			if (!id) {
 				// The caller validates the id shape before it gets here; this is the
 				// second of two guards, so a future caller cannot inherit the first
 				// one's diligence by forgetting it. An empty id would otherwise
 				// become the key `d:` — one shared name that every id-less delivery
 				// would dedupe against.
-				return new Response(JSON.stringify({ error: "Delivery id required" }), {
+				return new Response(JSON.stringify({ error: 'Delivery id required' }), {
 					status: HTTP.BadRequest,
-					headers: { "Content-Type": MediaType.ApplicationJson },
+					headers: { 'Content-Type': MediaType.ApplicationJson },
 				});
 			}
 
-			if (operation === "/reserve") {
+			if (operation === '/reserve') {
 				return await this.reserve(id);
 			}
 
-			return await this.settle(id, operation === "/commit" ? "commit" : operation === "/hold" ? "hold" : "release");
+			return await this.settle(id, operation === '/commit' ? 'commit' : operation === '/hold' ? 'hold' : 'release');
 		} catch (error) {
 			// The end of the line, as in `RateLimiter.fetch`: nothing above this
 			// catches a fault from inside a Durable Object, so it is reported here or
 			// not at all. The delivery id is deliberately absent from the log — the
 			// path is what says which operation failed, and the id is the caller's
 			// value.
-			logger.error("Delivery ledger request failed", error, { action: "webhook-replay", path: url.pathname });
-			const message = error instanceof Error ? error.message : "Unknown error";
+			logger.error('Delivery ledger request failed', error, { action: 'webhook-replay', path: url.pathname });
+			const message = error instanceof Error ? error.message : 'Unknown error';
 			return new Response(JSON.stringify({ error: message }), {
 				status: HTTP.InternalServerError,
-				headers: { "Content-Type": MediaType.ApplicationJson },
+				headers: { 'Content-Type': MediaType.ApplicationJson },
 			});
 		}
 	}
@@ -161,7 +161,7 @@ export class WebhookDeliveries implements DurableObject {
 			}
 		});
 
-		if ("failure" in outcome) {
+		if ('failure' in outcome) {
 			throw outcome.failure;
 		}
 
@@ -225,7 +225,7 @@ export class WebhookDeliveries implements DurableObject {
 
 		return new Response(JSON.stringify(result), {
 			status: HTTP.OK,
-			headers: { "Content-Type": MediaType.ApplicationJson },
+			headers: { 'Content-Type': MediaType.ApplicationJson },
 		});
 	}
 
@@ -283,7 +283,7 @@ export class WebhookDeliveries implements DurableObject {
 	 * hold. The two flags accumulate, because each is a fact about what the
 	 * delivery did and neither un-says the other.
 	 */
-	private async settle(id: string, phase: "commit" | "hold" | "release"): Promise<Response> {
+	private async settle(id: string, phase: 'commit' | 'hold' | 'release'): Promise<Response> {
 		const key = `${this.keyPrefix}${id}`;
 
 		const result = await this.exclusively(async () => {
@@ -291,35 +291,35 @@ export class WebhookDeliveries implements DurableObject {
 			const now = Date.now();
 
 			if (!existing) {
-				if (phase === "release") {
-					return { settled: false, reason: "absent" as const };
+				if (phase === 'release') {
+					return { settled: false, reason: 'absent' as const };
 				}
 
 				await this.state.storage.put<DeliveryRecord>(key, {
 					firstSeen: now,
 					expiresAt: now + DELIVERY_RETENTION_MS,
-					committed: phase === "commit",
-					held: phase === "hold",
+					committed: phase === 'commit',
+					held: phase === 'hold',
 				});
 				return {
 					settled: true,
 					reason:
-						phase === "commit" ? ("committed_without_reservation" as const) : ("held_without_reservation" as const),
+						phase === 'commit' ? ('committed_without_reservation' as const) : ('held_without_reservation' as const),
 				};
 			}
 
-			if (phase !== "release") {
+			if (phase !== 'release') {
 				await this.state.storage.put<DeliveryRecord>(key, {
 					firstSeen: existing.firstSeen,
 					expiresAt: now + DELIVERY_RETENTION_MS,
-					committed: phase === "commit" || existing.committed,
-					held: phase === "hold" || existing.held === true,
+					committed: phase === 'commit' || existing.committed,
+					held: phase === 'hold' || existing.held === true,
 				});
-				return { settled: true, reason: phase === "commit" ? ("committed" as const) : ("held" as const) };
+				return { settled: true, reason: phase === 'commit' ? ('committed' as const) : ('held' as const) };
 			}
 
 			if (existing.committed) {
-				return { settled: false, reason: "already_committed" as const };
+				return { settled: false, reason: 'already_committed' as const };
 			}
 
 			// Reached by a held record as well as a reserved one, and that is the
@@ -327,7 +327,7 @@ export class WebhookDeliveries implements DurableObject {
 			// that was held a moment ago goes back and an operator's fix plus a
 			// redelivery is a real retry.
 			await this.state.storage.delete(key);
-			return { settled: true, reason: "released" as const };
+			return { settled: true, reason: 'released' as const };
 		});
 
 		// A commit or a hold can now create a record where `reserve` created none,
@@ -335,13 +335,13 @@ export class WebhookDeliveries implements DurableObject {
 		// written after the sweep emptied the ledger — which stops re-arming itself
 		// when it finds nothing — would sit there until the next unrelated
 		// reservation.
-		if (phase !== "release") {
+		if (phase !== 'release') {
 			await this.scheduleSweep();
 		}
 
 		return new Response(JSON.stringify(result), {
 			status: HTTP.OK,
-			headers: { "Content-Type": MediaType.ApplicationJson },
+			headers: { 'Content-Type': MediaType.ApplicationJson },
 		});
 	}
 

@@ -61,7 +61,7 @@ a JSON blob. Callers using the Go package read them off `client.Guidance`; see
 [`HealthResponse`](../src/schemas/health.ts) — `status`, `timestamp`, `version`,
 `checks` — not an error envelope. It carries no `code`, and therefore no `docs`
 either, because the middleware has nothing to build a link from. It is a
-_report_ that the service is degraded rather than a refusal of the request you
+*report* that the service is degraded rather than a refusal of the request you
 made, and `/health` is the only route that answers this way. Do not write a
 client that assumes `status >= 400` implies a `code`.
 
@@ -143,15 +143,15 @@ Check and fix:
 ```bash
 # What is trusted now. `active: false` is a revoked or expired rule.
 curl --fail-with-body --silent \
-	-H "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN" \
-	"$GPG_SIGN_URL/admin/subjects" | jq '.subjects[] | {name, subjectPrefix, active}'
+  -H "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN" \
+  "$GPG_SIGN_URL/admin/subjects" | jq '.subjects[] | {name, subjectPrefix, active}'
 
 # Authorize one.
 curl --fail-with-body --silent \
-	-H "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN" \
-	-H 'Content-Type: application/json' \
-	-d '{"name":"kjanat/kjanat","issuer":"https://token.actions.githubusercontent.com","subjectPrefix":"repo:kjanat/kjanat","keyIds":[]}' \
-	"$GPG_SIGN_URL/admin/subjects"
+  -H "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"kjanat/kjanat","issuer":"https://token.actions.githubusercontent.com","subjectPrefix":"repo:kjanat/kjanat","keyIds":[]}' \
+  "$GPG_SIGN_URL/admin/subjects"
 ```
 
 The `hint` separates the two situations a caller can act on differently. **No
@@ -178,13 +178,13 @@ Three different situations answer with this same code and message: the subject
 matches nothing, it matches a **revoked** rule, and it matches an **expired**
 one. They are not distinguished in the response, because telling the holder of a
 token that their subject matches a revoked rule confirms the rule exists. They
-_are_ distinguished in the logs, keyed by the `requestId` from the response —
+*are* distinguished in the logs, keyed by the `requestId` from the response —
 see [Looking a refusal up](#looking-a-refusal-up).
 
 ### AUTH_SCOPE_INSUFFICIENT
 
 **403.** The credential is one this deployment issued, and it is not allowed to
-do _this_. Today that is exactly one case: the read-only admin bearer
+do *this*. Today that is exactly one case: the read-only admin bearer
 (`ADMIN_READONLY_TOKEN`) on an admin route that changes state.
 
 The response carries `WWW-Authenticate: Bearer …, error="insufficient_scope"`
@@ -275,7 +275,7 @@ Not a variant of [`INVALID_REQUEST`](#invalid_request), because the two have
 different fixes and one of them is not a fix: a malformed body is corrected and
 resent, an oversize one is refused identically forever.
 
-The refusal is the same whether the request _declared_ an oversize
+The refusal is the same whether the request *declared* an oversize
 `Content-Length` or merely turned out to be oversize while being read. That is
 deliberate — a sender able to tell those apart would have learnt that the header
 is consulted, which is the one fact needed to pick the cheaper attack — and it
@@ -441,7 +441,7 @@ ejecting one would answer its own bare 502 — losing the `code`, `hint` and
 `docs` this whole reference is about, at the one moment they matter.
 
 500 is also the truer shape. One bad entry in `ALLOWED_ISSUERS` breaks that
-issuer's callers while everybody else keeps signing, so the _service_ is not
+issuer's callers while everybody else keeps signing, so the *service* is not
 unavailable; 500's "unexpected condition that prevented it from fulfilling the
 request" is request-scoped, which is what this is.
 

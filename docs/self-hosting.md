@@ -64,10 +64,10 @@ The helper uses an isolated keyring under `.keys/`:
 
 ```bash
 bash scripts/generate-key.sh \
-	"Example Company" \
-	"signing@example.com" \
-	"Production signing key" \
-	"strong-passphrase"
+  "Example Company" \
+  "signing@example.com" \
+  "Production signing key" \
+  "strong-passphrase"
 ```
 
 Record the generated 16-character hexadecimal key ID. Keep
@@ -183,7 +183,7 @@ pasted out of a CI log finds the event.
 
 Secrets never travel: `KEY_PASSPHRASE`, `ADMIN_TOKEN`, armored or PEM private
 key material, raw OIDC JWTs, `gst_` service tokens, `Bearer` credentials and the
-`Authorization` header are redacted by name _and_ by value shape before an
+`Authorization` header are redacted by name *and* by value shape before an
 event leaves the Worker, request bodies are never collected at all, and
 every Sentry `dataCollection` category is off. The values you configured are also swept out by literal
 value with no minimum length, so a short `ADMIN_TOKEN` is covered like any
@@ -209,7 +209,7 @@ defaulting to `0.1`. It has no effect without a DSN.
 and `HEAD` admin routes and refused, with
 [`403 AUTH_SCOPE_INSUFFICIENT`](errors.md#auth_scope_insufficient), on every
 admin route that changes state. Provision it for anything that only needs to
-_look_ at the deployment — the scheduled key-expiry check is the case it was
+*look* at the deployment — the scheduled key-expiry check is the case it was
 built for, and without it that workflow's repository secret would also be able
 to delete the signing key.
 
@@ -305,8 +305,8 @@ export GPG_SIGN_URL="https://your-worker.example"
 export GPG_SIGN_ADMIN_TOKEN="..."
 
 gpg-sign admin upload \
-	--key-id A1B2C3D4E5F67890 \
-	--file .keys/private-key.asc
+  --key-id A1B2C3D4E5F67890 \
+  --file .keys/private-key.asc
 ```
 
 The uploaded `--key-id` must match the `KEY_ID` value when it is the default
@@ -316,19 +316,19 @@ The HTTP API also supports X.509 keys:
 
 ```bash
 jq --null-input \
-	--arg keyId "0123456789ABCDEF" \
-	--rawfile privateKeyPem private-key.pem \
-	--rawfile certificatePem certificate.pem \
-	'{
+  --arg keyId "0123456789ABCDEF" \
+  --rawfile privateKeyPem private-key.pem \
+  --rawfile certificatePem certificate.pem \
+  '{
     keyId: $keyId,
     privateKeyPem: $privateKeyPem,
     certificatePem: $certificatePem
   }' \
-	| curl --fail-with-body --silent --show-error \
-		--request POST "$GPG_SIGN_URL/admin/keys/x509" \
-		--header "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN" \
-		--header "Content-Type: application/json" \
-		--data-binary @-
+  | curl --fail-with-body --silent --show-error \
+    --request POST "$GPG_SIGN_URL/admin/keys/x509" \
+    --header "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN" \
+    --header "Content-Type: application/json" \
+    --data-binary @-
 ```
 
 The private key must be PKCS#8 PEM and match the certificate.
@@ -346,14 +346,14 @@ Create a service token or configure OIDC, then request a test signature:
 ```bash
 export GPG_SIGN_TOKEN="gst_..."
 printf 'smoke test' \
-	| gpg-sign sign --key-id A1B2C3D4E5F67890 >smoke-test.asc
+  | gpg-sign sign --key-id A1B2C3D4E5F67890 >smoke-test.asc
 ```
 
 Verify a PGP result:
 
 ```bash
 printf 'smoke test' \
-	| gpg --verify smoke-test.asc -
+  | gpg --verify smoke-test.asc -
 ```
 
 ## 9. Key expiry monitoring
@@ -399,7 +399,7 @@ Neither step produces a secret.
 ### What gets monitored
 
 The set is derived, not maintained by hand. A key is checked when this
-deployment could sign with it _right now_:
+deployment could sign with it *right now*:
 
 - the deployment's own `KEY_ID`, which is what a caller that names no key gets;
 - every key a **live** grant — a trusted OIDC subject row or a service token —
@@ -408,11 +408,11 @@ deployment could sign with it _right now_:
   grant reaches all of them.
 
 A stored key that no live grant reaches is deliberately left out, so retaining a
-superseded key raises nothing. A key that is configured or granted but _not_
+superseded key raises nothing. A key that is configured or granted but *not*
 stored is reported as `missing` — signing through it is already broken.
 
 Expiry is read out of the key material itself rather than from a date typed into
-a config file: for a PGP key, the _latest_ still-usable signing subkey's
+a config file: for a PGP key, the *latest* still-usable signing subkey's
 expiration, capped by the primary key's — signing keeps working until the last
 usable subkey lapses, so reading the earliest instead would warn about an outage
 a valid replacement subkey already prevents. For an X.509 key, the certificate's
@@ -445,21 +445,21 @@ production and a second schedule would mail the same warning twice.
 
 A run that cannot read its own state, or cannot send mail it had to send, fails
 the invocation rather than reporting success. The mail configuration is checked
-_before_ any key is read, so a broken alerting path surfaces on a quiet week
+*before* any key is read, so a broken alerting path surfaces on a quiet week
 rather than on the one where it had something to say.
 
 That ordering also means a monitor that breaks can say so. Once the mail path is
 established, a failure in the work that follows — an unreadable
 `KEY_EXPIRY_WARN_DAYS`, a `KEY_STORAGE` Durable Object that will not answer, a
 grant table that will not read — sends one alert under the subject
-`Signing key expiry check did not run`, and _then_ fails the invocation anyway.
+`Signing key expiry check did not run`, and *then* fails the invocation anyway.
 Otherwise the monitor's own breakage would be quieter than the condition it
 watches for, and its silence would stop meaning anything.
 
 That email carries a fixed sentence per failure class and nothing else. The
 underlying exception is not serialized into it: it goes to the Workers logs for
 the failed invocation, where it can be read without having crossed a mail
-server. And if the failure _is_ the send, it is not reported through the channel
+server. And if the failure *is* the send, it is not reported through the channel
 that just failed — it propagates and fails the invocation, as before.
 
 ## Key rotation

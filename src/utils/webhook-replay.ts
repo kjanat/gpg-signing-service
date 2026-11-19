@@ -114,8 +114,8 @@
  * a 5xx, a lost answer, a process that never comes back — leaves the id spent.
  */
 
-import type { Env } from "#types";
-import { TIME } from "#types";
+import type { Env } from '#types';
+import { TIME } from '#types';
 
 /**
  * How long a committed delivery id is remembered.
@@ -155,7 +155,7 @@ export const DELIVERY_RESERVATION_MS = 5 * TIME.MINUTE;
  * design to avoid. If it ever is, the change is a deterministic id → shard
  * function here and nothing else.
  */
-const DELIVERY_LEDGER = "deliveries";
+const DELIVERY_LEDGER = 'deliveries';
 
 /**
  * What a delivery id may look like.
@@ -175,7 +175,7 @@ const DELIVERY_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{7,199}$/;
 
 /** Is `value` an id this service is willing to dedupe on? */
 export function isDeliveryId(value: string | null | undefined): value is string {
-	return typeof value === "string" && DELIVERY_ID_PATTERN.test(value);
+	return typeof value === 'string' && DELIVERY_ID_PATTERN.test(value);
 }
 
 /** The outcome of trying to reserve a delivery id. */
@@ -208,7 +208,7 @@ async function ledgerCall(env: Env, operation: string, deliveryId: string): Prom
 	const ledger = env.WEBHOOK_DELIVERIES.get(env.WEBHOOK_DELIVERIES.idFromName(DELIVERY_LEDGER));
 
 	const response = await ledger.fetch(
-		new Request(`http://internal/${operation}?id=${encodeURIComponent(deliveryId)}`, { method: "POST" }),
+		new Request(`http://internal/${operation}?id=${encodeURIComponent(deliveryId)}`, { method: 'POST' }),
 	);
 
 	if (!response.ok) {
@@ -229,14 +229,14 @@ async function ledgerCall(env: Env, operation: string, deliveryId: string): Prom
  *   the moment it is least able to be checked.
  */
 export async function reserveDelivery(env: Env, deliveryId: string): Promise<DeliveryReservation> {
-	const body = await ledgerCall(env, "reserve", deliveryId);
+	const body = await ledgerCall(env, 'reserve', deliveryId);
 
 	// Parsed rather than cast through: this decides whether an event is acted on
 	// twice, and a malformed body silently read as `reserved: undefined` would be
 	// falsy — which happens to fail closed, and is not a property worth resting
 	// on an accident of coercion.
-	if (typeof body.reserved !== "boolean" || typeof body.firstSeen !== "number" || typeof body.committed !== "boolean") {
-		throw new Error("Delivery ledger returned an unreadable reservation");
+	if (typeof body.reserved !== 'boolean' || typeof body.firstSeen !== 'number' || typeof body.committed !== 'boolean') {
+		throw new Error('Delivery ledger returned an unreadable reservation');
 	}
 
 	// `held` is read leniently where the other three are strict, and only that
@@ -265,9 +265,9 @@ export async function reserveDelivery(env: Env, deliveryId: string): Promise<Del
  *   for the response; it does not mean the action can be undone.
  */
 export async function commitDelivery(env: Env, deliveryId: string): Promise<string | null> {
-	const body = await ledgerCall(env, "commit", deliveryId);
+	const body = await ledgerCall(env, 'commit', deliveryId);
 
-	return typeof body.reason === "string" ? body.reason : null;
+	return typeof body.reason === 'string' ? body.reason : null;
 }
 
 /**
@@ -292,9 +292,9 @@ export async function commitDelivery(env: Env, deliveryId: string): Promise<stri
  *   a hold that did not land is the exact state this call exists to avoid.
  */
 export async function holdDelivery(env: Env, deliveryId: string): Promise<string | null> {
-	const body = await ledgerCall(env, "hold", deliveryId);
+	const body = await ledgerCall(env, 'hold', deliveryId);
 
-	return typeof body.reason === "string" ? body.reason : null;
+	return typeof body.reason === 'string' ? body.reason : null;
 }
 
 /**
@@ -309,5 +309,5 @@ export async function holdDelivery(env: Env, deliveryId: string): Promise<string
  * fix plus a redelivery work after GitHub has said it created nothing.
  */
 export async function releaseDelivery(env: Env, deliveryId: string): Promise<void> {
-	await ledgerCall(env, "release", deliveryId);
+	await ledgerCall(env, 'release', deliveryId);
 }

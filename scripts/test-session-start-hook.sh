@@ -273,7 +273,7 @@ fi
 #
 # A tool the loop forgets is a tool the hook reports as present, and the session
 # then discovers it is missing halfway through `task format`. Every bin the
-# Taskfile or dprint reaches for has to be probed.
+# Taskfile or kprint reaches for has to be probed.
 case_name=probe-list-drift
 for tool in task shellcheck biome wrangler golangci-lint tombi; do
 	grep -qF "${tool}" <<<"${ALL_TOOLS}" \

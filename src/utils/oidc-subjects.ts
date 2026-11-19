@@ -11,7 +11,7 @@
  * caller is revocable, expirable and key-scoped like any other credential.
  */
 
-import { logger } from "#utils/logger";
+import { logger } from '#utils/logger';
 
 /** A matched subject's identity and signing policy. */
 export interface OIDCSubjectPolicy {
@@ -40,10 +40,10 @@ export interface OIDCSubjectPolicy {
  * null files the incident under the noise.
  */
 export type OIDCSubjectResolution =
-	| { status: "trusted"; policy: OIDCSubjectPolicy }
-	| ({ status: "unknown" } & RefusalContext)
-	| ({ status: "revoked"; id: string; name: string; revokedAt: string } & RefusalContext)
-	| ({ status: "expired"; id: string; name: string; expiresAt: string } & RefusalContext);
+	| { status: 'trusted'; policy: OIDCSubjectPolicy }
+	| ({ status: 'unknown' } & RefusalContext)
+	| ({ status: 'revoked'; id: string; name: string; revokedAt: string } & RefusalContext)
+	| ({ status: 'expired'; id: string; name: string; expiresAt: string } & RefusalContext);
 
 /**
  * What was checked, carried on every refusal so the 401 can say more than "no".
@@ -101,7 +101,7 @@ interface OIDCSubjectRow {
 }
 
 /** Characters that terminate a subject prefix in GitHub and GitLab subjects. */
-const SUBJECT_DELIMITERS = new Set([":", "@", "/"]);
+const SUBJECT_DELIMITERS = new Set([':', '@', '/']);
 
 /**
  * Does `sub` fall under `prefix`?
@@ -125,7 +125,7 @@ export function subjectMatchesPrefix(sub: string, prefix: string): boolean {
 	// real issuers always set it, but ALLOWED_ISSUERS is configurable, and
 	// `sub.startsWith` on undefined throws — which the caller's catch would file
 	// as "authorization store unavailable", a 503 and an alert for what is a 401.
-	if (typeof sub !== "string" || !sub) {
+	if (typeof sub !== 'string' || !sub) {
 		return false;
 	}
 	if (!prefix) {
@@ -145,7 +145,7 @@ export function subjectMatchesPrefix(sub: string, prefix: string): boolean {
 
 function parseKeyIds(raw: string): string[] | null {
 	const keyIds = raw
-		.split(",")
+		.split(',')
 		.map((keyId) => keyId.trim())
 		.filter((keyId) => keyId.length > 0);
 	return keyIds.length > 0 ? keyIds : null;
@@ -175,7 +175,7 @@ export async function insertOIDCSubject(
 			input.name,
 			input.issuer,
 			input.subjectPrefix,
-			input.keyIds.join(","),
+			input.keyIds.join(','),
 			input.createdAt ?? new Date().toISOString(),
 			input.expiresAt,
 		)
@@ -239,13 +239,13 @@ export async function resolveOIDCSubject(db: D1Database, issuer: string, sub: st
 		// expired one: expiry is routine, revocation was a decision.
 		const revoked = matches.find((candidate) => candidate.revoked_at);
 		if (revoked?.revoked_at) {
-			return { status: "revoked", id: revoked.id, name: revoked.name, revokedAt: revoked.revoked_at, ...context };
+			return { status: 'revoked', id: revoked.id, name: revoked.name, revokedAt: revoked.revoked_at, ...context };
 		}
 		const expired = matches[0];
 		if (expired?.expires_at) {
-			return { status: "expired", id: expired.id, name: expired.name, expiresAt: expired.expires_at, ...context };
+			return { status: 'expired', id: expired.id, name: expired.name, expiresAt: expired.expires_at, ...context };
 		}
-		return { status: "unknown", ...context };
+		return { status: 'unknown', ...context };
 	}
 
 	// Best-effort usage stamp, deferred rather than awaited: this sits on the
@@ -255,11 +255,11 @@ export async function resolveOIDCSubject(db: D1Database, issuer: string, sub: st
 	const stampUsage = async () => {
 		try {
 			await db
-				.prepare("UPDATE oidc_subjects SET last_used_at = ? WHERE id = ?")
+				.prepare('UPDATE oidc_subjects SET last_used_at = ? WHERE id = ?')
 				.bind(new Date().toISOString(), row.id)
 				.run();
 		} catch (error) {
-			logger.warn("Failed to stamp OIDC subject usage", {
+			logger.warn('Failed to stamp OIDC subject usage', {
 				subjectId: row.id,
 				error: error instanceof Error ? error.message : String(error),
 			});
@@ -267,7 +267,7 @@ export async function resolveOIDCSubject(db: D1Database, issuer: string, sub: st
 	};
 
 	return {
-		status: "trusted",
+		status: 'trusted',
 		policy: {
 			id: row.id,
 			name: row.name,

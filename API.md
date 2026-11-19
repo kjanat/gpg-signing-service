@@ -35,13 +35,13 @@ Requires a valid OIDC token from GitHub Actions or GitLab CI:
 ```bash
 # GitHub Actions
 OIDC_TOKEN=$(curl -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-	"$ACTIONS_ID_TOKEN_REQUEST_URL" | jq -r '.token')
+  "$ACTIONS_ID_TOKEN_REQUEST_URL" | jq -r '.token')
 
 # Sign commit
 SIGNATURE=$(curl -X POST \
-	-H "Authorization: Bearer $OIDC_TOKEN" \
-	--data-raw "$(git cat-file commit HEAD)" \
-	https://gpg.kajkowalski.nl/sign)
+  -H "Authorization: Bearer $OIDC_TOKEN" \
+  --data-raw "$(git cat-file commit HEAD)" \
+  https://gpg.kajkowalski.nl/sign)
 ```
 
 ### 3. Manage Keys (Admin Auth)
@@ -49,9 +49,9 @@ SIGNATURE=$(curl -X POST \
 ```bash
 # Upload a new key
 curl -X POST https://gpg.kajkowalski.nl/admin/keys \
-	-H "Authorization: Bearer $ADMIN_TOKEN" \
-	-H "Content-Type: application/json" \
-	-d '{
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
     "keyId": "signing-key-v1",
     "armoredPrivateKey": "<the ASCII-armored private key, one JSON string, newlines escaped>"
   }'
@@ -74,7 +74,7 @@ headers.
 
 **Rate Limit**: 100 requests/minute per caller — `<iss>:<sub>` on the OIDC
 path, the policy name on the service-token path. A trusted OIDC subject is
-additionally bounded by a 1000 req/min ceiling on its subject _row_.
+additionally bounded by a 1000 req/min ceiling on its subject *row*.
 
 **Headers**:
 
@@ -129,7 +129,7 @@ sign_with_service:
 
 **Rate Limit**: 100 requests/minute, per client IP
 
-The limiter runs _before_ the token check, so an unauthenticated request to an
+The limiter runs *before* the token check, so an unauthenticated request to an
 `/admin/*` route is metered too — that is what makes brute-forcing `ADMIN_TOKEN`
 expensive. The bucket is therefore keyed by `CF-Connecting-IP`, not by the
 bearer: a caller holding no token at all still spends from it.
@@ -323,20 +323,20 @@ OIDC_TOKEN="..."
 COMMIT_DATA=$(git cat-file commit HEAD)
 
 RESPONSE=$(curl -w "\n%{http_code}" -X POST \
-	-H "Authorization: Bearer $OIDC_TOKEN" \
-	-H "X-Request-ID: $(uuidgen)" \
-	--data-raw "$COMMIT_DATA" \
-	https://gpg.kajkowalski.nl/sign)
+  -H "Authorization: Bearer $OIDC_TOKEN" \
+  -H "X-Request-ID: $(uuidgen)" \
+  --data-raw "$COMMIT_DATA" \
+  https://gpg.kajkowalski.nl/sign)
 
 HTTP_CODE=$(echo "$RESPONSE" | tail -1)
 SIGNATURE=$(echo "$RESPONSE" | head -n -1)
 
 if [ "$HTTP_CODE" = "200" ]; then
-	# Use signature in git config
-	git config user.signingkey "$SIGNATURE"
+  # Use signature in git config
+  git config user.signingkey "$SIGNATURE"
 else
-	# Handle error
-	echo "Signing failed: $RESPONSE"
+  # Handle error
+  echo "Signing failed: $RESPONSE"
 fi
 ```
 
@@ -538,15 +538,15 @@ Query audit log entries with filtering and pagination.
 ```bash
 # Get all signing operations from a specific repository
 curl "https://gpg.kajkowalski.nl/admin/audit?action=sign&subject=owner/repo" \
-	-H "Authorization: Bearer $ADMIN_TOKEN"
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 
 # Get key operations in a date range
 curl "https://gpg.kajkowalski.nl/admin/audit?action=key_upload&startDate=2024-01-01&endDate=2024-01-31" \
-	-H "Authorization: Bearer $ADMIN_TOKEN"
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 
 # Paginate through large result sets
 curl "https://gpg.kajkowalski.nl/admin/audit?limit=50&offset=0" \
-	-H "Authorization: Bearer $ADMIN_TOKEN"
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
 ---
@@ -623,7 +623,7 @@ in the Worker; they are protected by Cloudflare's edge only. Everything a
 limiter does rule on refills at its own capacity per minute, so a bucket idle
 for a full minute is back at full.
 
-`/sign` has a second tier the table does not show, because it bounds a _row_
+`/sign` has a second tier the table does not show, because it bounds a *row*
 rather than a caller: a request authenticated by a trusted OIDC subject also
 spends from a 1000 req/min bucket keyed on that subject's row id. The
 per-caller bucket is keyed on `<iss>:<sub>`, and GitHub puts the git ref in
@@ -703,14 +703,14 @@ Audit logs are retained indefinitely in the database. Query with:
 ```bash
 # All operations from last 7 days
 curl "https://gpg.kajkowalski.nl/admin/audit?startDate=$(
-	date -u -d '7 days ago' +%Y-%m-%dT00:00:00Z
+  date -u -d '7 days ago' +%Y-%m-%dT00:00:00Z
 )" \
-	-H "Authorization: Bearer ${ADMIN_TOKEN}"
+  -H "Authorization: Bearer ${ADMIN_TOKEN}"
 
 # Failed operations only
 curl "https://gpg.kajkowalski.nl/admin/audit?limit=100" \
-	-H "Authorization: Bearer ${ADMIN_TOKEN}" \
-	| jq '.logs | map(select(.success == false))'
+  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+  | jq '.logs | map(select(.success == false))'
 ```
 
 ---
@@ -870,10 +870,10 @@ Example hosting of the checked-in contract:
 ```bash
 # Using Swagger UI Docker
 docker run \
-	-p 8080:8080 \
-	-e SWAGGER_JSON=/openapi.json \
-	-v $(pwd)/client/openapi.json:/openapi.json \
-	swaggerapi/swagger-ui
+  -p 8080:8080 \
+  -e SWAGGER_JSON=/openapi.json \
+  -v $(pwd)/client/openapi.json:/openapi.json \
+  swaggerapi/swagger-ui
 ```
 
 ---

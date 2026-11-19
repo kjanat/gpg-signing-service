@@ -2,10 +2,10 @@
  * Environment bindings and context types
  */
 
-import type { Context } from "hono";
-import type { Identity } from "#types/branded";
-import type { WebhookAuthorization, WebhookDelivery, WebhookReplay } from "#types/github";
-import type { ValidatedOIDCClaims } from "#types/oidc";
+import type { Context } from 'hono';
+import type { Identity } from '#types/branded';
+import type { WebhookAuthorization, WebhookDelivery, WebhookReplay } from '#types/github';
+import type { ValidatedOIDCClaims } from '#types/oidc';
 
 /** Context variables (for c.set/c.get) */
 export interface Variables {

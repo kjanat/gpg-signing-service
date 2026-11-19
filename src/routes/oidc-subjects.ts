@@ -1,18 +1,18 @@
-import { createRoute, z } from "@hono/zod-openapi";
-import { createOpenAPIApp, forbiddenResponse, unauthorizedResponse } from "#lib/openapi";
+import { createRoute, z } from '@hono/zod-openapi';
+import { createOpenAPIApp, forbiddenResponse, unauthorizedResponse } from '#lib/openapi';
 import {
 	ErrorResponseSchema,
 	SubjectCreatedResponseSchema,
 	SubjectCreateSchema,
 	SubjectListResponseSchema,
 	SubjectRevokeResponseSchema,
-} from "#schemas";
-import type { ErrorCode } from "#schemas/errors";
-import { HTTP } from "#types";
-import { logAuditEvent } from "#utils/audit";
-import { scheduleBackgroundTask } from "#utils/execution";
-import { logger } from "#utils/logger";
-import { insertOIDCSubject, listOIDCSubjects, revokeOIDCSubject } from "#utils/oidc-subjects";
+} from '#schemas';
+import type { ErrorCode } from '#schemas/errors';
+import { HTTP } from '#types';
+import { logAuditEvent } from '#utils/audit';
+import { scheduleBackgroundTask } from '#utils/execution';
+import { logger } from '#utils/logger';
+import { insertOIDCSubject, listOIDCSubjects, revokeOIDCSubject } from '#utils/oidc-subjects';
 
 const app = createOpenAPIApp();
 
@@ -93,7 +93,7 @@ async function describeNameConflict(db: D1Database, name: string): Promise<strin
 	const base = `Subject name already exists: ${name}`;
 	try {
 		const row = await db
-			.prepare("SELECT id, revoked_at, expires_at FROM oidc_subjects WHERE name = ?")
+			.prepare('SELECT id, revoked_at, expires_at FROM oidc_subjects WHERE name = ?')
 			.bind(name)
 			.first<{ id: string; revoked_at: string | null; expires_at: string | null }>();
 
@@ -124,54 +124,54 @@ async function describeNameConflict(db: D1Database, name: string): Promise<strin
 }
 
 const createSubjectRoute = createRoute({
-	method: "post",
-	path: "/subjects",
-	summary: "Trust an OIDC subject",
+	method: 'post',
+	path: '/subjects',
+	summary: 'Trust an OIDC subject',
 	description:
-		"Authorize a CI identity to sign. A verified OIDC token only proves that some workflow on an " +
-		"accepted issuer asked for our audience, and those issuers are shared by every repository on " +
-		"GitHub Actions and every project on GitLab — so a subject must be trusted explicitly.",
+		'Authorize a CI identity to sign. A verified OIDC token only proves that some workflow on an ' +
+		'accepted issuer asked for our audience, and those issuers are shared by every repository on ' +
+		'GitHub Actions and every project on GitLab — so a subject must be trusted explicitly.',
 	security: [{ bearerAuth: [] }],
 	request: {
 		body: {
-			content: { "application/json": { schema: SubjectCreateSchema } },
+			content: { 'application/json': { schema: SubjectCreateSchema } },
 			required: true,
 		},
 	},
 	responses: {
 		[HTTP.Created]: {
-			content: { "application/json": { schema: SubjectCreatedResponseSchema } },
-			description: "Subject trusted",
+			content: { 'application/json': { schema: SubjectCreatedResponseSchema } },
+			description: 'Subject trusted',
 		},
 		[HTTP.BadRequest]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Invalid request",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Invalid request',
 		},
-		[HTTP.Unauthorized]: unauthorizedResponse("Missing or invalid admin token"),
-		[HTTP.Forbidden]: forbiddenResponse("Read-only admin credential; trusting a subject needs the full ADMIN_TOKEN"),
+		[HTTP.Unauthorized]: unauthorizedResponse('Missing or invalid admin token'),
+		[HTTP.Forbidden]: forbiddenResponse('Read-only admin credential; trusting a subject needs the full ADMIN_TOKEN'),
 		[HTTP.Conflict]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Subject name, or issuer and prefix pair, already exists",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Subject name, or issuer and prefix pair, already exists',
 		},
 		[HTTP.InternalServerError]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Internal server error",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Internal server error',
 		},
 	},
 });
 
 app.openapi(createSubjectRoute, async (c) => {
-	const requestId = c.get("requestId");
-	const body = c.req.valid("json");
+	const requestId = c.get('requestId');
+	const body = c.req.valid('json');
 
 	// A row whose issuer is not accepted can never match a token, so it would
 	// list as trusted and be silently dead. Fail at the point of the typo.
-	const allowedIssuers = c.env.ALLOWED_ISSUERS.split(",").map((issuer) => issuer.trim());
+	const allowedIssuers = c.env.ALLOWED_ISSUERS.split(',').map((issuer) => issuer.trim());
 	if (!allowedIssuers.includes(body.issuer)) {
 		return c.json(
 			{
 				error: `Issuer is not in ALLOWED_ISSUERS: ${body.issuer}`,
-				code: "INVALID_REQUEST" as const satisfies ErrorCode,
+				code: 'INVALID_REQUEST' as const satisfies ErrorCode,
 				requestId,
 			},
 			HTTP.BadRequest,
@@ -197,10 +197,10 @@ app.openapi(createSubjectRoute, async (c) => {
 			requestId,
 			logAuditEvent(c.env.AUDIT_DB, {
 				requestId,
-				action: "subject_create",
-				issuer: "admin",
+				action: 'subject_create',
+				issuer: 'admin',
 				subject: body.name,
-				keyId: keyIds.join(",") || "*",
+				keyId: keyIds.join(',') || '*',
 				success: true,
 				metadata: JSON.stringify({
 					issuer: body.issuer,
@@ -227,10 +227,10 @@ app.openapi(createSubjectRoute, async (c) => {
 			HTTP.Created,
 		);
 	} catch (error) {
-		const message = error instanceof Error ? error.message : "Subject creation failed";
-		logger.error("Subject creation failed", { requestId, error: message });
+		const message = error instanceof Error ? error.message : 'Subject creation failed';
+		logger.error('Subject creation failed', { requestId, error: message });
 
-		if (message.includes("UNIQUE constraint failed")) {
+		if (message.includes('UNIQUE constraint failed')) {
 			// Two different collisions land here; blaming the name for a prefix
 			// clash sends the operator to change the one field that was fine.
 			//
@@ -240,13 +240,13 @@ app.openapi(createSubjectRoute, async (c) => {
 			// is false, and the nearest thing the operator can then type is a
 			// broader prefix, which is the one direction that opens access. Name
 			// the offending row instead.
-			const conflict = message.includes("subject_prefix")
+			const conflict = message.includes('subject_prefix')
 				? await describePrefixConflict(c.env.AUDIT_DB, body.issuer, body.subjectPrefix)
 				: await describeNameConflict(c.env.AUDIT_DB, body.name);
 			return c.json(
 				{
 					error: conflict,
-					code: "INVALID_REQUEST" as const satisfies ErrorCode,
+					code: 'INVALID_REQUEST' as const satisfies ErrorCode,
 					requestId,
 				},
 				HTTP.Conflict,
@@ -256,7 +256,7 @@ app.openapi(createSubjectRoute, async (c) => {
 		return c.json(
 			{
 				error: message,
-				code: "INTERNAL_ERROR" as const satisfies ErrorCode,
+				code: 'INTERNAL_ERROR' as const satisfies ErrorCode,
 				requestId,
 			},
 			HTTP.InternalServerError,
@@ -265,36 +265,36 @@ app.openapi(createSubjectRoute, async (c) => {
 });
 
 const listSubjectsRoute = createRoute({
-	method: "get",
-	path: "/subjects",
-	summary: "List trusted OIDC subjects",
-	description: "List every trusted subject, including revoked and expired ones",
+	method: 'get',
+	path: '/subjects',
+	summary: 'List trusted OIDC subjects',
+	description: 'List every trusted subject, including revoked and expired ones',
 	security: [{ bearerAuth: [] }],
 	responses: {
 		[HTTP.OK]: {
-			content: { "application/json": { schema: SubjectListResponseSchema } },
-			description: "Subjects",
+			content: { 'application/json': { schema: SubjectListResponseSchema } },
+			description: 'Subjects',
 		},
-		[HTTP.Unauthorized]: unauthorizedResponse("Missing or invalid admin token"),
+		[HTTP.Unauthorized]: unauthorizedResponse('Missing or invalid admin token'),
 		[HTTP.InternalServerError]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Internal server error",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Internal server error',
 		},
 	},
 });
 
 app.openapi(listSubjectsRoute, async (c) => {
-	const requestId = c.get("requestId");
+	const requestId = c.get('requestId');
 	try {
 		const subjects = await listOIDCSubjects(c.env.AUDIT_DB);
 		return c.json({ subjects }, HTTP.OK);
 	} catch (error) {
-		const message = error instanceof Error ? error.message : "List failed";
-		logger.error("Subject list failed", { requestId, error: message });
+		const message = error instanceof Error ? error.message : 'List failed';
+		logger.error('Subject list failed', { requestId, error: message });
 		return c.json(
 			{
 				error: message,
-				code: "INTERNAL_ERROR" as const satisfies ErrorCode,
+				code: 'INTERNAL_ERROR' as const satisfies ErrorCode,
 				requestId,
 			},
 			HTTP.InternalServerError,
@@ -303,48 +303,48 @@ app.openapi(listSubjectsRoute, async (c) => {
 });
 
 const revokeSubjectRoute = createRoute({
-	method: "delete",
-	path: "/subjects/{id}",
-	summary: "Revoke a trusted OIDC subject",
+	method: 'delete',
+	path: '/subjects/{id}',
+	summary: 'Revoke a trusted OIDC subject',
 	description:
-		"Revoke a subject by id. This does not necessarily stop the subject signing: resolution " +
-		"takes the longest live prefix, so a broader row that also covers it takes over — with " +
+		'Revoke a subject by id. This does not necessarily stop the subject signing: resolution ' +
+		'takes the longest live prefix, so a broader row that also covers it takes over — with ' +
 		"that row's key grant, which may be wider. Rows nested under the revoked prefix are not " +
-		"touched at all. The response lists both in `stillCoveredBy` and `stillTrustedWithin`; " +
-		"only when both are empty was the revoke final.",
+		'touched at all. The response lists both in `stillCoveredBy` and `stillTrustedWithin`; ' +
+		'only when both are empty was the revoke final.',
 	security: [{ bearerAuth: [] }],
 	request: {
 		params: z.object({ id: z.uuid() }),
 	},
 	responses: {
 		[HTTP.OK]: {
-			content: { "application/json": { schema: SubjectRevokeResponseSchema } },
-			description: "Subject revoked",
+			content: { 'application/json': { schema: SubjectRevokeResponseSchema } },
+			description: 'Subject revoked',
 		},
-		[HTTP.Unauthorized]: unauthorizedResponse("Missing or invalid admin token"),
-		[HTTP.Forbidden]: forbiddenResponse("Read-only admin credential; revoking a subject needs the full ADMIN_TOKEN"),
+		[HTTP.Unauthorized]: unauthorizedResponse('Missing or invalid admin token'),
+		[HTTP.Forbidden]: forbiddenResponse('Read-only admin credential; revoking a subject needs the full ADMIN_TOKEN'),
 		[HTTP.NotFound]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Subject not found or already revoked",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Subject not found or already revoked',
 		},
 		[HTTP.InternalServerError]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Internal server error",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Internal server error',
 		},
 	},
 });
 
 app.openapi(revokeSubjectRoute, async (c) => {
-	const requestId = c.get("requestId");
-	const { id } = c.req.valid("param");
+	const requestId = c.get('requestId');
+	const { id } = c.req.valid('param');
 
 	try {
 		const revoked = await revokeOIDCSubject(c.env.AUDIT_DB, id);
 		if (!revoked) {
 			return c.json(
 				{
-					error: "Subject not found or already revoked",
-					code: "INVALID_REQUEST" as const satisfies ErrorCode,
+					error: 'Subject not found or already revoked',
+					code: 'INVALID_REQUEST' as const satisfies ErrorCode,
 					requestId,
 				},
 				HTTP.NotFound,
@@ -356,10 +356,10 @@ app.openapi(revokeSubjectRoute, async (c) => {
 			requestId,
 			logAuditEvent(c.env.AUDIT_DB, {
 				requestId,
-				action: "subject_revoke",
-				issuer: "admin",
+				action: 'subject_revoke',
+				issuer: 'admin',
 				subject: id,
-				keyId: "*",
+				keyId: '*',
 				success: true,
 				// `sign` events are keyed by the row's name, this one by its id.
 				// Carry both so the trail joins to itself without a table lookup.
@@ -378,7 +378,7 @@ app.openapi(revokeSubjectRoute, async (c) => {
 		);
 
 		if (revoked.stillCoveredBy.length > 0 || revoked.stillTrustedWithin.length > 0) {
-			logger.warn("Revoked subject is still trusted through another row", {
+			logger.warn('Revoked subject is still trusted through another row', {
 				requestId,
 				subjectId: id,
 				subjectPolicy: revoked.name,
@@ -398,12 +398,12 @@ app.openapi(revokeSubjectRoute, async (c) => {
 			HTTP.OK,
 		);
 	} catch (error) {
-		const message = error instanceof Error ? error.message : "Revoke failed";
-		logger.error("Subject revoke failed", { requestId, error: message });
+		const message = error instanceof Error ? error.message : 'Revoke failed';
+		logger.error('Subject revoke failed', { requestId, error: message });
 		return c.json(
 			{
 				error: message,
-				code: "INTERNAL_ERROR" as const satisfies ErrorCode,
+				code: 'INTERNAL_ERROR' as const satisfies ErrorCode,
 				requestId,
 			},
 			HTTP.InternalServerError,

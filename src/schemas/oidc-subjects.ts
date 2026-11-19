@@ -1,14 +1,14 @@
-import { z } from "@hono/zod-openapi";
+import { z } from '@hono/zod-openapi';
 
-import { KeyIdSchema } from "#schemas/keys";
+import { KeyIdSchema } from '#schemas/keys';
 
 /** Trusted subject name: human-readable label for the CI identity. */
 export const SubjectNameSchema = z
 	.string()
 	.min(1)
 	.max(64)
-	.regex(/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/, "Name must be alphanumeric with ._/- separators")
-	.openapi("SubjectName");
+	.regex(/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/, 'Name must be alphanumeric with ._/- separators')
+	.openapi('SubjectName');
 
 /**
  * Both prefix rules below as one expression, for the published JSON Schema.
@@ -37,7 +37,7 @@ export const SubjectNameSchema = z
  * Change either `.regex()` and this must change with it; the round trip is
  * covered in `schemas.test.ts`.
  */
-export const SUBJECT_PREFIX_PATTERN = "^[^\\s*?\\[\\]]*[:@\\/][^\\s*?\\[\\]]*[^\\s:@\\/*?\\[\\]][^\\s*?\\[\\]]*$";
+export const SUBJECT_PREFIX_PATTERN = '^[^\\s*?\\[\\]]*[:@\\/][^\\s*?\\[\\]]*[^\\s:@\\/*?\\[\\]][^\\s*?\\[\\]]*$';
 
 /**
  * A `sub` prefix. Matched with a delimiter boundary, so `repo:owner/name`
@@ -65,7 +65,7 @@ export const SubjectPrefixSchema = z
 	// the *first*, since the first precedes every other.
 	.regex(
 		/^\S*[:@/]\S*[^\s:@/]\S*$/,
-		"Subject prefix must have no whitespace and must name an identity after its scheme, e.g. repo:owner — not repo: or repo",
+		'Subject prefix must have no whitespace and must name an identity after its scheme, e.g. repo:owner — not repo: or repo',
 	)
 	// Globs are the other degenerate input, and the one an operator reaches for
 	// first: matching is `startsWith` plus a delimiter check, never a pattern
@@ -92,19 +92,19 @@ export const SubjectPrefixSchema = z
 	// debugging a 400 against it.
 	.regex(
 		/^[^*?[\]]*$/,
-		"Subject prefix is a literal prefix, not a glob — remove * ? [ ]. A prefix ending at a delimiter is already the wildcard: repo:owner/ trusts every repository of that owner",
+		'Subject prefix is a literal prefix, not a glob — remove * ? [ ]. A prefix ending at a delimiter is already the wildcard: repo:owner/ trusts every repository of that owner',
 	)
-	.openapi("SubjectPrefix", {
+	.openapi('SubjectPrefix', {
 		pattern: SUBJECT_PREFIX_PATTERN,
 		// The rule is only obvious once you know matching is startsWith, so state
 		// it where the spec is read. TSDoc above does not reach openapi.json.
 		description:
 			"A literal prefix of the token's `sub`, not a glob — `*`, `?`, `[` and `]` are refused. A subject " +
-			"matches when it starts with this string and the next character is a delimiter (`:`, `@`, `/`) " +
-			"or the end of the subject, so `repo:owner/svc` does not admit `repo:owner/svc-evil`. A prefix " +
-			"that ends at a delimiter is the wildcard: `repo:owner/` trusts every repository of that owner. " +
-			"Where several rows match, the longest live prefix wins.",
-		example: "repo:owner/repository",
+			'matches when it starts with this string and the next character is a delimiter (`:`, `@`, `/`) ' +
+			'or the end of the subject, so `repo:owner/svc` does not admit `repo:owner/svc-evil`. A prefix ' +
+			'that ends at a delimiter is the wildcard: `repo:owner/` trusts every repository of that owner. ' +
+			'Where several rows match, the longest live prefix wins.',
+		example: 'repo:owner/repository',
 	});
 
 /**
@@ -127,14 +127,14 @@ export const StoredSubjectPrefixSchema = z
 	.string()
 	.min(1)
 	.max(255)
-	.openapi("StoredSubjectPrefix", {
+	.openapi('StoredSubjectPrefix', {
 		description:
-			"A stored `sub` prefix. Matching is `startsWith` plus a delimiter (`:`, `@`, `/`) or " +
-			"end-of-subject boundary; the longest live prefix wins. No `pattern` is published here on " +
-			"purpose: new prefixes must satisfy `SubjectPrefix`, but rows created before that rule existed " +
-			"are returned as they were stored, so a client that must list and revoke them can still read " +
-			"this response.",
-		example: "repo:owner/repository",
+			'A stored `sub` prefix. Matching is `startsWith` plus a delimiter (`:`, `@`, `/`) or ' +
+			'end-of-subject boundary; the longest live prefix wins. No `pattern` is published here on ' +
+			'purpose: new prefixes must satisfy `SubjectPrefix`, but rows created before that rule existed ' +
+			'are returned as they were stored, so a client that must list and revoke them can still read ' +
+			'this response.',
+		example: 'repo:owner/repository',
 	});
 
 /** Request body for trusting an OIDC subject. */
@@ -154,11 +154,11 @@ export const SubjectCreateSchema = z
 		 * key_ids string, which means *every* key, so a caller that meant to
 		 * restrict would silently widen. Omit the field to mean every key.
 		 */
-		keyIds: z.array(KeyIdSchema).min(1, "keyIds must list at least one key; omit it to allow every key").optional(),
+		keyIds: z.array(KeyIdSchema).min(1, 'keyIds must list at least one key; omit it to allow every key').optional(),
 		/** Days until expiry; omit for a non-expiring trust. */
 		expiresInDays: z.number().int().min(1).max(3650).optional(),
 	})
-	.openapi("SubjectCreate");
+	.openapi('SubjectCreate');
 
 /** One trusted subject in the list view. */
 export const SubjectSummarySchema = z
@@ -180,13 +180,13 @@ export const SubjectSummarySchema = z
 		 */
 		active: z.boolean(),
 	})
-	.openapi("SubjectSummary");
+	.openapi('SubjectSummary');
 
-export const SubjectCreatedResponseSchema = SubjectSummarySchema.openapi("SubjectCreatedResponse");
+export const SubjectCreatedResponseSchema = SubjectSummarySchema.openapi('SubjectCreatedResponse');
 
 export const SubjectListResponseSchema = z
 	.object({ subjects: z.array(SubjectSummarySchema) })
-	.openapi("SubjectListResponse");
+	.openapi('SubjectListResponse');
 
 /** A live row that still covers a revoked subject's prefix. */
 export const CoveringSubjectSchema = z
@@ -196,7 +196,7 @@ export const CoveringSubjectSchema = z
 		subjectPrefix: StoredSubjectPrefixSchema,
 		keyIds: z.array(z.string()).nullable(),
 	})
-	.openapi("CoveringSubject");
+	.openapi('CoveringSubject');
 
 export const SubjectRevokeResponseSchema = z
 	.object({
@@ -222,11 +222,11 @@ export const SubjectRevokeResponseSchema = z
 			// guidance, and TSDoc does not reach openapi.json or the generated
 			// client, which is what somebody reads mid-incident.
 			.describe(
-				"Live rows whose prefix covers the revoked one, most specific first. The whole revoked " +
+				'Live rows whose prefix covers the revoked one, most specific first. The whole revoked ' +
 					"scope keeps signing, under key grants that may be wider than the revoked row's " +
-					"(keyIds: null means every key). The first entry is what resolution picks only for the " +
-					"part of the scope no stillTrustedWithin row claims — those are nested, hence longer " +
-					"than every row here, and longest live wins.",
+					'(keyIds: null means every key). The first entry is what resolution picks only for the ' +
+					'part of the scope no stillTrustedWithin row claims — those are nested, hence longer ' +
+					'than every row here, and longest live wins.',
 			),
 		/**
 		 * Live rows *nested under* the revoked prefix, outermost first: where one
@@ -238,10 +238,10 @@ export const SubjectRevokeResponseSchema = z
 		stillTrustedWithin: z
 			.array(CoveringSubjectSchema)
 			.describe(
-				"Live rows nested under the revoked prefix, outermost first: where one contains another, " +
-					"the container is listed above it. Rows in disjoint scopes are not ordered against each " +
-					"other — a one-repo row can precede a team-wide one — so read the whole list. Only when " +
-					"both lists are empty was the revoke final.",
+				'Live rows nested under the revoked prefix, outermost first: where one contains another, ' +
+					'the container is listed above it. Rows in disjoint scopes are not ordered against each ' +
+					'other — a one-repo row can precede a team-wide one — so read the whole list. Only when ' +
+					'both lists are empty was the revoke final.',
 			),
 	})
-	.openapi("SubjectRevokeResponse");
+	.openapi('SubjectRevokeResponse');

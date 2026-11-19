@@ -1,14 +1,14 @@
-import { swaggerUI } from "@hono/swagger-ui";
-import { createRoute } from "@hono/zod-openapi";
-import * as Sentry from "@sentry/cloudflare";
-import { logger } from "hono/logger";
-import * as openpgp from "openpgp";
-import { KeyStorage as KeyStorageClass } from "#durable-objects/key-storage";
-import { RateLimiter as RateLimiterClass } from "#durable-objects/rate-limiter";
-import { WebhookDeliveries as WebhookDeliveriesClass } from "#durable-objects/webhook-deliveries";
-import { createOpenAPIApp, openApiConfig, registerSecuritySchemes } from "#lib/openapi";
-import { callerAuth } from "#middleware/caller-auth";
-import { errorDocs } from "#middleware/error-docs";
+import { swaggerUI } from '@hono/swagger-ui';
+import { createRoute } from '@hono/zod-openapi';
+import * as Sentry from '@sentry/cloudflare';
+import { logger } from 'hono/logger';
+import * as openpgp from 'openpgp';
+import { KeyStorage as KeyStorageClass } from '#durable-objects/key-storage';
+import { RateLimiter as RateLimiterClass } from '#durable-objects/rate-limiter';
+import { WebhookDeliveries as WebhookDeliveriesClass } from '#durable-objects/webhook-deliveries';
+import { createOpenAPIApp, openApiConfig, registerSecuritySchemes } from '#lib/openapi';
+import { callerAuth } from '#middleware/caller-auth';
+import { errorDocs } from '#middleware/error-docs';
 import {
 	githubWebhookAuth,
 	githubWebhookAuthorize,
@@ -16,25 +16,25 @@ import {
 	webhookBodyLimit,
 	webhookRateLimit,
 	webhookReplayGuard,
-} from "#middleware/github-webhook";
-import { adminAuth } from "#middleware/oidc";
-import { requestIdMiddleware } from "#middleware/request-id";
-import { adminRateLimit, productionCors, securityHeaders } from "#middleware/security";
-import adminRoutes from "#routes/admin";
-import githubWebhookRoutes from "#routes/github-webhook";
-import subjectRoutes from "#routes/oidc-subjects";
-import signRoutes from "#routes/sign";
-import tokenRoutes from "#routes/tokens";
-import { ErrorResponseSchema, HealthResponseSchema, PublicKeyQuerySchema, PublicKeyResponseSchema } from "#schemas";
-import { isErrorCode } from "#schemas/errors";
-import type { HealthResponse } from "#schemas/health";
-import type { Env } from "#types";
-import { HTTP, MediaType } from "#types";
-import { fetchKeyStorage } from "#utils/durable-objects";
-import { errorDocsTarget } from "#utils/error-docs";
-import { runKeyExpiryMonitor } from "#utils/key-expiry-monitor";
-import { logger as customLogger } from "#utils/logger";
-import { sentryOptions } from "#utils/sentry";
+} from '#middleware/github-webhook';
+import { adminAuth } from '#middleware/oidc';
+import { requestIdMiddleware } from '#middleware/request-id';
+import { adminRateLimit, productionCors, securityHeaders } from '#middleware/security';
+import adminRoutes from '#routes/admin';
+import githubWebhookRoutes from '#routes/github-webhook';
+import subjectRoutes from '#routes/oidc-subjects';
+import signRoutes from '#routes/sign';
+import tokenRoutes from '#routes/tokens';
+import { ErrorResponseSchema, HealthResponseSchema, PublicKeyQuerySchema, PublicKeyResponseSchema } from '#schemas';
+import { isErrorCode } from '#schemas/errors';
+import type { HealthResponse } from '#schemas/health';
+import type { Env } from '#types';
+import { HTTP, MediaType } from '#types';
+import { fetchKeyStorage } from '#utils/durable-objects';
+import { errorDocsTarget } from '#utils/error-docs';
+import { runKeyExpiryMonitor } from '#utils/key-expiry-monitor';
+import { logger as customLogger } from '#utils/logger';
+import { sentryOptions } from '#utils/sentry';
 
 // Export Durable Objects
 //
@@ -71,7 +71,7 @@ export type KeyStorage = KeyStorageClass;
 export type RateLimiter = RateLimiterClass;
 export type WebhookDeliveries = WebhookDeliveriesClass;
 
-export { Signer } from "#signer";
+export { Signer } from '#signer';
 
 const app = createOpenAPIApp();
 
@@ -79,30 +79,30 @@ const app = createOpenAPIApp();
 // Ahead of everything else so `c.get("requestId")` is populated for the whole
 // pipeline and every response echoes X-Request-ID. The value is the caller's
 // only when it is a UUID — it reaches audit_logs.request_id, declared z.uuid().
-app.use("*", requestIdMiddleware);
+app.use('*', requestIdMiddleware);
 // Directly after the request id, and before everything that can refuse: it runs
 // on the way *out*, so the outermost registration is the one that sees every
 // error body — including the 401s the auth middlewares answer without ever
 // reaching a route, and whatever `onError` produces.
-app.use("*", errorDocs);
-app.use("*", logger());
-app.use("*", securityHeaders);
-app.use("*", productionCors);
+app.use('*', errorDocs);
+app.use('*', logger());
+app.use('*', securityHeaders);
+app.use('*', productionCors);
 
 // Health check endpoint (no auth)
 const healthRoute = createRoute({
-	method: "get",
-	path: "/health",
-	summary: "Health check",
-	description: "Check the health of the service",
+	method: 'get',
+	path: '/health',
+	summary: 'Health check',
+	description: 'Check the health of the service',
 	responses: {
 		[HTTP.OK]: {
-			content: { "application/json": { schema: HealthResponseSchema } },
-			description: "Service is healthy",
+			content: { 'application/json': { schema: HealthResponseSchema } },
+			description: 'Service is healthy',
 		},
 		[HTTP.ServiceUnavailable]: {
-			content: { "application/json": { schema: HealthResponseSchema } },
-			description: "Service is degraded",
+			content: { 'application/json': { schema: HealthResponseSchema } },
+			description: 'Service is degraded',
 		},
 	},
 });
@@ -112,10 +112,10 @@ app.openapi(healthRoute, async (c) => {
 
 	try {
 		// Check key storage
-		const keyHealthResponse = await fetchKeyStorage(c.env, "/health");
+		const keyHealthResponse = await fetchKeyStorage(c.env, '/health');
 		checks.keyStorage = keyHealthResponse.ok;
 	} catch (error) {
-		customLogger.error("Key storage health check failed", {
+		customLogger.error('Key storage health check failed', {
 			error: error instanceof Error ? error.message : String(error),
 		});
 		checks.keyStorage = false;
@@ -123,10 +123,10 @@ app.openapi(healthRoute, async (c) => {
 
 	try {
 		// Check database
-		const result = await c.env.AUDIT_DB.prepare("SELECT 1").first();
+		const result = await c.env.AUDIT_DB.prepare('SELECT 1').first();
 		checks.database = result !== null;
 	} catch (error) {
-		customLogger.error("Database health check failed", {
+		customLogger.error('Database health check failed', {
 			error: error instanceof Error ? error.message : String(error),
 		});
 		checks.database = false;
@@ -135,9 +135,9 @@ app.openapi(healthRoute, async (c) => {
 	const allHealthy = checks.keyStorage && checks.database;
 
 	const response: HealthResponse = {
-		status: allHealthy ? "healthy" : "degraded",
+		status: allHealthy ? 'healthy' : 'degraded',
 		timestamp: new Date().toISOString(),
-		version: "1.0.0",
+		version: '1.0.0',
 		checks,
 	};
 
@@ -146,35 +146,35 @@ app.openapi(healthRoute, async (c) => {
 
 // Public key endpoint (no auth) - for git to verify signatures
 const publicKeyRoute = createRoute({
-	method: "get",
-	path: "/public-key",
-	summary: "Get public key",
-	description: "Get the public key for signature verification",
+	method: 'get',
+	path: '/public-key',
+	summary: 'Get public key',
+	description: 'Get the public key for signature verification',
 	request: { query: PublicKeyQuerySchema },
 	responses: {
 		[HTTP.OK]: {
-			content: { "application/pgp-keys": { schema: PublicKeyResponseSchema } },
-			description: "Public Key",
+			content: { 'application/pgp-keys': { schema: PublicKeyResponseSchema } },
+			description: 'Public Key',
 		},
 		[HTTP.NotFound]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Key not found",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Key not found',
 		},
 		[HTTP.InternalServerError]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Internal server error",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Internal server error',
 		},
 	},
 });
 
 app.openapi(publicKeyRoute, async (c) => {
-	const { keyId: keyIdQuery } = c.req.valid("query");
+	const { keyId: keyIdQuery } = c.req.valid('query');
 	const keyId = keyIdQuery || c.env.KEY_ID;
 
 	const keyResponse = await fetchKeyStorage(c.env, `/get-key?keyId=${encodeURIComponent(keyId)}`);
 
 	if (!keyResponse.ok) {
-		return c.json({ error: "Key not found", code: "KEY_NOT_FOUND" }, HTTP.NotFound);
+		return c.json({ error: 'Key not found', code: 'KEY_NOT_FOUND' }, HTTP.NotFound);
 	}
 
 	try {
@@ -187,14 +187,14 @@ app.openapi(publicKeyRoute, async (c) => {
 		const publicKey = privateKey.toPublic().armor();
 
 		return c.text(publicKey, HTTP.OK, {
-			"Content-Type": MediaType.ApplicationPgpKeys,
+			'Content-Type': MediaType.ApplicationPgpKeys,
 		});
 	} catch (error) {
-		customLogger.error("Key processing error", {
+		customLogger.error('Key processing error', {
 			error: error instanceof Error ? error.message : String(error),
-			keyId: c.req.query("keyId"),
+			keyId: c.req.query('keyId'),
 		});
-		return c.json({ error: "Key processing error", code: "KEY_PROCESSING_ERROR" }, HTTP.InternalServerError);
+		return c.json({ error: 'Key processing error', code: 'KEY_PROCESSING_ERROR' }, HTTP.InternalServerError);
 	}
 });
 
@@ -217,11 +217,11 @@ app.openapi(publicKeyRoute, async (c) => {
  * is for humans following a link, not for the generated clients — declaring it
  * would put a redirect-following method on every one of them for no caller.
  */
-app.get("/e/:code", (c) => {
+app.get('/e/:code', (c) => {
 	// Uppercased so the lowercase form from a URL bar works. Codes are uppercase
 	// by convention and the anchor is derived by lowercasing again, so this only
 	// ever widens what is accepted.
-	const code = c.req.param("code").toUpperCase();
+	const code = c.req.param('code').toUpperCase();
 
 	if (!isErrorCode(code)) {
 		// Deliberately not a redirect to the reference's top: silently landing
@@ -230,7 +230,7 @@ app.get("/e/:code", (c) => {
 		return c.json(
 			{
 				error: `Unknown error code: ${code}`,
-				code: "NOT_FOUND" as const,
+				code: 'NOT_FOUND' as const,
 				hint: `No error in this service carries that code. The full list is at ${errorDocsTarget(c.env)}.`,
 			},
 			HTTP.NotFound,
@@ -241,17 +241,17 @@ app.get("/e/:code", (c) => {
 });
 
 // Sign endpoint: OIDC or service-token auth
-app.route("/sign", createOpenAPIApp().use("*", callerAuth).route("/", signRoutes));
+app.route('/sign', createOpenAPIApp().use('*', callerAuth).route('/', signRoutes));
 
 // Admin endpoints with rate limiting and admin auth
 app.route(
-	"/admin",
+	'/admin',
 	createOpenAPIApp()
-		.use("*", adminRateLimit) // Rate limit before auth to prevent brute force
-		.use("*", adminAuth)
-		.route("/", adminRoutes)
-		.route("/", tokenRoutes)
-		.route("/", subjectRoutes),
+		.use('*', adminRateLimit) // Rate limit before auth to prevent brute force
+		.use('*', adminAuth)
+		.route('/', adminRoutes)
+		.route('/', tokenRoutes)
+		.route('/', subjectRoutes),
 );
 
 // GitHub App webhook, opt-in.
@@ -277,43 +277,43 @@ app.route(
 // Nothing under here is in the OpenAPI document; see the comment at the top of
 // `#routes/github-webhook` for why.
 app.route(
-	"/github",
+	'/github',
 	createOpenAPIApp()
-		.use("*", githubWebhookGate)
-		.use("*", webhookBodyLimit)
-		.use("*", webhookRateLimit)
-		.use("*", githubWebhookAuth)
-		.use("*", githubWebhookAuthorize)
-		.use("*", webhookReplayGuard)
-		.route("/", githubWebhookRoutes),
+		.use('*', githubWebhookGate)
+		.use('*', webhookBodyLimit)
+		.use('*', webhookRateLimit)
+		.use('*', githubWebhookAuth)
+		.use('*', githubWebhookAuthorize)
+		.use('*', webhookReplayGuard)
+		.route('/', githubWebhookRoutes),
 );
 
 // OpenAPI Docs
 registerSecuritySchemes(app);
-app.doc("/doc", openApiConfig);
+app.doc('/doc', openApiConfig);
 
 // Swagger UI
 // `validatorUrl: "none"` disables Swagger UI's online validator badge, which
 // otherwise loads an <img> from validator.swagger.io — blocked by the docs CSP
 // (rendering a broken "Error" image) and leaking the spec URL to a third party.
-app.get("/ui", swaggerUI({ url: "/doc", validatorUrl: "none" }));
+app.get('/ui', swaggerUI({ url: '/doc', validatorUrl: 'none' }));
 
 // 404 handler
 app.notFound((c) => {
-	return c.json({ error: "Not found", code: "NOT_FOUND" }, HTTP.NotFound);
+	return c.json({ error: 'Not found', code: 'NOT_FOUND' }, HTTP.NotFound);
 });
 
 // Error handler
 app.onError((err, c) => {
 	// The id the caller was handed, so the one in a 500 body is greppable against
 	// the logs. The fallback covers a throw from before the middleware ran.
-	const requestId = c.get("requestId") ?? crypto.randomUUID();
-	customLogger.error("Unhandled error", {
+	const requestId = c.get('requestId') ?? crypto.randomUUID();
+	customLogger.error('Unhandled error', {
 		requestId,
 		error: err instanceof Error ? err.message : String(err),
 		stack: err instanceof Error ? err.stack : undefined,
 	});
-	return c.json({ error: "Internal server error", code: "INTERNAL_ERROR", requestId }, HTTP.InternalServerError);
+	return c.json({ error: 'Internal server error', code: 'INTERNAL_ERROR', requestId }, HTTP.InternalServerError);
 });
 
 /**
@@ -347,8 +347,8 @@ const handler = Object.assign(app, {
 		try {
 			await runKeyExpiryMonitor(env);
 		} catch (error) {
-			customLogger.error("Scheduled key expiry monitor failed", error, {
-				action: "key-expiry-check",
+			customLogger.error('Scheduled key expiry monitor failed', error, {
+				action: 'key-expiry-check',
 				cron: controller.cron,
 			});
 			throw error;

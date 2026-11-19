@@ -1,5 +1,5 @@
-import type { Context } from "hono";
-import { logger } from "#utils/logger";
+import type { Context } from 'hono';
+import { logger } from '#utils/logger';
 
 /**
  * Schedules a promise for background execution using executionCtx.waitUntil.
@@ -17,7 +17,7 @@ export async function scheduleBackgroundTask(
 	promise: Promise<unknown>,
 ): Promise<void> {
 	const taskWithErrorHandling = promise.catch((error) => {
-		logger.error("Background task failed", {
+		logger.error('Background task failed', {
 			requestId,
 			error: error instanceof Error ? error.message : String(error),
 		});
@@ -33,7 +33,7 @@ export async function scheduleBackgroundTask(
 		executionCtx = undefined;
 	}
 
-	logger.debug("Scheduling background task", {
+	logger.debug('Scheduling background task', {
 		requestId,
 		hasExecutionCtx: !!executionCtx,
 	});

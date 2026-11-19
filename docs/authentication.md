@@ -19,7 +19,7 @@ A verified token is not an authorized one. `ALLOWED_ISSUERS` is not a
 repository allowlist: `token.actions.githubusercontent.com` issues tokens to
 every repository on GitHub Actions, `gitlab.com` to every project there, and
 the audience is a public string. Issuer plus audience therefore says nothing
-about _who_ is calling.
+about *who* is calling.
 
 Authorization is a separate table of trusted subjects, managed through
 [`/admin/subjects`](#trusted-oidc-subjects). A token is refused with
@@ -40,9 +40,9 @@ until at least one subject is trusted, which is the intended failure direction.
 
 ```bash
 curl -X POST "$GPG_SIGN_URL/admin/subjects" \
-	-H "Authorization: Bearer $ADMIN_TOKEN" \
-	-H 'Content-Type: application/json' \
-	-d '{
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
     "name": "kjanat-repos",
     "issuer": "https://token.actions.githubusercontent.com",
     "subjectPrefix": "repo:kjanat",
@@ -66,7 +66,7 @@ owner-wide row covering the rest.
 
 A prefix must also contain a delimiter with something after it. `repo:` and
 `repo` are refused, because a prefix ending at a delimiter is owner-wide and a
-bare scheme would therefore be _host_-wide — every repository on the issuer.
+bare scheme would therefore be *host*-wide — every repository on the issuer.
 The practical consequence: an identity provider whose subjects are opaque, with
 no `:`, `@` or `/` in them, cannot be trusted through this table even by naming
 one in full. Neither GitHub nor GitLab produces such subjects, but a custom
@@ -93,7 +93,7 @@ The trailing delimiter **is** the wildcard. `repo:kjanat/` is what
 | Every repo of an owner               | `repo:kjanat`        | `repo:kjanat/*`        |
 | Every repo of an owner, `/` boundary | `repo:kjanat/`       | `repo:kjanat/*`        |
 | One repository, any ref              | `repo:kjanat/kjanat` | `repo:kjanat/kjanat:*` |
-| Every repository on the issuer       | _not possible_       | `repo:*`, `repo:`      |
+| Every repository on the issuer       | *not possible*       | `repo:*`, `repo:`      |
 
 `repo:kjanat` and `repo:kjanat/` differ only in which boundary they accept —
 prefer the first, per the tip above.
@@ -173,7 +173,7 @@ repo:kjanat/svc    keyIds: [A1B2C3D4E5F67890] ← this repo, one key
 ```
 
 Revoke `repo:kjanat/svc` and that repository keeps signing, now under the
-owner-wide row — which pins no keys, so it just gained access to _every_ key.
+owner-wide row — which pins no keys, so it just gained access to *every* key.
 The revoke widened the grant.
 
 Revoking the **broad** row is the mirror image: rows nested underneath it are
@@ -290,7 +290,7 @@ Setting the optional [`SENTRY_DSN`](self-hosting.md#optional-error-reporting) is
 one way to ship them. Both lines become Sentry **breadcrumbs** rather than
 events — deliberately, because an unknown subject on a shared issuer is
 caller-controlled volume — so they arrive as context on whatever event is
-raised rather than as alerts of their own. The two refusals that _are_ raised as
+raised rather than as alerts of their own. The two refusals that *are* raised as
 alertable events are `KEY_NOT_ALLOWED` and a revoked trust presented again,
 which is the same pair the table above names. With no DSN configured nothing
 leaves the Worker and these two lines remain log-only.
@@ -418,11 +418,11 @@ reasoning as step 5 above: the credential was never judged.
 
 ```bash
 created="$(
-	curl --fail-with-body --silent --show-error \
-		--request POST "$GPG_SIGN_URL/admin/tokens" \
-		--header "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN" \
-		--header "Content-Type: application/json" \
-		--data '{
+  curl --fail-with-body --silent --show-error \
+    --request POST "$GPG_SIGN_URL/admin/tokens" \
+    --header "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN" \
+    --header "Content-Type: application/json" \
+    --data '{
       "name": "ci/woodpecker",
       "keyIds": ["AFD5E3EC68371856"],
       "expiresInDays": 90
@@ -450,12 +450,12 @@ printf 'data to sign' | gpg-sign sign --key-id AFD5E3EC68371856
 
 ```bash
 curl --fail-with-body --silent --show-error \
-	"$GPG_SIGN_URL/admin/tokens" \
-	--header "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN"
+  "$GPG_SIGN_URL/admin/tokens" \
+  --header "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN"
 
 curl --fail-with-body --silent --show-error \
-	--request DELETE "$GPG_SIGN_URL/admin/tokens/TOKEN_UUID" \
-	--header "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN"
+  --request DELETE "$GPG_SIGN_URL/admin/tokens/TOKEN_UUID" \
+  --header "Authorization: Bearer $GPG_SIGN_ADMIN_TOKEN"
 ```
 
 Revocation is immediate. A token's name becomes its audit subject and

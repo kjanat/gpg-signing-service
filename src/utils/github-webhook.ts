@@ -31,20 +31,20 @@
  * account of how many it is about to send.
  */
 
-import type { WebhookAuthorization, WebhookDelivery } from "#types";
-import { requireSigningKey } from "#utils/github-signing-key";
+import type { WebhookAuthorization, WebhookDelivery } from '#types';
+import { requireSigningKey } from '#utils/github-signing-key';
 
 /** The header GitHub puts the HMAC in. */
-export const SIGNATURE_HEADER = "X-Hub-Signature-256";
+export const SIGNATURE_HEADER = 'X-Hub-Signature-256';
 
 /** The header carrying GitHub's unique id for a delivery. */
-export const DELIVERY_HEADER = "X-GitHub-Delivery";
+export const DELIVERY_HEADER = 'X-GitHub-Delivery';
 
 /** The header naming the event type. */
-export const EVENT_HEADER = "X-GitHub-Event";
+export const EVENT_HEADER = 'X-GitHub-Event';
 
 /** How GitHub prefixes the hex digest. */
-export const SIGNATURE_PREFIX = "sha256=";
+export const SIGNATURE_PREFIX = 'sha256=';
 
 /** Hex characters in a SHA-256 digest. */
 const DIGEST_HEX_LENGTH = 64;
@@ -113,14 +113,14 @@ export async function verifyWebhookSignature(
 	}
 
 	const key = await crypto.subtle.importKey(
-		"raw",
+		'raw',
 		new TextEncoder().encode(secret),
-		{ name: "HMAC", hash: "SHA-256" },
+		{ name: 'HMAC', hash: 'SHA-256' },
 		false,
-		["sign"],
+		['sign'],
 	);
 
-	const expected = new Uint8Array(await crypto.subtle.sign("HMAC", key, body));
+	const expected = new Uint8Array(await crypto.subtle.sign('HMAC', key, body));
 
 	return crypto.subtle.timingSafeEqual(expected, presented);
 }
@@ -135,18 +135,18 @@ export async function verifyWebhookSignature(
  * has no installation — and both mean "no token can be minted for this".
  */
 export function installationIdOf(payload: unknown): number | null {
-	if (typeof payload !== "object" || payload === null) {
+	if (typeof payload !== 'object' || payload === null) {
 		return null;
 	}
 
 	const installation = (payload as { installation?: unknown }).installation;
-	if (typeof installation !== "object" || installation === null) {
+	if (typeof installation !== 'object' || installation === null) {
 		return null;
 	}
 
 	const id = (installation as { id?: unknown }).id;
 
-	return typeof id === "number" && Number.isSafeInteger(id) && id > 0 ? id : null;
+	return typeof id === 'number' && Number.isSafeInteger(id) && id > 0 ? id : null;
 }
 
 /**

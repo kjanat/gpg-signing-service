@@ -49,7 +49,7 @@ export interface WebhookAuthorization {
 	 * - `none` — the delivery names neither. The App-level `ping` is the only
 	 *   event that realistically lands here. Authorizes nothing at all.
 	 */
-	scope: "repository" | "installation" | "none";
+	scope: 'repository' | 'installation' | 'none';
 	/** The allowlisted installation, or null at `none` scope. */
 	installationId: number | null;
 	/**

@@ -13,7 +13,7 @@ includes:
 vars:
   DATABASE_NAME: gpg-signing-audit
   KV_NAMESPACE: JWKS_CACHE
-  DPRINT_CONFIG: .dprint.jsonc
+  KPRINT_CONFIG: kprint.toml
 
 dotenv: [.dev.env]
 
@@ -315,11 +315,10 @@ tasks:
     desc: Format code
     aliases: [fmt, f]
     env:
-      CONFIG: "{{.DPRINT_CONFIG}}"
-      DPRINT_CONFIG_DISCOVERY: 0
+      CONFIG: "{{.KPRINT_CONFIG}}"
     cmds:
       - task: client:format
-      - bunx @kjanat/fmt {{.CLI_ARGS}} --config "${CONFIG}" --allow-no-files
+      - bun run format -- {{.CLI_ARGS}} --config "${CONFIG}" --config-discovery=false --allow-no-files
 
   format:check:
     silent: true
@@ -327,18 +326,16 @@ tasks:
     aliases: [fc]
     deps: [install:noscripts]
     env:
-      CONFIG: "{{.DPRINT_CONFIG}}"
-      DPRINT_CONFIG_DISCOVERY: 0
-    cmd: dprint check {{.CLI_ARGS}} --config "${CONFIG}" --allow-no-files
+      CONFIG: "{{.KPRINT_CONFIG}}"
+    cmd: bun run format:check -- {{.CLI_ARGS}} --config "${CONFIG}" --config-discovery=false --allow-no-files
 
   format:staged:
     silent: true
     desc: Format staged files with kprint
     aliases: [fs]
     env:
-      CONFIG: "{{.DPRINT_CONFIG}}"
-      DPRINT_CONFIG_DISCOVERY: 0
-    cmd: bunx @kjanat/fmt --staged --config "${CONFIG}" --allow-no-files
+      CONFIG: "{{.KPRINT_CONFIG}}"
+    cmd: bun run format -- --staged --config "${CONFIG}" --config-discovery=false --allow-no-files
 
   verify:hsts:
     desc: Compare the live Strict-Transport-Security header against the policy the Worker sets
@@ -392,7 +389,7 @@ tasks:
     cmds:
       - bun run generate:oapigen
       - task: client:generate
-      - bunx @kjanat/fmt
+      - bun run format
 
   generate:key:
     desc: Generate GPG key

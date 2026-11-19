@@ -42,7 +42,7 @@
  * exact state, asserted rather than reasoned about.
  */
 
-import type { RepositoryCommit } from "#utils/github-repo";
+import type { RepositoryCommit } from '#utils/github-repo';
 
 /**
  * How many commits one delivery may cause to be signed.
@@ -57,20 +57,20 @@ export const MAX_SIGNABLE_COMMITS = 20;
 /** Why a push causes nothing. */
 export type PushRefusal =
 	/** The ref is not `refs/heads/<branch>` — a tag, a note, or something else. */
-	| "not_a_branch"
+	| 'not_a_branch'
 	/** The push deleted the branch. There is nothing at the tip to sign. */
-	| "branch_deleted"
+	| 'branch_deleted'
 	/**
 	 * The payload could not be shown to describe a signable push: no usable ref,
 	 * or a `deleted` flag that is not the literal `false` a non-deletion carries.
 	 */
-	| "malformed"
+	| 'malformed'
 	/** The head already carries a signature, so the run is empty. */
-	| "nothing_to_sign"
+	| 'nothing_to_sign'
 	/** The branch named by the delivery does not exist any more. */
-	| "branch_missing"
+	| 'branch_missing'
 	/** More unsigned commits at the tip than one delivery may rewrite. */
-	| "too_many_unsigned"
+	| 'too_many_unsigned'
 	/**
 	 * A commit in the run could not be reproduced byte-for-byte from what the
 	 * API reports, so its rewrite would silently alter it.
@@ -80,7 +80,7 @@ export type PushRefusal =
 	 * rewriting a commit we cannot reconstruct means publishing a signature over
 	 * something other than what the author wrote.
 	 */
-	| "unreproducible_commit";
+	| 'unreproducible_commit';
 
 /** A push this service will act on, and the branch it will act on. */
 export type PushPlan = { act: true; branch: string } | { act: false; reason: PushRefusal };
@@ -97,13 +97,13 @@ const BRANCH_PATTERN = /^(?!\/)(?!.*\/\/)(?!.*\.\.)(?!.*@\{)[\x21-\x7e]{1,255}$/
  * rejects is not signed rather than signed somewhere unexpected.
  */
 export function branchFromRef(ref: unknown): string | null {
-	if (typeof ref !== "string" || !ref.startsWith("refs/heads/")) {
+	if (typeof ref !== 'string' || !ref.startsWith('refs/heads/')) {
 		return null;
 	}
 
-	const branch = ref.slice("refs/heads/".length);
+	const branch = ref.slice('refs/heads/'.length);
 
-	if (!BRANCH_PATTERN.test(branch) || branch.endsWith("/") || branch.endsWith(".lock")) {
+	if (!BRANCH_PATTERN.test(branch) || branch.endsWith('/') || branch.endsWith('.lock')) {
 		return null;
 	}
 
@@ -112,7 +112,7 @@ export function branchFromRef(ref: unknown): string | null {
 
 /** Is `value` a JSON object rather than an array, a null, or a scalar? */
 function isObject(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -136,20 +136,20 @@ function isObject(value: unknown): value is Record<string, unknown> {
  */
 export function planPush(payload: unknown): PushPlan {
 	if (!isObject(payload)) {
-		return { act: false, reason: "malformed" };
+		return { act: false, reason: 'malformed' };
 	}
 
 	if (payload.deleted === true) {
-		return { act: false, reason: "branch_deleted" };
+		return { act: false, reason: 'branch_deleted' };
 	}
 
 	if (payload.deleted !== false) {
-		return { act: false, reason: "malformed" };
+		return { act: false, reason: 'malformed' };
 	}
 
 	const branch = branchFromRef(payload.ref);
 	if (branch === null) {
-		return { act: false, reason: payload.ref === undefined ? "malformed" : "not_a_branch" };
+		return { act: false, reason: payload.ref === undefined ? 'malformed' : 'not_a_branch' };
 	}
 
 	return { act: true, branch };
@@ -197,20 +197,20 @@ export async function signableRun(
 		// the first half of one whose second half cannot be reproduced would leave
 		// a branch nobody asked for.
 		if (commit.offsets === null) {
-			return { act: false, reason: "unreproducible_commit" };
+			return { act: false, reason: 'unreproducible_commit' };
 		}
 
 		collected.push(commit);
 
 		if (collected.length > MAX_SIGNABLE_COMMITS) {
-			return { act: false, reason: "too_many_unsigned" };
+			return { act: false, reason: 'too_many_unsigned' };
 		}
 
 		sha = commit.parents[0];
 	}
 
 	if (collected.length === 0) {
-		return { act: false, reason: "nothing_to_sign" };
+		return { act: false, reason: 'nothing_to_sign' };
 	}
 
 	return { act: true, commits: collected.reverse() };

@@ -9,7 +9,6 @@ bun           = { prefix = "1.4" }
 gitleaks      = { prefix = "8" }
 go            = "latest"
 golangci-lint = { prefix = "2.15" }
-kprint        = "latest"
 lefthook      = "latest"
 node          = "26"
 runner-run    = "latest"
@@ -36,19 +35,14 @@ version       = "latest"
 asset_pattern = 'rshellcheck-*-{{ arch(x64="x86_64", arm64="aarch64") }}-{{ os(linux="unknown-linux-musl", macos="apple-darwin", windows="pc-windows-msvc") }}.*'
 
 [tool_alias]
-kprint     = "github:kjanat/kprint"
 runner-run = "github:kjanat/runner"
 tombi      = "github:tombi-toml/tombi"
 typescript = "github:Microsoft/TypeScript"
 shellcheck = "github:koalaman/shellcheck"
 
-[wrappers.dprint]
-command = "kprint"
-
 [settings]
 minimum_release_age_excludes        = [
   "github:Microsoft/TypeScript",
-  "github:kjanat/kprint",
   "github:kjanat/runner",
   "github:kjanat/shellcheck-rs",
 ]

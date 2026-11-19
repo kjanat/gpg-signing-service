@@ -59,31 +59,31 @@
  * model. The endpoint is documented for humans in `docs/github-app.md`.
  */
 
-import { createOpenAPIApp } from "#lib/openapi";
-import type { AnyStoredKey } from "#schemas/keys";
-import type { AppContext, RateLimitResult, WebhookAuthorization, WebhookDelivery } from "#types";
-import { createIdentity, HTTP } from "#types";
-import { logAuditEvent } from "#utils/audit";
-import type { CheckReportResult } from "#utils/check-report";
-import { reportSignatureCheck } from "#utils/check-report";
-import type { CommentDispatchResult, DispatchTarget } from "#utils/comment-dispatch";
+import { createOpenAPIApp } from '#lib/openapi';
+import type { AnyStoredKey } from '#schemas/keys';
+import type { AppContext, RateLimitResult, WebhookAuthorization, WebhookDelivery } from '#types';
+import { createIdentity, HTTP } from '#types';
+import { logAuditEvent } from '#utils/audit';
+import type { CheckReportResult } from '#utils/check-report';
+import { reportSignatureCheck } from '#utils/check-report';
+import type { CommentDispatchResult, DispatchTarget } from '#utils/comment-dispatch';
 import {
 	commentDispatchEnabled,
 	DISPATCH_LIMIT,
 	dispatchCommentRequest,
 	planCommentDispatch,
 	requireDispatchTarget,
-} from "#utils/comment-dispatch";
-import { fetchRateLimiter } from "#utils/durable-objects";
-import { scheduleBackgroundTask } from "#utils/execution";
-import { planPush } from "#utils/github-push";
-import { RepositoryClient } from "#utils/github-repo";
-import { loadSigningKey, requireSigningKey } from "#utils/github-signing-key";
-import { acknowledgement } from "#utils/github-webhook";
-import { logger } from "#utils/logger";
-import type { PushSigningResult } from "#utils/push-signing";
-import { signPushedCommits } from "#utils/push-signing";
-import { holdDelivery } from "#utils/webhook-replay";
+} from '#utils/comment-dispatch';
+import { fetchRateLimiter } from '#utils/durable-objects';
+import { scheduleBackgroundTask } from '#utils/execution';
+import { planPush } from '#utils/github-push';
+import { RepositoryClient } from '#utils/github-repo';
+import { loadSigningKey, requireSigningKey } from '#utils/github-signing-key';
+import { acknowledgement } from '#utils/github-webhook';
+import { logger } from '#utils/logger';
+import type { PushSigningResult } from '#utils/push-signing';
+import { signPushedCommits } from '#utils/push-signing';
+import { holdDelivery } from '#utils/webhook-replay';
 
 const app = createOpenAPIApp();
 
@@ -95,7 +95,7 @@ const app = createOpenAPIApp();
  * route — which counts *requests per IP* and is not a signing budget. This one
  * counts signatures, per authorized subject, per key.
  */
-const PUSH_SIGNING_METER = "github-push";
+const PUSH_SIGNING_METER = 'github-push';
 
 /**
  * Signatures per minute per `<installation, repository, key>`.
@@ -138,7 +138,7 @@ export function signingBudgetIdentity(authorization: WebhookAuthorization, keyId
  * a small shared set, so it is exhausted by traffic rather than by abuse.
  * This counts *comments that would cost a GitHub call*, per repository.
  */
-const DISPATCH_METER = "github-dispatch";
+const DISPATCH_METER = 'github-dispatch';
 
 /**
  * The bucket a repository's dispatch attempts are counted in.
@@ -168,36 +168,36 @@ async function spendBudget(
 	identity: string,
 	limit: number,
 	units: number,
-): Promise<"ok" | "limited" | "unavailable"> {
+): Promise<'ok' | 'limited' | 'unavailable'> {
 	for (let spent = 0; spent < units; spent += 1) {
 		let response: Response;
 		try {
 			response = await fetchRateLimiter(c.env, identity, limit);
 		} catch (error) {
-			logger.error("Webhook rate limiter unreachable", error, { identity, requestId: c.get("requestId") });
-			return "unavailable";
+			logger.error('Webhook rate limiter unreachable', error, { identity, requestId: c.get('requestId') });
+			return 'unavailable';
 		}
 
 		// A denied consume is a *verdict* and arrives as a 429 with the verdict in
 		// the body, so `!ok` alone would read the one answer this is asking for as
 		// an outage — the bug `/sign`'s `resolveRateLimit` carries a comment about.
 		if (!response.ok && response.status !== HTTP.TooManyRequests) {
-			logger.error("Webhook rate limiter failed", { identity, status: response.status, requestId: c.get("requestId") });
-			return "unavailable";
+			logger.error('Webhook rate limiter failed', { identity, status: response.status, requestId: c.get('requestId') });
+			return 'unavailable';
 		}
 
 		const verdict = (await response.json()) as RateLimitResult;
 		if (!verdict.allowed) {
-			return "limited";
+			return 'limited';
 		}
 	}
 
-	return "ok";
+	return 'ok';
 }
 
 /** Mark this delivery as having caused nothing, so a redelivery is a real retry. */
 function retryable(c: AppContext): void {
-	c.set("webhookRetryable", true);
+	c.set('webhookRetryable', true);
 }
 
 /**
@@ -221,15 +221,15 @@ function auditPush(
 ): Promise<void> {
 	return scheduleBackgroundTask(
 		c,
-		c.get("requestId"),
+		c.get('requestId'),
 		logAuditEvent(c.env.AUDIT_DB, {
-			requestId: c.get("requestId"),
-			action: "push_sign",
-			issuer: "github-app",
-			subject: authorization?.repository ?? "unknown",
+			requestId: c.get('requestId'),
+			action: 'push_sign',
+			issuer: 'github-app',
+			subject: authorization?.repository ?? 'unknown',
 			keyId,
 			success,
-			...(success ? {} : { errorCode: "SIGN_ERROR" as const }),
+			...(success ? {} : { errorCode: 'SIGN_ERROR' as const }),
 			metadata: JSON.stringify(metadata),
 		}),
 	);
@@ -273,15 +273,15 @@ async function reportCheck(
 	key: AnyStoredKey,
 	branch: string,
 ): Promise<CheckReportResult> {
-	const requestId = c.get("requestId");
+	const requestId = c.get('requestId');
 	// The client is the caller's — the one already bound to the authorized
 	// `<installation, repository>` pair — rather than rebuilt here. Rebuilding it
 	// would be a second place that decides which repository this delivery may
 	// address, and two such places are one too many.
 	const report = await reportSignatureCheck(c.env, client, branch, key, keyId);
 
-	if (report.outcome === "published") {
-		logger.info("Published a commit signature check", {
+	if (report.outcome === 'published') {
+		logger.info('Published a commit signature check', {
 			requestId,
 			repository: authorization.repository,
 			keyId,
@@ -304,11 +304,11 @@ async function reportCheck(
 		return report;
 	}
 
-	if (report.outcome === "failed") {
+	if (report.outcome === 'failed') {
 		// At error and audited: an installation that has not granted
 		// `checks: write` lands here on every delivery, and the operator needs to
 		// be able to see that without reading the App's own delivery log.
-		logger.error("Could not publish a commit signature check", {
+		logger.error('Could not publish a commit signature check', {
 			requestId,
 			repository: authorization.repository,
 			branch,
@@ -321,11 +321,11 @@ async function reportCheck(
 	// Skipped. `disabled` is every deployment that has not opted in, so it is
 	// debug rather than info — the rest are states an operator may want to see
 	// and are rare enough to log.
-	if (report.reason === "disabled") {
+	if (report.reason === 'disabled') {
 		return report;
 	}
 
-	logger.info("Published no commit signature check", {
+	logger.info('Published no commit signature check', {
 		requestId,
 		repository: authorization.repository,
 		branch,
@@ -352,13 +352,13 @@ function auditCheck(
 	metadata: Record<string, unknown>,
 ): Promise<void> {
 	return logAuditEvent(c.env.AUDIT_DB, {
-		requestId: c.get("requestId"),
-		action: "check_report",
-		issuer: "github-app",
-		subject: authorization.repository ?? "unknown",
+		requestId: c.get('requestId'),
+		action: 'check_report',
+		issuer: 'github-app',
+		subject: authorization.repository ?? 'unknown',
 		keyId,
 		success,
-		...(success ? {} : { errorCode: "INTERNAL_ERROR" as const }),
+		...(success ? {} : { errorCode: 'INTERNAL_ERROR' as const }),
 		metadata: JSON.stringify(metadata),
 	});
 }
@@ -385,7 +385,7 @@ function scheduleCheckReport(
 	key: AnyStoredKey,
 	branch: string,
 ): Promise<void> {
-	return scheduleBackgroundTask(c, c.get("requestId"), reportCheck(c, client, authorization, keyId, key, branch));
+	return scheduleBackgroundTask(c, c.get('requestId'), reportCheck(c, client, authorization, keyId, key, branch));
 }
 
 /**
@@ -402,14 +402,14 @@ async function handlePush(
 	delivery: WebhookDelivery,
 	authorization: WebhookAuthorization | undefined,
 ): Promise<Response> {
-	const requestId = c.get("requestId");
+	const requestId = c.get('requestId');
 
-	const plan = planPush(c.get("webhookPayload"));
+	const plan = planPush(c.get('webhookPayload'));
 	if (!plan.act) {
 		// A tag, a deletion, a payload with no ref. Deterministic no-ops: a
 		// redelivery would reach the same answer, so the id stays committed rather
 		// than being handed back for a replay that cannot accomplish anything.
-		logger.info("Push delivery causes no signing", { requestId, delivery: delivery.id, reason: plan.reason });
+		logger.info('Push delivery causes no signing', { requestId, delivery: delivery.id, reason: plan.reason });
 		return c.json(
 			{ ...acknowledgement(delivery, authorization, { duplicate: false }), skipped: plan.reason },
 			HTTP.Accepted,
@@ -424,15 +424,15 @@ async function handlePush(
 	const client = RepositoryClient.forAuthorization(c.env, authorization);
 
 	if (!decision.allowed || client === null) {
-		const reason = decision.allowed ? "not_repository_scope" : decision.reason;
+		const reason = decision.allowed ? 'not_repository_scope' : decision.reason;
 		// `no_key_bound` is a configuration state an operator fixes and then
 		// redelivers, so the id goes back. `not_repository_scope` cannot be fixed by
 		// anything — a push that is not about an allowlisted pair was refused
 		// upstream — so it does not.
-		if (reason === "no_key_bound") {
+		if (reason === 'no_key_bound') {
 			retryable(c);
 		}
-		logger.warn("Push delivery has no signing key", { requestId, delivery: delivery.id, reason });
+		logger.warn('Push delivery has no signing key', { requestId, delivery: delivery.id, reason });
 		return c.json(
 			{ ...acknowledgement(delivery, authorization, { duplicate: false }), skipped: reason },
 			HTTP.Accepted,
@@ -449,7 +449,7 @@ async function handlePush(
 		// Neither changed anything, and both are states an operator resolves and
 		// then redelivers into.
 		retryable(c);
-		logger.error("Push delivery could not load its signing key", {
+		logger.error('Push delivery could not load its signing key', {
 			requestId,
 			delivery: delivery.id,
 			repository: grant.repository,
@@ -478,7 +478,7 @@ async function handlePush(
 			// the ledger write from its `finally`, after this handler has returned,
 			// and the reservation it took covers the whole request in the meantime.
 			beforePublish: async () => {
-				c.set("webhookRetryable", false);
+				c.set('webhookRetryable', false);
 			},
 		});
 	} catch (error) {
@@ -486,16 +486,16 @@ async function handlePush(
 		// own failures with a `published` flag, so reaching here means something
 		// unmodelled went wrong; the delivery is left committed, which is the
 		// direction that cannot sign twice.
-		logger.error("Push signing failed unexpectedly", error, {
+		logger.error('Push signing failed unexpectedly', error, {
 			requestId,
 			delivery: delivery.id,
 			repository: grant.repository,
 		});
-		await auditPush(c, grant, decision.keyId, false, { branch: plan.branch, reason: "unexpected_error" });
-		return c.json({ error: "Internal server error", code: "INTERNAL_ERROR" }, HTTP.InternalServerError);
+		await auditPush(c, grant, decision.keyId, false, { branch: plan.branch, reason: 'unexpected_error' });
+		return c.json({ error: 'Internal server error', code: 'INTERNAL_ERROR' }, HTTP.InternalServerError);
 	}
 
-	if (result.outcome === "refused") {
+	if (result.outcome === 'refused') {
 		// The budget said no. Nothing was signed and nothing was published, so the
 		// delivery goes back: this is exactly the case where an operator waits and
 		// redelivers.
@@ -512,7 +512,7 @@ async function handlePush(
 		// to touch. The report is not lost: a refusal is redeliverable, and the
 		// redelivery that eventually signs reports then.
 		retryable(c);
-		logger.warn("Push signing refused by its budget", {
+		logger.warn('Push signing refused by its budget', {
 			requestId,
 			delivery: delivery.id,
 			repository: grant.repository,
@@ -520,8 +520,8 @@ async function handlePush(
 		});
 		await auditPush(c, grant, decision.keyId, false, { branch: plan.branch, reason: result.reason });
 		return c.json(
-			{ error: "Push signing is over budget", code: "RATE_LIMITED", retryAfter: 60 },
-			result.reason === "rate_limited" ? HTTP.TooManyRequests : HTTP.ServiceUnavailable,
+			{ error: 'Push signing is over budget', code: 'RATE_LIMITED', retryAfter: 60 },
+			result.reason === 'rate_limited' ? HTTP.TooManyRequests : HTTP.ServiceUnavailable,
 		);
 	}
 
@@ -542,8 +542,8 @@ async function handlePush(
 	// The one outcome above it: a budget refusal, which returned already.
 	await scheduleCheckReport(c, client, grant, decision.keyId, loaded.key, plan.branch);
 
-	if (result.outcome === "signed") {
-		logger.info("Signed pushed commits", {
+	if (result.outcome === 'signed') {
+		logger.info('Signed pushed commits', {
 			requestId,
 			delivery: delivery.id,
 			repository: grant.repository,
@@ -569,7 +569,7 @@ async function handlePush(
 		);
 	}
 
-	if (result.outcome === "skipped") {
+	if (result.outcome === 'skipped') {
 		// Nothing was published. Most of these would reach the same answer on a
 		// repeat — the head is already signed, the branch is gone, the run is too
 		// long, or somebody else's push won the race and will raise its own
@@ -580,10 +580,10 @@ async function handlePush(
 		// nothing was signed, and the fix is to bind a PGP one and redeliver. A
 		// committed id would answer that redelivery `duplicate: true`, which is
 		// exactly the lost-event failure the two-phase ledger exists to prevent.
-		if (result.reason === "unsupported_key") {
+		if (result.reason === 'unsupported_key') {
 			retryable(c);
 		}
-		logger.info("Push signing did nothing", {
+		logger.info('Push signing did nothing', {
 			requestId,
 			delivery: delivery.id,
 			repository: grant.repository,
@@ -603,7 +603,7 @@ async function handlePush(
 		retryable(c);
 	}
 
-	logger.error("Push signing failed", {
+	logger.error('Push signing failed', {
 		requestId,
 		delivery: delivery.id,
 		repository: grant.repository,
@@ -617,7 +617,7 @@ async function handlePush(
 		published: result.published,
 	});
 
-	return c.json({ error: "Push signing failed", code: "SIGN_ERROR" }, HTTP.InternalServerError);
+	return c.json({ error: 'Push signing failed', code: 'SIGN_ERROR' }, HTTP.InternalServerError);
 }
 
 /**
@@ -643,18 +643,18 @@ function auditDispatch(
 	c: AppContext,
 	authorization: WebhookAuthorization | undefined,
 	success: boolean,
-	errorCode: "AUTH_SUBJECT_UNTRUSTED" | "RATE_LIMITED" | "INTERNAL_ERROR" | null,
+	errorCode: 'AUTH_SUBJECT_UNTRUSTED' | 'RATE_LIMITED' | 'INTERNAL_ERROR' | null,
 	metadata: Record<string, unknown>,
 ): Promise<void> {
 	return scheduleBackgroundTask(
 		c,
-		c.get("requestId"),
+		c.get('requestId'),
 		logAuditEvent(c.env.AUDIT_DB, {
-			requestId: c.get("requestId"),
-			action: "comment_dispatch",
-			issuer: "github-app",
-			subject: authorization?.repository ?? "unknown",
-			keyId: "none",
+			requestId: c.get('requestId'),
+			action: 'comment_dispatch',
+			issuer: 'github-app',
+			subject: authorization?.repository ?? 'unknown',
+			keyId: 'none',
 			success,
 			...(errorCode === null ? {} : { errorCode }),
 			metadata: JSON.stringify(metadata),
@@ -680,7 +680,7 @@ async function handleIssueComment(
 	delivery: WebhookDelivery,
 	authorization: WebhookAuthorization | undefined,
 ): Promise<Response> {
-	const requestId = c.get("requestId");
+	const requestId = c.get('requestId');
 
 	const acknowledged = (reason: string) =>
 		c.json({ ...acknowledgement(delivery, authorization, { duplicate: false }), skipped: reason }, HTTP.Accepted);
@@ -690,22 +690,22 @@ async function handleIssueComment(
 		// what makes an upgraded deployment that has not granted `Actions: write`
 		// behave exactly as it did before. Deliberately *before* the payload is
 		// read, so a deployment with the feature off does no work per comment.
-		return acknowledged("dispatch_disabled");
+		return acknowledged('dispatch_disabled');
 	}
 
-	const plan = planCommentDispatch(c.get("webhookPayload"));
+	const plan = planCommentDispatch(c.get('webhookPayload'));
 	if (!plan.act) {
 		// Deterministic no-ops, every one of them: an edit rather than a new
 		// comment, no trigger phrase, a bot, an unreadable payload. A redelivery
 		// reaches the same answer, so the id stays spent. At debug for the two that
 		// are the overwhelming majority of deliveries on a busy repository — a
 		// comment with no phrase in it is not an event, it is the weather.
-		const routine = plan.reason === "no_trigger_phrase" || plan.reason === "not_created";
+		const routine = plan.reason === 'no_trigger_phrase' || plan.reason === 'not_created';
 		const line = { requestId, delivery: delivery.id, reason: plan.reason, repository: authorization?.repository };
 		if (routine) {
-			logger.debug("Comment delivery is not a request", line);
+			logger.debug('Comment delivery is not a request', line);
 		} else {
-			logger.info("Comment delivery will not be dispatched", line);
+			logger.info('Comment delivery will not be dispatched', line);
 		}
 
 		// Two of these earn a row, and the volume argument is what decides which.
@@ -717,8 +717,8 @@ async function handleIssueComment(
 		// both are the security-significant ones. The rest are weather: a comment
 		// with no phrase in it is not an event, and a row per one of those would be
 		// a D1 write per comment on the repository.
-		if (plan.reason === "actor_is_not_human" || plan.reason === "unreadable_actor") {
-			await auditDispatch(c, authorization, false, "AUTH_SUBJECT_UNTRUSTED", { reason: plan.reason });
+		if (plan.reason === 'actor_is_not_human' || plan.reason === 'unreadable_actor') {
+			await auditDispatch(c, authorization, false, 'AUTH_SUBJECT_UNTRUSTED', { reason: plan.reason });
 		}
 
 		return acknowledged(plan.reason);
@@ -729,8 +729,8 @@ async function handleIssueComment(
 		// An `issue_comment` always names a repository, so reaching this means the
 		// grant was not a repository-scoped one — refused upstream — and there is
 		// nothing an operator can redeliver into.
-		logger.warn("Comment delivery has no repository to act on", { requestId, delivery: delivery.id });
-		return acknowledged("not_repository_scope");
+		logger.warn('Comment delivery has no repository to act on', { requestId, delivery: delivery.id });
+		return acknowledged('not_repository_scope');
 	}
 
 	// Non-null: `forAuthorization` returns a client only at `repository` scope.
@@ -745,9 +745,9 @@ async function handleIssueComment(
 		// guard; retryable, because setting the two vars and redelivering is
 		// exactly the recovery.
 		retryable(c);
-		logger.error("Comment dispatch is enabled but not configured", error, { requestId, delivery: delivery.id });
-		await auditDispatch(c, grant, false, "INTERNAL_ERROR", { reason: "misconfigured" });
-		return c.json({ error: "Service is misconfigured", code: "SERVICE_MISCONFIGURED" }, HTTP.InternalServerError);
+		logger.error('Comment dispatch is enabled but not configured', error, { requestId, delivery: delivery.id });
+		await auditDispatch(c, grant, false, 'INTERNAL_ERROR', { reason: 'misconfigured' });
+		return c.json({ error: 'Service is misconfigured', code: 'SERVICE_MISCONFIGURED' }, HTTP.InternalServerError);
 	}
 
 	const identity = dispatchBudgetIdentity(grant);
@@ -756,7 +756,7 @@ async function handleIssueComment(
 
 	let result: CommentDispatchResult;
 	try {
-		result = await dispatchCommentRequest(client, target, plan.plan, deliveryId ?? "unknown", {
+		result = await dispatchCommentRequest(client, target, plan.plan, deliveryId ?? 'unknown', {
 			reserveBudget: () => spendBudget(c, identity, DISPATCH_LIMIT, 1),
 			// The irreversible boundary, and it is a *durable write* rather than a
 			// decision to write later. There is no idempotency key on the dispatch
@@ -776,8 +776,8 @@ async function handleIssueComment(
 					// with no usable id before any handler runs. Present so that a
 					// change to the mounting cannot dispatch onto a ledger key that
 					// every id-less delivery would share.
-					logger.error("Comment dispatch reached the irreversible boundary with no delivery id", { requestId });
-					return "unavailable";
+					logger.error('Comment dispatch reached the irreversible boundary with no delivery id', { requestId });
+					return 'unavailable';
 				}
 
 				try {
@@ -786,16 +786,16 @@ async function handleIssueComment(
 					// Fail closed, and nothing has left: the dispatch is refused and the
 					// delivery stays retryable, which is the same posture the guard
 					// itself takes when the ledger cannot be reached.
-					logger.error("Delivery ledger could not hold a delivery before dispatching", error, {
+					logger.error('Delivery ledger could not hold a delivery before dispatching', error, {
 						requestId,
 						delivery: deliveryId,
 						repository: grant.repository,
 					});
-					return "unavailable";
+					return 'unavailable';
 				}
 
-				c.set("webhookRetryable", false);
-				return "held";
+				c.set('webhookRetryable', false);
+				return 'held';
 			},
 		});
 	} catch (error) {
@@ -803,17 +803,17 @@ async function handleIssueComment(
 		// failures with a `retryable` flag, so reaching here means something
 		// unexpected went wrong at an unknown point; the delivery is left
 		// committed, which is the direction that cannot start two runs.
-		logger.error("Comment dispatch failed unexpectedly", error, {
+		logger.error('Comment dispatch failed unexpectedly', error, {
 			requestId,
 			delivery: delivery.id,
 			repository: grant.repository,
 		});
-		await auditDispatch(c, grant, false, "INTERNAL_ERROR", { reason: "unexpected_error" });
-		return c.json({ error: "Internal server error", code: "INTERNAL_ERROR" }, HTTP.InternalServerError);
+		await auditDispatch(c, grant, false, 'INTERNAL_ERROR', { reason: 'unexpected_error' });
+		return c.json({ error: 'Internal server error', code: 'INTERNAL_ERROR' }, HTTP.InternalServerError);
 	}
 
-	if (result.outcome === "dispatched") {
-		logger.info("Dispatched a workflow for a comment", {
+	if (result.outcome === 'dispatched') {
+		logger.info('Dispatched a workflow for a comment', {
 			requestId,
 			delivery: delivery.id,
 			repository: grant.repository,
@@ -837,7 +837,7 @@ async function handleIssueComment(
 		);
 	}
 
-	if (result.outcome === "skipped") {
+	if (result.outcome === 'skipped') {
 		// `actor_not_permitted`, and today only that. Audited as a failure with
 		// `AUTH_SUBJECT_UNTRUSTED` rather than logged and forgotten: somebody who
 		// may read this repository asked it to run something, and that is the
@@ -846,7 +846,7 @@ async function handleIssueComment(
 		if (result.retryable) {
 			retryable(c);
 		}
-		logger.warn("Comment delivery was not authorized to dispatch", {
+		logger.warn('Comment delivery was not authorized to dispatch', {
 			requestId,
 			delivery: delivery.id,
 			repository: grant.repository,
@@ -854,7 +854,7 @@ async function handleIssueComment(
 			detail: result.detail,
 			actor: plan.plan.actor,
 		});
-		await auditDispatch(c, grant, false, "AUTH_SUBJECT_UNTRUSTED", {
+		await auditDispatch(c, grant, false, 'AUTH_SUBJECT_UNTRUSTED', {
 			reason: result.reason,
 			// Which shape of refusal. `not_a_collaborator` is an outsider on a
 			// repository the App can still see; `insufficient_permission` is somebody
@@ -875,7 +875,7 @@ async function handleIssueComment(
 		retryable(c);
 	}
 
-	logger.error("Comment dispatch failed", {
+	logger.error('Comment dispatch failed', {
 		requestId,
 		delivery: delivery.id,
 		repository: grant.repository,
@@ -885,7 +885,7 @@ async function handleIssueComment(
 		retryable: result.retryable,
 		actor: plan.plan.actor,
 	});
-	await auditDispatch(c, grant, false, result.reason === "rate_limited" ? "RATE_LIMITED" : "INTERNAL_ERROR", {
+	await auditDispatch(c, grant, false, result.reason === 'rate_limited' ? 'RATE_LIMITED' : 'INTERNAL_ERROR', {
 		reason: result.reason,
 		// `repository_not_visible` lands here, and it is the row that says the
 		// problem is the installation rather than the commenter — the distinction
@@ -898,14 +898,14 @@ async function handleIssueComment(
 		comment: plan.plan.commentId,
 	});
 
-	if (result.reason === "rate_limited") {
+	if (result.reason === 'rate_limited') {
 		return c.json(
-			{ error: "Comment dispatch is over budget", code: "RATE_LIMITED", retryAfter: 60 },
+			{ error: 'Comment dispatch is over budget', code: 'RATE_LIMITED', retryAfter: 60 },
 			HTTP.TooManyRequests,
 		);
 	}
 
-	return c.json({ error: "Comment dispatch failed", code: "INTERNAL_ERROR" }, HTTP.InternalServerError);
+	return c.json({ error: 'Comment dispatch failed', code: 'INTERNAL_ERROR' }, HTTP.InternalServerError);
 }
 
 /**
@@ -927,25 +927,25 @@ async function handleIssueComment(
  * `duplicate: true`, so an operator can tell a retry from a fresh event without
  * a log.
  */
-app.post("/webhook", async (c) => {
+app.post('/webhook', async (c) => {
 	// Set by `githubWebhookAuth`, which is mounted in front of this route in
 	// `src/index.ts`. Absent is impossible on a request that got here; the
 	// fallback exists so this handler cannot be the thing that 500s if the
 	// mounting is ever changed.
-	const delivery = c.get("webhookDelivery");
+	const delivery = c.get('webhookDelivery');
 
 	if (!delivery) {
-		logger.error("Webhook handler reached without a verified delivery on the context");
-		return c.json({ error: "Internal server error", code: "INTERNAL_ERROR" }, HTTP.InternalServerError);
+		logger.error('Webhook handler reached without a verified delivery on the context');
+		return c.json({ error: 'Internal server error', code: 'INTERNAL_ERROR' }, HTTP.InternalServerError);
 	}
 
-	const authorization = c.get("webhookAuthorization");
+	const authorization = c.get('webhookAuthorization');
 
-	if (delivery.event === "push") {
+	if (delivery.event === 'push') {
 		return await handlePush(c as AppContext, delivery, authorization);
 	}
 
-	if (delivery.event === "issue_comment") {
+	if (delivery.event === 'issue_comment') {
 		return await handleIssueComment(c as AppContext, delivery, authorization);
 	}
 
@@ -964,8 +964,8 @@ app.post("/webhook", async (c) => {
 	// field that makes a binding diagnosable without an operator having to read
 	// `wrangler.toml` next to a delivery log.
 	const signingKey = requireSigningKey(authorization);
-	logger.info("GitHub webhook delivery accepted", {
-		requestId: c.get("requestId"),
+	logger.info('GitHub webhook delivery accepted', {
+		requestId: c.get('requestId'),
 		event: delivery.event,
 		delivery: delivery.id,
 		installationId: delivery.installationId,

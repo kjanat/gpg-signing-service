@@ -1,7 +1,7 @@
-import type { AuditAction, AuditLogEntry } from "#schemas/audit";
-import type { ErrorCode } from "#schemas/errors";
+import type { AuditAction, AuditLogEntry } from '#schemas/audit';
+import type { ErrorCode } from '#schemas/errors';
 
-export async function logAuditEvent(db: D1Database, entry: Omit<AuditLogEntry, "id" | "timestamp">): Promise<void> {
+export async function logAuditEvent(db: D1Database, entry: Omit<AuditLogEntry, 'id' | 'timestamp'>): Promise<void> {
 	const id = crypto.randomUUID();
 	const timestamp = new Date().toISOString();
 
@@ -40,11 +40,11 @@ export async function getAuditLogs(
 ): Promise<AuditLogEntry[]> {
 	const { limit = 100, offset = 0, action, subject, startDate, endDate } = options;
 
-	let query = "SELECT * FROM audit_logs WHERE 1=1";
+	let query = 'SELECT * FROM audit_logs WHERE 1=1';
 	const params: (string | number)[] = [];
 
 	if (action) {
-		query += " AND action = ?";
+		query += ' AND action = ?';
 		params.push(action);
 	}
 
@@ -52,21 +52,21 @@ export async function getAuditLogs(
 		// SECURITY: Escape LIKE wildcards to prevent pattern injection (OWASP A03:2021)
 		// Must specify ESCAPE clause for SQLite to recognize the escape character
 		query += " AND subject LIKE ? ESCAPE '\\'";
-		const escapedSubject = subject.replace(/[%_\\]/g, "\\$&");
+		const escapedSubject = subject.replace(/[%_\\]/g, '\\$&');
 		params.push(`%${escapedSubject}%`);
 	}
 
 	if (startDate) {
-		query += " AND timestamp >= ?";
+		query += ' AND timestamp >= ?';
 		params.push(startDate);
 	}
 
 	if (endDate) {
-		query += " AND timestamp <= ?";
+		query += ' AND timestamp <= ?';
 		params.push(endDate);
 	}
 
-	query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?";
+	query += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
 	params.push(limit, offset);
 
 	const result = await db

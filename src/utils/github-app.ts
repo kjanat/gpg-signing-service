@@ -34,14 +34,14 @@
  * when it comes back out.
  */
 
-import { signJwt } from "micro509/jose";
-import { type ImportRsaKeyInput, importPkcs1Pem, importPkcs8Pem } from "micro509/keys";
-import { z } from "zod";
-import type { Env } from "#types";
-import { TIME } from "#types";
-import { PKCS8_PRIVATE_BEGIN, RSA_PRIVATE_BEGIN } from "#utils/armor";
-import { fetchWithTimeout } from "#utils/fetch";
-import { logger } from "#utils/logger";
+import { signJwt } from 'micro509/jose';
+import { type ImportRsaKeyInput, importPkcs1Pem, importPkcs8Pem } from 'micro509/keys';
+import { z } from 'zod';
+import type { Env } from '#types';
+import { TIME } from '#types';
+import { PKCS8_PRIVATE_BEGIN, RSA_PRIVATE_BEGIN } from '#utils/armor';
+import { fetchWithTimeout } from '#utils/fetch';
+import { logger } from '#utils/logger';
 
 /**
  * The only origin this module talks to.
@@ -51,7 +51,7 @@ import { logger } from "#utils/logger";
  * support is not in scope for a scaffold. When it is, it belongs behind its own
  * validated setting rather than by relaxing this.
  */
-export const GITHUB_API_ORIGIN = "https://api.github.com";
+export const GITHUB_API_ORIGIN = 'https://api.github.com';
 
 /**
  * How long an App JWT is valid.
@@ -106,7 +106,7 @@ export class GitHubAppError extends Error {
 
 	constructor(message: string, options: { misconfigured?: boolean; cause?: unknown } = {}) {
 		super(message, options.cause === undefined ? undefined : { cause: options.cause });
-		this.name = "GitHubAppError";
+		this.name = 'GitHubAppError';
 		this.misconfigured = options.misconfigured ?? false;
 	}
 }
@@ -126,8 +126,8 @@ interface AppConfig {
  * every near-miss reads as "off" until it does not. `wrangler.toml` ships the
  * value spelled out.
  */
-export function githubAppEnabled(env: Pick<Env, "GITHUB_APP_ENABLED">): boolean {
-	return env.GITHUB_APP_ENABLED === "true";
+export function githubAppEnabled(env: Pick<Env, 'GITHUB_APP_ENABLED'>): boolean {
+	return env.GITHUB_APP_ENABLED === 'true';
 }
 
 /**
@@ -137,7 +137,7 @@ export function githubAppEnabled(env: Pick<Env, "GITHUB_APP_ENABLED">): boolean 
  * told about the other in the same breath rather than one deploy later. The
  * message names the *setting*, never any part of its value.
  */
-export function requireAppConfig(env: Pick<Env, "GITHUB_APP_ID" | "GITHUB_APP_PRIVATE_KEY">): AppConfig {
+export function requireAppConfig(env: Pick<Env, 'GITHUB_APP_ID' | 'GITHUB_APP_PRIVATE_KEY'>): AppConfig {
 	const missing: string[] = [];
 	// Empty and unset are the same thing to a Worker: an unset `wrangler secret`
 	// and one put with an empty value both arrive as something falsy, and
@@ -146,14 +146,14 @@ export function requireAppConfig(env: Pick<Env, "GITHUB_APP_ID" | "GITHUB_APP_PR
 	const privateKey = env.GITHUB_APP_PRIVATE_KEY?.trim();
 
 	if (!appId) {
-		missing.push("GITHUB_APP_ID");
+		missing.push('GITHUB_APP_ID');
 	}
 	if (!privateKey) {
-		missing.push("GITHUB_APP_PRIVATE_KEY");
+		missing.push('GITHUB_APP_PRIVATE_KEY');
 	}
 
 	if (!appId || !privateKey) {
-		throw new GitHubAppError(`GitHub App integration is enabled but ${missing.join(" and ")} is not set`, {
+		throw new GitHubAppError(`GitHub App integration is enabled but ${missing.join(' and ')} is not set`, {
 			misconfigured: true,
 		});
 	}
@@ -173,21 +173,21 @@ export function requireAppConfig(env: Pick<Env, "GITHUB_APP_ID" | "GITHUB_APP_PR
  * @param path - Absolute path beginning with `/`
  */
 export function githubApiUrl(path: string): URL {
-	if (!path.startsWith("/") || path.startsWith("//")) {
-		throw new GitHubAppError("GitHub API path must be an absolute path on api.github.com");
+	if (!path.startsWith('/') || path.startsWith('//')) {
+		throw new GitHubAppError('GitHub API path must be an absolute path on api.github.com');
 	}
 
 	const url = new URL(path, GITHUB_API_ORIGIN);
 
 	if (url.origin !== GITHUB_API_ORIGIN) {
-		throw new GitHubAppError("GitHub API path resolved off api.github.com");
+		throw new GitHubAppError('GitHub API path resolved off api.github.com');
 	}
 
 	return url;
 }
 
 /** RS256: RSASSA-PKCS1-v1_5 with SHA-256, the only App JWT algorithm GitHub accepts. */
-const RS256_KEY: ImportRsaKeyInput = { kind: "rsa", scheme: "pkcs1-v1_5", hash: "SHA-256" };
+const RS256_KEY: ImportRsaKeyInput = { kind: 'rsa', scheme: 'pkcs1-v1_5', hash: 'SHA-256' };
 
 /**
  * The App private key as a signing `CryptoKey`, whichever form the operator
@@ -207,12 +207,12 @@ async function importAppPrivateKey(pem: string): Promise<CryptoKey> {
 
 	if (imported === null) {
 		throw new GitHubAppError(
-			"GITHUB_APP_PRIVATE_KEY is not a PEM private key; expected a `BEGIN RSA PRIVATE KEY` block as downloaded from GitHub, or a `BEGIN PRIVATE KEY` block",
+			'GITHUB_APP_PRIVATE_KEY is not a PEM private key; expected a `BEGIN RSA PRIVATE KEY` block as downloaded from GitHub, or a `BEGIN PRIVATE KEY` block',
 			{ misconfigured: true },
 		);
 	}
 	if (!imported.ok) {
-		throw new GitHubAppError("GITHUB_APP_PRIVATE_KEY could not be imported as an RSA private key", {
+		throw new GitHubAppError('GITHUB_APP_PRIVATE_KEY could not be imported as an RSA private key', {
 			misconfigured: true,
 			cause: imported.code,
 		});
@@ -229,7 +229,7 @@ async function importAppPrivateKey(pem: string): Promise<CryptoKey> {
  * can enumerate installations, whereas `getInstallationToken` below hands back
  * the narrower credential that is right for acting on one of them.
  */
-export async function mintAppJwt(env: Pick<Env, "GITHUB_APP_ID" | "GITHUB_APP_PRIVATE_KEY">): Promise<string> {
+export async function mintAppJwt(env: Pick<Env, 'GITHUB_APP_ID' | 'GITHUB_APP_PRIVATE_KEY'>): Promise<string> {
 	const { appId, privateKey } = requireAppConfig(env);
 
 	const key = await importAppPrivateKey(privateKey);
@@ -237,7 +237,7 @@ export async function mintAppJwt(env: Pick<Env, "GITHUB_APP_ID" | "GITHUB_APP_PR
 
 	return signJwt({
 		privateKey: key,
-		algorithm: "RS256",
+		algorithm: 'RS256',
 		claims: {
 			iss: appId,
 			iat: nowSeconds - CLOCK_SKEW / TIME.SECOND,
@@ -294,7 +294,7 @@ export async function getInstallationToken(env: Env, installationId: number): Pr
 	// and it is about to be interpolated into a URL path. `githubApiUrl` would
 	// catch an origin change but not a `1/../../orgs/x` that stays on the host.
 	if (!Number.isSafeInteger(installationId) || installationId <= 0) {
-		throw new GitHubAppError("Installation id must be a positive integer");
+		throw new GitHubAppError('Installation id must be a positive integer');
 	}
 
 	const { appId } = requireAppConfig(env);
@@ -313,12 +313,12 @@ export async function getInstallationToken(env: Env, installationId: number): Pr
 		response = await fetchWithTimeout(
 			url,
 			{
-				method: "POST",
+				method: 'POST',
 				headers: {
 					Authorization: `Bearer ${jwt}`,
-					Accept: "application/vnd.github+json",
-					"X-GitHub-Api-Version": "2022-11-28",
-					"User-Agent": "gpg-signing-service",
+					Accept: 'application/vnd.github+json',
+					'X-GitHub-Api-Version': '2022-11-28',
+					'User-Agent': 'gpg-signing-service',
 				},
 			},
 			GITHUB_TIMEOUT,
@@ -356,11 +356,11 @@ export async function getInstallationToken(env: Env, installationId: number): Pr
 async function readCachedToken(env: Env, cacheKey: string): Promise<InstallationToken | null> {
 	let cached: unknown;
 	try {
-		cached = await env.JWKS_CACHE.get(cacheKey, "json");
+		cached = await env.JWKS_CACHE.get(cacheKey, 'json');
 	} catch (error) {
 		// A cache that cannot be read is a slow path, not a failure: fall through
 		// and mint. Logged without the key, which names an installation.
-		logger.warn("Could not read the installation-token cache", {
+		logger.warn('Could not read the installation-token cache', {
 			error: error instanceof Error ? error.message : String(error),
 		});
 		return null;
@@ -410,7 +410,7 @@ async function cacheToken(
 			expirationTtl: ttlSeconds,
 		});
 	} catch (error) {
-		logger.warn("Could not cache an installation token", {
+		logger.warn('Could not cache an installation token', {
 			installationId,
 			error: error instanceof Error ? error.message : String(error),
 		});

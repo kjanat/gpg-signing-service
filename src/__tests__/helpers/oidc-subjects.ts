@@ -30,9 +30,9 @@ const CREATE_INDEX = `CREATE UNIQUE INDEX IF NOT EXISTS idx_oidc_subjects_issuer
 
 /** Issuers the suites mint tokens for. */
 const TEST_ISSUERS = [
-	"https://token.actions.githubusercontent.com",
-	"https://token.actions.githubusercontent.com/unique-test-issuer",
-	"https://gitlab.com",
+	'https://token.actions.githubusercontent.com',
+	'https://token.actions.githubusercontent.com/unique-test-issuer',
+	'https://gitlab.com',
 ];
 
 /**
@@ -41,7 +41,7 @@ const TEST_ISSUERS = [
  * bare names here would make the fixture looser than production — the same gap
  * that let the revoke lockout survive a green suite.
  */
-const TEST_SUBJECT_PREFIXES = ["repo:test/svc", "repo:test-subject/svc", "repo:subject/svc", "repo:user/repo"];
+const TEST_SUBJECT_PREFIXES = ['repo:test/svc', 'repo:test-subject/svc', 'repo:subject/svc', 'repo:user/repo'];
 
 /**
  * Create the table and trust every issuer/subject pair the tests use, with no
@@ -71,5 +71,5 @@ export async function seedTrustedSubjects(db: D1Database): Promise<void> {
 export async function clearTrustedSubjects(db: D1Database): Promise<void> {
 	await db.prepare(CREATE_TABLE).run();
 	await db.prepare(CREATE_INDEX).run();
-	await db.prepare("DELETE FROM oidc_subjects").run();
+	await db.prepare('DELETE FROM oidc_subjects').run();
 }

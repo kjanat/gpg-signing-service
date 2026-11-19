@@ -2,12 +2,12 @@
  * Error handling utilities
  */
 
-import type { Context } from "hono";
-import type { ContentfulStatusCode } from "hono/utils/http-status";
-import { insufficientScopeChallenge, WWW_AUTHENTICATE } from "#lib/openapi";
-import type { ErrorCode } from "#schemas/errors";
-import { HEADERS, HTTP } from "#types";
-import { logger } from "#utils/logger";
+import type { Context } from 'hono';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
+import { insufficientScopeChallenge, WWW_AUTHENTICATE } from '#lib/openapi';
+import type { ErrorCode } from '#schemas/errors';
+import { HEADERS, HTTP } from '#types';
+import { logger } from '#utils/logger';
 
 interface ErrorOptions {
 	code: ErrorCode;
@@ -39,7 +39,7 @@ export function errorResponse(c: Context, message: string, options: ErrorOptions
 }
 
 /** The codes a 401 may carry. */
-export type UnauthorizedCode = Extract<ErrorCode, "AUTH_MISSING" | "AUTH_INVALID" | "AUTH_SUBJECT_UNTRUSTED">;
+export type UnauthorizedCode = Extract<ErrorCode, 'AUTH_MISSING' | 'AUTH_INVALID' | 'AUTH_SUBJECT_UNTRUSTED'>;
 
 /**
  * The service's single 401.
@@ -77,8 +77,8 @@ export function unauthorized(
 	code: UnauthorizedCode,
 	details: { hint?: string | undefined; subject?: string | undefined } = {},
 ) {
-	const requestId = c.get("requestId");
-	c.header("WWW-Authenticate", WWW_AUTHENTICATE);
+	const requestId = c.get('requestId');
+	c.header('WWW-Authenticate', WWW_AUTHENTICATE);
 	return c.json(
 		{
 			error: message,
@@ -112,22 +112,22 @@ export function unauthorized(
  * @param details - `hint` says which credential the operation actually needs
  */
 export function insufficientScope(c: Context, message: string, details: { hint?: string | undefined } = {}) {
-	const requestId = c.get("requestId");
+	const requestId = c.get('requestId');
 
 	logger.warn(message, {
-		code: "AUTH_SCOPE_INSUFFICIENT",
+		code: 'AUTH_SCOPE_INSUFFICIENT',
 		status: HTTP.Forbidden,
 		method: c.req.method,
 		path: c.req.path,
 		...(requestId && { requestId }),
 	});
 
-	c.header("WWW-Authenticate", insufficientScopeChallenge(message));
+	c.header('WWW-Authenticate', insufficientScopeChallenge(message));
 
 	return c.json(
 		{
 			error: message,
-			code: "AUTH_SCOPE_INSUFFICIENT" as const satisfies ErrorCode,
+			code: 'AUTH_SCOPE_INSUFFICIENT' as const satisfies ErrorCode,
 			...(requestId && { requestId }),
 			...(details.hint && { hint: details.hint }),
 		},
@@ -164,10 +164,10 @@ export function serviceDegraded(
 	message: string,
 	details: { hint?: string | undefined; retryAfter?: number | undefined } = {},
 ) {
-	const requestId = c.get("requestId");
+	const requestId = c.get('requestId');
 
 	logger.warn(message, {
-		code: "SERVICE_DEGRADED",
+		code: 'SERVICE_DEGRADED',
 		status: HTTP.ServiceUnavailable,
 		...(requestId && { requestId }),
 	});
@@ -182,7 +182,7 @@ export function serviceDegraded(
 	return c.json(
 		{
 			error: message,
-			code: "SERVICE_DEGRADED" as const satisfies ErrorCode,
+			code: 'SERVICE_DEGRADED' as const satisfies ErrorCode,
 			...(requestId && { requestId }),
 			...(details.hint && { hint: details.hint }),
 		},
@@ -231,10 +231,10 @@ export function serviceDegraded(
  * @param details - `hint` says which knob the operator should check
  */
 export function serviceMisconfigured(c: Context, message: string, details: { hint?: string | undefined } = {}) {
-	const requestId = c.get("requestId");
+	const requestId = c.get('requestId');
 
 	logger.error(message, undefined, {
-		code: "SERVICE_MISCONFIGURED",
+		code: 'SERVICE_MISCONFIGURED',
 		status: HTTP.InternalServerError,
 		...(requestId && { requestId }),
 	});
@@ -242,7 +242,7 @@ export function serviceMisconfigured(c: Context, message: string, details: { hin
 	return c.json(
 		{
 			error: message,
-			code: "SERVICE_MISCONFIGURED" as const satisfies ErrorCode,
+			code: 'SERVICE_MISCONFIGURED' as const satisfies ErrorCode,
 			...(requestId && { requestId }),
 			...(details.hint && { hint: details.hint }),
 		},
@@ -255,9 +255,9 @@ export function serviceMisconfigured(c: Context, message: string, details: { hin
  */
 export function handleUnknownError(c: Context, error: unknown, fallbackMessage: string, code: ErrorCode): Response {
 	const message = error instanceof Error ? error.message : fallbackMessage;
-	const requestId = c.get("requestId");
+	const requestId = c.get('requestId');
 
-	logger.error("Unhandled error", error, { code, requestId });
+	logger.error('Unhandled error', error, { code, requestId });
 
 	return errorResponse(c, message, {
 		code,
@@ -277,7 +277,7 @@ export class AppError extends Error {
 		public readonly context?: Record<string, unknown>,
 	) {
 		super(message);
-		this.name = "AppError";
+		this.name = 'AppError';
 	}
 }
 

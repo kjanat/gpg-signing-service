@@ -35,7 +35,6 @@ jobs:
       *Check,
       &MiseGo { uses: *MiseAction, with: { working_directory: client } },
       *Bun,
-      { uses: kjanat/dprint-check@v3, with: { install-only: true } },
       run: task lint,
     ],
   }

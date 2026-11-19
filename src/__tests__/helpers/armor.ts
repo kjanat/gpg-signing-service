@@ -28,11 +28,11 @@ export {
 	PKCS8_PRIVATE_END,
 	RSA_PRIVATE_BEGIN,
 	RSA_PRIVATE_END,
-} from "#utils/armor";
+} from '#utils/armor';
 
-import { armorMarker } from "#utils/armor";
+import { armorMarker } from '#utils/armor';
 
 /** Wrap `body` in the armor pair for `label`. */
 export function armored(label: string, body: string): string {
-	return `${armorMarker("BEGIN", label)}\n${body}\n${armorMarker("END", label)}`;
+	return `${armorMarker('BEGIN', label)}\n${body}\n${armorMarker('END', label)}`;
 }

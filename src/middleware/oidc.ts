@@ -1,4 +1,4 @@
-import type { Context, MiddlewareHandler } from "hono";
+import type { Context, MiddlewareHandler } from 'hono';
 import {
 	createJwksKeyResolver,
 	decodeJwtUnverified,
@@ -6,23 +6,23 @@ import {
 	parseJwks,
 	type VerifyJwtErrorCode,
 	verifyJwt,
-} from "micro509/jose";
-import { z } from "zod";
-import { INSUFFICIENT_SCOPE_MESSAGE } from "#lib/openapi";
-import { getRequestId } from "#middleware/request-id";
-import type { Env, OIDCClaims, RateLimitResult, Variables } from "#types";
-import { createIdentity, HEADERS, HTTP, markClaimsAsValidated, TIME } from "#types";
-import { logAuditEvent } from "#utils/audit";
-import { CACHE_TTL } from "#utils/constants";
-import { fetchRateLimiter } from "#utils/durable-objects";
-import { insufficientScope, serviceDegraded, serviceMisconfigured, unauthorized } from "#utils/errors";
-import { scheduleBackgroundTask } from "#utils/execution";
-import { fetchWithTimeout } from "#utils/fetch";
-import { logger } from "#utils/logger";
-import type { OIDCSubjectResolution, RefusalContext } from "#utils/oidc-subjects";
-import { resolveOIDCSubject } from "#utils/oidc-subjects";
-import { addRefusalBreadcrumb, captureRefusalEvent } from "#utils/sentry";
-import { validateUrl } from "#utils/url-validation";
+} from 'micro509/jose';
+import { z } from 'zod';
+import { INSUFFICIENT_SCOPE_MESSAGE } from '#lib/openapi';
+import { getRequestId } from '#middleware/request-id';
+import type { Env, OIDCClaims, RateLimitResult, Variables } from '#types';
+import { createIdentity, HEADERS, HTTP, markClaimsAsValidated, TIME } from '#types';
+import { logAuditEvent } from '#utils/audit';
+import { CACHE_TTL } from '#utils/constants';
+import { fetchRateLimiter } from '#utils/durable-objects';
+import { insufficientScope, serviceDegraded, serviceMisconfigured, unauthorized } from '#utils/errors';
+import { scheduleBackgroundTask } from '#utils/execution';
+import { fetchWithTimeout } from '#utils/fetch';
+import { logger } from '#utils/logger';
+import type { OIDCSubjectResolution, RefusalContext } from '#utils/oidc-subjects';
+import { resolveOIDCSubject } from '#utils/oidc-subjects';
+import { addRefusalBreadcrumb, captureRefusalEvent } from '#utils/sentry';
+import { validateUrl } from '#utils/url-validation';
 
 /**
  * Rate-limiter namespace for revoked-trust reuse, kept disjoint from the
@@ -36,7 +36,7 @@ import { validateUrl } from "#utils/url-validation";
  * requires an absolute `https:` URL. So this string can never appear as an `iss`
  * that reached the point of naming a bucket.
  */
-const REVOKED_REUSE_METER = "oidc-revoked-reuse";
+const REVOKED_REUSE_METER = 'oidc-revoked-reuse';
 
 /**
  * This deployment could not reach the issuer, as distinct from the issuer
@@ -77,7 +77,7 @@ export class IssuerUnavailableError extends Error {
 		options?: { cause?: unknown },
 	) {
 		super(message, options);
-		this.name = "IssuerUnavailableError";
+		this.name = 'IssuerUnavailableError';
 	}
 }
 
@@ -121,7 +121,7 @@ async function recordRevokedReuse(
 	c: Context<{ Bindings: Env; Variables: Variables }>,
 	requestId: string,
 	payload: OIDCClaims,
-	resolution: Extract<OIDCSubjectResolution, { status: "revoked" }>,
+	resolution: Extract<OIDCSubjectResolution, { status: 'revoked' }>,
 ): Promise<void> {
 	try {
 		const limit = await fetchRateLimiter(c.env, createIdentity(REVOKED_REUSE_METER, resolution.id));
@@ -133,7 +133,7 @@ async function recordRevokedReuse(
 			return;
 		}
 	} catch (error) {
-		logger.warn("Could not meter a revoked-trust reuse, so it was not recorded", {
+		logger.warn('Could not meter a revoked-trust reuse, so it was not recorded', {
 			requestId,
 			error: error instanceof Error ? error.message : String(error),
 		});
@@ -145,14 +145,14 @@ async function recordRevokedReuse(
 		requestId,
 		logAuditEvent(c.env.AUDIT_DB, {
 			requestId,
-			action: "sign",
+			action: 'sign',
 			issuer: payload.iss,
 			subject: payload.sub,
-			keyId: "*",
+			keyId: '*',
 			success: false,
-			errorCode: "AUTH_SUBJECT_UNTRUSTED",
+			errorCode: 'AUTH_SUBJECT_UNTRUSTED',
 			metadata: JSON.stringify({
-				reason: "revoked_trust_presented",
+				reason: 'revoked_trust_presented',
 				subjectId: resolution.id,
 				subjectPolicy: resolution.name,
 				revokedAt: resolution.revokedAt,
@@ -179,13 +179,13 @@ async function recordRevokedReuse(
  * @param env - Deployment bindings, for naming the values actually configured
  */
 function tokenHint(message: string, env: Env): string | undefined {
-	if (message === "Token expired" || message === "Token not yet valid") {
+	if (message === 'Token expired' || message === 'Token not yet valid') {
 		return "The token's lifetime does not cover this request. Mint a fresh OIDC token immediately before calling /sign rather than reusing one from earlier in the job, and check the runner's clock.";
 	}
-	if (message === "Invalid token audience") {
-		return `Request the token with audience "${env.EXPECTED_AUDIENCE || "gpg-signing-service"}" — for GitHub Actions, core.getIDToken(audience) or the audience input of the OIDC step.`;
+	if (message === 'Invalid token audience') {
+		return `Request the token with audience "${env.EXPECTED_AUDIENCE || 'gpg-signing-service'}" — for GitHub Actions, core.getIDToken(audience) or the audience input of the OIDC step.`;
 	}
-	if (message.startsWith("Issuer not allowed")) {
+	if (message.startsWith('Issuer not allowed')) {
 		// The list is behind the same flag the trusted prefixes are, and for a
 		// stronger reason. This check runs before the timing check, the audience
 		// check and the JWKS fetch, so an unsigned JWT assembled by hand reaches
@@ -196,25 +196,25 @@ function tokenHint(message: string, env: Env): string | undefined {
 		// half; the knob is the operator's half, and it is the same sentence
 		// whether or not the values are printed.
 		const base =
-			"The `iss` in this token is not one this deployment accepts. The operator sets that list in `ALLOWED_ISSUERS`.";
-		if (env.DISCLOSE_TRUST_PATTERNS !== "true") {
+			'The `iss` in this token is not one this deployment accepts. The operator sets that list in `ALLOWED_ISSUERS`.';
+		if (env.DISCLOSE_TRUST_PATTERNS !== 'true') {
 			return base;
 		}
-		const issuers = env.ALLOWED_ISSUERS.split(",")
+		const issuers = env.ALLOWED_ISSUERS.split(',')
 			.map((issuer) => issuer.trim())
 			.filter(Boolean);
-		return issuers.length > 0 ? `${base} It currently accepts: ${issuers.join(", ")}.` : base;
+		return issuers.length > 0 ? `${base} It currently accepts: ${issuers.join(', ')}.` : base;
 	}
-	if (message === "Invalid token format" || message === "Invalid token encoding") {
-		return "The Authorization header did not carry a JWT. A common cause is an unset variable expanding to an empty string, so the header reads `Bearer ` with nothing after it.";
+	if (message === 'Invalid token format' || message === 'Invalid token encoding') {
+		return 'The Authorization header did not carry a JWT. A common cause is an unset variable expanding to an empty string, so the header reads `Bearer ` with nothing after it.';
 	}
-	if (message.startsWith("Algorithm not allowed")) {
+	if (message.startsWith('Algorithm not allowed')) {
 		// Named because the reference's table is the caller's only account of what
 		// AUTH_INVALID means, and a fault missing from it reads as a fault the
 		// documentation does not know about.
 		return "The token's `alg` header is not one this service verifies. It accepts RS256 only — any other `alg`, including `none` or a symmetric one, is refused before any key is fetched.";
 	}
-	if (message === "Key not intended for signatures") {
+	if (message === 'Key not intended for signatures') {
 		return "The issuer's JWKS names this key with `use` set to something other than `sig`, so it is not a signing key. This is the issuer's metadata, not the token's — if it persists, it is one for the issuer's operator.";
 	}
 	return undefined;
@@ -294,10 +294,10 @@ function untrustedSubjectHint(issuer: string, context: RefusalContext, env: Env)
 	// Off by default; see RefusalContext for why the trust list is not free to
 	// hand out. `=== "true"` rather than truthiness so an operator who sets it to
 	// "false" gets what they asked for.
-	if (env.DISCLOSE_TRUST_PATTERNS === "true") {
+	if (env.DISCLOSE_TRUST_PATTERNS === 'true') {
 		hint += ` ${context.issuerRuleCount} rule(s) exist for issuer ${issuer}, ${active} of them active.`;
 		if (active > 0) {
-			hint += ` Active prefixes: ${context.activePrefixes.join(", ")}.`;
+			hint += ` Active prefixes: ${context.activePrefixes.join(', ')}.`;
 		}
 	}
 	return hint;
@@ -327,25 +327,25 @@ export const oidcAuth: MiddlewareHandler<{
 	// way out, so re-deriving here mints a *different* UUID when the caller sent
 	// no header — stranding every row this request writes under an id the caller
 	// never sees. The fallback covers direct invocation in tests.
-	const requestId = c.get("requestId") ?? getRequestId(c.req.header(HEADERS.REQUEST_ID));
-	c.set("requestId", requestId);
+	const requestId = c.get('requestId') ?? getRequestId(c.req.header(HEADERS.REQUEST_ID));
+	c.set('requestId', requestId);
 
-	const authHeader = c.req.header("Authorization");
+	const authHeader = c.req.header('Authorization');
 
-	if (!authHeader?.startsWith("Bearer ")) {
-		return unauthorized(c, "Missing authorization header", "AUTH_MISSING", {
+	if (!authHeader?.startsWith('Bearer ')) {
+		return unauthorized(c, 'Missing authorization header', 'AUTH_MISSING', {
 			hint: "Send `Authorization: Bearer <token>` with an OIDC token minted for this service's audience.",
 		});
 	}
 
-	const token = authHeader.split(" ")[1];
+	const token = authHeader.split(' ')[1];
 	if (!token) {
 		// `code` is not decoration: the document now declares this 401 as an
 		// ErrorResponse, and every client that reads the envelope branches on the
 		// code rather than the prose. A bare `Bearer ` is the same fault as no
 		// header at all, so it carries the same code.
-		return unauthorized(c, "Missing token", "AUTH_MISSING", {
-			hint: "The Authorization header was `Bearer ` with nothing after it, which is what an unset variable expands to.",
+		return unauthorized(c, 'Missing token', 'AUTH_MISSING', {
+			hint: 'The Authorization header was `Bearer ` with nothing after it, which is what an unset variable expands to.',
 		});
 	}
 
@@ -375,8 +375,8 @@ export const oidcAuth: MiddlewareHandler<{
 				retryAfter: ISSUER_RETRY_AFTER_SECONDS,
 			});
 		}
-		const message = error instanceof Error ? error.message : "Invalid token";
-		return unauthorized(c, message, "AUTH_INVALID", { hint: tokenHint(message, c.env) });
+		const message = error instanceof Error ? error.message : 'Invalid token';
+		return unauthorized(c, message, 'AUTH_INVALID', { hint: tokenHint(message, c.env) });
 	}
 
 	// Authentication is not authorization. A verified token only proves that some
@@ -398,7 +398,7 @@ export const oidcAuth: MiddlewareHandler<{
 		// below all carry it, for the reason stated there, and the caller holding
 		// the 503's id had no entry to match it against on the one arm whose
 		// answer is "wait" rather than "fix your credential".
-		logger.error("OIDC subject lookup failed", error, {
+		logger.error('OIDC subject lookup failed', error, {
 			requestId,
 			issuer: payload.iss,
 		});
@@ -407,13 +407,13 @@ export const oidcAuth: MiddlewareHandler<{
 		// migrations and unhandled exceptions — for what is usually D1 being
 		// briefly unavailable. The caller's move is to wait, and only a code that
 		// says so gets them there.
-		return serviceDegraded(c, "Authorization store unavailable", {
-			hint: "The trusted-subject lookup failed, so this request could not be authorized either way. Nothing about the token is wrong. Retry after the interval in Retry-After; if it persists, the operator should check D1 and that `task db:migrate` has been applied.",
+		return serviceDegraded(c, 'Authorization store unavailable', {
+			hint: 'The trusted-subject lookup failed, so this request could not be authorized either way. Nothing about the token is wrong. Retry after the interval in Retry-After; if it persists, the operator should check D1 and that `task db:migrate` has been applied.',
 			retryAfter: ISSUER_RETRY_AFTER_SECONDS,
 		});
 	}
 
-	if (resolution.status !== "trusted") {
+	if (resolution.status !== 'trusted') {
 		// Three different events, one response. The caller learns nothing extra —
 		// telling a stranger that their subject matches a revoked row would confirm
 		// the row exists — but the operator gets to tell them apart. Reuse of a
@@ -425,8 +425,8 @@ export const oidcAuth: MiddlewareHandler<{
 		// operator's only route from a pasted CI log to the reason. Without it here
 		// that route dead-ended — the id reached `audit_logs` on the revoked path
 		// alone, and the two arms that write no row were unfindable by it.
-		if (resolution.status === "revoked") {
-			logger.warn("Revoked OIDC trust presented", {
+		if (resolution.status === 'revoked') {
+			logger.warn('Revoked OIDC trust presented', {
 				requestId,
 				issuer: payload.iss,
 				subject: payload.sub,
@@ -440,19 +440,19 @@ export const oidcAuth: MiddlewareHandler<{
 			// already-vetted population. That is an incident, and it is one of the
 			// two refusals worth an alert rule. None of the fields here is secret:
 			// every one of them is readable through GET /admin/subjects.
-			captureRefusalEvent("Revoked OIDC trust presented", {
+			captureRefusalEvent('Revoked OIDC trust presented', {
 				requestId,
-				action: "sign",
-				errorCode: "AUTH_INVALID",
-				reason: "revoked_trust_presented",
+				action: 'sign',
+				errorCode: 'AUTH_INVALID',
+				reason: 'revoked_trust_presented',
 				issuer: payload.iss,
 				subject: payload.sub,
 				subjectId: resolution.id,
 				subjectPolicy: resolution.name,
 				revokedAt: resolution.revokedAt,
 			});
-		} else if (resolution.status === "expired") {
-			logger.warn("Expired OIDC trust presented", {
+		} else if (resolution.status === 'expired') {
+			logger.warn('Expired OIDC trust presented', {
 				requestId,
 				issuer: payload.iss,
 				subject: payload.sub,
@@ -464,7 +464,7 @@ export const oidcAuth: MiddlewareHandler<{
 			// the row owner's problem; raising it would bury the two refusals that
 			// are actually alertable. As a breadcrumb it costs nothing and is still
 			// there, in order, on whatever event does get raised.
-			addRefusalBreadcrumb("Expired OIDC trust presented", {
+			addRefusalBreadcrumb('Expired OIDC trust presented', {
 				requestId,
 				issuer: payload.iss,
 				subject: payload.sub,
@@ -488,7 +488,7 @@ export const oidcAuth: MiddlewareHandler<{
 			// `DISCLOSE_TRUST_PATTERNS` gates in the response, and the authorized
 			// answer to it is GET /admin/subjects. `requestId`, `issuer` and
 			// `subject` stay so the pasted CI log still joins to this line.
-			logger.warn("Rejected untrusted OIDC subject", {
+			logger.warn('Rejected untrusted OIDC subject', {
 				requestId,
 				issuer: payload.iss,
 				subject: payload.sub,
@@ -501,7 +501,7 @@ export const oidcAuth: MiddlewareHandler<{
 			// The counts ride along because they are what separates "never
 			// configured for this issuer" from "configured and all dead" from
 			// "live, and this subject is not among them".
-			addRefusalBreadcrumb("Rejected untrusted OIDC subject", {
+			addRefusalBreadcrumb('Rejected untrusted OIDC subject', {
 				requestId,
 				issuer: payload.iss,
 				subject: payload.sub,
@@ -524,7 +524,7 @@ export const oidcAuth: MiddlewareHandler<{
 		// `expired` is bounded the same way but stays log-only: a lapsed trust is
 		// routine maintenance, not evidence of anything, and it is the row owner's
 		// problem rather than an operator's. Recording it would mostly add volume.
-		if (resolution.status === "revoked") {
+		if (resolution.status === 'revoked') {
 			await recordRevokedReuse(c, requestId, payload, resolution);
 		}
 
@@ -537,7 +537,7 @@ export const oidcAuth: MiddlewareHandler<{
 		// thing here that discloses nothing: it arrived in a token they hold and
 		// already signed. Withholding it only meant re-running the workflow with a
 		// debug step to print the claim the refusal was about.
-		return unauthorized(c, "Subject is not trusted for signing", "AUTH_SUBJECT_UNTRUSTED", {
+		return unauthorized(c, 'Subject is not trusted for signing', 'AUTH_SUBJECT_UNTRUSTED', {
 			subject: payload.sub,
 			hint: untrustedSubjectHint(payload.iss, resolution, c.env),
 		});
@@ -546,17 +546,17 @@ export const oidcAuth: MiddlewareHandler<{
 	const policy = resolution.policy;
 
 	// Store validated claims in context for downstream use
-	c.set("oidcClaims", markClaimsAsValidated(payload));
-	c.set("identity", createIdentity(payload.iss, payload.sub));
+	c.set('oidcClaims', markClaimsAsValidated(payload));
+	c.set('identity', createIdentity(payload.iss, payload.sub));
 	// Key scoping now applies to OIDC callers too, not just service tokens.
-	c.set("allowedKeyIds", policy.allowedKeyIds);
+	c.set('allowedKeyIds', policy.allowedKeyIds);
 	// Which trust authorized this call. Without it the audit trail records only
 	// the JWT subject, so "what did the row I just revoked sign?" means re-running
 	// prefix matching over the whole history. The service-token path gets this
 	// for free by putting the policy name in its synthetic `sub`.
-	c.set("subjectPolicyName", policy.name);
+	c.set('subjectPolicyName', policy.name);
 	// Metering handle for the sign route's per-row ceiling; see the note above.
-	c.set("subjectPolicyId", policy.id);
+	c.set('subjectPolicyId', policy.id);
 
 	// The last-used stamp is bookkeeping; do not make every signature wait on a
 	// D1 write for it.
@@ -600,7 +600,7 @@ export const oidcAuth: MiddlewareHandler<{
  * `OPTIONS` that does reach this point is not a read, and failing it closed
  * costs a caller nothing.
  */
-const READ_ONLY_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD"]);
+const READ_ONLY_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD']);
 
 /**
  * Admin auth for management endpoints, and the scope boundary between the two
@@ -631,9 +631,9 @@ export const adminAuth: MiddlewareHandler<{
 	// — nothing checks it. Answer 500, because the caller's credential is not
 	// what is wrong and no amount of retrying with a better one will help.
 	if (!c.env.ADMIN_TOKEN) {
-		logger.error("ADMIN_TOKEN is not configured; refusing every admin request");
+		logger.error('ADMIN_TOKEN is not configured; refusing every admin request');
 		return c.json(
-			{ error: "Admin authentication is not configured", code: "INTERNAL_ERROR" },
+			{ error: 'Admin authentication is not configured', code: 'INTERNAL_ERROR' },
 			HTTP.InternalServerError,
 		);
 	}
@@ -662,16 +662,16 @@ export const adminAuth: MiddlewareHandler<{
 	// caller's 500 to the log line that says what to fix.
 	if (readOnlyToken !== undefined && readOnlyToken === c.env.ADMIN_TOKEN) {
 		logger.error(
-			"ADMIN_READONLY_TOKEN is set to the same value as ADMIN_TOKEN, which would make the read-only credential a full administrator; refusing every admin request until they differ. Put a distinct value with `wrangler secret put ADMIN_READONLY_TOKEN`.",
+			'ADMIN_READONLY_TOKEN is set to the same value as ADMIN_TOKEN, which would make the read-only credential a full administrator; refusing every admin request until they differ. Put a distinct value with `wrangler secret put ADMIN_READONLY_TOKEN`.',
 		);
-		return serviceMisconfigured(c, "Admin authentication is misconfigured");
+		return serviceMisconfigured(c, 'Admin authentication is misconfigured');
 	}
 
-	const authHeader = c.req.header("Authorization");
+	const authHeader = c.req.header('Authorization');
 
-	if (!authHeader?.startsWith("Bearer ")) {
-		return unauthorized(c, "Missing authorization header", "AUTH_MISSING", {
-			hint: "Admin routes take `Authorization: Bearer <ADMIN_TOKEN>`.",
+	if (!authHeader?.startsWith('Bearer ')) {
+		return unauthorized(c, 'Missing authorization header', 'AUTH_MISSING', {
+			hint: 'Admin routes take `Authorization: Bearer <ADMIN_TOKEN>`.',
 		});
 	}
 
@@ -683,8 +683,8 @@ export const adminAuth: MiddlewareHandler<{
 	// An empty token is not a credential the service refused; it is no
 	// credential at all.
 	if (!token) {
-		return unauthorized(c, "Missing token", "AUTH_MISSING", {
-			hint: "The Authorization header was `Bearer ` with nothing after it, which is what an unset variable expands to.",
+		return unauthorized(c, 'Missing token', 'AUTH_MISSING', {
+			hint: 'The Authorization header was `Bearer ` with nothing after it, which is what an unset variable expands to.',
 		});
 	}
 
@@ -704,7 +704,7 @@ export const adminAuth: MiddlewareHandler<{
 	]);
 
 	if (!isFullAdmin && !isReadOnly) {
-		return unauthorized(c, "Invalid admin token", "AUTH_INVALID", {
+		return unauthorized(c, 'Invalid admin token', 'AUTH_INVALID', {
 			hint: "The bearer did not match this deployment's ADMIN_TOKEN secret, or its ADMIN_READONLY_TOKEN if one is set. Rotate with `wrangler secret put ADMIN_TOKEN` if it has been lost.",
 		});
 	}
@@ -714,7 +714,7 @@ export const adminAuth: MiddlewareHandler<{
 	// keeps the safe outcome if that guard is ever weakened.
 	if (!isFullAdmin && !READ_ONLY_METHODS.has(c.req.method)) {
 		return insufficientScope(c, INSUFFICIENT_SCOPE_MESSAGE, {
-			hint: `ADMIN_READONLY_TOKEN is accepted on ${[...READ_ONLY_METHODS].join(" and ")} admin routes only. ${c.req.method} ${c.req.path} changes state and needs ADMIN_TOKEN.`,
+			hint: `ADMIN_READONLY_TOKEN is accepted on ${[...READ_ONLY_METHODS].join(' and ')} admin routes only. ${c.req.method} ${c.req.path} changes state and needs ADMIN_TOKEN.`,
 		});
 	}
 
@@ -742,7 +742,7 @@ async function timingSafeEqual(a: string, b: string): Promise<boolean> {
 }
 
 // GitHub Actions and GitLab CI both sign OIDC tokens with RS256.
-const ALLOWED_ALGORITHMS = ["RS256"];
+const ALLOWED_ALGORITHMS = ['RS256'];
 
 const RoutingClaimsSchema = z.looseObject({
 	iss: z.string(),
@@ -764,19 +764,19 @@ const OIDCClaimsSchema = RoutingClaimsSchema.extend({
 }) satisfies z.ZodType<OIDCClaims>;
 
 async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
-	const parts = token.split(".");
+	const parts = token.split('.');
 	if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) {
-		throw new Error("Invalid token format");
+		throw new Error('Invalid token format');
 	}
 
 	const decoded = decodeJwtUnverified(token);
 	if (!decoded.ok) {
-		throw new Error("Invalid token encoding");
+		throw new Error('Invalid token encoding');
 	}
 	const { header } = decoded.value;
 	const routing = RoutingClaimsSchema.safeParse(decoded.value.claims);
 	if (!routing.success) {
-		throw new Error("Invalid token claims");
+		throw new Error('Invalid token claims');
 	}
 	const payload = routing.data;
 
@@ -789,7 +789,7 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
 	// if only one side trimmed, whitespace after a comma would let an issuer be
 	// trusted at create time and refused here, producing exactly the silently
 	// dead row that check exists to prevent.
-	const allowedIssuers = env.ALLOWED_ISSUERS.split(",").map((issuer) => issuer.trim());
+	const allowedIssuers = env.ALLOWED_ISSUERS.split(',').map((issuer) => issuer.trim());
 	if (!allowedIssuers.includes(payload.iss)) {
 		throw new Error(`Issuer not allowed: ${payload.iss}`);
 	}
@@ -800,19 +800,19 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
 
 	// Check not-before (nbf) with skew tolerance
 	if (payload.nbf && payload.nbf > now + CLOCK_SKEW_SECONDS) {
-		throw new Error("Token not yet valid");
+		throw new Error('Token not yet valid');
 	}
 
 	// Check expiration with skew tolerance
 	if (payload.exp < now - CLOCK_SKEW_SECONDS) {
-		throw new Error("Token expired");
+		throw new Error('Token expired');
 	}
 
 	// Validate audience (configurable via env, defaults to service name)
-	const expectedAudience = env.EXPECTED_AUDIENCE || "gpg-signing-service";
+	const expectedAudience = env.EXPECTED_AUDIENCE || 'gpg-signing-service';
 	const audiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
 	if (!audiences.includes(expectedAudience)) {
-		throw new Error("Invalid token audience");
+		throw new Error('Invalid token audience');
 	}
 
 	// Fetch JWKS and verify signature. If the cached JWKS doesn't have the
@@ -820,7 +820,7 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
 	const jwks = await getJWKS(payload.iss, env, header.kid);
 
 	const verified = await verifyJwt(token, {
-		algorithms: ["RS256"],
+		algorithms: ['RS256'],
 		key: createJwksKeyResolver(jwks),
 		tokenType: { unchecked: true },
 		claims: {
@@ -835,7 +835,7 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
 
 	const claims = OIDCClaimsSchema.safeParse(verified.value.claims);
 	if (!claims.success) {
-		throw new Error("Invalid token claims");
+		throw new Error('Invalid token claims');
 	}
 	return claims.data;
 }
@@ -843,31 +843,31 @@ async function validateOIDCToken(token: string, env: Env): Promise<OIDCClaims> {
 /** The curated message for a micro509 verification failure. Exported for the branch-coverage suite. */
 export function mapVerifyFailure(code: VerifyJwtErrorCode): never {
 	switch (code) {
-		case "key_not_found":
-		case "ambiguous_key":
-			throw new Error("Key not found");
-		case "key_unsuitable":
-			throw new Error("Key not intended for signatures");
-		case "invalid_signature":
-			throw new Error("Invalid token signature");
-		case "expired":
-			throw new Error("Token expired");
-		case "not_yet_valid":
-			throw new Error("Token not yet valid");
-		case "audience_mismatch":
-			throw new Error("Invalid token audience");
-		case "missing_claim":
-		case "invalid_claim":
-			throw new Error("Invalid token claims");
+		case 'key_not_found':
+		case 'ambiguous_key':
+			throw new Error('Key not found');
+		case 'key_unsuitable':
+			throw new Error('Key not intended for signatures');
+		case 'invalid_signature':
+			throw new Error('Invalid token signature');
+		case 'expired':
+			throw new Error('Token expired');
+		case 'not_yet_valid':
+			throw new Error('Token not yet valid');
+		case 'audience_mismatch':
+			throw new Error('Invalid token audience');
+		case 'missing_claim':
+		case 'invalid_claim':
+			throw new Error('Invalid token claims');
 		default:
-			throw new Error("Invalid token");
+			throw new Error('Invalid token');
 	}
 }
 
 async function getJWKS(issuer: string, env: Env, expectedKid?: string): Promise<Jwks> {
 	const cacheKey = `jwks:${issuer}`;
 
-	const cachedText = await env.JWKS_CACHE.get(cacheKey, "text");
+	const cachedText = await env.JWKS_CACHE.get(cacheKey, 'text');
 	if (cachedText !== null) {
 		const cached = parseJwks(cachedText);
 		if (cached.ok && (!expectedKid || cached.value.keys.some((key) => key.kid === expectedKid))) {
@@ -882,8 +882,8 @@ async function getJWKS(issuer: string, env: Env, expectedKid?: string): Promise<
 	try {
 		await validateUrl(wellKnownUrl);
 	} catch (error) {
-		const message = error instanceof Error ? error.message : "Invalid URL";
-		logger.warn("SSRF protection blocked OIDC config URL", {
+		const message = error instanceof Error ? error.message : 'Invalid URL';
+		logger.warn('SSRF protection blocked OIDC config URL', {
 			issuer,
 			url: wellKnownUrl,
 			error: message,
@@ -931,8 +931,8 @@ async function getJWKS(issuer: string, env: Env, expectedKid?: string): Promise<
 	try {
 		await validateUrl(config.jwks_uri);
 	} catch (error) {
-		const message = error instanceof Error ? error.message : "Invalid URL";
-		logger.warn("SSRF protection blocked JWKS URI", {
+		const message = error instanceof Error ? error.message : 'Invalid URL';
+		logger.warn('SSRF protection blocked JWKS URI', {
 			issuer,
 			jwks_uri: config.jwks_uri,
 			error: message,
@@ -975,7 +975,7 @@ async function getJWKS(issuer: string, env: Env, expectedKid?: string): Promise<
 			expirationTtl: CACHE_TTL.JWKS / TIME.SECOND,
 		});
 	} catch (error) {
-		logger.warn("Failed to cache JWKS", {
+		logger.warn('Failed to cache JWKS', {
 			error: error instanceof Error ? error.message : String(error),
 			issuer,
 		});

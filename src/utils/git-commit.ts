@@ -128,19 +128,19 @@ const GIT_OFFSET = /^[+-]\d{4}$/;
 export function gitTimestamp(iso: string, offset?: string): string {
 	const match = ISO_WITH_OFFSET.exec(iso);
 	if (!match) {
-		throw new Error("Commit date is not ISO 8601 with an offset");
+		throw new Error('Commit date is not ISO 8601 with an offset');
 	}
 
 	const seconds = Math.floor(Date.parse(iso) / 1000);
 	if (!Number.isFinite(seconds)) {
-		throw new Error("Commit date is not a date");
+		throw new Error('Commit date is not a date');
 	}
 
 	if (offset !== undefined && !GIT_OFFSET.test(offset)) {
-		throw new Error("Commit date offset is not ±HHMM");
+		throw new Error('Commit date offset is not ±HHMM');
 	}
 
-	const written = offset ?? (match[2] === "Z" ? "+0000" : (match[2] as string).replace(":", ""));
+	const written = offset ?? (match[2] === 'Z' ? '+0000' : (match[2] as string).replace(':', ''));
 
 	return `${seconds} ${written}`;
 }
@@ -158,15 +158,15 @@ export function gitTimestamp(iso: string, offset?: string): string {
  */
 export function isoWithOffset(iso: string, offset: string): string {
 	if (!GIT_OFFSET.test(offset)) {
-		throw new Error("Commit date offset is not ±HHMM");
+		throw new Error('Commit date offset is not ±HHMM');
 	}
 
 	const instant = Date.parse(iso);
 	if (!Number.isFinite(instant)) {
-		throw new Error("Commit date is not a date");
+		throw new Error('Commit date is not a date');
 	}
 
-	const minutes = (offset.startsWith("-") ? -1 : 1) * (Number(offset.slice(1, 3)) * 60 + Number(offset.slice(3, 5)));
+	const minutes = (offset.startsWith('-') ? -1 : 1) * (Number(offset.slice(1, 3)) * 60 + Number(offset.slice(3, 5)));
 
 	// `toISOString` only renders UTC, so the wall clock is shifted onto the
 	// instant first and the offset is appended as a literal. Truncated at seconds
@@ -192,11 +192,11 @@ export function commitPayload(commit: CommitObject): string {
 	const lines = [
 		`tree ${commit.tree}`,
 		...commit.parents.map((parent) => `parent ${parent}`),
-		identityLine("author", commit.author),
-		identityLine("committer", commit.committer),
+		identityLine('author', commit.author),
+		identityLine('committer', commit.committer),
 	];
 
-	return `${lines.join("\n")}\n\n${commit.message}`;
+	return `${lines.join('\n')}\n\n${commit.message}`;
 }
 
 /**
@@ -212,14 +212,14 @@ export function commitPayload(commit: CommitObject): string {
  * @param signature - An ASCII-armored detached signature over `payload`
  */
 export function signedCommitObject(payload: string, signature: string): string {
-	const folded = signature.replace(/\n+$/, "").split("\n").join("\n ");
+	const folded = signature.replace(/\n+$/, '').split('\n').join('\n ');
 
 	// The header block ends at the first blank line; the message is everything
 	// after it. Split on the first occurrence only, because a commit message may
 	// contain blank lines of its own and they are not header boundaries.
-	const boundary = payload.indexOf("\n\n");
+	const boundary = payload.indexOf('\n\n');
 	if (boundary === -1) {
-		throw new Error("Commit payload has no header boundary");
+		throw new Error('Commit payload has no header boundary');
 	}
 
 	const headers = payload.slice(0, boundary);
@@ -249,11 +249,11 @@ export async function commitObjectId(content: string): Promise<string> {
 	object.set(header, 0);
 	object.set(body, header.byteLength);
 
-	const digest = await crypto.subtle.digest("SHA-1", object);
+	const digest = await crypto.subtle.digest('SHA-1', object);
 
 	return Array.from(new Uint8Array(digest))
-		.map((byte) => byte.toString(16).padStart(2, "0"))
-		.join("");
+		.map((byte) => byte.toString(16).padStart(2, '0'))
+		.join('');
 }
 
 /**
@@ -278,9 +278,9 @@ export const GIT_OFFSET_CANDIDATES: readonly string[] = (() => {
 	return minutes
 		.sort((a, b) => Math.abs(a) - Math.abs(b) || a - b)
 		.map((value) => {
-			const sign = value < 0 ? "-" : "+";
+			const sign = value < 0 ? '-' : '+';
 			const absolute = Math.abs(value);
-			return `${sign}${String(Math.floor(absolute / 60)).padStart(2, "0")}${String(absolute % 60).padStart(2, "0")}`;
+			return `${sign}${String(Math.floor(absolute / 60)).padStart(2, '0')}${String(absolute % 60).padStart(2, '0')}`;
 		});
 })();
 

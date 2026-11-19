@@ -27,15 +27,15 @@
  *   an `undefined` that reaches a commit payload.
  */
 
-import { z } from "@hono/zod-openapi";
+import { z } from '@hono/zod-openapi';
 
-import type { Env, WebhookAuthorization } from "#types";
-import { TIME } from "#types";
-import type { ReportedVerification } from "#utils/commit-signature";
-import { fetchWithTimeout } from "#utils/fetch";
-import type { CommitIdentity, CommitOffsets, CommitReconstruction } from "#utils/git-commit";
-import { isoWithOffset, recoverCommitObject } from "#utils/git-commit";
-import { getInstallationToken, githubApiUrl } from "#utils/github-app";
+import type { Env, WebhookAuthorization } from '#types';
+import { TIME } from '#types';
+import type { ReportedVerification } from '#utils/commit-signature';
+import { fetchWithTimeout } from '#utils/fetch';
+import type { CommitIdentity, CommitOffsets, CommitReconstruction } from '#utils/git-commit';
+import { isoWithOffset, recoverCommitObject } from '#utils/git-commit';
+import { getInstallationToken, githubApiUrl } from '#utils/github-app';
 
 /** How long any single GitHub call may take. */
 const GITHUB_TIMEOUT = 10 * TIME.SECOND;
@@ -52,7 +52,7 @@ export class GitHubApiError extends Error {
 
 	constructor(message: string, status: number | null = null, options: { cause?: unknown } = {}) {
 		super(message, options);
-		this.name = "GitHubApiError";
+		this.name = 'GitHubApiError';
 		this.status = status;
 	}
 }
@@ -60,7 +60,7 @@ export class GitHubApiError extends Error {
 /** What GitHub said about one login's access, and whether it said anything. */
 export interface ActorPermission {
 	/** The legacy base role GitHub reports, or `none`. */
-	permission: "admin" | "write" | "read" | "none";
+	permission: 'admin' | 'write' | 'read' | 'none';
 	/**
 	 * Whether GitHub answered with a permission at all.
 	 *
@@ -85,7 +85,7 @@ export interface ActorPermission {
 export class RepositoryNotVisibleError extends GitHubApiError {
 	constructor(message: string, status: number | null = null) {
 		super(message, status);
-		this.name = "RepositoryNotVisibleError";
+		this.name = 'RepositoryNotVisibleError';
 	}
 }
 
@@ -240,7 +240,7 @@ export interface CheckRunInput {
 	name: string;
 	/** The sha read back from the authorized repository's ref. */
 	headSha: string;
-	conclusion: "success" | "failure" | "neutral";
+	conclusion: 'success' | 'failure' | 'neutral';
 	title: string;
 	summary: string;
 	completedAt: string;
@@ -257,7 +257,7 @@ export interface CheckRunInput {
 function checkRunFields(input: CheckRunInput) {
 	return {
 		name: input.name,
-		status: "completed",
+		status: 'completed',
 		conclusion: input.conclusion,
 		completed_at: input.completedAt,
 		output: { title: input.title, summary: input.summary },
@@ -282,9 +282,9 @@ export interface BranchRef {
  */
 function encodeRefPath(ref: string): string {
 	return ref
-		.split("/")
+		.split('/')
 		.map((segment) => encodeURIComponent(segment))
-		.join("/");
+		.join('/');
 }
 
 /**
@@ -304,7 +304,7 @@ function encodeRefPath(ref: string): string {
  * @param sha - The commit that body was asked for
  */
 export function patchAuthorOffset(patch: string, sha: string): string | null {
-	const lines = patch.split("\n");
+	const lines = patch.split('\n');
 
 	if (lines[0] === undefined || !lines[0].startsWith(`From ${sha} `)) {
 		return null;
@@ -314,7 +314,7 @@ export function patchAuthorOffset(patch: string, sha: string): string | null {
 		// The mail header block ends at the first blank line. Stopping there keeps
 		// a `Date:` inside the diff body — a patch to a changelog, say — from being
 		// read as the commit's own.
-		if (line.trim() === "") {
+		if (line.trim() === '') {
 			return null;
 		}
 
@@ -356,7 +356,7 @@ export class RepositoryClient {
 		this.installationId = installationId;
 		this.repository = repository;
 
-		const [owner, name] = repository.split("/");
+		const [owner, name] = repository.split('/');
 		this.repoPath = `${encodeURIComponent(owner as string)}/${encodeURIComponent(name as string)}`;
 	}
 
@@ -371,7 +371,7 @@ export class RepositoryClient {
 	static forAuthorization(env: Env, authorization: WebhookAuthorization | undefined): RepositoryClient | null {
 		if (
 			authorization === undefined ||
-			authorization.scope !== "repository" ||
+			authorization.scope !== 'repository' ||
 			authorization.repository === null ||
 			authorization.installationId === null
 		) {
@@ -393,7 +393,7 @@ export class RepositoryClient {
 		method: string,
 		path: string,
 		body?: unknown,
-		accept = "application/vnd.github+json",
+		accept = 'application/vnd.github+json',
 	): Promise<Response> {
 		const url = githubApiUrl(`/repos/${this.repoPath}${path}`);
 
@@ -416,9 +416,9 @@ export class RepositoryClient {
 					headers: {
 						Authorization: `Bearer ${token}`,
 						Accept: accept,
-						"X-GitHub-Api-Version": "2022-11-28",
-						"User-Agent": "gpg-signing-service",
-						...(body === undefined ? {} : { "Content-Type": "application/json" }),
+						'X-GitHub-Api-Version': '2022-11-28',
+						'User-Agent': 'gpg-signing-service',
+						...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
 					},
 					...(body === undefined ? {} : { body: JSON.stringify(body) }),
 				},
@@ -460,13 +460,13 @@ export class RepositoryClient {
 
 	/** Where a branch points right now. Null when the branch does not exist. */
 	async getBranch(branch: string): Promise<BranchRef | null> {
-		const response = await this.call("GET", `/git/ref/heads/${encodeRefPath(branch)}`);
+		const response = await this.call('GET', `/git/ref/heads/${encodeRefPath(branch)}`);
 
 		if (response.status === 404) {
 			return null;
 		}
 
-		const ref = await this.read(response, RefSchema, "a branch lookup");
+		const ref = await this.read(response, RefSchema, 'a branch lookup');
 
 		return { ref: ref.ref, sha: ref.object.sha };
 	}
@@ -494,10 +494,10 @@ export class RepositoryClient {
 	 * plus a wasted patch fetch into nothing.
 	 */
 	async getCommit(sha: string): Promise<RepositoryCommit> {
-		const response = await this.call("GET", `/git/commits/${encodeURIComponent(sha)}`);
-		const commit = await this.read(response, CommitSchema, "a commit lookup");
+		const response = await this.call('GET', `/git/commits/${encodeURIComponent(sha)}`);
+		const commit = await this.read(response, CommitSchema, 'a commit lookup');
 
-		const signed = typeof commit.verification?.signature === "string";
+		const signed = typeof commit.verification?.signature === 'string';
 
 		const object = {
 			tree: commit.tree.sha,
@@ -551,8 +551,8 @@ export class RepositoryClient {
 	 * than the one being reported on.
 	 */
 	async getCommitVerification(sha: string): Promise<ReportedVerification> {
-		const response = await this.call("GET", `/git/commits/${encodeURIComponent(sha)}`);
-		const commit = await this.read(response, VerificationSchema, "a commit signature lookup");
+		const response = await this.call('GET', `/git/commits/${encodeURIComponent(sha)}`);
+		const commit = await this.read(response, VerificationSchema, 'a commit signature lookup');
 
 		return {
 			sha: commit.sha,
@@ -587,10 +587,10 @@ export class RepositoryClient {
 	 */
 	async listCheckRuns(sha: string, name: string, appId: number): Promise<{ id: number }[]> {
 		const response = await this.call(
-			"GET",
+			'GET',
 			`/commits/${encodeURIComponent(sha)}/check-runs?check_name=${encodeURIComponent(name)}&filter=all&app_id=${appId}&per_page=100`,
 		);
-		const listed = await this.read(response, CheckRunListSchema, "a check run lookup");
+		const listed = await this.read(response, CheckRunListSchema, 'a check run lookup');
 
 		return listed.check_runs
 			.filter((run) => run.name === name && run.app?.id === appId)
@@ -614,7 +614,7 @@ export class RepositoryClient {
 	 * not a commenter's.
 	 */
 	private async repositoryVisible(): Promise<boolean> {
-		const response = await this.call("GET", "");
+		const response = await this.call('GET', '');
 
 		if (response.ok) {
 			return true;
@@ -669,11 +669,11 @@ export class RepositoryClient {
 	 * to the user whose comment is being authorized.
 	 */
 	async getActorPermission(login: string): Promise<ActorPermission> {
-		const response = await this.call("GET", `/collaborators/${encodeURIComponent(login)}/permission`);
+		const response = await this.call('GET', `/collaborators/${encodeURIComponent(login)}/permission`);
 
 		if (response.status === 404) {
 			if (await this.repositoryVisible()) {
-				return { permission: "none", collaborator: false };
+				return { permission: 'none', collaborator: false };
 			}
 
 			throw new RepositoryNotVisibleError(
@@ -682,7 +682,7 @@ export class RepositoryClient {
 			);
 		}
 
-		const answer = await this.read(response, CollaboratorPermissionSchema, "a collaborator permission lookup");
+		const answer = await this.read(response, CollaboratorPermissionSchema, 'a collaborator permission lookup');
 
 		if (answer.user && answer.user.login.toLowerCase() !== login.toLowerCase()) {
 			throw new GitHubApiError(
@@ -698,9 +698,9 @@ export class RepositoryClient {
 		// is a different sentence from "not a collaborator" even though both refuse.
 		return {
 			permission:
-				answer.permission === "admin" || answer.permission === "write" || answer.permission === "read"
+				answer.permission === 'admin' || answer.permission === 'write' || answer.permission === 'read'
 					? answer.permission
-					: "none",
+					: 'none',
 			collaborator: true,
 		};
 	}
@@ -736,40 +736,40 @@ export class RepositoryClient {
 		workflow: string,
 		ref: string,
 		inputs: Record<string, string>,
-	): Promise<{ outcome: "accepted" | "refused" | "unknown"; status: number | null }> {
+	): Promise<{ outcome: 'accepted' | 'refused' | 'unknown'; status: number | null }> {
 		let response: Response;
 		try {
-			response = await this.call("POST", `/actions/workflows/${encodeURIComponent(workflow)}/dispatches`, {
+			response = await this.call('POST', `/actions/workflows/${encodeURIComponent(workflow)}/dispatches`, {
 				ref,
 				inputs,
 			});
 		} catch (error) {
 			// The message is not reused. `call` already decided what a token failure
 			// and a transport failure may say, and this is not the place to widen it.
-			return { outcome: "unknown", status: error instanceof GitHubApiError ? error.status : null };
+			return { outcome: 'unknown', status: error instanceof GitHubApiError ? error.status : null };
 		}
 
 		if (response.ok) {
-			return { outcome: "accepted", status: response.status };
+			return { outcome: 'accepted', status: response.status };
 		}
 
 		return {
-			outcome: response.status >= 400 && response.status < 500 ? "refused" : "unknown",
+			outcome: response.status >= 400 && response.status < 500 ? 'refused' : 'unknown',
 			status: response.status,
 		};
 	}
 
 	/** Create a check run, returning its id. */
 	async createCheckRun(input: CheckRunInput): Promise<number> {
-		const response = await this.call("POST", "/check-runs", { ...checkRunFields(input), head_sha: input.headSha });
-		const created = await this.read(response, CheckRunSchema, "a check run creation");
+		const response = await this.call('POST', '/check-runs', { ...checkRunFields(input), head_sha: input.headSha });
+		const created = await this.read(response, CheckRunSchema, 'a check run creation');
 
 		return created.id;
 	}
 
 	/** Overwrite an existing check run of ours with the same fields. */
 	async updateCheckRun(id: number, input: CheckRunInput): Promise<void> {
-		const response = await this.call("PATCH", `/check-runs/${encodeURIComponent(String(id))}`, checkRunFields(input));
+		const response = await this.call('PATCH', `/check-runs/${encodeURIComponent(String(id))}`, checkRunFields(input));
 
 		if (!response.ok) {
 			throw new GitHubApiError(`GitHub refused a check run update for ${this.repository}`, response.status);
@@ -788,10 +788,10 @@ export class RepositoryClient {
 	private async authorOffsetFromPatch(sha: string): Promise<string | null> {
 		try {
 			const response = await this.call(
-				"GET",
+				'GET',
 				`/commits/${encodeURIComponent(sha)}`,
 				undefined,
-				"application/vnd.github.patch",
+				'application/vnd.github.patch',
 			);
 
 			if (!response.ok) {
@@ -836,7 +836,7 @@ export class RepositoryClient {
 		committer: CommitIdentity;
 		signature: string;
 	}): Promise<string> {
-		const response = await this.call("POST", "/git/commits", {
+		const response = await this.call('POST', '/git/commits', {
 			message: input.message,
 			tree: input.tree,
 			parents: input.parents,
@@ -844,7 +844,7 @@ export class RepositoryClient {
 			committer: wireIdentity(input.committer),
 			signature: input.signature,
 		});
-		const created = await this.read(response, CommitSchema, "a commit creation");
+		const created = await this.read(response, CommitSchema, 'a commit creation');
 
 		return created.sha;
 	}
@@ -861,7 +861,7 @@ export class RepositoryClient {
 	 * `#utils/webhook-replay`.
 	 */
 	async updateBranch(branch: string, sha: string, force: boolean): Promise<void> {
-		const response = await this.call("PATCH", `/git/refs/heads/${encodeRefPath(branch)}`, { sha, force });
+		const response = await this.call('PATCH', `/git/refs/heads/${encodeRefPath(branch)}`, { sha, force });
 
 		if (!response.ok) {
 			throw new GitHubApiError(`GitHub refused a branch update for ${this.repository}`, response.status);

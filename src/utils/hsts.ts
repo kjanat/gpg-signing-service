@@ -71,16 +71,16 @@ export interface HstsPolicy {
 
 /** What went wrong, in a form a caller can branch on rather than grep for. */
 export type HstsFindingCode =
-	| "MISSING_HEADER"
-	| "MULTIPLE_HEADERS"
-	| "DUPLICATE_DIRECTIVE"
-	| "NO_MAX_AGE"
-	| "MAX_AGE_BELOW_INTENDED"
-	| "MAX_AGE_ABOVE_INTENDED"
-	| "PRELOAD_BELOW_FLOOR"
-	| "MISSING_INCLUDE_SUBDOMAINS"
-	| "MISSING_PRELOAD"
-	| "UNEXPECTED_DIRECTIVE";
+	| 'MISSING_HEADER'
+	| 'MULTIPLE_HEADERS'
+	| 'DUPLICATE_DIRECTIVE'
+	| 'NO_MAX_AGE'
+	| 'MAX_AGE_BELOW_INTENDED'
+	| 'MAX_AGE_ABOVE_INTENDED'
+	| 'PRELOAD_BELOW_FLOOR'
+	| 'MISSING_INCLUDE_SUBDOMAINS'
+	| 'MISSING_PRELOAD'
+	| 'UNEXPECTED_DIRECTIVE';
 
 export interface HstsFinding {
 	code: HstsFindingCode;
@@ -126,21 +126,21 @@ function directiveValue(raw: string): string {
  */
 export function splitHeaderValues(header: string): string[] {
 	const values: string[] = [];
-	let current = "";
+	let current = '';
 	let quoted = false;
 
 	for (const character of header) {
 		if (character === '"') quoted = !quoted;
-		if (character === "," && !quoted) {
+		if (character === ',' && !quoted) {
 			values.push(current);
-			current = "";
+			current = '';
 			continue;
 		}
 		current += character;
 	}
 	values.push(current);
 
-	return values.map((value) => value.trim()).filter((value) => value !== "");
+	return values.map((value) => value.trim()).filter((value) => value !== '');
 }
 
 /**
@@ -159,14 +159,14 @@ function parseDirectives(value: string): HstsPolicy {
 	};
 	const seen = new Set<string>();
 
-	for (const directive of value.split(";")) {
+	for (const directive of value.split(';')) {
 		// Split on the first `=` rather than destructuring `split("=")`, so a
 		// value that contains one survives and both halves are known strings.
-		const separator = directive.indexOf("=");
+		const separator = directive.indexOf('=');
 		const name = (separator === -1 ? directive : directive.slice(0, separator)).trim().toLowerCase();
 		// A trailing or doubled `;` yields an empty name. It is punctuation, not a
 		// directive, so it is neither unknown nor a duplicate of the last empty one.
-		if (name === "") continue;
+		if (name === '') continue;
 
 		if (seen.has(name)) {
 			// First occurrence wins over last, deliberately — but only so the parse
@@ -180,10 +180,10 @@ function parseDirectives(value: string): HstsPolicy {
 		}
 		seen.add(name);
 
-		const directiveArgument = separator === -1 ? "" : directiveValue(directive.slice(separator + 1));
+		const directiveArgument = separator === -1 ? '' : directiveValue(directive.slice(separator + 1));
 
 		switch (name) {
-			case "max-age": {
+			case 'max-age': {
 				// RFC 6797 §6.1 spells max-age-value as `1*DIGIT`, and a header that
 				// breaks the grammar is one browsers discard whole — no HSTS at all.
 				// `Number` is far more generous than that: it reads `0x1E000000`,
@@ -195,10 +195,10 @@ function parseDirectives(value: string): HstsPolicy {
 				if (/^\d+$/.test(directiveArgument)) policy.maxAge = Number(directiveArgument);
 				break;
 			}
-			case "includesubdomains":
+			case 'includesubdomains':
 				policy.includeSubDomains = true;
 				break;
-			case "preload":
+			case 'preload':
 				policy.preload = true;
 				break;
 			default:
@@ -220,7 +220,7 @@ function parseDirectives(value: string): HstsPolicy {
  * and very different policy.
  */
 export function parseHstsPolicy(header: string | null | undefined): HstsPolicy | null {
-	if (header === null || header === undefined || header.trim() === "") return null;
+	if (header === null || header === undefined || header.trim() === '') return null;
 	return parseDirectives(header);
 }
 
@@ -237,13 +237,13 @@ export function parseHstsPolicy(header: string | null | undefined): HstsPolicy |
  * but proof that the value on the wire is not the one the source sets.
  */
 export function auditHstsPolicy(header: string | null | undefined): HstsAudit {
-	const observed = header === null || header === undefined || header.trim() === "" ? null : header.trim();
+	const observed = header === null || header === undefined || header.trim() === '' ? null : header.trim();
 	const findings: HstsFinding[] = [];
 
 	if (observed === null) {
 		findings.push({
-			code: "MISSING_HEADER",
-			message: "No Strict-Transport-Security header on the response; the Worker sets one on every route.",
+			code: 'MISSING_HEADER',
+			message: 'No Strict-Transport-Security header on the response; the Worker sets one on every route.',
 		});
 		return { ok: false, observed, policy: null, findings };
 	}
@@ -253,7 +253,7 @@ export function auditHstsPolicy(header: string | null | undefined): HstsAudit {
 
 	if (single === undefined) {
 		findings.push({
-			code: "MISSING_HEADER",
+			code: 'MISSING_HEADER',
 			message: `Strict-Transport-Security is ${JSON.stringify(observed)}, which carries no policy at all.`,
 		});
 		return { ok: false, observed, policy: null, findings };
@@ -261,10 +261,10 @@ export function auditHstsPolicy(header: string | null | undefined): HstsAudit {
 
 	if (values.length > 1) {
 		findings.push({
-			code: "MULTIPLE_HEADERS",
+			code: 'MULTIPLE_HEADERS',
 			message:
-				`Strict-Transport-Security arrived as ${values.length} comma-joined values (${values.map((value) => JSON.stringify(value)).join(", ")}), ` +
-				"so something appended a policy rather than replacing one. RFC 6797 §8.1 says a UA honours the first, but which header was first cannot be read off the joined string, so no single effective policy can be claimed here.",
+				`Strict-Transport-Security arrived as ${values.length} comma-joined values (${values.map((value) => JSON.stringify(value)).join(', ')}), ` +
+				'so something appended a policy rather than replacing one. RFC 6797 §8.1 says a UA honours the first, but which header was first cannot be read off the joined string, so no single effective policy can be claimed here.',
 		});
 		return { ok: false, observed, policy: null, findings };
 	}
@@ -273,8 +273,8 @@ export function auditHstsPolicy(header: string | null | undefined): HstsAudit {
 
 	if (policy.duplicatedDirectives.length > 0) {
 		findings.push({
-			code: "DUPLICATE_DIRECTIVE",
-			message: `${policy.duplicatedDirectives.join(", ")} appears more than once in ${JSON.stringify(observed)}; RFC 6797 §6.1 allows each directive once, so a UA ignores this header entirely and no HSTS is in force.`,
+			code: 'DUPLICATE_DIRECTIVE',
+			message: `${policy.duplicatedDirectives.join(', ')} appears more than once in ${JSON.stringify(observed)}; RFC 6797 §6.1 allows each directive once, so a UA ignores this header entirely and no HSTS is in force.`,
 		});
 		// Nothing below would be true of a header browsers discard: reporting
 		// "max-age below intended" on it would name a window that is not in force.
@@ -283,46 +283,46 @@ export function auditHstsPolicy(header: string | null | undefined): HstsAudit {
 
 	if (policy.maxAge === null) {
 		findings.push({
-			code: "NO_MAX_AGE",
+			code: 'NO_MAX_AGE',
 			message: `No usable max-age directive in ${JSON.stringify(observed)}; browsers discard a policy without one.`,
 		});
 	} else if (policy.maxAge < HSTS_MAX_AGE) {
 		findings.push({
-			code: "MAX_AGE_BELOW_INTENDED",
+			code: 'MAX_AGE_BELOW_INTENDED',
 			message: `max-age is ${policy.maxAge}s, but the Worker sets ${HSTS_MAX_AGE}s — something between the Worker and the caller replaced the header.`,
 		});
 	} else if (policy.maxAge > HSTS_MAX_AGE) {
 		findings.push({
-			code: "MAX_AGE_ABOVE_INTENDED",
+			code: 'MAX_AGE_ABOVE_INTENDED',
 			message: `max-age is ${policy.maxAge}s, but the Worker sets ${HSTS_MAX_AGE}s — a longer window is still not this service's policy, so something between the Worker and the caller replaced the header.`,
 		});
 	}
 
 	if (policy.preload && (policy.maxAge === null || policy.maxAge < HSTS_PRELOAD_MIN_MAX_AGE)) {
 		findings.push({
-			code: "PRELOAD_BELOW_FLOOR",
-			message: `preload is advertised with max-age ${policy.maxAge ?? "absent"}, below the ${HSTS_PRELOAD_MIN_MAX_AGE}s hstspreload.org floor, so the token is inert.`,
+			code: 'PRELOAD_BELOW_FLOOR',
+			message: `preload is advertised with max-age ${policy.maxAge ?? 'absent'}, below the ${HSTS_PRELOAD_MIN_MAX_AGE}s hstspreload.org floor, so the token is inert.`,
 		});
 	}
 
 	if (!policy.includeSubDomains) {
 		findings.push({
-			code: "MISSING_INCLUDE_SUBDOMAINS",
-			message: "includeSubDomains is absent, but the Worker sets it.",
+			code: 'MISSING_INCLUDE_SUBDOMAINS',
+			message: 'includeSubDomains is absent, but the Worker sets it.',
 		});
 	}
 
 	if (!policy.preload) {
 		findings.push({
-			code: "MISSING_PRELOAD",
-			message: "preload is absent, but the Worker sets it.",
+			code: 'MISSING_PRELOAD',
+			message: 'preload is absent, but the Worker sets it.',
 		});
 	}
 
 	if (policy.unknownDirectives.length > 0) {
 		findings.push({
-			code: "UNEXPECTED_DIRECTIVE",
-			message: `${policy.unknownDirectives.join(", ")} is not part of the Worker's policy; a UA ignores it, but the Worker never writes it, so the header was rewritten in transit.`,
+			code: 'UNEXPECTED_DIRECTIVE',
+			message: `${policy.unknownDirectives.join(', ')} is not part of the Worker's policy; a UA ignores it, but the Worker never writes it, so the header was rewritten in transit.`,
 		});
 	}
 

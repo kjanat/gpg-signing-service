@@ -11,23 +11,23 @@
  * proved not to mutate.
  */
 
-import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { env } from "cloudflare:workers";
-import * as openpgp from "openpgp";
-import { beforeAll, describe, expect, it } from "vitest";
-import app from "#gpg-signing-service";
-import { openApiConfig, WWW_AUTHENTICATE_INSUFFICIENT_SCOPE } from "#lib/openapi";
-import { PGP_PRIVATE_BEGIN, PKCS8_PRIVATE_BEGIN, PKCS8_PRIVATE_END } from "./helpers/armor";
+import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import { env } from 'cloudflare:workers';
+import * as openpgp from 'openpgp';
+import { beforeAll, describe, expect, it } from 'vitest';
+import app from '#gpg-signing-service';
+import { openApiConfig, WWW_AUTHENTICATE_INSUFFICIENT_SCOPE } from '#lib/openapi';
+import { PGP_PRIVATE_BEGIN, PKCS8_PRIVATE_BEGIN, PKCS8_PRIVATE_END } from './helpers/armor';
 
-const READONLY = "test-readonly-admin-token";
-const FULL = "test-admin-token";
+const READONLY = 'test-readonly-admin-token';
+const FULL = 'test-admin-token';
 
 /** The key the read paths are exercised against. */
-const SEEDED_KEY_ID = "5C0BE7E57000000A";
+const SEEDED_KEY_ID = '5C0BE7E57000000A';
 /** A second key, so the delete tests have something to destroy. */
-const DOOMED_KEY_ID = "5C0BE7E57000000B";
+const DOOMED_KEY_ID = '5C0BE7E57000000B';
 
-const SEEDED_ISSUER = "https://gitlab.com";
+const SEEDED_ISSUER = 'https://gitlab.com';
 
 interface Envelope {
 	error: string;
@@ -42,7 +42,7 @@ async function request(path: string, init: RequestInit = {}, overrides: Record<s
 	const response = await app.fetch(
 		new Request(`http://localhost${path}`, {
 			...init,
-			headers: { "Content-Type": "application/json", ...init.headers },
+			headers: { 'Content-Type': 'application/json', ...init.headers },
 		}),
 		{ ...env, ...overrides },
 		ctx,
@@ -100,21 +100,21 @@ const MIGRATION_SQL = [
 
 async function generateKey(email: string): Promise<string> {
 	const { privateKey } = await openpgp.generateKey({
-		type: "ecc",
-		curve: "ed25519Legacy",
-		userIDs: [{ name: "Scope Test", email }],
+		type: 'ecc',
+		curve: 'ed25519Legacy',
+		userIDs: [{ name: 'Scope Test', email }],
 		passphrase: env.KEY_PASSPHRASE,
-		format: "armored",
+		format: 'armored',
 	});
 	return privateKey;
 }
 
 /** Ids minted by the fixture, so the by-id routes address something real. */
-const seeded = { tokenId: "", subjectId: "" };
+const seeded = { tokenId: '', subjectId: '' };
 
 async function uploadKey(keyId: string, email: string): Promise<void> {
-	const response = await asAdmin(FULL, "/admin/keys", {
-		method: "POST",
+	const response = await asAdmin(FULL, '/admin/keys', {
+		method: 'POST',
 		body: JSON.stringify({ armoredPrivateKey: await generateKey(email), keyId }),
 	});
 	expect([keyId, response.status]).toEqual([keyId, 201]);
@@ -125,22 +125,22 @@ beforeAll(async () => {
 		await env.AUDIT_DB.prepare(statement).run();
 	}
 
-	await uploadKey(SEEDED_KEY_ID, "seeded@scope.test");
-	await uploadKey(DOOMED_KEY_ID, "doomed@scope.test");
+	await uploadKey(SEEDED_KEY_ID, 'seeded@scope.test');
+	await uploadKey(DOOMED_KEY_ID, 'doomed@scope.test');
 
-	const token = await asAdmin(FULL, "/admin/tokens", {
-		method: "POST",
-		body: JSON.stringify({ name: "scope-test-token" }),
+	const token = await asAdmin(FULL, '/admin/tokens', {
+		method: 'POST',
+		body: JSON.stringify({ name: 'scope-test-token' }),
 	});
 	expect(token.status).toBe(201);
 	seeded.tokenId = (await token.json<{ id: string }>()).id;
 
-	const subject = await asAdmin(FULL, "/admin/subjects", {
-		method: "POST",
+	const subject = await asAdmin(FULL, '/admin/subjects', {
+		method: 'POST',
 		body: JSON.stringify({
-			name: "scope-test-subject",
+			name: 'scope-test-subject',
 			issuer: SEEDED_ISSUER,
-			subjectPrefix: "project_path:scope-test/monitor",
+			subjectPrefix: 'project_path:scope-test/monitor',
 		}),
 	});
 	expect(subject.status).toBe(201);
@@ -162,55 +162,55 @@ interface AdminOperation {
 }
 
 const READS: AdminOperation[] = [
-	{ method: "GET", template: "/admin/audit", path: () => "/admin/audit" },
-	{ method: "GET", template: "/admin/keys", path: () => "/admin/keys" },
+	{ method: 'GET', template: '/admin/audit', path: () => '/admin/audit' },
+	{ method: 'GET', template: '/admin/keys', path: () => '/admin/keys' },
 	{
-		method: "GET",
-		template: "/admin/keys/{keyId}/public",
+		method: 'GET',
+		template: '/admin/keys/{keyId}/public',
 		path: () => `/admin/keys/${SEEDED_KEY_ID}/public`,
 	},
-	{ method: "GET", template: "/admin/subjects", path: () => "/admin/subjects" },
-	{ method: "GET", template: "/admin/tokens", path: () => "/admin/tokens" },
+	{ method: 'GET', template: '/admin/subjects', path: () => '/admin/subjects' },
+	{ method: 'GET', template: '/admin/tokens', path: () => '/admin/tokens' },
 ];
 
 const MUTATIONS: AdminOperation[] = [
 	{
-		method: "POST",
-		template: "/admin/keys",
-		path: () => "/admin/keys",
-		body: () => JSON.stringify({ armoredPrivateKey: PGP_PRIVATE_BEGIN, keyId: "5C0BE7E5700F0BB1" }),
+		method: 'POST',
+		template: '/admin/keys',
+		path: () => '/admin/keys',
+		body: () => JSON.stringify({ armoredPrivateKey: PGP_PRIVATE_BEGIN, keyId: '5C0BE7E5700F0BB1' }),
 	},
 	{
-		method: "POST",
-		template: "/admin/keys/x509",
-		path: () => "/admin/keys/x509",
+		method: 'POST',
+		template: '/admin/keys/x509',
+		path: () => '/admin/keys/x509',
 		body: () =>
 			JSON.stringify({
-				keyId: "5C0BE7E5700F0BB2",
+				keyId: '5C0BE7E5700F0BB2',
 				privateKeyPem: `${PKCS8_PRIVATE_BEGIN}\nnot-real\n${PKCS8_PRIVATE_END}`,
-				certificatePem: "-----BEGIN CERTIFICATE-----\nnot-real\n-----END CERTIFICATE-----",
+				certificatePem: '-----BEGIN CERTIFICATE-----\nnot-real\n-----END CERTIFICATE-----',
 			}),
 	},
-	{ method: "DELETE", template: "/admin/keys/{keyId}", path: () => `/admin/keys/${DOOMED_KEY_ID}` },
+	{ method: 'DELETE', template: '/admin/keys/{keyId}', path: () => `/admin/keys/${DOOMED_KEY_ID}` },
 	{
-		method: "POST",
-		template: "/admin/tokens",
-		path: () => "/admin/tokens",
-		body: () => JSON.stringify({ name: "minted-by-the-monitor" }),
+		method: 'POST',
+		template: '/admin/tokens',
+		path: () => '/admin/tokens',
+		body: () => JSON.stringify({ name: 'minted-by-the-monitor' }),
 	},
-	{ method: "DELETE", template: "/admin/tokens/{id}", path: () => `/admin/tokens/${seeded.tokenId}` },
+	{ method: 'DELETE', template: '/admin/tokens/{id}', path: () => `/admin/tokens/${seeded.tokenId}` },
 	{
-		method: "POST",
-		template: "/admin/subjects",
-		path: () => "/admin/subjects",
+		method: 'POST',
+		template: '/admin/subjects',
+		path: () => '/admin/subjects',
 		body: () =>
 			JSON.stringify({
-				name: "trusted-by-the-monitor",
+				name: 'trusted-by-the-monitor',
 				issuer: SEEDED_ISSUER,
-				subjectPrefix: "project_path:scope-test/escalation",
+				subjectPrefix: 'project_path:scope-test/escalation',
 			}),
 	},
-	{ method: "DELETE", template: "/admin/subjects/{id}", path: () => `/admin/subjects/${seeded.subjectId}` },
+	{ method: 'DELETE', template: '/admin/subjects/{id}', path: () => `/admin/subjects/${seeded.subjectId}` },
 ];
 
 function send(token: string, operation: AdminOperation, overrides: Record<string, unknown> = {}) {
@@ -221,7 +221,7 @@ function send(token: string, operation: AdminOperation, overrides: Record<string
 
 const label = (operation: AdminOperation) => `${operation.method} ${operation.template}`;
 
-describe("the admin route table this suite claims to cover", () => {
+describe('the admin route table this suite claims to cover', () => {
 	// The claim "the read-only credential is denied on every mutation route" is
 	// only as good as the list of routes. Reading that list off the document the
 	// service publishes is what makes it a claim about the service rather than
@@ -232,7 +232,7 @@ describe("the admin route table this suite claims to cover", () => {
 	const document = JSON.parse(JSON.stringify(app.getOpenAPIDocument(openApiConfig))) as {
 		paths: Record<string, Record<string, { responses?: Record<string, unknown> }>>;
 	};
-	const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "head"]);
+	const HTTP_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete', 'head']);
 
 	// `path === "/admin"` is not redundant with the prefix. A sub-app route
 	// declared as `path: "/"` renders in the document without the trailing
@@ -242,7 +242,7 @@ describe("the admin route table this suite claims to cover", () => {
 	// The enumeration would stay green while the route it missed was handed to
 	// the read-only credential by default, which is the one failure this whole
 	// describe block exists to make impossible.
-	const isAdminPath = (path: string) => path === "/admin" || path.startsWith("/admin/");
+	const isAdminPath = (path: string) => path === '/admin' || path.startsWith('/admin/');
 
 	const adminOperations = Object.entries(document.paths)
 		.filter(([path]) => isAdminPath(path))
@@ -254,36 +254,36 @@ describe("the admin route table this suite claims to cover", () => {
 
 	const documented = adminOperations.map(({ label: name }) => name).sort();
 
-	it("is every admin operation the service publishes, and nothing else", () => {
+	it('is every admin operation the service publishes, and nothing else', () => {
 		expect([...READS, ...MUTATIONS].map(label).sort()).toEqual(documented);
 	});
 
-	it("pins the allowed set literally", () => {
+	it('pins the allowed set literally', () => {
 		// Written out rather than derived, so widening what a monitoring
 		// credential may read is a visible edit to this list and not a
 		// side effect of adding a route.
 		expect(READS.map(label)).toEqual([
-			"GET /admin/audit",
-			"GET /admin/keys",
-			"GET /admin/keys/{keyId}/public",
-			"GET /admin/subjects",
-			"GET /admin/tokens",
+			'GET /admin/audit',
+			'GET /admin/keys',
+			'GET /admin/keys/{keyId}/public',
+			'GET /admin/subjects',
+			'GET /admin/tokens',
 		]);
 	});
 
-	it("pins the denied set literally", () => {
+	it('pins the denied set literally', () => {
 		expect(MUTATIONS.map(label).sort()).toEqual([
-			"DELETE /admin/keys/{keyId}",
-			"DELETE /admin/subjects/{id}",
-			"DELETE /admin/tokens/{id}",
-			"POST /admin/keys",
-			"POST /admin/keys/x509",
-			"POST /admin/subjects",
-			"POST /admin/tokens",
+			'DELETE /admin/keys/{keyId}',
+			'DELETE /admin/subjects/{id}',
+			'DELETE /admin/tokens/{id}',
+			'POST /admin/keys',
+			'POST /admin/keys/x509',
+			'POST /admin/subjects',
+			'POST /admin/tokens',
 		]);
 	});
 
-	it("declares the 403 on exactly the mutation routes in the published document", () => {
+	it('declares the 403 on exactly the mutation routes in the published document', () => {
 		// The runtime boundary and the document are two independent statements of
 		// the same rule, and only one of them is what a generated client compiles
 		// against. Nothing above ties them together: classifying a new route into
@@ -291,23 +291,23 @@ describe("the admin route table this suite claims to cover", () => {
 		// still declares only a 401, so `api.gen.go` would ship without a
 		// `JSON403` for a call that can only ever answer 403.
 		const declaresForbidden = adminOperations
-			.filter(({ operation }) => operation.responses && "403" in operation.responses)
+			.filter(({ operation }) => operation.responses && '403' in operation.responses)
 			.map(({ label: name }) => name)
 			.sort();
 
 		expect(declaresForbidden).toEqual(MUTATIONS.map(label).sort());
 	});
 
-	it("covers the four routes the key-expiry monitor calls", () => {
+	it('covers the four routes the key-expiry monitor calls', () => {
 		// Named separately from the list above because these are a requirement on
 		// the service, not a description of it: dropping one from the read set
 		// breaks the scheduled workflow, and nothing else in this suite says so.
-		const required = ["GET /admin/keys", "GET /admin/keys/{keyId}/public", "GET /admin/subjects", "GET /admin/tokens"];
+		const required = ['GET /admin/keys', 'GET /admin/keys/{keyId}/public', 'GET /admin/subjects', 'GET /admin/tokens'];
 		expect(READS.map(label)).toEqual(expect.arrayContaining(required));
 	});
 });
 
-describe("the read-only admin credential", () => {
+describe('the read-only admin credential', () => {
 	for (const operation of READS) {
 		it(`is served ${label(operation)}`, async () => {
 			const response = await send(READONLY, operation);
@@ -318,16 +318,16 @@ describe("the read-only admin credential", () => {
 		});
 	}
 
-	it("is served HEAD on a route it may GET", async () => {
+	it('is served HEAD on a route it may GET', async () => {
 		// `READ_ONLY_METHODS` admits HEAD, and nothing above reaches it: the
 		// enumeration is built from the OpenAPI document, which declares no HEAD
 		// operation, so the allowance would otherwise ship unexercised. Hono
 		// answers HEAD by dispatching the GET handler with `c.req.method` still
 		// `HEAD`, which is the only reason the method has to be in that set at all.
-		const response = await asAdmin(READONLY, "/admin/keys", { method: "HEAD" });
+		const response = await asAdmin(READONLY, '/admin/keys', { method: 'HEAD' });
 
 		expect(response.status).toBe(200);
-		expect(await response.text()).toBe("");
+		expect(await response.text()).toBe('');
 	});
 
 	for (const operation of MUTATIONS) {
@@ -338,54 +338,54 @@ describe("the read-only admin credential", () => {
 			expect([label(operation), response.status, body.code]).toEqual([
 				label(operation),
 				403,
-				"AUTH_SCOPE_INSUFFICIENT",
+				'AUTH_SCOPE_INSUFFICIENT',
 			]);
 			// 403 and not 401, said in the header as well as the code: a caller
 			// whose generic handler branches on the challenge must not be told to
 			// re-authenticate with a credential that is already correct.
-			expect(response.headers.get("WWW-Authenticate")).toBe(WWW_AUTHENTICATE_INSUFFICIENT_SCOPE);
+			expect(response.headers.get('WWW-Authenticate')).toBe(WWW_AUTHENTICATE_INSUFFICIENT_SCOPE);
 			// And the challenge is the body, not a second copy of it. A header
 			// asserting a different refusal than the JSON beside it is the failure
 			// mode of two literals that have to stay equal.
-			expect(response.headers.get("WWW-Authenticate")).toContain(`error_description="${body.error}"`);
+			expect(response.headers.get('WWW-Authenticate')).toContain(`error_description="${body.error}"`);
 			// The same envelope every other refusal carries, so the refusal is
 			// greppable in the audit trail and self-documenting in a CI log.
-			expect(body.requestId).toBe(response.headers.get("X-Request-ID"));
-			expect(body.docs).toBe("http://localhost/e/AUTH_SCOPE_INSUFFICIENT");
-			expect(body.hint).toContain("ADMIN_TOKEN");
+			expect(body.requestId).toBe(response.headers.get('X-Request-ID'));
+			expect(body.docs).toBe('http://localhost/e/AUTH_SCOPE_INSUFFICIENT');
+			expect(body.hint).toContain('ADMIN_TOKEN');
 		});
 	}
 });
 
-describe("what the refused calls did not change", () => {
+describe('what the refused calls did not change', () => {
 	// The status code is the promise; this is the property. A 403 returned
 	// *after* the handler had already run would satisfy every assertion above.
 
-	it("left the key it was refused permission to delete", async () => {
-		const response = await asAdmin(READONLY, "/admin/keys");
+	it('left the key it was refused permission to delete', async () => {
+		const response = await asAdmin(READONLY, '/admin/keys');
 		const { keys } = await response.json<{ keys: { keyId: string }[] }>();
 
 		expect(keys.map((key) => key.keyId)).toContain(DOOMED_KEY_ID);
 	});
 
-	it("minted no service token, and revoked none", async () => {
-		const response = await asAdmin(READONLY, "/admin/tokens");
+	it('minted no service token, and revoked none', async () => {
+		const response = await asAdmin(READONLY, '/admin/tokens');
 		const { tokens } = await response.json<{ tokens: { id: string; name: string; revokedAt: string | null }[] }>();
 
-		expect(tokens.map((token) => token.name)).not.toContain("minted-by-the-monitor");
+		expect(tokens.map((token) => token.name)).not.toContain('minted-by-the-monitor');
 		expect(tokens.find((token) => token.id === seeded.tokenId)?.revokedAt ?? null).toBeNull();
 	});
 
-	it("trusted no subject, and revoked none", async () => {
-		const response = await asAdmin(READONLY, "/admin/subjects");
+	it('trusted no subject, and revoked none', async () => {
+		const response = await asAdmin(READONLY, '/admin/subjects');
 		const { subjects } = await response.json<{ subjects: { id: string; name: string; revokedAt: string | null }[] }>();
 
-		expect(subjects.map((subject) => subject.name)).not.toContain("trusted-by-the-monitor");
+		expect(subjects.map((subject) => subject.name)).not.toContain('trusted-by-the-monitor');
 		expect(subjects.find((subject) => subject.id === seeded.subjectId)?.revokedAt ?? null).toBeNull();
 	});
 });
 
-describe("the full admin credential", () => {
+describe('the full admin credential', () => {
 	for (const operation of MUTATIONS) {
 		it(`still reaches the handler for ${label(operation)}`, async () => {
 			// Asserted as "past the auth layer" rather than as success: two of these
@@ -397,73 +397,73 @@ describe("the full admin credential", () => {
 		});
 	}
 
-	it("really can delete the key the read-only credential could not", async () => {
+	it('really can delete the key the read-only credential could not', async () => {
 		// The other half of the boundary. Without this the suite would pass on a
 		// service where nobody can delete anything.
-		const deletion = await asAdmin(FULL, `/admin/keys/${DOOMED_KEY_ID}`, { method: "DELETE" });
+		const deletion = await asAdmin(FULL, `/admin/keys/${DOOMED_KEY_ID}`, { method: 'DELETE' });
 		expect(deletion.status).toBe(200);
 
-		const { keys } = await (await asAdmin(FULL, "/admin/keys")).json<{ keys: { keyId: string }[] }>();
+		const { keys } = await (await asAdmin(FULL, '/admin/keys')).json<{ keys: { keyId: string }[] }>();
 		expect(keys.map((key) => key.keyId)).not.toContain(DOOMED_KEY_ID);
 	});
 });
 
-describe("how the read-only credential is provisioned", () => {
-	it("does not exist when ADMIN_READONLY_TOKEN is unset", async () => {
+describe('how the read-only credential is provisioned', () => {
+	it('does not exist when ADMIN_READONLY_TOKEN is unset', async () => {
 		// A deployment that never put the secret must not have a second working
 		// bearer, and the refusal is a plain wrong-credential 401 — there is no
 		// scope to be insufficient.
-		const response = await asAdmin(READONLY, "/admin/keys", {}, { ADMIN_READONLY_TOKEN: undefined });
+		const response = await asAdmin(READONLY, '/admin/keys', {}, { ADMIN_READONLY_TOKEN: undefined });
 
 		expect(response.status).toBe(401);
-		expect((await envelope(response)).code).toBe("AUTH_INVALID");
+		expect((await envelope(response)).code).toBe('AUTH_INVALID');
 	});
 
-	it("does not exist when ADMIN_READONLY_TOKEN is empty", async () => {
+	it('does not exist when ADMIN_READONLY_TOKEN is empty', async () => {
 		// An unset wrangler secret and a `""` are the same thing to a caller, and
 		// the empty string is what an unset variable expands to in the shell that
 		// would have set it. Treating it as configured would hand the read scope
 		// to `Authorization: Bearer `.
-		const bare = await request("/admin/keys", { headers: { Authorization: "Bearer " } }, { ADMIN_READONLY_TOKEN: "" });
+		const bare = await request('/admin/keys', { headers: { Authorization: 'Bearer ' } }, { ADMIN_READONLY_TOKEN: '' });
 
 		expect(bare.status).toBe(401);
-		expect((await envelope(bare)).code).toBe("AUTH_MISSING");
+		expect((await envelope(bare)).code).toBe('AUTH_MISSING');
 	});
 
-	it("refuses the whole admin surface when the two secrets are equal", async () => {
+	it('refuses the whole admin surface when the two secrets are equal', async () => {
 		// The failure this configuration produces is silent and total: the
 		// comparison cannot tell the two apart, so the credential labelled
 		// read-only is a full administrator and every call the monitor makes
 		// succeeds. Refused loudly instead, on reads as well as writes, because a
 		// half-working admin API is how this goes unnoticed.
-		for (const path of ["/admin/keys", "/admin/tokens"]) {
+		for (const path of ['/admin/keys', '/admin/tokens']) {
 			const response = await asAdmin(FULL, path, {}, { ADMIN_READONLY_TOKEN: FULL });
 			const body = await envelope(response);
 
-			expect([path, response.status, body.code]).toEqual([path, 500, "SERVICE_MISCONFIGURED"]);
+			expect([path, response.status, body.code]).toEqual([path, 500, 'SERVICE_MISCONFIGURED']);
 		}
 	});
 
-	it("does not describe the misconfiguration to a caller holding no credential", async () => {
+	it('does not describe the misconfiguration to a caller holding no credential', async () => {
 		// The guard above runs before the Authorization header is read, so its
 		// body goes to anyone who can reach the URL. It must not be the most
 		// specific configuration statement the service makes — the `!ADMIN_TOKEN`
 		// guard beside it answers its own deployment fault with no hint for the
 		// same reason. The diagnosis is a log line; `requestId` is what ties the
 		// two together.
-		const response = await request("/admin/keys", {}, { ADMIN_READONLY_TOKEN: FULL });
+		const response = await request('/admin/keys', {}, { ADMIN_READONLY_TOKEN: FULL });
 		const body = await envelope(response);
 
-		expect([response.status, body.code]).toEqual([500, "SERVICE_MISCONFIGURED"]);
+		expect([response.status, body.code]).toEqual([500, 'SERVICE_MISCONFIGURED']);
 		expect(body.hint).toBeUndefined();
-		expect(JSON.stringify(body)).not.toContain("ADMIN_READONLY_TOKEN");
+		expect(JSON.stringify(body)).not.toContain('ADMIN_READONLY_TOKEN');
 		expect(body.requestId).toBeTruthy();
 	});
 
-	it("still refuses a bearer that is neither secret", async () => {
-		const response = await asAdmin("not-either-of-them", "/admin/keys");
+	it('still refuses a bearer that is neither secret', async () => {
+		const response = await asAdmin('not-either-of-them', '/admin/keys');
 
 		expect(response.status).toBe(401);
-		expect((await envelope(response)).code).toBe("AUTH_INVALID");
+		expect((await envelope(response)).code).toBe('AUTH_INVALID');
 	});
 });

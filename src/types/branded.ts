@@ -2,7 +2,7 @@
  * Branded types for security-critical strings
  */
 
-import { LIMITS } from "#utils/constants";
+import { LIMITS } from '#utils/constants';
 
 /**
  * Brand type for nominal typing - creates distinct types from string
@@ -13,16 +13,16 @@ type Brand<T, B> = T & { readonly [__brand]: B };
 /** GPG Key identifier
  * @example "A1B2C3D4E5F6G7H8"
  */
-export type KeyId = Brand<string, "KeyId">;
+export type KeyId = Brand<string, 'KeyId'>;
 
 /** GPG Key fingerprint (40-char hex string) */
-export type KeyFingerprint = Brand<string, "KeyFingerprint">;
+export type KeyFingerprint = Brand<string, 'KeyFingerprint'>;
 
 /** PGP armored private key string */
-export type ArmoredPrivateKey = Brand<string, "ArmoredPrivateKey">;
+export type ArmoredPrivateKey = Brand<string, 'ArmoredPrivateKey'>;
 
 /** OIDC identity string in format `<iss>:<sub>` */
-export type Identity = Brand<string, "Identity">;
+export type Identity = Brand<string, 'Identity'>;
 
 const KEY_ID_PATTERN = /^[A-F0-9]{16}$/i;
 
@@ -61,11 +61,11 @@ export function createKeyFingerprint(value: string): KeyFingerprint {
 /** Helper function to create validated armored private key */
 export function createArmoredPrivateKey(value: string): ArmoredPrivateKey {
 	// Basic validation - full validation via ArmoredPrivateKeySchema
-	if (!value.includes("BEGIN PGP PRIVATE KEY BLOCK")) {
-		throw new Error("Invalid ArmoredPrivateKey: missing PGP header");
+	if (!value.includes('BEGIN PGP PRIVATE KEY BLOCK')) {
+		throw new Error('Invalid ArmoredPrivateKey: missing PGP header');
 	}
-	if (!value.includes("END PGP PRIVATE KEY BLOCK")) {
-		throw new Error("Invalid ArmoredPrivateKey: missing PGP footer");
+	if (!value.includes('END PGP PRIVATE KEY BLOCK')) {
+		throw new Error('Invalid ArmoredPrivateKey: missing PGP footer');
 	}
 	if (value.length < LIMITS.MIN_KEY_SIZE || value.length > LIMITS.MAX_KEY_SIZE) {
 		throw new Error(`Invalid ArmoredPrivateKey length: ${value.length}`);

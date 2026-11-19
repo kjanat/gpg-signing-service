@@ -1,4 +1,4 @@
-import type { Env } from "#types";
+import type { Env } from '#types';
 
 /**
  * Durable Object helper functions to eliminate duplication
@@ -11,7 +11,7 @@ import type { Env } from "#types";
  * @param options - Optional RequestInit options
  */
 export async function fetchKeyStorage(env: Env, endpoint: string, options?: RequestInit): Promise<Response> {
-	const id = env.KEY_STORAGE.idFromName("global");
+	const id = env.KEY_STORAGE.idFromName('global');
 	const storage = env.KEY_STORAGE.get(id);
 	return storage.fetch(new Request(`http://internal${endpoint}`, options));
 }
@@ -23,11 +23,11 @@ export async function fetchKeyStorage(env: Env, endpoint: string, options?: Requ
  * @param limit - Bucket capacity; omit for the default per-caller budget
  */
 export async function fetchRateLimiter(env: Env, identity: string, limit?: number): Promise<Response> {
-	const id = env.RATE_LIMITER.idFromName("global");
+	const id = env.RATE_LIMITER.idFromName('global');
 	const limiter = env.RATE_LIMITER.get(id);
 	const query = new URLSearchParams({ identity });
 	if (limit !== undefined) {
-		query.set("limit", String(limit));
+		query.set('limit', String(limit));
 	}
 	return limiter.fetch(new Request(`http://internal/consume?${query}`));
 }

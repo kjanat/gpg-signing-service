@@ -2,7 +2,7 @@
  * GPG signing operation types
  */
 
-import type { KeyFingerprint, KeyId } from "#types/branded";
+import type { KeyFingerprint, KeyId } from '#types/branded';
 
 /** Result from signing operation */
 export interface SigningResult {

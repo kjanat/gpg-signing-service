@@ -1,21 +1,21 @@
-import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { env } from "cloudflare:workers";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import app from "#gpg-signing-service";
-import { varyOnOrigin } from "#middleware/security";
-import { logAuditEvent } from "#utils/audit";
-import { logger } from "#utils/logger";
-import { insertOIDCSubject, revokeOIDCSubject } from "#utils/oidc-subjects";
-import { exportTestJwk, generateTestKeyPair, TestJwt, type TestKeyPair } from "./helpers/jwt";
-import { clearTrustedSubjects, seedTrustedSubjects } from "./helpers/oidc-subjects";
+import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import { env } from 'cloudflare:workers';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import app from '#gpg-signing-service';
+import { varyOnOrigin } from '#middleware/security';
+import { logAuditEvent } from '#utils/audit';
+import { logger } from '#utils/logger';
+import { insertOIDCSubject, revokeOIDCSubject } from '#utils/oidc-subjects';
+import { exportTestJwk, generateTestKeyPair, TestJwt, type TestKeyPair } from './helpers/jwt';
+import { clearTrustedSubjects, seedTrustedSubjects } from './helpers/oidc-subjects';
 
 const parseJson = async <T>(response: Response): Promise<T> => (await response.json()) as T;
 
-const base64url = (text: string) => btoa(text).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+const base64url = (text: string) => btoa(text).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 
 /** A well-formed JWT whose signature segment is a placeholder that verifies against no key. */
 const unsignedJwt = (header: object, claims: object) =>
-	`${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(claims))}.${base64url("not-a-signature")}`;
+	`${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(claims))}.${base64url('not-a-signature')}`;
 
 // Mock fetch for JWKS
 const { middlewareFetchMock, validateUrlMock } = vi.hoisted(() => ({
@@ -23,17 +23,17 @@ const { middlewareFetchMock, validateUrlMock } = vi.hoisted(() => ({
 	validateUrlMock: vi.fn(),
 }));
 
-vi.mock("#utils/fetch", () => ({
+vi.mock('#utils/fetch', () => ({
 	fetchWithTimeout: middlewareFetchMock,
 }));
 
-vi.mock("#utils/url-validation", () => ({
+vi.mock('#utils/url-validation', () => ({
 	validateUrl: validateUrlMock,
 }));
 
 // Mock audit logging to avoid database errors in tests
-vi.mock("#utils/audit", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("#utils/audit")>();
+vi.mock('#utils/audit', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('#utils/audit')>();
 	return {
 		...actual,
 		logAuditEvent: vi.fn(async () => undefined),
@@ -45,13 +45,13 @@ function rateLimiterAnswering(body: unknown, status?: number): DurableObjectName
 	return {
 		idFromName: () => ({}) as DurableObjectId,
 		get: () => ({
-			fetch: async () => (status ? new Response("boom", { status }) : Response.json(body)),
+			fetch: async () => (status ? new Response('boom', { status }) : Response.json(body)),
 		}),
 	} as unknown as DurableObjectNamespace;
 }
 
 /** A RATE_LIMITER binding that is unreachable. */
-function rateLimiterThrowing(reason: unknown = new Error("Rate limiter unavailable")): DurableObjectNamespace {
+function rateLimiterThrowing(reason: unknown = new Error('Rate limiter unavailable')): DurableObjectNamespace {
 	const fail = () => {
 		throw reason;
 	};
@@ -71,35 +71,35 @@ async function makeRequest(path: string, options: RequestInit = {}, customEnv?: 
 	return response;
 }
 
-describe("Security Headers Middleware", () => {
-	it("should set X-Content-Type-Options", async () => {
-		const response = await makeRequest("/health");
-		expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
+describe('Security Headers Middleware', () => {
+	it('should set X-Content-Type-Options', async () => {
+		const response = await makeRequest('/health');
+		expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff');
 	});
 
-	it("should set X-Frame-Options", async () => {
-		const response = await makeRequest("/health");
-		expect(response.headers.get("X-Frame-Options")).toBe("DENY");
+	it('should set X-Frame-Options', async () => {
+		const response = await makeRequest('/health');
+		expect(response.headers.get('X-Frame-Options')).toBe('DENY');
 	});
 
-	it("should set HSTS header", async () => {
-		const response = await makeRequest("/health");
-		expect(response.headers.get("Strict-Transport-Security")).toBe("max-age=31536000; includeSubDomains; preload");
+	it('should set HSTS header', async () => {
+		const response = await makeRequest('/health');
+		expect(response.headers.get('Strict-Transport-Security')).toBe('max-age=31536000; includeSubDomains; preload');
 	});
 
-	it("should set Referrer-Policy", async () => {
-		const response = await makeRequest("/health");
-		expect(response.headers.get("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
+	it('should set Referrer-Policy', async () => {
+		const response = await makeRequest('/health');
+		expect(response.headers.get('Referrer-Policy')).toBe('strict-origin-when-cross-origin');
 	});
 
-	it("should set Content-Security-Policy", async () => {
-		const response = await makeRequest("/health");
-		expect(response.headers.get("Content-Security-Policy")).toBe("default-src 'none'; frame-ancestors 'none'");
+	it('should set Content-Security-Policy', async () => {
+		const response = await makeRequest('/health');
+		expect(response.headers.get('Content-Security-Policy')).toBe("default-src 'none'; frame-ancestors 'none'");
 	});
 
-	it("should relax Content-Security-Policy for the Swagger UI page", async () => {
-		const response = await makeRequest("/ui");
-		const csp = response.headers.get("Content-Security-Policy") ?? "";
+	it('should relax Content-Security-Policy for the Swagger UI page', async () => {
+		const response = await makeRequest('/ui');
+		const csp = response.headers.get('Content-Security-Policy') ?? '';
 
 		expect(csp).toContain("script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net");
 		expect(csp).toContain("style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net");
@@ -108,19 +108,19 @@ describe("Security Headers Middleware", () => {
 		expect(csp).toContain("frame-ancestors 'none'");
 	});
 
-	it("should keep the strict Content-Security-Policy on /doc and API routes", async () => {
-		for (const path of ["/doc", "/health", "/public-key"]) {
+	it('should keep the strict Content-Security-Policy on /doc and API routes', async () => {
+		for (const path of ['/doc', '/health', '/public-key']) {
 			const response = await makeRequest(path);
-			expect(response.headers.get("Content-Security-Policy")).toBe("default-src 'none'; frame-ancestors 'none'");
+			expect(response.headers.get('Content-Security-Policy')).toBe("default-src 'none'; frame-ancestors 'none'");
 		}
 	});
 
-	it("should set Permissions-Policy", async () => {
-		const response = await makeRequest("/health");
-		expect(response.headers.get("Permissions-Policy")).toBe("geolocation=(), microphone=(), camera=()");
+	it('should set Permissions-Policy', async () => {
+		const response = await makeRequest('/health');
+		expect(response.headers.get('Permissions-Policy')).toBe('geolocation=(), microphone=(), camera=()');
 	});
 
-	describe("CORS", () => {
+	describe('CORS', () => {
 		/** `exactOptionalPropertyTypes` forbids assigning `undefined`, so unset by deleting. */
 		function setAllowedOrigins(value: string | undefined): void {
 			if (value === undefined) {
@@ -131,12 +131,12 @@ describe("Security Headers Middleware", () => {
 		}
 
 		/** `env` is module-scoped and shared, so every case states its own allowlist. */
-		function corsRequest(origin: string | undefined, method = "GET"): Promise<Response> {
-			return makeRequest("/health", {
+		function corsRequest(origin: string | undefined, method = 'GET'): Promise<Response> {
+			return makeRequest('/health', {
 				method,
 				headers: {
 					...(origin === undefined ? {} : { Origin: origin }),
-					...(method === "OPTIONS" ? { "Access-Control-Request-Method": "GET" } : {}),
+					...(method === 'OPTIONS' ? { 'Access-Control-Request-Method': 'GET' } : {}),
 				},
 			});
 		}
@@ -149,159 +149,159 @@ describe("Security Headers Middleware", () => {
 			setAllowedOrigins(undefined);
 		});
 
-		it("should handle CORS preflight for an allowed origin", async () => {
-			setAllowedOrigins("https://allowed-origin.com");
+		it('should handle CORS preflight for an allowed origin', async () => {
+			setAllowedOrigins('https://allowed-origin.com');
 
-			const response = await corsRequest("https://allowed-origin.com", "OPTIONS");
-
-			expect(response.status).toBe(204);
-			expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://allowed-origin.com");
-			expect(response.headers.get("Access-Control-Allow-Methods")).toBe("GET, POST, DELETE, OPTIONS");
-			expect(response.headers.get("Access-Control-Allow-Headers")).toBe("Authorization, Content-Type, X-Request-ID");
-			expect(response.headers.get("Access-Control-Max-Age")).toBe("86400");
-		});
-
-		it("should handle CORS actual request for an allowed origin", async () => {
-			setAllowedOrigins("https://allowed-origin.com");
-
-			const response = await corsRequest("https://allowed-origin.com");
-
-			expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://allowed-origin.com");
-		});
-
-		it("should handle CORS OPTIONS with disallowed origin", async () => {
-			setAllowedOrigins("https://allowed.com");
-
-			const response = await corsRequest("https://disallowed-origin.com", "OPTIONS");
+			const response = await corsRequest('https://allowed-origin.com', 'OPTIONS');
 
 			expect(response.status).toBe(204);
-			expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
-			expect(response.headers.get("Access-Control-Allow-Methods")).toBeNull();
+			expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://allowed-origin.com');
+			expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, DELETE, OPTIONS');
+			expect(response.headers.get('Access-Control-Allow-Headers')).toBe('Authorization, Content-Type, X-Request-ID');
+			expect(response.headers.get('Access-Control-Max-Age')).toBe('86400');
+		});
+
+		it('should handle CORS actual request for an allowed origin', async () => {
+			setAllowedOrigins('https://allowed-origin.com');
+
+			const response = await corsRequest('https://allowed-origin.com');
+
+			expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://allowed-origin.com');
+		});
+
+		it('should handle CORS OPTIONS with disallowed origin', async () => {
+			setAllowedOrigins('https://allowed.com');
+
+			const response = await corsRequest('https://disallowed-origin.com', 'OPTIONS');
+
+			expect(response.status).toBe(204);
+			expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
+			expect(response.headers.get('Access-Control-Allow-Methods')).toBeNull();
 		});
 
 		it.each([
-			["unset", undefined],
-			["empty", ""],
-			["only separators and whitespace", " , "],
-		])("fails closed when ALLOWED_ORIGINS is %s", async (_label, allowlist) => {
+			['unset', undefined],
+			['empty', ''],
+			['only separators and whitespace', ' , '],
+		])('fails closed when ALLOWED_ORIGINS is %s', async (_label, allowlist) => {
 			setAllowedOrigins(allowlist);
 
-			const actual = await corsRequest("https://evil.example.com");
-			const preflight = await corsRequest("https://evil.example.com", "OPTIONS");
+			const actual = await corsRequest('https://evil.example.com');
+			const preflight = await corsRequest('https://evil.example.com', 'OPTIONS');
 
 			for (const response of [actual, preflight]) {
-				expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
-				expect(response.headers.get("Access-Control-Allow-Credentials")).toBeNull();
+				expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
+				expect(response.headers.get('Access-Control-Allow-Credentials')).toBeNull();
 			}
 		});
 
-		it("never grants credentials, even to an allowed origin", async () => {
-			setAllowedOrigins("https://allowed.com");
+		it('never grants credentials, even to an allowed origin', async () => {
+			setAllowedOrigins('https://allowed.com');
 
-			const actual = await corsRequest("https://allowed.com");
-			const preflight = await corsRequest("https://allowed.com", "OPTIONS");
+			const actual = await corsRequest('https://allowed.com');
+			const preflight = await corsRequest('https://allowed.com', 'OPTIONS');
 
 			// Auth is a bearer token in `Authorization`, which no browser attaches
 			// ambiently — so the header buys nothing and is never sent on either branch.
-			expect(actual.headers.get("Access-Control-Allow-Credentials")).toBeNull();
-			expect(preflight.headers.get("Access-Control-Allow-Credentials")).toBeNull();
+			expect(actual.headers.get('Access-Control-Allow-Credentials')).toBeNull();
+			expect(preflight.headers.get('Access-Control-Allow-Credentials')).toBeNull();
 		});
 
-		it("rejects the null origin even when it is listed", async () => {
+		it('rejects the null origin even when it is listed', async () => {
 			// Sandboxed iframes, `data:` URLs and `file://` documents all send it, so
 			// granting it would hand every such context the same shared origin.
-			setAllowedOrigins("null,https://allowed.com");
+			setAllowedOrigins('null,https://allowed.com');
 
-			const actual = await corsRequest("null");
-			const preflight = await corsRequest("null", "OPTIONS");
+			const actual = await corsRequest('null');
+			const preflight = await corsRequest('null', 'OPTIONS');
 
-			expect(actual.headers.get("Access-Control-Allow-Origin")).toBeNull();
-			expect(preflight.headers.get("Access-Control-Allow-Origin")).toBeNull();
+			expect(actual.headers.get('Access-Control-Allow-Origin')).toBeNull();
+			expect(preflight.headers.get('Access-Control-Allow-Origin')).toBeNull();
 		});
 
-		it("still answers the null origin with the wildcard when `*` is listed", async () => {
+		it('still answers the null origin with the wildcard when `*` is listed', async () => {
 			// The wildcard is checked before the null-origin refusal, and deliberately
 			// so: `*` is an explicit opt-in to public browser access, and the CORS spec
 			// already lets an opaque origin read a `*` response. The refusal above
 			// covers `null` as an *allowlist entry*, which is the case that would
 			// otherwise look like a targeted grant.
-			setAllowedOrigins("*");
+			setAllowedOrigins('*');
 
-			const actual = await corsRequest("null");
-			const preflight = await corsRequest("null", "OPTIONS");
+			const actual = await corsRequest('null');
+			const preflight = await corsRequest('null', 'OPTIONS');
 
 			for (const response of [actual, preflight]) {
-				expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
-				expect(response.headers.get("Access-Control-Allow-Credentials")).toBeNull();
+				expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+				expect(response.headers.get('Access-Control-Allow-Credentials')).toBeNull();
 			}
 		});
 
-		it("answers a caller that sends no Origin with the wildcard too", async () => {
+		it('answers a caller that sends no Origin with the wildcard too', async () => {
 			// The wildcard is resolved before `Origin` is read, so a `*` deployment
 			// answers every request identically and a shared cache needs one entry
 			// rather than one per origin. Inert for the callers this reaches: nothing
 			// consults `Access-Control-Allow-Origin` on a request it sent no `Origin`
 			// on, which is every CI runner and Go client call this service serves.
-			setAllowedOrigins("*");
+			setAllowedOrigins('*');
 
 			const actual = await corsRequest(undefined);
-			const preflight = await corsRequest(undefined, "OPTIONS");
+			const preflight = await corsRequest(undefined, 'OPTIONS');
 
 			for (const response of [actual, preflight]) {
-				expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
-				expect(response.headers.get("Vary")).toBeNull();
+				expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+				expect(response.headers.get('Vary')).toBeNull();
 			}
 		});
 
-		it("trims whitespace around allowlist entries", async () => {
-			setAllowedOrigins("https://a.example.com , https://b.example.com");
+		it('trims whitespace around allowlist entries', async () => {
+			setAllowedOrigins('https://a.example.com , https://b.example.com');
 
-			const response = await corsRequest("https://b.example.com");
+			const response = await corsRequest('https://b.example.com');
 
-			expect(response.headers.get("Access-Control-Allow-Origin")).toBe("https://b.example.com");
+			expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://b.example.com');
 		});
 
-		it("echoes a literal wildcard rather than reflecting the origin when `*` is listed", async () => {
-			setAllowedOrigins("*");
+		it('echoes a literal wildcard rather than reflecting the origin when `*` is listed', async () => {
+			setAllowedOrigins('*');
 
-			const actual = await corsRequest("https://anyone.example.com");
-			const preflight = await corsRequest("https://anyone.example.com", "OPTIONS");
+			const actual = await corsRequest('https://anyone.example.com');
+			const preflight = await corsRequest('https://anyone.example.com', 'OPTIONS');
 
 			for (const response of [actual, preflight]) {
-				expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
-				expect(response.headers.get("Access-Control-Allow-Credentials")).toBeNull();
+				expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+				expect(response.headers.get('Access-Control-Allow-Credentials')).toBeNull();
 				// The answer no longer depends on the request origin, so caches need not key on it.
-				expect(response.headers.get("Vary")).toBeNull();
+				expect(response.headers.get('Vary')).toBeNull();
 			}
 		});
 
-		it("honours a wildcard listed beside real origins, granting every origin", async () => {
+		it('honours a wildcard listed beside real origins, granting every origin', async () => {
 			// `entries.includes("*")` does not require the wildcard to stand alone, so
 			// appending one to an allowlist that looks restrictive opens the whole
 			// deployment. Pinned because the blast radius is much larger than the diff
 			// that would cause it.
-			setAllowedOrigins("https://allowed.com,*");
+			setAllowedOrigins('https://allowed.com,*');
 
-			const response = await corsRequest("https://anyone.example.com");
+			const response = await corsRequest('https://anyone.example.com');
 
-			expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+			expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
 		});
 
 		it.each([
-			["an allowed origin", "https://allowed.com"],
-			["a denied origin", "https://evil.example.com"],
-			["no origin at all", undefined],
-		])("sets Vary: Origin for %s", async (_label, origin) => {
-			setAllowedOrigins("https://allowed.com");
+			['an allowed origin', 'https://allowed.com'],
+			['a denied origin', 'https://evil.example.com'],
+			['no origin at all', undefined],
+		])('sets Vary: Origin for %s', async (_label, origin) => {
+			setAllowedOrigins('https://allowed.com');
 
 			const actual = await corsRequest(origin);
-			const preflight = await corsRequest(origin, "OPTIONS");
+			const preflight = await corsRequest(origin, 'OPTIONS');
 
-			expect(actual.headers.get("Vary")).toBe("Origin");
-			expect(preflight.headers.get("Vary")).toBe("Origin");
+			expect(actual.headers.get('Vary')).toBe('Origin');
+			expect(preflight.headers.get('Vary')).toBe('Origin');
 		});
 
-		it("exposes X-Request-ID even on a response that carries no rate-limit headers", async () => {
+		it('exposes X-Request-ID even on a response that carries no rate-limit headers', async () => {
 			// /health sets no rate-limit headers, so the conditional half of the list
 			// is empty here — but X-Request-ID is on every response and is the header
 			// a browser caller needs to quote when filing a bug. It is named
@@ -309,113 +309,113 @@ describe("Security Headers Middleware", () => {
 			// stamps it *after* `securityHeaders` builds this list, so a presence test
 			// would see it only on the signing route, which sets it itself. The
 			// conditional half is pinned on the admin route in branch-coverage.test.ts.
-			setAllowedOrigins("https://allowed.com");
+			setAllowedOrigins('https://allowed.com');
 
-			const response = await corsRequest("https://allowed.com");
+			const response = await corsRequest('https://allowed.com');
 
-			expect(response.headers.get("Access-Control-Expose-Headers")).toBe("X-Request-ID");
-			expect(response.headers.get("X-Request-ID")).not.toBeNull();
+			expect(response.headers.get('Access-Control-Expose-Headers')).toBe('X-Request-ID');
+			expect(response.headers.get('X-Request-ID')).not.toBeNull();
 		});
 
-		it("exposes X-Request-ID on a 404, which no route handler touches", async () => {
+		it('exposes X-Request-ID on a 404, which no route handler touches', async () => {
 			// The claim the unconditional listing rests on is that *every* response
 			// carries the header. `app.notFound` synthesises its response outside any
 			// route, so it is the path most likely to have escaped `requestId` — it
 			// does not, because `notFound` runs inside the middleware chain.
-			setAllowedOrigins("https://allowed.com");
+			setAllowedOrigins('https://allowed.com');
 
-			const response = await makeRequest("/no-such-route", { headers: { Origin: "https://allowed.com" } });
+			const response = await makeRequest('/no-such-route', { headers: { Origin: 'https://allowed.com' } });
 
 			expect(response.status).toBe(404);
-			expect(response.headers.get("X-Request-ID")).not.toBeNull();
-			expect(response.headers.get("Access-Control-Expose-Headers")).toBe("X-Request-ID");
+			expect(response.headers.get('X-Request-ID')).not.toBeNull();
+			expect(response.headers.get('Access-Control-Expose-Headers')).toBe('X-Request-ID');
 		});
 
-		it("exposes Retry-After on the 503 whose whole answer is Retry-After", async () => {
+		it('exposes Retry-After on the 503 whose whole answer is Retry-After', async () => {
 			// SERVICE_DEGRADED puts the wait in a header, because ErrorResponse
 			// declares no `retryAfter` field — and its own hint tells the reader to
 			// "wait the interval in `Retry-After`". A cross-origin caller reads
 			// response headers through the CORS filter, so a header the service
 			// sends but does not expose is a header that caller does not have: the
 			// hint names a value the fetch layer hid from it.
-			setAllowedOrigins("https://allowed.com");
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			setAllowedOrigins('https://allowed.com');
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
 			// Unsigned on purpose: the discovery fetch happens before the signature
 			// is verified, so this reaches the degraded branch without a key.
 			const token = unsignedJwt(
-				{ alg: "RS256", kid: "unreachable" },
+				{ alg: 'RS256', kid: 'unreachable' },
 				{
-					iss: "https://token.actions.githubusercontent.com",
-					sub: "repo:test/expose:ref:refs/heads/main",
-					aud: "gpg-signing-service",
+					iss: 'https://token.actions.githubusercontent.com',
+					sub: 'repo:test/expose:ref:refs/heads/main',
+					aud: 'gpg-signing-service',
 					exp: Math.floor(Date.now() / 1000) + 3600,
 				},
 			);
-			middlewareFetchMock.mockRejectedValue(new Error("connection timed out"));
+			middlewareFetchMock.mockRejectedValue(new Error('connection timed out'));
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
-				headers: { Authorization: `Bearer ${token}`, Origin: "https://allowed.com" },
-				body: "commit data",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
+				headers: { Authorization: `Bearer ${token}`, Origin: 'https://allowed.com' },
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(503);
-			expect(response.headers.get("Retry-After")).toBeTruthy();
-			expect(response.headers.get("Access-Control-Expose-Headers")).toContain("Retry-After");
+			expect(response.headers.get('Retry-After')).toBeTruthy();
+			expect(response.headers.get('Access-Control-Expose-Headers')).toContain('Retry-After');
 		});
 
-		it("does not name Retry-After on a response that carries none", async () => {
+		it('does not name Retry-After on a response that carries none', async () => {
 			// The conditional half stays conditional: the list describes this
 			// response, not every response the service can produce.
-			setAllowedOrigins("https://allowed.com");
+			setAllowedOrigins('https://allowed.com');
 
-			const response = await corsRequest("https://allowed.com");
+			const response = await corsRequest('https://allowed.com');
 
-			expect(response.headers.get("Retry-After")).toBeNull();
-			expect(response.headers.get("Access-Control-Expose-Headers")).not.toContain("Retry-After");
+			expect(response.headers.get('Retry-After')).toBeNull();
+			expect(response.headers.get('Access-Control-Expose-Headers')).not.toContain('Retry-After');
 		});
 
-		it("names X-Request-ID in Access-Control-Allow-Headers and exposes it back", async () => {
+		it('names X-Request-ID in Access-Control-Allow-Headers and exposes it back', async () => {
 			// Both directions, on the same deployment: a browser may *send* the header
 			// (the preflight allows it) and may *read* it back (the actual response
 			// exposes it). Allowing one without the other is the shape that makes a
 			// caller's correlation id vanish on the way home.
-			setAllowedOrigins("https://allowed.com");
+			setAllowedOrigins('https://allowed.com');
 
-			const preflight = await corsRequest("https://allowed.com", "OPTIONS");
-			const actual = await corsRequest("https://allowed.com");
+			const preflight = await corsRequest('https://allowed.com', 'OPTIONS');
+			const actual = await corsRequest('https://allowed.com');
 
-			expect(preflight.headers.get("Access-Control-Allow-Headers")).toContain("X-Request-ID");
-			expect(actual.headers.get("Access-Control-Expose-Headers")).toContain("X-Request-ID");
+			expect(preflight.headers.get('Access-Control-Allow-Headers')).toContain('X-Request-ID');
+			expect(actual.headers.get('Access-Control-Expose-Headers')).toContain('X-Request-ID');
 		});
 
 		// No handler in the service sets Vary, so the merge paths are only
 		// reachable directly — but a future one must not have its token clobbered.
-		describe("varyOnOrigin", () => {
+		describe('varyOnOrigin', () => {
 			it.each([
-				["absent", undefined, "Origin"],
-				["another token", "Accept-Encoding", "Accept-Encoding, Origin"],
-				["Origin already, differently cased", "origin", "origin"],
-				["Origin among others", "Accept-Encoding, Origin", "Accept-Encoding, Origin"],
-				["the wildcard", "*", "*"],
-			])("with Vary %s", (_label, existing, expected) => {
+				['absent', undefined, 'Origin'],
+				['another token', 'Accept-Encoding', 'Accept-Encoding, Origin'],
+				['Origin already, differently cased', 'origin', 'origin'],
+				['Origin among others', 'Accept-Encoding, Origin', 'Accept-Encoding, Origin'],
+				['the wildcard', '*', '*'],
+			])('with Vary %s', (_label, existing, expected) => {
 				const headers = new Headers(existing === undefined ? {} : { Vary: existing });
 
 				varyOnOrigin(headers);
 
-				expect(headers.get("Vary")).toBe(expected);
+				expect(headers.get('Vary')).toBe(expected);
 			});
 		});
 	});
 
-	describe("OIDC Token Validation", () => {
+	describe('OIDC Token Validation', () => {
 		beforeAll(async () => {
 			// The OIDC path now requires a trusted-subject row.
 			await seedTrustedSubjects(env.AUDIT_DB);
 
 			// Clean up real KV cache to prevent test pollution from other test files (e.g. sign.test.ts)
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com/unique-test-issuer");
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com/unique-test-issuer');
 		});
 
 		beforeEach(async () => {
@@ -425,8 +425,8 @@ describe("Security Headers Middleware", () => {
 			// Default: validateUrl passes (no SSRF detected)
 			validateUrlMock.mockResolvedValue(undefined);
 			// Clean up KV cache before each test to avoid stale state
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com/unique-test-issuer");
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com/unique-test-issuer');
 		});
 
 		afterEach(async () => {
@@ -439,8 +439,8 @@ describe("Security Headers Middleware", () => {
 			middlewareFetchMock.mockReset();
 			validateUrlMock.mockReset();
 			// Clean up real KV cache to prevent test pollution
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com/unique-test-issuer");
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com/unique-test-issuer');
 			// Same argument for the trusted-subject table: tests here clear it and
 			// insert their own rows, and reseeding at the end of the body only
 			// happens when the body got that far. Restore the `beforeAll` fixture
@@ -452,7 +452,7 @@ describe("Security Headers Middleware", () => {
 		async function setupJWKSMock(issuer: string, kid: string, publicKey: CryptoKey) {
 			const jwk = await exportTestJwk(publicKey);
 			jwk.kid = kid;
-			jwk.use = "sig";
+			jwk.use = 'sig';
 
 			// Mock OIDC discovery
 			middlewareFetchMock.mockImplementation(async (url: string) => {
@@ -462,30 +462,30 @@ describe("Security Headers Middleware", () => {
 				if (url === `${issuer}/jwks`) {
 					return new Response(JSON.stringify({ keys: [jwk] }));
 				}
-				return new Response("Not Found", { status: 404 });
+				return new Response('Not Found', { status: 404 });
 			});
 		}
 
-		it("tolerates whitespace around a comma in ALLOWED_ISSUERS", async () => {
+		it('tolerates whitespace around a comma in ALLOWED_ISSUERS', async () => {
 			// /admin/subjects trims before deciding an issuer is acceptable. If this
 			// side did not, a padded entry would be trustable at create time and
 			// refused here — a row that lists as trusted and can never match.
 			const { privateKey } = await generateTestKeyPair();
 			const token = await new TestJwt({
-				iss: "https://gitlab.com",
-				sub: "repo:test/svc",
-				aud: "gpg-signing-service",
+				iss: 'https://gitlab.com',
+				sub: 'repo:test/svc',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid: "test" })
+				.setProtectedHeader({ alg: 'RS256', kid: 'test' })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
 			const response = await makeRequest(
-				"/sign",
-				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+				'/sign',
+				{ method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: 'commit data' },
 				{
-					ALLOWED_ISSUERS: "https://token.actions.githubusercontent.com, https://gitlab.com" as Env["ALLOWED_ISSUERS"],
+					ALLOWED_ISSUERS: 'https://token.actions.githubusercontent.com, https://gitlab.com' as Env['ALLOWED_ISSUERS'],
 				},
 			);
 
@@ -493,47 +493,47 @@ describe("Security Headers Middleware", () => {
 			// issuer gate rather than at it.
 			expect(response.status).toBe(401);
 			const body = await parseJson<{ error: string }>(response);
-			expect(body.error).not.toContain("Issuer not allowed");
+			expect(body.error).not.toContain('Issuer not allowed');
 		});
 
-		it("reports an unreadable policy store as 503 without leaking the schema", async () => {
+		it('reports an unreadable policy store as 503 without leaking the schema', async () => {
 			// Merge-day failure mode: the Worker deploys before task db:migrate
 			// runs. A database we cannot read is not a bad credential, and the
 			// caller must not be handed our table names to work that out.
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
 
-			const issuer = "https://token.actions.githubusercontent.com";
-			const kid = "store-down-key";
+			const issuer = 'https://token.actions.githubusercontent.com';
+			const kid = 'store-down-key';
 			const { privateKey, publicKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			const token = await new TestJwt({
 				iss: issuer,
-				sub: "repo:test/svc",
-				aud: "gpg-signing-service",
+				sub: 'repo:test/svc',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid })
+				.setProtectedHeader({ alg: 'RS256', kid })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
 			const originalPrepare = env.AUDIT_DB.prepare;
 			const realPrepare = env.AUDIT_DB.prepare.bind(env.AUDIT_DB);
-			const spy = vi.spyOn(env.AUDIT_DB, "prepare").mockImplementation((query: string) => {
-				if (query.includes("FROM oidc_subjects")) {
-					throw new Error("D1_ERROR: no such table: oidc_subjects: SQLITE_ERROR");
+			const spy = vi.spyOn(env.AUDIT_DB, 'prepare').mockImplementation((query: string) => {
+				if (query.includes('FROM oidc_subjects')) {
+					throw new Error('D1_ERROR: no such table: oidc_subjects: SQLITE_ERROR');
 				}
 				return realPrepare(query);
 			});
-			const errorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+			const errorSpy = vi.spyOn(logger, 'error').mockImplementation(() => {});
 			const requestId = crypto.randomUUID();
 
 			let response: Response;
 			try {
-				response = await makeRequest("/sign", {
-					method: "POST",
-					headers: { Authorization: `Bearer ${token}`, "X-Request-ID": requestId },
-					body: "commit data",
+				response = await makeRequest('/sign', {
+					method: 'POST',
+					headers: { Authorization: `Bearer ${token}`, 'X-Request-ID': requestId },
+					body: 'commit data',
 				});
 			} finally {
 				// A rejected request used to skip this line and leave every later
@@ -550,12 +550,12 @@ describe("Security Headers Middleware", () => {
 			// reader to a section about migrations and unhandled faults for what is
 			// usually D1 being briefly away, and the Go client had nothing to tell
 			// it this one is worth waiting on.
-			expect(body.code).toBe("SERVICE_DEGRADED");
-			expect(response.headers.get("Retry-After")).toBeTruthy();
-			expect(Number(response.headers.get("Retry-After"))).toBeGreaterThan(0);
-			expect(body.hint).toContain("Nothing about the token is wrong");
-			expect(body.error).not.toContain("oidc_subjects");
-			expect(body.error).not.toContain("SQLITE");
+			expect(body.code).toBe('SERVICE_DEGRADED');
+			expect(response.headers.get('Retry-After')).toBeTruthy();
+			expect(Number(response.headers.get('Retry-After'))).toBeGreaterThan(0);
+			expect(body.hint).toContain('Nothing about the token is wrong');
+			expect(body.error).not.toContain('oidc_subjects');
+			expect(body.error).not.toContain('SQLITE');
 
 			// The same shape the service-token branch is asserted to write, for the
 			// same outage: the caught value in `logger.error`'s error slot, and the
@@ -563,110 +563,110 @@ describe("Security Headers Middleware", () => {
 			// the entry came out `{"error":{"issuer":...,"error":"D1_ERROR..."}}`
 			// with nothing to correlate it against.
 			expect(errorSpy).toHaveBeenCalledWith(
-				"OIDC subject lookup failed",
+				'OIDC subject lookup failed',
 				expect.any(Error),
 				expect.objectContaining({ requestId, issuer }),
 			);
 			const [, loggedError, loggedContext] = errorSpy.mock.calls[0] as [string, unknown, { requestId?: string }];
-			expect((loggedError as Error).message).toContain("no such table: oidc_subjects");
-			expect(loggedContext.requestId).toBe(response.headers.get("X-Request-ID"));
+			expect((loggedError as Error).message).toContain('no such table: oidc_subjects');
+			expect(loggedContext.requestId).toBe(response.headers.get('X-Request-ID'));
 		});
 
-		it("rejects a cryptographically valid token whose subject is not trusted", async () => {
+		it('rejects a cryptographically valid token whose subject is not trusted', async () => {
 			// The whole point of the subject allowlist: the token here is
 			// perfectly valid — right issuer, right audience, good signature —
 			// it is simply from a repository nobody trusted. Every repo on
 			// GitHub Actions can produce exactly this.
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
 			await clearTrustedSubjects(env.AUDIT_DB);
 
-			const issuer = "https://token.actions.githubusercontent.com";
-			const kid = "untrusted-key";
+			const issuer = 'https://token.actions.githubusercontent.com';
+			const kid = 'untrusted-key';
 			const { privateKey, publicKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			const token = await new TestJwt({
 				iss: issuer,
-				sub: "repo:attacker/evil:ref:refs/heads/main",
-				aud: "gpg-signing-service",
+				sub: 'repo:attacker/evil:ref:refs/heads/main',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid })
+				.setProtectedHeader({ alg: 'RS256', kid })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(401);
 			const body = await parseJson<{ error: string; code: string; subject: string; hint: string; docs: string }>(
 				response,
 			);
-			expect(body.error).toContain("not trusted");
+			expect(body.error).toContain('not trusted');
 			// Its own code: the token is fine, the identity is not authorized, and
 			// the fix is to the trust list rather than to the credential.
-			expect(body.code).toBe("AUTH_SUBJECT_UNTRUSTED");
+			expect(body.code).toBe('AUTH_SUBJECT_UNTRUSTED');
 			// The subject the caller presented, echoed back. It came from a token
 			// they hold, so this discloses nothing — and without it the only way to
 			// see which claim was refused was another workflow run.
-			expect(body.subject).toBe("repo:attacker/evil:ref:refs/heads/main");
+			expect(body.subject).toBe('repo:attacker/evil:ref:refs/heads/main');
 			// The table was cleared, so the hint has to say the list is empty rather
 			// than imply this particular subject was the problem.
-			expect(body.hint).toContain("No trust rules are configured");
+			expect(body.hint).toContain('No trust rules are configured');
 			// Short enough to survive a wrapped, truncated CI log, and derived from
 			// the origin the request arrived on so a fresh deployment needs no
 			// configuration to emit a working one.
-			expect(body.docs).toBe("http://localhost/e/AUTH_SUBJECT_UNTRUSTED");
+			expect(body.docs).toBe('http://localhost/e/AUTH_SUBJECT_UNTRUSTED');
 			// The prefixes are not disclosed unless the deployment opts in.
-			expect(body.hint).not.toContain("repo:");
+			expect(body.hint).not.toContain('repo:');
 		});
 
-		it("separates an unconfigured trust list from a subject that misses a configured one", async () => {
+		it('separates an unconfigured trust list from a subject that misses a configured one', async () => {
 			// The two are opposite problems with the same old message. Nothing
 			// configured means the service was never set up for this issuer;
 			// something configured means this particular ref or repository is not
 			// the one that was authorized, which is where to look next.
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
 			await seedTrustedSubjects(env.AUDIT_DB);
 
-			const issuer = "https://token.actions.githubusercontent.com";
-			const kid = "near-miss-key";
+			const issuer = 'https://token.actions.githubusercontent.com';
+			const kid = 'near-miss-key';
 			const { privateKey, publicKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			const token = await new TestJwt({
 				iss: issuer,
-				sub: "repo:test/other-svc:ref:refs/heads/main",
-				aud: "gpg-signing-service",
+				sub: 'repo:test/other-svc:ref:refs/heads/main',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid })
+				.setProtectedHeader({ alg: 'RS256', kid })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(401);
 			const payload = await parseJson<{ code: string; hint: string; subject: string }>(response);
-			expect(payload.code).toBe("AUTH_SUBJECT_UNTRUSTED");
-			expect(payload.subject).toBe("repo:test/other-svc:ref:refs/heads/main");
-			expect(payload.hint).toContain("No active trust rule matches this subject");
+			expect(payload.code).toBe('AUTH_SUBJECT_UNTRUSTED');
+			expect(payload.subject).toBe('repo:test/other-svc:ref:refs/heads/main');
+			expect(payload.hint).toContain('No active trust rule matches this subject');
 			// Rules exist, so the hint says so — that is the whole distinction a
 			// caller can act on, and it is the opposite of the sentence the empty
 			// table gets.
-			expect(payload.hint).toContain("Trust rules exist for this issuer");
-			expect(payload.hint).not.toContain("No trust rules are configured");
+			expect(payload.hint).toContain('Trust rules exist for this issuer');
+			expect(payload.hint).not.toContain('No trust rules are configured');
 			// Which prefixes those are is not free to hand out: this issuer is
 			// shared with every repository on GitHub Actions, so anyone who can run
 			// a workflow could read the list of everyone who signs here.
-			expect(payload.hint).not.toContain("repo:test/svc");
+			expect(payload.hint).not.toContain('repo:test/svc');
 			// Nor is *how many* there are. This 401 is answered before any limiter
 			// is consulted and writes no audit row, so a live count here is an
 			// unmetered, untraceable oracle on the trust table — and 4 versus 40
@@ -674,195 +674,195 @@ describe("Security Headers Middleware", () => {
 			expect(payload.hint).not.toMatch(/\d/);
 		});
 
-		it("names the trusted prefixes only where the deployment opted in", async () => {
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+		it('names the trusted prefixes only where the deployment opted in', async () => {
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
 			await seedTrustedSubjects(env.AUDIT_DB);
 
-			const issuer = "https://token.actions.githubusercontent.com";
-			const kid = "disclosing-key";
+			const issuer = 'https://token.actions.githubusercontent.com';
+			const kid = 'disclosing-key';
 			const { privateKey, publicKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			const token = await new TestJwt({
 				iss: issuer,
-				sub: "repo:test/other-svc:ref:refs/heads/main",
-				aud: "gpg-signing-service",
+				sub: 'repo:test/other-svc:ref:refs/heads/main',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid })
+				.setProtectedHeader({ alg: 'RS256', kid })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
 			const response = await makeRequest(
-				"/sign",
-				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
-				{ DISCLOSE_TRUST_PATTERNS: "true" },
+				'/sign',
+				{ method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: 'commit data' },
+				{ DISCLOSE_TRUST_PATTERNS: 'true' },
 			);
 
 			const payload = await parseJson<{ hint: string }>(response);
-			expect(payload.hint).toContain("Active prefixes:");
-			expect(payload.hint).toContain("repo:test/svc");
+			expect(payload.hint).toContain('Active prefixes:');
+			expect(payload.hint).toContain('repo:test/svc');
 			// The counts moved behind the same flag as the prefixes they count.
-			expect(payload.hint).toContain("rule(s) exist for issuer");
+			expect(payload.hint).toContain('rule(s) exist for issuer');
 		});
 
-		it("names no prefixes when the opted-in deployment has none left alive", async () => {
+		it('names no prefixes when the opted-in deployment has none left alive', async () => {
 			// Every rule for the issuer revoked: the counts still separate "never
 			// configured" from "configured and all dead", and there is no empty
 			// "Active prefixes:" tail to read past.
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
 			await clearTrustedSubjects(env.AUDIT_DB);
 
-			const issuer = "https://token.actions.githubusercontent.com";
+			const issuer = 'https://token.actions.githubusercontent.com';
 			const id = await insertOIDCSubject(env.AUDIT_DB, {
-				name: "all-revoked-fixture",
+				name: 'all-revoked-fixture',
 				issuer,
-				subjectPrefix: "repo:someone/else",
+				subjectPrefix: 'repo:someone/else',
 				keyIds: [],
 				expiresAt: null,
 			});
 			await revokeOIDCSubject(env.AUDIT_DB, id);
 
-			const kid = "all-dead-key";
+			const kid = 'all-dead-key';
 			const { privateKey, publicKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			const token = await new TestJwt({
 				iss: issuer,
-				sub: "repo:test/svc:ref:refs/heads/main",
-				aud: "gpg-signing-service",
+				sub: 'repo:test/svc:ref:refs/heads/main',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid })
+				.setProtectedHeader({ alg: 'RS256', kid })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
 			const response = await makeRequest(
-				"/sign",
-				{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
-				{ DISCLOSE_TRUST_PATTERNS: "true" },
+				'/sign',
+				{ method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: 'commit data' },
+				{ DISCLOSE_TRUST_PATTERNS: 'true' },
 			);
 
 			const payload = await parseJson<{ hint: string }>(response);
-			expect(payload.hint).toContain("1 rule(s) exist for issuer");
-			expect(payload.hint).toContain("0 of them active");
-			expect(payload.hint).not.toContain("Active prefixes:");
+			expect(payload.hint).toContain('1 rule(s) exist for issuer');
+			expect(payload.hint).toContain('0 of them active');
+			expect(payload.hint).not.toContain('Active prefixes:');
 		});
 
-		it("says what to change when the credential itself was refused", async () => {
+		it('says what to change when the credential itself was refused', async () => {
 			// A token problem and an authorization problem now carry different
 			// codes, and the token problem's hint names the knob rather than the
 			// symptom — "Invalid token audience" does not tell anyone where the
 			// audience is set.
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
 			await seedTrustedSubjects(env.AUDIT_DB);
 
-			const issuer = "https://token.actions.githubusercontent.com";
-			const kid = "wrong-audience-key";
+			const issuer = 'https://token.actions.githubusercontent.com';
+			const kid = 'wrong-audience-key';
 			const { privateKey, publicKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			const token = await new TestJwt({
 				iss: issuer,
-				sub: "repo:test/svc:ref:refs/heads/main",
-				aud: "some-other-service",
+				sub: 'repo:test/svc:ref:refs/heads/main',
+				aud: 'some-other-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid })
+				.setProtectedHeader({ alg: 'RS256', kid })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(401);
 			const payload = await parseJson<{ code: string; hint: string; docs: string }>(response);
-			expect(payload.code).toBe("AUTH_INVALID");
-			expect(payload.hint).toContain("gpg-signing-service");
-			expect(payload.docs).toBe("http://localhost/e/AUTH_INVALID");
+			expect(payload.code).toBe('AUTH_INVALID');
+			expect(payload.hint).toContain('gpg-signing-service');
+			expect(payload.docs).toBe('http://localhost/e/AUTH_INVALID');
 		});
 
-		it("distinguishes a revoked trust still in use from an unknown subject", async () => {
+		it('distinguishes a revoked trust still in use from an unknown subject', async () => {
 			// Both are 401 to the caller — telling a stranger their subject matches
 			// a revoked row would confirm the row exists. But for the operator these
 			// are different events: a killed credential still being presented is an
 			// incident, an unknown subject on a shared issuer is background traffic.
 			// Collapsing them files the incident under the noise.
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
 			await clearTrustedSubjects(env.AUDIT_DB);
 
-			const issuer = "https://token.actions.githubusercontent.com";
-			const kid = "revoked-key";
+			const issuer = 'https://token.actions.githubusercontent.com';
+			const kid = 'revoked-key';
 			const { privateKey, publicKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			const subjectId = await insertOIDCSubject(env.AUDIT_DB, {
-				name: "ci/killed",
+				name: 'ci/killed',
 				issuer,
-				subjectPrefix: "repo:victim/svc",
+				subjectPrefix: 'repo:victim/svc',
 				keyIds: [],
 				expiresAt: null,
 			});
-			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toMatchObject({ name: "ci/killed", stillCoveredBy: [] });
+			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toMatchObject({ name: 'ci/killed', stillCoveredBy: [] });
 
 			const mint = async (sub: string) =>
-				new TestJwt({ iss: issuer, sub, aud: "gpg-signing-service" })
-					.setProtectedHeader({ alg: "RS256", kid })
+				new TestJwt({ iss: issuer, sub, aud: 'gpg-signing-service' })
+					.setProtectedHeader({ alg: 'RS256', kid })
 					.setIssuedAt()
-					.setExpirationTime("1h")
+					.setExpirationTime('1h')
 					.sign(privateKey);
 
-			const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+			const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 
-			const reused = await makeRequest("/sign", {
-				method: "POST",
-				headers: { Authorization: `Bearer ${await mint("repo:victim/svc:ref:refs/heads/main")}` },
-				body: "commit data",
+			const reused = await makeRequest('/sign', {
+				method: 'POST',
+				headers: { Authorization: `Bearer ${await mint('repo:victim/svc:ref:refs/heads/main')}` },
+				body: 'commit data',
 			});
 			expect(reused.status).toBe(401);
 			// The response must not differ from the stranger's.
 			expect(await parseJson<{ error: string }>(reused)).toMatchObject({
-				error: "Subject is not trusted for signing",
-				code: "AUTH_SUBJECT_UNTRUSTED",
+				error: 'Subject is not trusted for signing',
+				code: 'AUTH_SUBJECT_UNTRUSTED',
 			});
 			expect(warnSpy).toHaveBeenCalledWith(
-				"Revoked OIDC trust presented",
+				'Revoked OIDC trust presented',
 				// `requestId` too: the response deliberately does not say which of
 				// the three refusals it was, so the id it hands back is the only
 				// route from a pasted CI log to the reason.
-				expect.objectContaining({ subjectId, subjectPolicy: "ci/killed", requestId: expect.any(String) }),
+				expect.objectContaining({ subjectId, subjectPolicy: 'ci/killed', requestId: expect.any(String) }),
 			);
 			// A killed credential still in use outlives the log store's retention,
 			// so it gets a durable row too — unlike the unknown-subject arm, which
 			// anyone can trigger and which stays log-only.
 			const reuseEvents = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
-			const recorded = reuseEvents.find((event) => event.errorCode === "AUTH_SUBJECT_UNTRUSTED");
+			const recorded = reuseEvents.find((event) => event.errorCode === 'AUTH_SUBJECT_UNTRUSTED');
 			expect(recorded).toBeDefined();
-			expect(JSON.parse(recorded?.metadata ?? "{}")).toMatchObject({
-				reason: "revoked_trust_presented",
+			expect(JSON.parse(recorded?.metadata ?? '{}')).toMatchObject({
+				reason: 'revoked_trust_presented',
 				subjectId,
-				subjectPolicy: "ci/killed",
+				subjectPolicy: 'ci/killed',
 			});
 			vi.mocked(logAuditEvent).mockClear();
 
 			warnSpy.mockClear();
-			const stranger = await makeRequest("/sign", {
-				method: "POST",
-				headers: { Authorization: `Bearer ${await mint("repo:some-rando/thing:ref:refs/heads/main")}` },
-				body: "commit data",
+			const stranger = await makeRequest('/sign', {
+				method: 'POST',
+				headers: { Authorization: `Bearer ${await mint('repo:some-rando/thing:ref:refs/heads/main')}` },
+				body: 'commit data',
 			});
 			expect(stranger.status).toBe(401);
 			expect(warnSpy).toHaveBeenCalledWith(
-				"Rejected untrusted OIDC subject",
+				'Rejected untrusted OIDC subject',
 				expect.objectContaining({
 					requestId: expect.any(String),
-					subject: "repo:some-rando/thing:ref:refs/heads/main",
+					subject: 'repo:some-rando/thing:ref:refs/heads/main',
 				}),
 			);
-			expect(warnSpy).not.toHaveBeenCalledWith("Revoked OIDC trust presented", expect.any(Object));
+			expect(warnSpy).not.toHaveBeenCalledWith('Revoked OIDC trust presented', expect.any(Object));
 			// No durable row for the unknown arm: anyone holding any token the
 			// issuer will mint can reach it.
 			expect(vi.mocked(logAuditEvent).mock.calls).toHaveLength(0);
@@ -876,17 +876,17 @@ describe("Security Headers Middleware", () => {
 			// and so only ran when the test passed, and it seeded without clearing,
 			// leaving the revoked row behind either way.
 			const live = await env.AUDIT_DB.prepare(
-				"SELECT COUNT(*) AS n FROM oidc_subjects WHERE revoked_at IS NULL",
+				'SELECT COUNT(*) AS n FROM oidc_subjects WHERE revoked_at IS NULL',
 			).first<{ n: number }>();
 			expect(Number(live?.n)).toBeGreaterThan(0);
 
-			const leftover = await env.AUDIT_DB.prepare("SELECT COUNT(*) AS n FROM oidc_subjects WHERE name = ?")
-				.bind("ci/killed")
+			const leftover = await env.AUDIT_DB.prepare('SELECT COUNT(*) AS n FROM oidc_subjects WHERE name = ?')
+				.bind('ci/killed')
 				.first<{ n: number }>();
 			expect(Number(leftover?.n)).toBe(0);
 		});
 
-		it("logs bounded counts rather than the trust list when the subject is unknown", async () => {
+		it('logs bounded counts rather than the trust list when the subject is unknown', async () => {
 			// This refusal is the unmetered one — answered before any limiter and
 			// writing no audit row — so the record it emits is the one thing a
 			// stranger can make the deployment pay for as often as it likes. While
@@ -894,8 +894,8 @@ describe("Security Headers Middleware", () => {
 			// trust table: every org signing here copied into every refusal, at a
 			// rate the caller picks. The counts carry the same diagnosis at a fixed
 			// size, and the prefixes stay behind GET /admin/subjects.
-			const issuer = "https://token.actions.githubusercontent.com";
-			const kid = "bounded-log-key";
+			const issuer = 'https://token.actions.githubusercontent.com';
+			const kid = 'bounded-log-key';
 
 			// Installed before anything this test owns is mutated, so the
 			// `finally` below covers the setup too, not just the assertions. A
@@ -903,7 +903,7 @@ describe("Security Headers Middleware", () => {
 			// records: `vi.resetAllMocks()` in `afterEach` clears the
 			// implementation but leaves the spy installed, so only `mockRestore`
 			// puts the real logger back.
-			const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+			const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
 			try {
 				await env.JWKS_CACHE.delete(`jwks:${issuer}`);
 				await clearTrustedSubjects(env.AUDIT_DB);
@@ -913,7 +913,7 @@ describe("Security Headers Middleware", () => {
 
 				// Several live rules plus a dead one, so the two counts are distinct
 				// numbers and a test that confused them would fail.
-				const livePrefixes = ["repo:acme/alpha", "repo:acme/beta", "repo:contoso/gamma"];
+				const livePrefixes = ['repo:acme/alpha', 'repo:acme/beta', 'repo:contoso/gamma'];
 				for (const prefix of livePrefixes) {
 					await insertOIDCSubject(env.AUDIT_DB, {
 						name: `bounded|${prefix}`,
@@ -924,9 +924,9 @@ describe("Security Headers Middleware", () => {
 					});
 				}
 				const revokedId = await insertOIDCSubject(env.AUDIT_DB, {
-					name: "bounded|revoked",
+					name: 'bounded|revoked',
 					issuer,
-					subjectPrefix: "repo:acme/delta",
+					subjectPrefix: 'repo:acme/delta',
 					keyIds: [],
 					expiresAt: null,
 				});
@@ -934,22 +934,22 @@ describe("Security Headers Middleware", () => {
 
 				const token = await new TestJwt({
 					iss: issuer,
-					sub: "repo:stranger/thing:ref:refs/heads/main",
-					aud: "gpg-signing-service",
+					sub: 'repo:stranger/thing:ref:refs/heads/main',
+					aud: 'gpg-signing-service',
 				})
-					.setProtectedHeader({ alg: "RS256", kid })
+					.setProtectedHeader({ alg: 'RS256', kid })
 					.setIssuedAt()
-					.setExpirationTime("1h")
+					.setExpirationTime('1h')
 					.sign(privateKey);
 
-				const response = await makeRequest("/sign", {
-					method: "POST",
+				const response = await makeRequest('/sign', {
+					method: 'POST',
 					headers: { Authorization: `Bearer ${token}` },
-					body: "commit data",
+					body: 'commit data',
 				});
 				expect(response.status).toBe(401);
 
-				const logged = warnSpy.mock.calls.find(([message]) => message === "Rejected untrusted OIDC subject")?.[1] as
+				const logged = warnSpy.mock.calls.find(([message]) => message === 'Rejected untrusted OIDC subject')?.[1] as
 					| Record<string, unknown>
 					| undefined;
 				expect(logged).toBeDefined();
@@ -959,16 +959,16 @@ describe("Security Headers Middleware", () => {
 				expect(logged).toMatchObject({
 					requestId: expect.any(String),
 					issuer,
-					subject: "repo:stranger/thing:ref:refs/heads/main",
+					subject: 'repo:stranger/thing:ref:refs/heads/main',
 					issuerRuleCount: 4,
 					activePrefixCount: 3,
 				});
-				expect(logged).not.toHaveProperty("activePrefixes");
+				expect(logged).not.toHaveProperty('activePrefixes');
 				// Serialized, so a prefix reintroduced under any other key or nested in
 				// any other field fails this too — the array coming back is the
 				// regression, whatever it is called.
 				const serialized = JSON.stringify(logged);
-				for (const prefix of [...livePrefixes, "repo:acme/delta"]) {
+				for (const prefix of [...livePrefixes, 'repo:acme/delta']) {
 					expect(serialized).not.toContain(prefix);
 				}
 			} finally {
@@ -990,43 +990,43 @@ describe("Security Headers Middleware", () => {
 			// signature's request id — the exact query an operator runs after the
 			// AUTH_INVALID alert — and the length ceiling is the header budget, not
 			// 36 characters.
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
 			await clearTrustedSubjects(env.AUDIT_DB);
 
-			const issuer = "https://token.actions.githubusercontent.com";
-			const kid = "forged-id-key";
+			const issuer = 'https://token.actions.githubusercontent.com';
+			const kid = 'forged-id-key';
 			const { privateKey, publicKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			const subjectId = await insertOIDCSubject(env.AUDIT_DB, {
-				name: "ci/forged",
+				name: 'ci/forged',
 				issuer,
-				subjectPrefix: "repo:forged/svc",
+				subjectPrefix: 'repo:forged/svc',
 				keyIds: [],
 				expiresAt: null,
 			});
-			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toMatchObject({ name: "ci/forged", stillCoveredBy: [] });
+			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toMatchObject({ name: 'ci/forged', stillCoveredBy: [] });
 
 			const token = await new TestJwt({
 				iss: issuer,
-				sub: "repo:forged/svc:ref:refs/heads/main",
-				aud: "gpg-signing-service",
+				sub: 'repo:forged/svc:ref:refs/heads/main',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid })
+				.setProtectedHeader({ alg: 'RS256', kid })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
-			const forged = `'; DROP TABLE audit_logs; --${"A".repeat(2000)}`;
-			const response = await makeRequest("/sign", {
-				method: "POST",
-				headers: { Authorization: `Bearer ${token}`, "X-Request-ID": forged },
-				body: "commit data",
+			const forged = `'; DROP TABLE audit_logs; --${'A'.repeat(2000)}`;
+			const response = await makeRequest('/sign', {
+				method: 'POST',
+				headers: { Authorization: `Bearer ${token}`, 'X-Request-ID': forged },
+				body: 'commit data',
 			});
 			expect(response.status).toBe(401);
 
 			const events = vi.mocked(logAuditEvent).mock.calls.map(([, event]) => event);
-			const recorded = events.find((event) => event.errorCode === "AUTH_SUBJECT_UNTRUSTED");
+			const recorded = events.find((event) => event.errorCode === 'AUTH_SUBJECT_UNTRUSTED');
 			expect(recorded).toBeDefined();
 			expect(recorded?.requestId).not.toBe(forged);
 			// Replaced with a real one rather than dropped, so the row still
@@ -1037,41 +1037,41 @@ describe("Security Headers Middleware", () => {
 			// A caller-supplied id that *is* a UUID is still honoured, so ordinary
 			// request correlation keeps working.
 			const supplied = crypto.randomUUID();
-			const withValidId = await makeRequest("/sign", {
-				method: "POST",
-				headers: { Authorization: `Bearer ${token}`, "X-Request-ID": supplied },
-				body: "commit data",
+			const withValidId = await makeRequest('/sign', {
+				method: 'POST',
+				headers: { Authorization: `Bearer ${token}`, 'X-Request-ID': supplied },
+				body: 'commit data',
 			});
 			expect(withValidId.status).toBe(401);
 			const second = vi
 				.mocked(logAuditEvent)
 				.mock.calls.map(([, event]) => event)
-				.find((event) => event.errorCode === "AUTH_SUBJECT_UNTRUSTED");
+				.find((event) => event.errorCode === 'AUTH_SUBJECT_UNTRUSTED');
 			expect(second?.requestId).toBe(supplied);
 		});
 
-		it("meters the revoked-reuse row per revoked row, not per subject the caller mints", async () => {
+		it('meters the revoked-reuse row per revoked row, not per subject the caller mints', async () => {
 			// The budget has to bound the *row*, but a row is a prefix and one prefix
 			// covers unboundedly many subjects — GitHub puts the ref in `sub`, so
 			// anyone who can push a branch under the revoked scope mints a fresh
 			// subject. Keyed per subject, the cap is no cap: N branches, N budgets,
 			// all writing into the database the authorization table lives in.
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
 			await clearTrustedSubjects(env.AUDIT_DB);
 
-			const issuer = "https://token.actions.githubusercontent.com";
-			const kid = "flood-key";
+			const issuer = 'https://token.actions.githubusercontent.com';
+			const kid = 'flood-key';
 			const { privateKey, publicKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			const subjectId = await insertOIDCSubject(env.AUDIT_DB, {
-				name: "ci/flood",
+				name: 'ci/flood',
 				issuer,
-				subjectPrefix: "repo:flood/",
+				subjectPrefix: 'repo:flood/',
 				keyIds: [],
 				expiresAt: null,
 			});
-			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toMatchObject({ name: "ci/flood" });
+			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toMatchObject({ name: 'ci/flood' });
 
 			// Record what the limiter is actually asked about, rather than only that
 			// a write was dropped — which is why the per-subject key survived.
@@ -1080,22 +1080,22 @@ describe("Security Headers Middleware", () => {
 				idFromName: () => ({}) as DurableObjectId,
 				get: () => ({
 					fetch: async (request: Request) => {
-						metered.push(decodeURIComponent(new URL(request.url).searchParams.get("identity") ?? ""));
+						metered.push(decodeURIComponent(new URL(request.url).searchParams.get('identity') ?? ''));
 						return Response.json({ allowed: true, remaining: 99, resetAt: Date.now() + 60_000 });
 					},
 				}),
 			} as unknown as DurableObjectNamespace;
 
 			try {
-				for (const sub of ["repo:flood/one:ref:refs/heads/main", "repo:flood/two:ref:refs/heads/anything-i-like"]) {
-					const token = await new TestJwt({ iss: issuer, sub, aud: "gpg-signing-service" })
-						.setProtectedHeader({ alg: "RS256", kid })
+				for (const sub of ['repo:flood/one:ref:refs/heads/main', 'repo:flood/two:ref:refs/heads/anything-i-like']) {
+					const token = await new TestJwt({ iss: issuer, sub, aud: 'gpg-signing-service' })
+						.setProtectedHeader({ alg: 'RS256', kid })
 						.setIssuedAt()
-						.setExpirationTime("1h")
+						.setExpirationTime('1h')
 						.sign(privateKey);
 					const response = await makeRequest(
-						"/sign",
-						{ method: "POST", headers: { Authorization: `Bearer ${token}` }, body: "commit data" },
+						'/sign',
+						{ method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: 'commit data' },
 						{ RATE_LIMITER: recordingLimiter },
 					);
 					expect(response.status).toBe(401);
@@ -1103,7 +1103,7 @@ describe("Security Headers Middleware", () => {
 
 				// One bucket for the row, whatever subject was presented.
 				expect(metered).toEqual([`oidc-revoked-reuse:${subjectId}`, `oidc-revoked-reuse:${subjectId}`]);
-				expect(metered.join(" ")).not.toContain("refs/heads");
+				expect(metered.join(' ')).not.toContain('refs/heads');
 			} finally {
 				// The `afterEach` reseed covers a failed assertion here too; this
 				// block keeps the intent local to the loop it guards.
@@ -1111,108 +1111,108 @@ describe("Security Headers Middleware", () => {
 			}
 		});
 
-		it("does not write the revoked-reuse row when the caller is over budget or the limiter is down", async () => {
+		it('does not write the revoked-reuse row when the caller is over budget or the limiter is down', async () => {
 			// The row is metered precisely so the holder of a revoked credential
 			// cannot flood the table the authorization store shares. Both failure
 			// modes must drop the write and leave the 401 unchanged.
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
 			await clearTrustedSubjects(env.AUDIT_DB);
 
-			const issuer = "https://token.actions.githubusercontent.com";
-			const kid = "revoked-unmetered-key";
+			const issuer = 'https://token.actions.githubusercontent.com';
+			const kid = 'revoked-unmetered-key';
 			const { privateKey, publicKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			const subjectId = await insertOIDCSubject(env.AUDIT_DB, {
-				name: "ci/unmetered",
+				name: 'ci/unmetered',
 				issuer,
-				subjectPrefix: "repo:unmetered/svc",
+				subjectPrefix: 'repo:unmetered/svc',
 				keyIds: [],
 				expiresAt: null,
 			});
 			expect(await revokeOIDCSubject(env.AUDIT_DB, subjectId)).toMatchObject({
-				name: "ci/unmetered",
+				name: 'ci/unmetered',
 				stillCoveredBy: [],
 			});
 
 			const token = await new TestJwt({
 				iss: issuer,
-				sub: "repo:unmetered/svc:ref:refs/heads/main",
-				aud: "gpg-signing-service",
+				sub: 'repo:unmetered/svc:ref:refs/heads/main',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid })
+				.setProtectedHeader({ alg: 'RS256', kid })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
 			const request = () => ({
-				method: "POST",
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
-			const overBudget = await makeRequest("/sign", request(), {
+			const overBudget = await makeRequest('/sign', request(), {
 				RATE_LIMITER: rateLimiterAnswering({ allowed: false, remaining: 0, resetAt: Date.now() + 30_000 }),
 			});
 			expect(overBudget.status).toBe(401);
 			expect(vi.mocked(logAuditEvent).mock.calls).toHaveLength(0);
 
-			const limiterErrored = await makeRequest("/sign", request(), { RATE_LIMITER: rateLimiterAnswering(null, 500) });
+			const limiterErrored = await makeRequest('/sign', request(), { RATE_LIMITER: rateLimiterAnswering(null, 500) });
 			expect(limiterErrored.status).toBe(401);
 			expect(vi.mocked(logAuditEvent).mock.calls).toHaveLength(0);
 
-			const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
-			const limiterDown = await makeRequest("/sign", request(), { RATE_LIMITER: rateLimiterThrowing() });
+			const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+			const limiterDown = await makeRequest('/sign', request(), { RATE_LIMITER: rateLimiterThrowing() });
 			expect(limiterDown.status).toBe(401);
 			expect(vi.mocked(logAuditEvent).mock.calls).toHaveLength(0);
 			expect(warnSpy).toHaveBeenCalledWith(
-				"Could not meter a revoked-trust reuse, so it was not recorded",
+				'Could not meter a revoked-trust reuse, so it was not recorded',
 				expect.objectContaining({ error: expect.any(String) }),
 			);
 
 			// Same again with a non-Error rejection, which takes the String(error) branch.
 			warnSpy.mockClear();
-			const nonError = await makeRequest("/sign", request(), { RATE_LIMITER: rateLimiterThrowing("down") });
+			const nonError = await makeRequest('/sign', request(), { RATE_LIMITER: rateLimiterThrowing('down') });
 			expect(nonError.status).toBe(401);
 			expect(warnSpy).toHaveBeenCalledWith(
-				"Could not meter a revoked-trust reuse, so it was not recorded",
-				expect.objectContaining({ error: "down" }),
+				'Could not meter a revoked-trust reuse, so it was not recorded',
+				expect.objectContaining({ error: 'down' }),
 			);
 		});
 
-		it("names an expired trust rather than reporting it as unknown", async () => {
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+		it('names an expired trust rather than reporting it as unknown', async () => {
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
 			await clearTrustedSubjects(env.AUDIT_DB);
 
-			const issuer = "https://token.actions.githubusercontent.com";
-			const kid = "expired-key";
+			const issuer = 'https://token.actions.githubusercontent.com';
+			const kid = 'expired-key';
 			const { privateKey, publicKey } = await generateTestKeyPair();
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			const expiresAt = new Date(Date.now() - 1000).toISOString();
 			const subjectId = await insertOIDCSubject(env.AUDIT_DB, {
-				name: "ci/lapsed",
+				name: 'ci/lapsed',
 				issuer,
-				subjectPrefix: "repo:lapsed/svc",
+				subjectPrefix: 'repo:lapsed/svc',
 				keyIds: [],
 				expiresAt,
 			});
 
 			const token = await new TestJwt({
 				iss: issuer,
-				sub: "repo:lapsed/svc:ref:refs/heads/main",
-				aud: "gpg-signing-service",
+				sub: 'repo:lapsed/svc:ref:refs/heads/main',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid })
+				.setProtectedHeader({ alg: 'RS256', kid })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
-			const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 			expect(response.status).toBe(401);
 			// The hint is one string shared by all three refusal arms, so it has to
@@ -1224,27 +1224,27 @@ describe("Security Headers Middleware", () => {
 			// matcher was broken. The answer is in `active`, and the hint has to
 			// name that possibility without saying which arm this was.
 			const expiredPayload = await parseJson<{ hint: string }>(response);
-			expect(expiredPayload.hint).toContain("No active trust rule matches this subject");
-			expect(expiredPayload.hint).not.toContain("none of them covers this subject");
-			expect(expiredPayload.hint).toContain("revoked or has expired");
+			expect(expiredPayload.hint).toContain('No active trust rule matches this subject');
+			expect(expiredPayload.hint).not.toContain('none of them covers this subject');
+			expect(expiredPayload.hint).toContain('revoked or has expired');
 			expect(warnSpy).toHaveBeenCalledWith(
-				"Expired OIDC trust presented",
-				expect.objectContaining({ subjectId, subjectPolicy: "ci/lapsed", expiresAt }),
+				'Expired OIDC trust presented',
+				expect.objectContaining({ subjectId, subjectPolicy: 'ci/lapsed', expiresAt }),
 			);
 		});
 
-		it("should reject key not intended for signatures", async () => {
+		it('should reject key not intended for signatures', async () => {
 			// Clean up cache to ensure no pollution
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
 
 			const { publicKey } = await generateTestKeyPair();
-			const issuer = "https://token.actions.githubusercontent.com";
-			const kid = "enc-key";
+			const issuer = 'https://token.actions.githubusercontent.com';
+			const kid = 'enc-key';
 
 			// Setup mock with use: "enc"
 			const jwk = await exportTestJwk(publicKey);
 			jwk.kid = kid;
-			jwk.use = "enc";
+			jwk.use = 'enc';
 
 			middlewareFetchMock.mockImplementation(async (url: string) => {
 				if (url === `${issuer}/.well-known/openid-configuration`) {
@@ -1253,49 +1253,49 @@ describe("Security Headers Middleware", () => {
 				if (url === `${issuer}/jwks`) {
 					return new Response(JSON.stringify({ keys: [jwk] }));
 				}
-				return new Response("Not Found", { status: 404 });
+				return new Response('Not Found', { status: 404 });
 			});
 
 			const { privateKey } = await generateTestKeyPair();
 			const token = await new TestJwt({
 				iss: issuer,
-				sub: "repo:test/svc",
-				aud: "gpg-signing-service",
+				sub: 'repo:test/svc',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid })
+				.setProtectedHeader({ alg: 'RS256', kid })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(401);
 			const body = (await response.json()) as { error: string };
-			expect(body.error).toContain("Key not intended for signatures");
+			expect(body.error).toContain('Key not intended for signatures');
 		});
 
-		it("should handle OIDC config fetch failure", async () => {
-			middlewareFetchMock.mockResolvedValue(new Response("Error", { status: 500 }));
+		it('should handle OIDC config fetch failure', async () => {
+			middlewareFetchMock.mockResolvedValue(new Response('Error', { status: 500 }));
 
 			const { privateKey } = await generateTestKeyPair();
 			const token = await new TestJwt({
-				iss: "https://token.actions.githubusercontent.com",
-				sub: "repo:test/svc",
-				aud: "gpg-signing-service",
+				iss: 'https://token.actions.githubusercontent.com',
+				sub: 'repo:test/svc',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid: "test" })
+				.setProtectedHeader({ alg: 'RS256', kid: 'test' })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			// 503, not 401. This deployment could not reach the issuer, which is not
@@ -1303,43 +1303,43 @@ describe("Security Headers Middleware", () => {
 			// fixes — the Go client refuses to retry an *AuthError.
 			expect(response.status).toBe(503);
 			const body = (await response.json()) as { error: string; code: string; hint: string };
-			expect(body.error).toContain("Failed to fetch OIDC config");
-			expect(body.code).toBe("SERVICE_DEGRADED");
-			expect(Number(response.headers.get("Retry-After"))).toBeGreaterThan(0);
-			expect(body.hint).toContain("Nothing about the token is wrong");
+			expect(body.error).toContain('Failed to fetch OIDC config');
+			expect(body.code).toBe('SERVICE_DEGRADED');
+			expect(Number(response.headers.get('Retry-After'))).toBeGreaterThan(0);
+			expect(body.hint).toContain('Nothing about the token is wrong');
 		});
 
-		it("should handle JWKS fetch failure", async () => {
-			const issuer = "https://token.actions.githubusercontent.com";
+		it('should handle JWKS fetch failure', async () => {
+			const issuer = 'https://token.actions.githubusercontent.com';
 			middlewareFetchMock.mockImplementation(async (url: string) => {
 				if (url === `${issuer}/.well-known/openid-configuration`) {
 					return new Response(JSON.stringify({ jwks_uri: `${issuer}/jwks` }));
 				}
-				return new Response("Error", { status: 500 });
+				return new Response('Error', { status: 500 });
 			});
 
 			const { privateKey } = await generateTestKeyPair();
 			const token = await new TestJwt({
 				iss: issuer,
-				sub: "repo:test/svc",
-				aud: "gpg-signing-service",
+				sub: 'repo:test/svc',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid: "test" })
+				.setProtectedHeader({ alg: 'RS256', kid: 'test' })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(503);
 			const body = (await response.json()) as { error: string; code: string };
-			expect(body.error).toContain("Failed to fetch JWKS");
-			expect(body.code).toBe("SERVICE_DEGRADED");
-			expect(Number(response.headers.get("Retry-After"))).toBeGreaterThan(0);
+			expect(body.error).toContain('Failed to fetch JWKS');
+			expect(body.code).toBe('SERVICE_DEGRADED');
+			expect(Number(response.headers.get('Retry-After'))).toBeGreaterThan(0);
 		});
 
 		/**
@@ -1351,177 +1351,177 @@ describe("Security Headers Middleware", () => {
 		 */
 		it.each([
 			{
-				name: "a discovery fetch that never completes",
+				name: 'a discovery fetch that never completes',
 				impl: async () => {
-					throw new Error("Request to https://token.actions.githubusercontent.com timed out after 10000ms");
+					throw new Error('Request to https://token.actions.githubusercontent.com timed out after 10000ms');
 				},
-				expected: "Could not reach the OIDC configuration",
+				expected: 'Could not reach the OIDC configuration',
 			},
 			{
-				name: "a discovery response that is not the document",
-				impl: async () => new Response("<html>captive portal</html>"),
-				expected: "was not readable JSON",
+				name: 'a discovery response that is not the document',
+				impl: async () => new Response('<html>captive portal</html>'),
+				expected: 'was not readable JSON',
 			},
 			{
-				name: "a JWKS fetch that never completes",
+				name: 'a JWKS fetch that never completes',
 				impl: async (url: string) => {
-					if (url.endsWith("/.well-known/openid-configuration")) {
-						return new Response(JSON.stringify({ jwks_uri: "https://token.actions.githubusercontent.com/jwks" }));
+					if (url.endsWith('/.well-known/openid-configuration')) {
+						return new Response(JSON.stringify({ jwks_uri: 'https://token.actions.githubusercontent.com/jwks' }));
 					}
-					throw new Error("Request to https://token.actions.githubusercontent.com/jwks timed out after 10000ms");
+					throw new Error('Request to https://token.actions.githubusercontent.com/jwks timed out after 10000ms');
 				},
-				expected: "Could not reach the JWKS",
+				expected: 'Could not reach the JWKS',
 			},
 			{
-				name: "a JWKS response that is not JSON",
+				name: 'a JWKS response that is not JSON',
 				impl: async (url: string) => {
-					if (url.endsWith("/.well-known/openid-configuration")) {
-						return new Response(JSON.stringify({ jwks_uri: "https://token.actions.githubusercontent.com/jwks" }));
+					if (url.endsWith('/.well-known/openid-configuration')) {
+						return new Response(JSON.stringify({ jwks_uri: 'https://token.actions.githubusercontent.com/jwks' }));
 					}
-					return new Response("not json at all");
+					return new Response('not json at all');
 				},
-				expected: "was not a readable JWK Set (jwks_malformed)",
+				expected: 'was not a readable JWK Set (jwks_malformed)',
 			},
 			{
-				name: "a JWKS response that is JSON without a keys array",
+				name: 'a JWKS response that is JSON without a keys array',
 				impl: async (url: string) => {
-					if (url.endsWith("/.well-known/openid-configuration")) {
-						return new Response(JSON.stringify({ jwks_uri: "https://token.actions.githubusercontent.com/jwks" }));
+					if (url.endsWith('/.well-known/openid-configuration')) {
+						return new Response(JSON.stringify({ jwks_uri: 'https://token.actions.githubusercontent.com/jwks' }));
 					}
-					return new Response(JSON.stringify({ keys: "none" }));
+					return new Response(JSON.stringify({ keys: 'none' }));
 				},
-				expected: "was not a readable JWK Set (jwks_malformed)",
+				expected: 'was not a readable JWK Set (jwks_malformed)',
 			},
 			{
-				name: "a JWKS response whose body breaks off",
+				name: 'a JWKS response whose body breaks off',
 				impl: async (url: string) => {
-					if (url.endsWith("/.well-known/openid-configuration")) {
-						return new Response(JSON.stringify({ jwks_uri: "https://token.actions.githubusercontent.com/jwks" }));
+					if (url.endsWith('/.well-known/openid-configuration')) {
+						return new Response(JSON.stringify({ jwks_uri: 'https://token.actions.githubusercontent.com/jwks' }));
 					}
 					return new Response(
 						new ReadableStream({
 							start(controller) {
-								controller.error(new Error("connection reset"));
+								controller.error(new Error('connection reset'));
 							},
 						}),
 					);
 				},
-				expected: "Could not read the JWKS at https://token.actions.githubusercontent.com/jwks",
+				expected: 'Could not read the JWKS at https://token.actions.githubusercontent.com/jwks',
 			},
-		])("answers 503 for $name", async ({ impl, expected }) => {
-			const issuer = "https://token.actions.githubusercontent.com";
+		])('answers 503 for $name', async ({ impl, expected }) => {
+			const issuer = 'https://token.actions.githubusercontent.com';
 			await env.JWKS_CACHE.delete(`jwks:${issuer}`);
 			middlewareFetchMock.mockImplementation(impl);
 
 			const { privateKey } = await generateTestKeyPair();
-			const token = await new TestJwt({ iss: issuer, sub: "repo:test/svc", aud: "gpg-signing-service" })
-				.setProtectedHeader({ alg: "RS256", kid: "unreachable-key" })
+			const token = await new TestJwt({ iss: issuer, sub: 'repo:test/svc', aud: 'gpg-signing-service' })
+				.setProtectedHeader({ alg: 'RS256', kid: 'unreachable-key' })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(503);
 			const body = await parseJson<{ error: string; code: string; hint: string; docs: string }>(response);
-			expect(body.code).toBe("SERVICE_DEGRADED");
+			expect(body.code).toBe('SERVICE_DEGRADED');
 			expect(body.error).toContain(expected);
 			// And it is an error response like any other, so the middleware links it
 			// — the reference section is where "retry this" is written down.
-			expect(body.docs).toBe("http://localhost/e/SERVICE_DEGRADED");
+			expect(body.docs).toBe('http://localhost/e/SERVICE_DEGRADED');
 			// Transient, so the caller is told how long to wait rather than left to
 			// guess or to give up.
-			expect(Number(response.headers.get("Retry-After"))).toBeGreaterThan(0);
-			expect(body.hint).toContain("Nothing about the token is wrong");
+			expect(Number(response.headers.get('Retry-After'))).toBeGreaterThan(0);
+			expect(body.hint).toContain('Nothing about the token is wrong');
 		});
 
-		it("decodes a base64url payload and keeps non-ASCII claims intact", async () => {
+		it('decodes a base64url payload and keeps non-ASCII claims intact', async () => {
 			const { publicKey, privateKey } = await generateTestKeyPair();
-			const issuer = "https://token.actions.githubusercontent.com";
-			const kid = "unicode-key";
+			const issuer = 'https://token.actions.githubusercontent.com';
+			const kid = 'unicode-key';
 			await setupJWKSMock(issuer, kid, publicKey);
 
-			const subject = "repo:café/🦊-signer:ref:refs/heads/~~~???";
-			const token = await new TestJwt({ iss: issuer, sub: subject, aud: "gpg-signing-service" })
-				.setProtectedHeader({ alg: "RS256", kid })
+			const subject = 'repo:café/🦊-signer:ref:refs/heads/~~~???';
+			const token = await new TestJwt({ iss: issuer, sub: subject, aud: 'gpg-signing-service' })
+				.setProtectedHeader({ alg: 'RS256', kid })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
-			const payload = token.split(".")[1];
+			const payload = token.split('.')[1];
 			expect(payload).toMatch(/-/);
 			expect(payload).toMatch(/_/);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(401);
 			const body = await parseJson<{ code: string; subject: string }>(response);
-			expect(body.code).toBe("AUTH_SUBJECT_UNTRUSTED");
+			expect(body.code).toBe('AUTH_SUBJECT_UNTRUSTED');
 			expect(body.subject).toBe(subject);
 		});
 
-		it("refuses a correctly signed token without a subject", async () => {
+		it('refuses a correctly signed token without a subject', async () => {
 			const { publicKey, privateKey } = await generateTestKeyPair();
-			const issuer = "https://token.actions.githubusercontent.com";
-			const kid = "no-sub-key";
+			const issuer = 'https://token.actions.githubusercontent.com';
+			const kid = 'no-sub-key';
 			await setupJWKSMock(issuer, kid, publicKey);
 
-			const token = await new TestJwt({ iss: issuer, aud: "gpg-signing-service" })
-				.setProtectedHeader({ alg: "RS256", kid })
+			const token = await new TestJwt({ iss: issuer, aud: 'gpg-signing-service' })
+				.setProtectedHeader({ alg: 'RS256', kid })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(401);
 			const body = await parseJson<{ code: string; error: string }>(response);
-			expect(body.code).toBe("AUTH_INVALID");
-			expect(body.error).toBe("Invalid token claims");
+			expect(body.code).toBe('AUTH_INVALID');
+			expect(body.error).toBe('Invalid token claims');
 			expect(middlewareFetchMock).toHaveBeenCalled();
 		});
 
-		it("refuses a token whose exp is a string before fetching any key", async () => {
+		it('refuses a token whose exp is a string before fetching any key', async () => {
 			const { privateKey } = await generateTestKeyPair();
 			const token = await new TestJwt({
-				iss: "https://token.actions.githubusercontent.com",
-				sub: "repo:test/svc",
-				aud: "gpg-signing-service",
-				exp: "9999999999",
+				iss: 'https://token.actions.githubusercontent.com',
+				sub: 'repo:test/svc',
+				aud: 'gpg-signing-service',
+				exp: '9999999999',
 			})
-				.setProtectedHeader({ alg: "RS256", kid: "string-exp" })
+				.setProtectedHeader({ alg: 'RS256', kid: 'string-exp' })
 				.setIssuedAt()
 				.sign(privateKey);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(401);
-			expect((await parseJson<{ error: string }>(response)).error).toBe("Invalid token claims");
+			expect((await parseJson<{ error: string }>(response)).error).toBe('Invalid token claims');
 			expect(middlewareFetchMock).not.toHaveBeenCalled();
 		});
 
 		it("caches the issuer's JWK Set text verbatim and serves the next request from it", async () => {
 			const { publicKey, privateKey } = await generateTestKeyPair();
-			const issuer = "https://token.actions.githubusercontent.com";
-			const kid = "cached-key";
+			const issuer = 'https://token.actions.githubusercontent.com';
+			const kid = 'cached-key';
 			const jwk = await exportTestJwk(publicKey);
 			jwk.kid = kid;
-			jwk.use = "sig";
+			jwk.use = 'sig';
 			const served = JSON.stringify({ keys: [jwk] }, null, 2);
 			middlewareFetchMock.mockImplementation(async (url: string) =>
 				url === `${issuer}/.well-known/openid-configuration`
@@ -1530,37 +1530,37 @@ describe("Security Headers Middleware", () => {
 			);
 			const token = await new TestJwt({
 				iss: issuer,
-				sub: "repo:user/repo:ref:refs/heads/main",
-				aud: "gpg-signing-service",
+				sub: 'repo:user/repo:ref:refs/heads/main',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid })
+				.setProtectedHeader({ alg: 'RS256', kid })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 			const send = () =>
-				makeRequest("/sign", {
-					method: "POST",
+				makeRequest('/sign', {
+					method: 'POST',
 					headers: { Authorization: `Bearer ${token}` },
-					body: "commit data",
+					body: 'commit data',
 				});
 
 			expect((await send()).status).toBe(404);
-			expect(await env.JWKS_CACHE.get(`jwks:${issuer}`, "text")).toBe(served);
+			expect(await env.JWKS_CACHE.get(`jwks:${issuer}`, 'text')).toBe(served);
 
 			middlewareFetchMock.mockReset();
-			middlewareFetchMock.mockRejectedValue(new Error("issuer unreachable"));
+			middlewareFetchMock.mockRejectedValue(new Error('issuer unreachable'));
 			expect((await send()).status).toBe(404);
 			expect(middlewareFetchMock).not.toHaveBeenCalled();
 		});
 
 		it.each([
-			{ name: "an unnamed key", kid: undefined },
-			{ name: "a named key", kid: "sole-issuer-key" },
-		])("serves a token without kid from a cached set holding only $name", async ({ kid }) => {
+			{ name: 'an unnamed key', kid: undefined },
+			{ name: 'a named key', kid: 'sole-issuer-key' },
+		])('serves a token without kid from a cached set holding only $name', async ({ kid }) => {
 			const { publicKey, privateKey } = await generateTestKeyPair();
-			const issuer = "https://token.actions.githubusercontent.com";
+			const issuer = 'https://token.actions.githubusercontent.com';
 			const jwk = await exportTestJwk(publicKey);
-			jwk.use = "sig";
+			jwk.use = 'sig';
 			if (kid !== undefined) {
 				jwk.kid = kid;
 			}
@@ -1568,135 +1568,135 @@ describe("Security Headers Middleware", () => {
 
 			const token = await new TestJwt({
 				iss: issuer,
-				sub: "repo:user/repo:ref:refs/heads/main",
-				aud: "gpg-signing-service",
+				sub: 'repo:user/repo:ref:refs/heads/main',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256" })
+				.setProtectedHeader({ alg: 'RS256' })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(404);
 			expect(middlewareFetchMock).not.toHaveBeenCalled();
 		});
 
-		it("refuses a token without kid when the set holds two usable keys", async () => {
+		it('refuses a token without kid when the set holds two usable keys', async () => {
 			const first = await generateTestKeyPair();
 			const second = await generateTestKeyPair();
-			const issuer = "https://token.actions.githubusercontent.com";
+			const issuer = 'https://token.actions.githubusercontent.com';
 			const keys = await Promise.all(
 				[first, second].map(async ({ publicKey }, index) => ({
 					...(await exportTestJwk(publicKey)),
 					kid: `rotation-${index}`,
-					use: "sig",
+					use: 'sig',
 				})),
 			);
 			await env.JWKS_CACHE.put(`jwks:${issuer}`, JSON.stringify({ keys }));
 
 			const token = await new TestJwt({
 				iss: issuer,
-				sub: "repo:user/repo:ref:refs/heads/main",
-				aud: "gpg-signing-service",
+				sub: 'repo:user/repo:ref:refs/heads/main',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256" })
+				.setProtectedHeader({ alg: 'RS256' })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(first.privateKey);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(401);
-			expect((await parseJson<{ error: string }>(response)).error).toBe("Key not found");
+			expect((await parseJson<{ error: string }>(response)).error).toBe('Key not found');
 		});
 
 		it.each([
-			{ name: "a numeric sub", claims: { sub: 42, iat: Math.floor(Date.now() / 1000) } },
-			{ name: "a string iat", claims: { sub: "repo:user/repo:ref:refs/heads/main", iat: "123" } },
-		])("refuses a correctly signed token with $name as invalid claims", async ({ claims }) => {
+			{ name: 'a numeric sub', claims: { sub: 42, iat: Math.floor(Date.now() / 1000) } },
+			{ name: 'a string iat', claims: { sub: 'repo:user/repo:ref:refs/heads/main', iat: '123' } },
+		])('refuses a correctly signed token with $name as invalid claims', async ({ claims }) => {
 			const { publicKey, privateKey } = await generateTestKeyPair();
-			const issuer = "https://token.actions.githubusercontent.com";
-			const kid = "typed-claims-key";
+			const issuer = 'https://token.actions.githubusercontent.com';
+			const kid = 'typed-claims-key';
 			await setupJWKSMock(issuer, kid, publicKey);
 
-			const token = await new TestJwt({ iss: issuer, aud: "gpg-signing-service", ...claims })
-				.setProtectedHeader({ alg: "RS256", kid })
-				.setExpirationTime("1h")
+			const token = await new TestJwt({ iss: issuer, aud: 'gpg-signing-service', ...claims })
+				.setProtectedHeader({ alg: 'RS256', kid })
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(401);
 			const body = await parseJson<{ code: string; error: string }>(response);
-			expect(body.code).toBe("AUTH_INVALID");
-			expect(body.error).toBe("Invalid token claims");
+			expect(body.code).toBe('AUTH_INVALID');
+			expect(body.error).toBe('Invalid token claims');
 		});
 
-		it("refetches when the cached entry is not a JWK Set", async () => {
+		it('refetches when the cached entry is not a JWK Set', async () => {
 			const { publicKey, privateKey } = await generateTestKeyPair();
-			const issuer = "https://token.actions.githubusercontent.com";
-			const kid = "recovered-key";
-			await env.JWKS_CACHE.put(`jwks:${issuer}`, "not a jwk set");
+			const issuer = 'https://token.actions.githubusercontent.com';
+			const kid = 'recovered-key';
+			await env.JWKS_CACHE.put(`jwks:${issuer}`, 'not a jwk set');
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			const token = await new TestJwt({
 				iss: issuer,
-				sub: "repo:user/repo:ref:refs/heads/main",
-				aud: "gpg-signing-service",
+				sub: 'repo:user/repo:ref:refs/heads/main',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid })
+				.setProtectedHeader({ alg: 'RS256', kid })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(404);
 			expect(middlewareFetchMock).toHaveBeenCalledWith(`${issuer}/jwks`, {}, 10000);
 		});
 
-		it("should handle cache put failure", async () => {
+		it('should handle cache put failure', async () => {
 			const { publicKey, privateKey } = await generateTestKeyPair();
-			const issuer = "https://token.actions.githubusercontent.com";
-			const kid = "test-key";
+			const issuer = 'https://token.actions.githubusercontent.com';
+			const kid = 'test-key';
 
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			// Mock cache put to fail
-			const putSpy = vi.spyOn(env.JWKS_CACHE, "put").mockRejectedValue(new Error("Cache error"));
+			const putSpy = vi.spyOn(env.JWKS_CACHE, 'put').mockRejectedValue(new Error('Cache error'));
 
 			try {
 				const token = await new TestJwt({
 					iss: issuer,
-					sub: "repo:test/svc",
-					aud: "gpg-signing-service",
+					sub: 'repo:test/svc',
+					aud: 'gpg-signing-service',
 				})
-					.setProtectedHeader({ alg: "RS256", kid })
+					.setProtectedHeader({ alg: 'RS256', kid })
 					.setIssuedAt()
-					.setExpirationTime("1h")
+					.setExpirationTime('1h')
 					.sign(privateKey);
 
-				const response = await makeRequest("/sign", {
-					method: "POST",
+				const response = await makeRequest('/sign', {
+					method: 'POST',
 					headers: { Authorization: `Bearer ${token}` },
-					body: "commit data",
+					body: 'commit data',
 				});
 
 				// Should still succeed despite cache error
@@ -1706,85 +1706,85 @@ describe("Security Headers Middleware", () => {
 			}
 		});
 
-		it("should reject missing authorization header", async () => {
-			const response = await makeRequest("/sign", {
-				method: "POST",
-				body: "commit data",
+		it('should reject missing authorization header', async () => {
+			const response = await makeRequest('/sign', {
+				method: 'POST',
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(401);
 			const body = (await response.json()) as { code: string };
-			expect(body.code).toBe("AUTH_MISSING");
+			expect(body.code).toBe('AUTH_MISSING');
 		});
 
-		it("should reject non-Bearer authorization", async () => {
-			const response = await makeRequest("/sign", {
-				method: "POST",
-				headers: { Authorization: "Basic dXNlcjpwYXNz" },
-				body: "commit data",
+		it('should reject non-Bearer authorization', async () => {
+			const response = await makeRequest('/sign', {
+				method: 'POST',
+				headers: { Authorization: 'Basic dXNlcjpwYXNz' },
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(401);
 			const body = (await response.json()) as { code: string };
-			expect(body.code).toBe("AUTH_MISSING");
+			expect(body.code).toBe('AUTH_MISSING');
 		});
 
-		it("should reject token with wrong number of parts", async () => {
-			const response = await makeRequest("/sign", {
-				method: "POST",
-				headers: { Authorization: "Bearer only.two" },
-				body: "commit data",
+		it('should reject token with wrong number of parts', async () => {
+			const response = await makeRequest('/sign', {
+				method: 'POST',
+				headers: { Authorization: 'Bearer only.two' },
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(401);
 			const body = (await response.json()) as { error: string; code: string };
-			expect(body.code).toBe("AUTH_INVALID");
-			expect(body.error).toContain("Invalid token format");
+			expect(body.code).toBe('AUTH_INVALID');
+			expect(body.error).toContain('Invalid token format');
 		});
 
-		it("should reject token with invalid base64 encoding", async () => {
-			const response = await makeRequest("/sign", {
-				method: "POST",
-				headers: { Authorization: "Bearer !!!.!!!.!!!" },
-				body: "commit data",
+		it('should reject token with invalid base64 encoding', async () => {
+			const response = await makeRequest('/sign', {
+				method: 'POST',
+				headers: { Authorization: 'Bearer !!!.!!!.!!!' },
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(401);
 			const body = (await response.json()) as { error: string; code: string };
-			expect(body.code).toBe("AUTH_INVALID");
+			expect(body.code).toBe('AUTH_INVALID');
 		});
 
-		it("should validate a correct token", async () => {
+		it('should validate a correct token', async () => {
 			const { publicKey, privateKey } = await generateTestKeyPair();
-			const issuer = "https://token.actions.githubusercontent.com/unique-test-issuer";
-			const kid = "test-key";
+			const issuer = 'https://token.actions.githubusercontent.com/unique-test-issuer';
+			const kid = 'test-key';
 
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			const token = await new TestJwt({
 				iss: issuer,
-				sub: "repo:user/repo:ref:refs/heads/main",
-				aud: "gpg-signing-service",
+				sub: 'repo:user/repo:ref:refs/heads/main',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid })
+				.setProtectedHeader({ alg: 'RS256', kid })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
 			// We expect 400 because the token is valid but the body is empty/invalid for the endpoint
 			// This proves authentication passed
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).not.toBe(401);
 		});
 
-		it("should reject token signed by unknown key", async () => {
+		it('should reject token signed by unknown key', async () => {
 			// Clean cache to avoid stale JWKS from previous tests
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
 			// Reset mocks to ensure clean state
 			vi.resetAllMocks();
 			middlewareFetchMock.mockReset();
@@ -1792,156 +1792,156 @@ describe("Security Headers Middleware", () => {
 			validateUrlMock.mockResolvedValue(undefined);
 
 			const { privateKey } = await generateTestKeyPair();
-			const issuer = "https://token.actions.githubusercontent.com";
+			const issuer = 'https://token.actions.githubusercontent.com';
 
 			// Setup mock with DIFFERENT key
 			const { publicKey: otherKey } = await generateTestKeyPair();
-			await setupJWKSMock(issuer, "other-key", otherKey);
+			await setupJWKSMock(issuer, 'other-key', otherKey);
 
 			const token = await new TestJwt({
 				iss: issuer,
-				sub: "repo:test/svc",
-				aud: "gpg-signing-service",
+				sub: 'repo:test/svc',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid: "unknown-key" })
+				.setProtectedHeader({ alg: 'RS256', kid: 'unknown-key' })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(401);
 			const body = (await response.json()) as { error: string };
-			expect(body.error).toContain("Key not found");
+			expect(body.error).toContain('Key not found');
 
 			// Final cleanup for this specific test
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
 			vi.resetAllMocks();
 		});
 
-		it("should reject token with invalid signature", async () => {
+		it('should reject token with invalid signature', async () => {
 			const { publicKey } = await generateTestKeyPair();
 			const { privateKey: otherKey } = await generateTestKeyPair();
-			const issuer = "https://token.actions.githubusercontent.com";
-			const kid = "test-key";
+			const issuer = 'https://token.actions.githubusercontent.com';
+			const kid = 'test-key';
 
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			// Sign with WRONG private key but claim it's the correct kid
 			const token = await new TestJwt({
 				iss: issuer,
-				sub: "repo:test/svc",
-				aud: "gpg-signing-service",
+				sub: 'repo:test/svc',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid })
+				.setProtectedHeader({ alg: 'RS256', kid })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(otherKey);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(401);
 			const body = (await response.json()) as { error: string };
-			expect(body.error).toContain("Invalid token signature");
+			expect(body.error).toContain('Invalid token signature');
 		});
 
-		it("rejects a token whose payload changed after signing, and accepts the original", async () => {
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+		it('rejects a token whose payload changed after signing, and accepts the original', async () => {
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
 			const { privateKey, publicKey } = await generateTestKeyPair();
-			const issuer = "https://token.actions.githubusercontent.com";
-			const kid = "tamper-key";
+			const issuer = 'https://token.actions.githubusercontent.com';
+			const kid = 'tamper-key';
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			const token = await new TestJwt({
 				iss: issuer,
-				sub: "repo:user/repo:ref:refs/heads/main",
-				aud: "gpg-signing-service",
+				sub: 'repo:user/repo:ref:refs/heads/main',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid })
+				.setProtectedHeader({ alg: 'RS256', kid })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
-			const [header, payload, signature] = token.split(".");
-			const claims: Record<string, unknown> = JSON.parse(atob((payload ?? "").replace(/-/g, "+").replace(/_/g, "/")));
-			claims.sub = "repo:attacker/repo:ref:refs/heads/main";
+			const [header, payload, signature] = token.split('.');
+			const claims: Record<string, unknown> = JSON.parse(atob((payload ?? '').replace(/-/g, '+').replace(/_/g, '/')));
+			claims.sub = 'repo:attacker/repo:ref:refs/heads/main';
 			const forged = base64url(JSON.stringify(claims));
 			const tampered = `${header}.${forged}.${signature}`;
 
 			const send = (bearer: string) =>
-				makeRequest("/sign", {
-					method: "POST",
+				makeRequest('/sign', {
+					method: 'POST',
 					headers: { Authorization: `Bearer ${bearer}` },
-					body: "commit data",
+					body: 'commit data',
 				});
 
 			const refused = await send(tampered);
 			expect(refused.status).toBe(401);
-			expect((await parseJson<{ error: string }>(refused)).error).toBe("Invalid token signature");
+			expect((await parseJson<{ error: string }>(refused)).error).toBe('Invalid token signature');
 
 			// 404 means OIDC passed and the request reached the route.
 			expect((await send(token)).status).toBe(404);
 		});
 
-		it("should reject token with disallowed algorithm", async () => {
+		it('should reject token with disallowed algorithm', async () => {
 			const { privateKey } = await generateTestKeyPair();
 			const token = await new TestJwt({
-				iss: "https://token.actions.githubusercontent.com",
-				sub: "repo:test/svc",
-				aud: "gpg-signing-service",
+				iss: 'https://token.actions.githubusercontent.com',
+				sub: 'repo:test/svc',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "HS256", kid: "test" })
+				.setProtectedHeader({ alg: 'HS256', kid: 'test' })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(401);
 			const body = await parseJson<{ error: string; hint: string }>(response);
-			expect(body.error).toContain("Algorithm not allowed");
+			expect(body.error).toContain('Algorithm not allowed');
 			// Missing from the reference's table until now, which meant the docs
 			// link — the whole point of the field — landed on a page that did not
 			// mention the fault the reader had.
-			expect(body.hint).toContain("RS256");
+			expect(body.hint).toContain('RS256');
 		});
 
-		it("should reject token from disallowed issuer", async () => {
+		it('should reject token from disallowed issuer', async () => {
 			const { privateKey } = await generateTestKeyPair();
 			const token = await new TestJwt({
-				iss: "https://malicious-issuer.com",
-				sub: "repo:test/svc",
-				aud: "gpg-signing-service",
+				iss: 'https://malicious-issuer.com',
+				sub: 'repo:test/svc',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid: "test" })
+				.setProtectedHeader({ alg: 'RS256', kid: 'test' })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(401);
 			const body = (await response.json()) as { error: string };
-			expect(body.error).toContain("Issuer not allowed");
+			expect(body.error).toContain('Issuer not allowed');
 		});
 
-		it("does not enumerate the accepted issuers to a caller who presented no credential", async () => {
+		it('does not enumerate the accepted issuers to a caller who presented no credential', async () => {
 			// The issuer check runs before the timing check, the audience check and
 			// the JWKS fetch, so this token — a header and a payload, signature a
 			// literal — reaches it. Nothing was verified and nothing ever will be,
@@ -1949,162 +1949,162 @@ describe("Security Headers Middleware", () => {
 			// every issuer this deployment accepts would hand a self-hoster's
 			// internal Keycloak hostname to anyone who can reach the worker.
 			const unsigned = unsignedJwt(
-				{ alg: "RS256", kid: "x" },
+				{ alg: 'RS256', kid: 'x' },
 				{
-					iss: "https://whatever.example",
-					sub: "repo:x/y",
-					aud: "gpg-signing-service",
+					iss: 'https://whatever.example',
+					sub: 'repo:x/y',
+					aud: 'gpg-signing-service',
 					exp: Math.floor(Date.now() / 1000) + 3600,
 				},
 			);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${unsigned}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(401);
 			const body = await parseJson<{ error: string; code: string; hint: string }>(response);
-			expect(body.code).toBe("AUTH_INVALID");
+			expect(body.code).toBe('AUTH_INVALID');
 			// The refused issuer is the caller's own value and stays in the message.
-			expect(body.error).toContain("https://whatever.example");
+			expect(body.error).toContain('https://whatever.example');
 			// The knob is named; the values behind it are not.
-			expect(body.hint).toContain("ALLOWED_ISSUERS");
-			expect(body.hint).not.toContain("token.actions.githubusercontent.com");
-			expect(body.hint).not.toContain("gitlab.com");
+			expect(body.hint).toContain('ALLOWED_ISSUERS');
+			expect(body.hint).not.toContain('token.actions.githubusercontent.com');
+			expect(body.hint).not.toContain('gitlab.com');
 		});
 
-		it("names the accepted issuers only where the deployment opted in", async () => {
+		it('names the accepted issuers only where the deployment opted in', async () => {
 			const unsigned = unsignedJwt(
-				{ alg: "RS256", kid: "x" },
+				{ alg: 'RS256', kid: 'x' },
 				{
-					iss: "https://whatever.example",
-					sub: "repo:x/y",
-					aud: "gpg-signing-service",
+					iss: 'https://whatever.example',
+					sub: 'repo:x/y',
+					aud: 'gpg-signing-service',
 					exp: Math.floor(Date.now() / 1000) + 3600,
 				},
 			);
 
 			const response = await makeRequest(
-				"/sign",
-				{ method: "POST", headers: { Authorization: `Bearer ${unsigned}` }, body: "commit data" },
-				{ DISCLOSE_TRUST_PATTERNS: "true" },
+				'/sign',
+				{ method: 'POST', headers: { Authorization: `Bearer ${unsigned}` }, body: 'commit data' },
+				{ DISCLOSE_TRUST_PATTERNS: 'true' },
 			);
 
 			const body = await parseJson<{ hint: string }>(response);
-			expect(body.hint).toContain("ALLOWED_ISSUERS");
-			expect(body.hint).toContain("https://token.actions.githubusercontent.com");
+			expect(body.hint).toContain('ALLOWED_ISSUERS');
+			expect(body.hint).toContain('https://token.actions.githubusercontent.com');
 		});
 
-		it("has nothing to name when the opted-in deployment accepts no issuers", async () => {
+		it('has nothing to name when the opted-in deployment accepts no issuers', async () => {
 			// An empty ALLOWED_ISSUERS refuses everyone, and "It currently accepts:
 			// ." is a worse sentence than the one that names only the knob.
 			const unsigned = unsignedJwt(
-				{ alg: "RS256", kid: "x" },
+				{ alg: 'RS256', kid: 'x' },
 				{
-					iss: "https://whatever.example",
-					sub: "repo:x/y",
-					aud: "gpg-signing-service",
+					iss: 'https://whatever.example',
+					sub: 'repo:x/y',
+					aud: 'gpg-signing-service',
 					exp: Math.floor(Date.now() / 1000) + 3600,
 				},
 			);
 
 			const response = await makeRequest(
-				"/sign",
-				{ method: "POST", headers: { Authorization: `Bearer ${unsigned}` }, body: "commit data" },
-				{ DISCLOSE_TRUST_PATTERNS: "true", ALLOWED_ISSUERS: "" as Env["ALLOWED_ISSUERS"] },
+				'/sign',
+				{ method: 'POST', headers: { Authorization: `Bearer ${unsigned}` }, body: 'commit data' },
+				{ DISCLOSE_TRUST_PATTERNS: 'true', ALLOWED_ISSUERS: '' as Env['ALLOWED_ISSUERS'] },
 			);
 
 			const body = await parseJson<{ hint: string }>(response);
-			expect(body.hint).toContain("ALLOWED_ISSUERS");
-			expect(body.hint).not.toContain("It currently accepts");
+			expect(body.hint).toContain('ALLOWED_ISSUERS');
+			expect(body.hint).not.toContain('It currently accepts');
 		});
 
-		it("should reject expired token", async () => {
+		it('should reject expired token', async () => {
 			const { privateKey } = await generateTestKeyPair();
 			const token = await new TestJwt({
-				iss: "https://token.actions.githubusercontent.com",
-				sub: "repo:test/svc",
-				aud: "gpg-signing-service",
+				iss: 'https://token.actions.githubusercontent.com',
+				sub: 'repo:test/svc',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid: "test" })
+				.setProtectedHeader({ alg: 'RS256', kid: 'test' })
 				.setIssuedAt()
-				.setExpirationTime("-1h") // Expired
+				.setExpirationTime('-1h') // Expired
 				.sign(privateKey);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(401);
 			const body = (await response.json()) as { error: string };
-			expect(body.error).toContain("Token expired");
+			expect(body.error).toContain('Token expired');
 		});
 
-		it("should reject token not yet valid (nbf)", async () => {
+		it('should reject token not yet valid (nbf)', async () => {
 			const { privateKey } = await generateTestKeyPair();
 			const token = await new TestJwt({
-				iss: "https://token.actions.githubusercontent.com",
-				sub: "repo:test/svc",
-				aud: "gpg-signing-service",
+				iss: 'https://token.actions.githubusercontent.com',
+				sub: 'repo:test/svc',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid: "test" })
+				.setProtectedHeader({ alg: 'RS256', kid: 'test' })
 				.setIssuedAt()
-				.setNotBefore("1h") // Not valid yet
-				.setExpirationTime("2h")
+				.setNotBefore('1h') // Not valid yet
+				.setExpirationTime('2h')
 				.sign(privateKey);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(401);
 			const body = (await response.json()) as { error: string };
-			expect(body.error).toContain("Token not yet valid");
+			expect(body.error).toContain('Token not yet valid');
 		});
 
 		async function createToken(
 			claims: object = {},
 			keyPair?: TestKeyPair,
-			alg: string = "RS256",
-			kid: string = "test-key",
+			alg: string = 'RS256',
+			kid: string = 'test-key',
 		) {
 			if (!keyPair) {
 				keyPair = await generateTestKeyPair();
 			}
 			return new TestJwt({
-				iss: "https://token.actions.githubusercontent.com",
-				sub: "repo:user/repo:ref:refs/heads/main",
-				aud: "gpg-signing-service",
+				iss: 'https://token.actions.githubusercontent.com',
+				sub: 'repo:user/repo:ref:refs/heads/main',
+				aud: 'gpg-signing-service',
 				...claims,
 			})
 				.setProtectedHeader({ alg, kid })
 				.setIssuedAt()
-				.setExpirationTime("1h")
+				.setExpirationTime('1h')
 				.sign(keyPair.privateKey);
 		}
 
-		it("should use cached JWKS", async () => {
+		it('should use cached JWKS', async () => {
 			const keyPair = await generateTestKeyPair();
-			const token = await createToken({}, keyPair, "RS256", "test-key-RS256");
+			const token = await createToken({}, keyPair, 'RS256', 'test-key-RS256');
 			const jwk = await exportTestJwk(keyPair.publicKey);
-			jwk.kid = "test-key-RS256";
-			jwk.use = "sig";
+			jwk.kid = 'test-key-RS256';
+			jwk.use = 'sig';
 
 			// Use real KV for this test
-			await env.JWKS_CACHE.put("jwks:https://token.actions.githubusercontent.com", JSON.stringify({ keys: [jwk] }));
+			await env.JWKS_CACHE.put('jwks:https://token.actions.githubusercontent.com', JSON.stringify({ keys: [jwk] }));
 
 			const response = await makeRequest(
-				"/sign",
+				'/sign',
 				{
-					method: "POST",
+					method: 'POST',
 					headers: { Authorization: `Bearer ${token}` },
-					body: "commit data",
+					body: 'commit data',
 				},
 				// No custom env needed, using real (isolated) KV
 			);
@@ -2113,105 +2113,105 @@ describe("Security Headers Middleware", () => {
 			expect(response.status).toBe(404);
 		});
 
-		it("should reject token with wrong audience", async () => {
-			const token = await createToken({ aud: "wrong-audience" });
-			const response = await makeRequest("/sign", {
-				method: "POST",
+		it('should reject token with wrong audience', async () => {
+			const token = await createToken({ aud: 'wrong-audience' });
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 			expect(response.status).toBe(401);
 			const body = await parseJson<{ error: string }>(response);
-			expect(body.error).toBe("Invalid token audience");
+			expect(body.error).toBe('Invalid token audience');
 		});
 
-		it("should accept token with array audience containing correct audience", async () => {
+		it('should accept token with array audience containing correct audience', async () => {
 			// Clean up cache to ensure no pollution
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
 
 			const { privateKey, publicKey } = await generateTestKeyPair();
-			const issuer = "https://token.actions.githubusercontent.com";
-			const kid = "test-key";
+			const issuer = 'https://token.actions.githubusercontent.com';
+			const kid = 'test-key';
 
 			await setupJWKSMock(issuer, kid, publicKey);
 
 			const token = await createToken(
-				{ aud: ["other-service", "gpg-signing-service"] },
+				{ aud: ['other-service', 'gpg-signing-service'] },
 				{ privateKey, publicKey },
-				"RS256",
+				'RS256',
 				kid,
 			);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 			// 404 means OIDC passed
 			expect(response.status).toBe(404);
 		});
 
-		it("should handle non-Error exceptions during validation", async () => {
+		it('should handle non-Error exceptions during validation', async () => {
 			const { privateKey, publicKey } = await generateTestKeyPair();
 			const token = await createToken({}, { privateKey, publicKey });
 
 			// Mock JWKS_CACHE to throw a string
-			vi.spyOn(env.JWKS_CACHE, "get").mockRejectedValue("String error");
+			vi.spyOn(env.JWKS_CACHE, 'get').mockRejectedValue('String error');
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(401);
 			const body = await parseJson<{ error: string }>(response);
-			expect(body.error).toBe("Invalid token");
+			expect(body.error).toBe('Invalid token');
 		});
 
-		describe("Algorithm Support", () => {
+		describe('Algorithm Support', () => {
 			async function requestWithAlg(alg: string) {
-				await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+				await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
 
 				const { privateKey, publicKey } = await generateTestKeyPair();
 				const jwk = await exportTestJwk(publicKey);
 				jwk.kid = `test-key-${alg}`;
-				jwk.use = "sig";
+				jwk.use = 'sig';
 
 				middlewareFetchMock.mockImplementation(async (url) => {
-					if (url === "https://token.actions.githubusercontent.com/.well-known/openid-configuration") {
-						return new Response(JSON.stringify({ jwks_uri: "https://token.actions.githubusercontent.com/jwks" }));
+					if (url === 'https://token.actions.githubusercontent.com/.well-known/openid-configuration') {
+						return new Response(JSON.stringify({ jwks_uri: 'https://token.actions.githubusercontent.com/jwks' }));
 					}
-					if (url === "https://token.actions.githubusercontent.com/jwks") {
+					if (url === 'https://token.actions.githubusercontent.com/jwks') {
 						return new Response(JSON.stringify({ keys: [jwk] }));
 					}
-					return new Response("Not Found", { status: 404 });
+					return new Response('Not Found', { status: 404 });
 				});
 
 				const token = await new TestJwt({
-					iss: "https://token.actions.githubusercontent.com",
-					sub: "repo:user/repo:ref:refs/heads/main",
-					aud: "gpg-signing-service",
+					iss: 'https://token.actions.githubusercontent.com',
+					sub: 'repo:user/repo:ref:refs/heads/main',
+					aud: 'gpg-signing-service',
 				})
 					.setProtectedHeader({ alg, kid: jwk.kid })
 					.setIssuedAt()
-					.setExpirationTime("1h")
+					.setExpirationTime('1h')
 					.sign(privateKey);
 
-				return makeRequest("/sign", {
-					method: "POST",
+				return makeRequest('/sign', {
+					method: 'POST',
 					headers: { Authorization: `Bearer ${token}` },
-					body: "commit data",
+					body: 'commit data',
 				});
 			}
 
-			it("accepts RS256", async () => {
+			it('accepts RS256', async () => {
 				// 404 means OIDC passed and the request reached the route.
-				expect((await requestWithAlg("RS256")).status).toBe(404);
+				expect((await requestWithAlg('RS256')).status).toBe(404);
 			});
 
-			it.each(["RS384", "RS512", "PS256", "ES256", "ES384", "none"])(
-				"refuses %s before fetching a key",
+			it.each(['RS384', 'RS512', 'PS256', 'ES256', 'ES384', 'none'])(
+				'refuses %s before fetching a key',
 				async (alg) => {
 					const response = await requestWithAlg(alg);
 
@@ -2223,37 +2223,37 @@ describe("Security Headers Middleware", () => {
 		});
 	});
 
-	describe("Admin Auth Middleware", () => {
-		it("should reject missing authorization header", async () => {
-			const response = await makeRequest("/admin/keys");
+	describe('Admin Auth Middleware', () => {
+		it('should reject missing authorization header', async () => {
+			const response = await makeRequest('/admin/keys');
 
 			expect(response.status).toBe(401);
 			const body = (await response.json()) as { code: string };
-			expect(body.code).toBe("AUTH_MISSING");
+			expect(body.code).toBe('AUTH_MISSING');
 		});
 
-		it("should reject non-Bearer authorization", async () => {
-			const response = await makeRequest("/admin/keys", {
-				headers: { Authorization: "Basic dXNlcjpwYXNz" },
+		it('should reject non-Bearer authorization', async () => {
+			const response = await makeRequest('/admin/keys', {
+				headers: { Authorization: 'Basic dXNlcjpwYXNz' },
 			});
 
 			expect(response.status).toBe(401);
 			const body = (await response.json()) as { code: string };
-			expect(body.code).toBe("AUTH_MISSING");
+			expect(body.code).toBe('AUTH_MISSING');
 		});
 
-		it("should reject invalid admin token", async () => {
-			const response = await makeRequest("/admin/keys", {
-				headers: { Authorization: "Bearer wrong-token" },
+		it('should reject invalid admin token', async () => {
+			const response = await makeRequest('/admin/keys', {
+				headers: { Authorization: 'Bearer wrong-token' },
 			});
 
 			expect(response.status).toBe(401);
 			const body = (await response.json()) as { code: string };
-			expect(body.code).toBe("AUTH_INVALID");
+			expect(body.code).toBe('AUTH_INVALID');
 		});
 
-		it("should accept valid admin token", async () => {
-			const response = await makeRequest("/admin/keys", {
+		it('should accept valid admin token', async () => {
+			const response = await makeRequest('/admin/keys', {
 				headers: { Authorization: `Bearer ${env.ADMIN_TOKEN}` },
 			});
 
@@ -2261,28 +2261,28 @@ describe("Security Headers Middleware", () => {
 			expect(response.status).not.toBe(401);
 		});
 
-		it("should handle rate limiter failure", async () => {
+		it('should handle rate limiter failure', async () => {
 			// Mock RATE_LIMITER failure
 			const originalIdFromName = env.RATE_LIMITER.idFromName;
 			env.RATE_LIMITER.idFromName = () => {
-				throw new Error("Rate limiter failure");
+				throw new Error('Rate limiter failure');
 			};
 
 			try {
-				const response = await makeRequest("/admin/keys", {
+				const response = await makeRequest('/admin/keys', {
 					headers: { Authorization: `Bearer ${env.ADMIN_TOKEN}` },
 				});
 
 				expect(response.status).toBe(503);
 				const body = (await response.json()) as { code: string };
-				expect(body.code).toBe("RATE_LIMIT_ERROR");
+				expect(body.code).toBe('RATE_LIMIT_ERROR');
 			} finally {
 				env.RATE_LIMITER.idFromName = originalIdFromName;
 			}
 		});
 	});
 
-	describe("SSRF Protection in OIDC", () => {
+	describe('SSRF Protection in OIDC', () => {
 		beforeEach(async () => {
 			vi.resetAllMocks();
 			middlewareFetchMock.mockReset();
@@ -2290,9 +2290,9 @@ describe("Security Headers Middleware", () => {
 			// Default: validateUrl passes
 			validateUrlMock.mockResolvedValue(undefined);
 			// Clean up KV cache to avoid pollution from other tests
-			await env.JWKS_CACHE.delete("jwks:https://10.0.0.1");
-			await env.JWKS_CACHE.delete("jwks:https://malicious.example.com");
-			await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
+			await env.JWKS_CACHE.delete('jwks:https://10.0.0.1');
+			await env.JWKS_CACHE.delete('jwks:https://malicious.example.com');
+			await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
 		});
 
 		afterEach(async () => {
@@ -2301,38 +2301,38 @@ describe("Security Headers Middleware", () => {
 			validateUrlMock.mockReset();
 			// Clean up all cache keys used in SSRF tests
 			try {
-				await env.JWKS_CACHE.delete("jwks:https://10.0.0.1");
-				await env.JWKS_CACHE.delete("jwks:https://malicious.example.com");
-				await env.JWKS_CACHE.delete("jwks:https://token.actions.githubusercontent.com");
-				await env.JWKS_CACHE.delete("jwks:https://169.254.169.254");
-				await env.JWKS_CACHE.delete("jwks:https://internal-service");
+				await env.JWKS_CACHE.delete('jwks:https://10.0.0.1');
+				await env.JWKS_CACHE.delete('jwks:https://malicious.example.com');
+				await env.JWKS_CACHE.delete('jwks:https://token.actions.githubusercontent.com');
+				await env.JWKS_CACHE.delete('jwks:https://169.254.169.254');
+				await env.JWKS_CACHE.delete('jwks:https://internal-service');
 			} catch {
 				// Suppress errors from cache deletes (keys might not exist)
 			}
 		});
 
-		it("should block SSRF in OIDC wellKnown URL with Error object", async () => {
+		it('should block SSRF in OIDC wellKnown URL with Error object', async () => {
 			// First call to validateUrl (wellKnown URL) throws Error
-			validateUrlMock.mockRejectedValueOnce(new Error("Access to private IP range 10.0.0.0/8 is forbidden"));
+			validateUrlMock.mockRejectedValueOnce(new Error('Access to private IP range 10.0.0.0/8 is forbidden'));
 
 			const { privateKey } = await generateTestKeyPair();
 			const token = await new TestJwt({
-				iss: "https://10.0.0.1",
-				sub: "repo:test-subject/svc",
-				aud: "gpg-signing-service",
+				iss: 'https://10.0.0.1',
+				sub: 'repo:test-subject/svc',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid: "test-key" })
-				.setExpirationTime("1h")
+				.setProtectedHeader({ alg: 'RS256', kid: 'test-key' })
+				.setExpirationTime('1h')
 				.sign(privateKey);
 
 			const response = await makeRequest(
-				"/sign",
+				'/sign',
 				{
-					method: "POST",
+					method: 'POST',
 					headers: { Authorization: `Bearer ${token}` },
-					body: "commit data",
+					body: 'commit data',
 				},
-				{ ALLOWED_ISSUERS: "https://10.0.0.1" as Env["ALLOWED_ISSUERS"] },
+				{ ALLOWED_ISSUERS: 'https://10.0.0.1' as Env['ALLOWED_ISSUERS'] },
 			);
 
 			// A configured issuer whose discovery URL this deployment refuses to
@@ -2348,114 +2348,114 @@ describe("Security Headers Middleware", () => {
 			// loop again one layer up, where nothing can tell it to stop.
 			expect(response.status).toBe(500);
 			const body = await parseJson<{ error: string; code: string; hint: string; docs: string }>(response);
-			expect(body.error).toContain("SSRF protection");
-			expect(body.code).toBe("SERVICE_MISCONFIGURED");
-			expect(response.headers.get("Retry-After")).toBeNull();
-			expect(body.hint).toContain("ALLOWED_ISSUERS");
+			expect(body.error).toContain('SSRF protection');
+			expect(body.code).toBe('SERVICE_MISCONFIGURED');
+			expect(response.headers.get('Retry-After')).toBeNull();
+			expect(body.hint).toContain('ALLOWED_ISSUERS');
 			// The hint says the thing the code says, for the human who is reading a
 			// CI log rather than branching on a field.
-			expect(body.hint).toContain("same answer every time");
+			expect(body.hint).toContain('same answer every time');
 			// And the link lands on the section that explains why this one is not
 			// worth retrying, rather than on SERVICE_DEGRADED's "wait and call
 			// again".
-			expect(body.docs).toBe("http://localhost/e/SERVICE_MISCONFIGURED");
+			expect(body.docs).toBe('http://localhost/e/SERVICE_MISCONFIGURED');
 		});
 
-		it("should block SSRF in OIDC wellKnown URL with non-Error", async () => {
+		it('should block SSRF in OIDC wellKnown URL with non-Error', async () => {
 			// First call throws non-Error object
-			validateUrlMock.mockRejectedValueOnce("String error");
+			validateUrlMock.mockRejectedValueOnce('String error');
 
 			const token = await new TestJwt({
-				iss: "https://malicious.example.com",
-				sub: "repo:test-subject/svc",
-				aud: "gpg-signing-service",
+				iss: 'https://malicious.example.com',
+				sub: 'repo:test-subject/svc',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid: "test-key" })
-				.setExpirationTime("1h")
+				.setProtectedHeader({ alg: 'RS256', kid: 'test-key' })
+				.setExpirationTime('1h')
 				.sign((await generateTestKeyPair()).privateKey);
 
 			const response = await makeRequest(
-				"/sign",
+				'/sign',
 				{
-					method: "POST",
+					method: 'POST',
 					headers: { Authorization: `Bearer ${token}` },
-					body: "commit data",
+					body: 'commit data',
 				},
 				{
-					ALLOWED_ISSUERS: "https://malicious.example.com" as Env["ALLOWED_ISSUERS"],
+					ALLOWED_ISSUERS: 'https://malicious.example.com' as Env['ALLOWED_ISSUERS'],
 				},
 			);
 
 			expect(response.status).toBe(500);
 			const body = await parseJson<{ error: string; code: string }>(response);
-			expect(body.error).toContain("SSRF protection: Invalid URL");
-			expect(body.code).toBe("SERVICE_MISCONFIGURED");
+			expect(body.error).toContain('SSRF protection: Invalid URL');
+			expect(body.code).toBe('SERVICE_MISCONFIGURED');
 		});
 
-		it("should block SSRF in JWKS URI with Error object", async () => {
+		it('should block SSRF in JWKS URI with Error object', async () => {
 			// First validateUrl call passes (wellKnown), second throws (jwks_uri)
 			validateUrlMock
 				.mockResolvedValueOnce(undefined) // wellKnown URL passes
-				.mockRejectedValueOnce(new Error("Access to cloud metadata endpoints is forbidden")); // jwks_uri fails
+				.mockRejectedValueOnce(new Error('Access to cloud metadata endpoints is forbidden')); // jwks_uri fails
 
 			// Mock OIDC config response with malicious jwks_uri
 			middlewareFetchMock.mockResolvedValueOnce(
 				new Response(
 					JSON.stringify({
-						jwks_uri: "https://169.254.169.254/latest/meta-data/",
+						jwks_uri: 'https://169.254.169.254/latest/meta-data/',
 					}),
 				),
 			);
 
 			const token = await new TestJwt({
-				iss: "https://token.actions.githubusercontent.com",
-				sub: "repo:test-subject/svc",
-				aud: "gpg-signing-service",
+				iss: 'https://token.actions.githubusercontent.com',
+				sub: 'repo:test-subject/svc',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid: "test-key" })
-				.setExpirationTime("1h")
+				.setProtectedHeader({ alg: 'RS256', kid: 'test-key' })
+				.setExpirationTime('1h')
 				.sign((await generateTestKeyPair()).privateKey);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(500);
 			const body = await parseJson<{ error: string; code: string }>(response);
-			expect(body.error).toContain("SSRF protection");
-			expect(body.code).toBe("SERVICE_MISCONFIGURED");
-			expect(response.headers.get("Retry-After")).toBeNull();
+			expect(body.error).toContain('SSRF protection');
+			expect(body.code).toBe('SERVICE_MISCONFIGURED');
+			expect(response.headers.get('Retry-After')).toBeNull();
 		});
 
-		it("should block SSRF in JWKS URI with non-Error", async () => {
+		it('should block SSRF in JWKS URI with non-Error', async () => {
 			// First validateUrl call passes, second throws non-Error
-			validateUrlMock.mockResolvedValueOnce(undefined).mockRejectedValueOnce("Non-error string");
+			validateUrlMock.mockResolvedValueOnce(undefined).mockRejectedValueOnce('Non-error string');
 
 			middlewareFetchMock.mockResolvedValueOnce(
-				new Response(JSON.stringify({ jwks_uri: "https://internal-service/jwks" })),
+				new Response(JSON.stringify({ jwks_uri: 'https://internal-service/jwks' })),
 			);
 
 			const token = await new TestJwt({
-				iss: "https://token.actions.githubusercontent.com",
-				sub: "repo:test-subject/svc",
-				aud: "gpg-signing-service",
+				iss: 'https://token.actions.githubusercontent.com',
+				sub: 'repo:test-subject/svc',
+				aud: 'gpg-signing-service',
 			})
-				.setProtectedHeader({ alg: "RS256", kid: "test-key" })
-				.setExpirationTime("1h")
+				.setProtectedHeader({ alg: 'RS256', kid: 'test-key' })
+				.setExpirationTime('1h')
 				.sign((await generateTestKeyPair()).privateKey);
 
-			const response = await makeRequest("/sign", {
-				method: "POST",
+			const response = await makeRequest('/sign', {
+				method: 'POST',
 				headers: { Authorization: `Bearer ${token}` },
-				body: "commit data",
+				body: 'commit data',
 			});
 
 			expect(response.status).toBe(500);
 			const body = await parseJson<{ error: string; code: string }>(response);
-			expect(body.error).toContain("SSRF protection: Invalid URL");
-			expect(body.code).toBe("SERVICE_MISCONFIGURED");
+			expect(body.error).toContain('SSRF protection: Invalid URL');
+			expect(body.code).toBe('SERVICE_MISCONFIGURED');
 		});
 	});
 });

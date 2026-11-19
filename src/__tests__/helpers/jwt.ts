@@ -1,4 +1,4 @@
-import { SignJWT } from "jose";
+import { SignJWT } from 'jose';
 
 /** An RS256 signing key pair for minting OIDC test tokens. */
 export interface TestKeyPair {
@@ -12,21 +12,21 @@ export type TestJwk = JsonWebKey & { kid?: string; use?: string };
 /** A fresh 2048-bit RSASSA-PKCS1-v1_5 SHA-256 key pair, the only kind the OIDC middleware verifies. */
 export async function generateTestKeyPair(): Promise<TestKeyPair> {
 	const pair = await crypto.subtle.generateKey(
-		{ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+		{ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
 		true,
-		["sign", "verify"],
+		['sign', 'verify'],
 	);
-	if (!("privateKey" in pair)) {
-		throw new Error("RSA key generation returned a single key");
+	if (!('privateKey' in pair)) {
+		throw new Error('RSA key generation returned a single key');
 	}
 	return { privateKey: pair.privateKey, publicKey: pair.publicKey };
 }
 
 /** The public key as a JWK. */
 export async function exportTestJwk(publicKey: CryptoKey): Promise<TestJwk> {
-	const exported = await crypto.subtle.exportKey("jwk", publicKey);
+	const exported = await crypto.subtle.exportKey('jwk', publicKey);
 	if (exported instanceof ArrayBuffer) {
-		throw new Error("JWK export returned raw bytes");
+		throw new Error('JWK export returned raw bytes');
 	}
 	return exported;
 }
@@ -35,7 +35,7 @@ export async function exportTestJwk(publicKey: CryptoKey): Promise<TestJwk> {
 type TimeInput = string | number;
 
 function epochSeconds(input: TimeInput, now: number): number {
-	if (typeof input === "number") {
+	if (typeof input === 'number') {
 		return input;
 	}
 	const match = /^(-?\d+)([smhd])$/.exec(input);
@@ -50,7 +50,7 @@ function epochSeconds(input: TimeInput, now: number): number {
 }
 
 function base64url(text: string): string {
-	return btoa(text).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+	return btoa(text).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 /**
@@ -62,7 +62,7 @@ function base64url(text: string): string {
  */
 export class TestJwt {
 	private readonly claims: Record<string, unknown>;
-	private header: { alg: string; kid?: string } = { alg: "RS256" };
+	private header: { alg: string; kid?: string } = { alg: 'RS256' };
 	private readonly now = Math.floor(Date.now() / 1000);
 
 	constructor(claims: object) {
@@ -90,11 +90,11 @@ export class TestJwt {
 	}
 
 	async sign(privateKey: CryptoKey): Promise<string> {
-		if (this.header.alg === "RS256") {
+		if (this.header.alg === 'RS256') {
 			return new SignJWT(this.claims).setProtectedHeader(this.header).sign(privateKey);
 		}
 		const header = base64url(JSON.stringify(this.header));
 		const payload = base64url(JSON.stringify(this.claims));
-		return `${header}.${payload}.${base64url("unsigned")}`;
+		return `${header}.${payload}.${base64url('unsigned')}`;
 	}
 }

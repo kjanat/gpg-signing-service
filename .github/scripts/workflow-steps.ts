@@ -64,11 +64,11 @@
  * would report the safest possible result for the least intelligible input.
  */
 
-import { readFileSync } from "node:fs";
-import { parseDocument } from "yaml";
+import { readFileSync } from 'node:fs';
+import { parseDocument } from 'yaml';
 
 /** Interpreters that run the script named as their first argument. */
-const INTERPRETERS = new Set(["bash", "sh", "python", "python3"]);
+const INTERPRETERS = new Set(['bash', 'sh', 'python', 'python3']);
 
 /** A full-length git object name. Anything shorter is not a pin. */
 const COMMIT_SHA = /^[0-9a-f]{40}$/;
@@ -104,18 +104,18 @@ function fail(message: string): never {
 function readDocument(file: string): Record<string, unknown> {
 	let source: string;
 	try {
-		source = readFileSync(file, "utf8");
+		source = readFileSync(file, 'utf8');
 	} catch (error) {
 		fail(`cannot read ${file}: ${error instanceof Error ? error.message : String(error)}`);
 	}
 
 	const doc = parseDocument(source, { prettyErrors: false });
 	if (doc.errors.length > 0) {
-		fail(`${file} is not parseable YAML: ${doc.errors.map((e) => e.message).join("; ")}`);
+		fail(`${file} is not parseable YAML: ${doc.errors.map((e) => e.message).join('; ')}`);
 	}
 
 	const root: unknown = doc.toJS({ maxAliasCount: 100 });
-	if (root === null || typeof root !== "object" || Array.isArray(root)) {
+	if (root === null || typeof root !== 'object' || Array.isArray(root)) {
 		fail(`${file} is not a workflow: its top level is not a mapping`);
 	}
 
@@ -124,7 +124,7 @@ function readDocument(file: string): Record<string, unknown> {
 
 function readJobs(file: string): Record<string, Job> {
 	const jobs: unknown = readDocument(file).jobs;
-	if (jobs === null || jobs === undefined || typeof jobs !== "object" || Array.isArray(jobs)) {
+	if (jobs === null || jobs === undefined || typeof jobs !== 'object' || Array.isArray(jobs)) {
 		fail(`${file} has no jobs: mapping`);
 	}
 
@@ -137,20 +137,20 @@ function selectJobs(file: string, jobs: Record<string, Job>, jobId: string | nul
 
 	const job = jobs[jobId];
 	if (job === undefined) {
-		fail(`${file} has no job named ${jobId} (jobs: ${Object.keys(jobs).join(", ") || "none"})`);
+		fail(`${file} has no job named ${jobId} (jobs: ${Object.keys(jobs).join(', ') || 'none'})`);
 	}
 	return [[jobId, job]];
 }
 
 function stepsOf(file: string, jobId: string, job: Job): Step[] {
-	if (job === null || typeof job !== "object") fail(`${file}: job ${jobId} is not a mapping`);
+	if (job === null || typeof job !== 'object') fail(`${file}: job ${jobId} is not a mapping`);
 
 	const steps: unknown = job.steps;
 	if (steps === undefined) return [];
 	if (!Array.isArray(steps)) fail(`${file}: job ${jobId} has a steps: that is not a sequence`);
 
 	return steps.map((step, index) => {
-		if (step === null || typeof step !== "object" || Array.isArray(step)) {
+		if (step === null || typeof step !== 'object' || Array.isArray(step)) {
 			fail(`${file}: job ${jobId} step ${index + 1} is not a mapping`);
 		}
 		return step as Step;
@@ -168,7 +168,7 @@ function stepsOf(file: string, jobId: string, job: Job): Step[] {
  * indicators (`>-`, `|2+`) that change where those newlines land.
  */
 function commandsOf(script: string): string[] {
-	return script.split("\n");
+	return script.split('\n');
 }
 
 /**
@@ -194,11 +194,11 @@ function commandExecutes(command: string, script: string): boolean {
 	while (index < words.length && ENV_ASSIGNMENT.test(words[index] as string)) index += 1;
 
 	let word = words[index];
-	if (word === undefined || word.startsWith("#")) return false;
+	if (word === undefined || word.startsWith('#')) return false;
 	if (INTERPRETERS.has(word)) word = words[index + 1];
 	if (word === undefined) return false;
 
-	return word.replace(/^\.\//, "") === script.replace(/^\.\//, "");
+	return word.replace(/^\.\//, '') === script.replace(/^\.\//, '');
 }
 
 /** The parsed run lines in one job, or all jobs when no job is selected. */
@@ -209,7 +209,7 @@ function runLines(file: string, only: string | null): string[] {
 	for (const [jobId, job] of selectJobs(file, jobs, only)) {
 		for (const step of stepsOf(file, jobId, job)) {
 			if (step.run === undefined) continue;
-			if (typeof step.run !== "string") fail(`${file}: job ${jobId} has a run: that is not a string`);
+			if (typeof step.run !== 'string') fail(`${file}: job ${jobId} has a run: that is not a string`);
 
 			lines.push(...commandsOf(step.run));
 		}
@@ -226,7 +226,7 @@ function runsScript(file: string, only: string | null, scripts: string[]): strin
 		}
 	}
 
-	return "";
+	return '';
 }
 
 /**
@@ -249,16 +249,16 @@ function mutableUses(file: string, jobId: string | null, expectUses: boolean): s
 
 	const consider = (where: string, value: unknown): void => {
 		if (value === undefined) return;
-		if (typeof value !== "string") fail(`${file}: ${where} has a uses: that is not a string`);
+		if (typeof value !== 'string') fail(`${file}: ${where} has a uses: that is not a string`);
 
 		seen += 1;
-		if (value.startsWith("./")) return;
-		if (value.startsWith("$/")) {
-			if (value.includes("@")) fail(`${file}: ${where} has a self-repository reference with a ref suffix`);
+		if (value.startsWith('./')) return;
+		if (value.startsWith('$/')) {
+			if (value.includes('@')) fail(`${file}: ${where} has a self-repository reference with a ref suffix`);
 			return;
 		}
 
-		const at = value.lastIndexOf("@");
+		const at = value.lastIndexOf('@');
 		if (at > 0 && COMMIT_SHA.test(value.slice(at + 1))) return;
 		mutable.push(value);
 	};
@@ -276,7 +276,7 @@ function mutableUses(file: string, jobId: string | null, expectUses: boolean): s
 	// assertion over a scope with no actions in it is green for the wrong
 	// reason, and this is called on a job block that is expected to have some.
 	if (expectUses && seen === 0) {
-		fail(`${file} has no uses: in ${jobId === null ? "any job" : `job ${jobId}`}`);
+		fail(`${file} has no uses: in ${jobId === null ? 'any job' : `job ${jobId}`}`);
 	}
 
 	return mutable;
@@ -289,8 +289,8 @@ function jobField(file: string, jobId: string, field: string): string {
 
 	const value: unknown = job[field];
 	if (value === undefined) fail(`${file}: job ${jobId} has no ${field}:`);
-	if (typeof value === "string") return value;
-	if (typeof value === "number" || typeof value === "boolean") return String(value);
+	if (typeof value === 'string') return value;
+	if (typeof value === 'number' || typeof value === 'boolean') return String(value);
 
 	return fail(`${file}: job ${jobId} has a ${field}: that is not a scalar`);
 }
@@ -312,25 +312,25 @@ function jobField(file: string, jobId: string, field: string): string {
 function inputMapping(file: string, name: string): Record<string, unknown> {
 	const root = readDocument(file);
 	const on: unknown = root.on ?? root.true;
-	if (on === null || on === undefined || typeof on !== "object" || Array.isArray(on)) {
+	if (on === null || on === undefined || typeof on !== 'object' || Array.isArray(on)) {
 		fail(`${file} has no on: mapping`);
 	}
 
 	const dispatch: unknown = (on as Record<string, unknown>).workflow_dispatch;
-	if (dispatch === null || dispatch === undefined || typeof dispatch !== "object" || Array.isArray(dispatch)) {
+	if (dispatch === null || dispatch === undefined || typeof dispatch !== 'object' || Array.isArray(dispatch)) {
 		fail(`${file} has no on.workflow_dispatch: mapping`);
 	}
 
 	const inputs: unknown = (dispatch as Record<string, unknown>).inputs;
-	if (inputs === null || inputs === undefined || typeof inputs !== "object" || Array.isArray(inputs)) {
+	if (inputs === null || inputs === undefined || typeof inputs !== 'object' || Array.isArray(inputs)) {
 		fail(`${file} has no on.workflow_dispatch.inputs: mapping`);
 	}
 
 	const input: unknown = (inputs as Record<string, unknown>)[name];
 	if (input === undefined) {
-		fail(`${file} has no ${name} input (inputs: ${Object.keys(inputs).join(", ") || "none"})`);
+		fail(`${file} has no ${name} input (inputs: ${Object.keys(inputs).join(', ') || 'none'})`);
 	}
-	if (input === null || typeof input !== "object" || Array.isArray(input)) {
+	if (input === null || typeof input !== 'object' || Array.isArray(input)) {
 		fail(`${file}: input ${name} is not a mapping`);
 	}
 
@@ -351,8 +351,8 @@ function inputField(file: string, name: string, field: string): string {
 	if (!(field in input)) fail(`${file}: input ${name} has no ${field}: of its own`);
 
 	const value: unknown = input[field];
-	if (typeof value === "string") return value;
-	if (typeof value === "number" || typeof value === "boolean") return String(value);
+	if (typeof value === 'string') return value;
+	if (typeof value === 'number' || typeof value === 'boolean') return String(value);
 
 	return fail(`${file}: input ${name} has a ${field}: that is not a scalar`);
 }
@@ -366,43 +366,43 @@ function main(argv: string[]): number {
 	const [command, file, ...rest] = argv;
 	if (command === undefined || file === undefined) {
 		process.stderr.write(
-			"usage: workflow-steps.ts <runs-script|run-lines|mutable-uses|job-field|input-field|input-fields> <file> ...\n",
+			'usage: workflow-steps.ts <runs-script|run-lines|mutable-uses|job-field|input-field|input-fields> <file> ...\n',
 		);
 		return 2;
 	}
 
 	try {
 		switch (command) {
-			case "runs-script": {
+			case 'runs-script': {
 				let jobId: string | null = null;
 				const scripts: string[] = [];
 				for (let index = 0; index < rest.length; index += 1) {
-					if (rest[index] === "--job") {
-						jobId = rest[index + 1] ?? fail("--job needs a job id");
+					if (rest[index] === '--job') {
+						jobId = rest[index + 1] ?? fail('--job needs a job id');
 						index += 1;
 					} else {
 						scripts.push(rest[index] as string);
 					}
 				}
-				if (scripts.length === 0) fail("runs-script needs at least one script path");
+				if (scripts.length === 0) fail('runs-script needs at least one script path');
 				const found = runsScript(file, jobId, scripts);
-				if (found !== "") process.stdout.write(`${found}\n`);
+				if (found !== '') process.stdout.write(`${found}\n`);
 				return 0;
 			}
-			case "run-lines": {
+			case 'run-lines': {
 				const [jobId] = rest;
-				if (jobId === undefined) fail("run-lines needs a job id");
+				if (jobId === undefined) fail('run-lines needs a job id');
 				for (const line of runLines(file, jobId)) process.stdout.write(`${line}\n`);
 				return 0;
 			}
-			case "mutable-uses": {
+			case 'mutable-uses': {
 				let jobId: string | null = null;
 				let expectUses = false;
 				for (let index = 0; index < rest.length; index += 1) {
-					if (rest[index] === "--job") {
-						jobId = rest[index + 1] ?? fail("--job needs a job id");
+					if (rest[index] === '--job') {
+						jobId = rest[index + 1] ?? fail('--job needs a job id');
 						index += 1;
-					} else if (rest[index] === "--expect-uses") {
+					} else if (rest[index] === '--expect-uses') {
 						expectUses = true;
 					} else {
 						fail(`unknown option ${rest[index]}`);
@@ -413,21 +413,21 @@ function main(argv: string[]): number {
 				}
 				return 0;
 			}
-			case "job-field": {
+			case 'job-field': {
 				const [jobId, field] = rest;
-				if (jobId === undefined || field === undefined) fail("job-field needs a job id and a field");
+				if (jobId === undefined || field === undefined) fail('job-field needs a job id and a field');
 				process.stdout.write(`${jobField(file, jobId, field)}\n`);
 				return 0;
 			}
-			case "input-field": {
+			case 'input-field': {
 				const [name, field] = rest;
-				if (name === undefined || field === undefined) fail("input-field needs an input name and a field");
+				if (name === undefined || field === undefined) fail('input-field needs an input name and a field');
 				process.stdout.write(`${inputField(file, name, field)}\n`);
 				return 0;
 			}
-			case "input-fields": {
+			case 'input-fields': {
 				const [name] = rest;
-				if (name === undefined) fail("input-fields needs an input name");
+				if (name === undefined) fail('input-fields needs an input name');
 				for (const key of inputFields(file, name)) process.stdout.write(`${key}\n`);
 				return 0;
 			}

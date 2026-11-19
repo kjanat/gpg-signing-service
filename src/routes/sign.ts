@@ -1,6 +1,6 @@
-import { createRoute, z } from "@hono/zod-openapi";
+import { createRoute, z } from '@hono/zod-openapi';
 
-import { createOpenAPIApp, unauthorizedResponse } from "#lib/openapi";
+import { createOpenAPIApp, unauthorizedResponse } from '#lib/openapi';
 import {
 	ErrorResponseSchema,
 	PublicKeyQuerySchema,
@@ -8,20 +8,20 @@ import {
 	RequestHeadersSchema,
 	SignRequestSchema,
 	SignResponseSchema,
-} from "#schemas";
-import type { ErrorCode } from "#schemas/errors";
-import type { AnyStoredKey } from "#schemas/keys";
-import { AnyStoredKeySchema, isX509Key } from "#schemas/keys";
-import type { Identity, RateLimitResult, ValidatedOIDCClaims } from "#types";
-import { createIdentity, createKeyId, HEADERS, HTTP, isKeyIdShaped, TIME } from "#types";
-import { logAuditEvent } from "#utils/audit";
-import { fetchKeyStorage, fetchRateLimiter } from "#utils/durable-objects";
-import { scheduleBackgroundTask } from "#utils/execution";
-import { logger } from "#utils/logger";
-import { rateLimitExceeded, retryAfterSeconds } from "#utils/rate-limit";
-import { captureRefusalEvent } from "#utils/sentry";
-import { signCommitData } from "#utils/signing";
-import { signCommitDataX509 } from "#utils/x509";
+} from '#schemas';
+import type { ErrorCode } from '#schemas/errors';
+import type { AnyStoredKey } from '#schemas/keys';
+import { AnyStoredKeySchema, isX509Key } from '#schemas/keys';
+import type { Identity, RateLimitResult, ValidatedOIDCClaims } from '#types';
+import { createIdentity, createKeyId, HEADERS, HTTP, isKeyIdShaped, TIME } from '#types';
+import { logAuditEvent } from '#utils/audit';
+import { fetchKeyStorage, fetchRateLimiter } from '#utils/durable-objects';
+import { scheduleBackgroundTask } from '#utils/execution';
+import { logger } from '#utils/logger';
+import { rateLimitExceeded, retryAfterSeconds } from '#utils/rate-limit';
+import { captureRefusalEvent } from '#utils/sentry';
+import { signCommitData } from '#utils/signing';
+import { signCommitDataX509 } from '#utils/x509';
 
 const app = createOpenAPIApp();
 
@@ -30,7 +30,7 @@ const app = createOpenAPIApp();
  * cannot collide with the `<iss>:<sub>` buckets — a non-URL issuer cannot
  * authenticate, since JWKS discovery runs the issuer through `validateUrl`.
  */
-const SUBJECT_ROW_METER = "oidc-subject-row";
+const SUBJECT_ROW_METER = 'oidc-subject-row';
 
 /**
  * Signatures per minute per trusted row, across every subject it covers.
@@ -43,7 +43,7 @@ const SUBJECT_ROW_METER = "oidc-subject-row";
 const SUBJECT_ROW_LIMIT = 1000;
 
 /** Outcome of consulting the rate limiter, with the failure modes separated. */
-type RateLimitDecision = { kind: "ok" } | { kind: "limited"; retryAfter: number } | { kind: "unavailable" };
+type RateLimitDecision = { kind: 'ok' } | { kind: 'limited'; retryAfter: number } | { kind: 'unavailable' };
 
 /**
  * Resolve an in-flight rate limiter call into a decision.
@@ -64,11 +64,11 @@ async function resolveRateLimit(pending: Promise<Response>, requestId: string): 
 	try {
 		response = await pending;
 	} catch (error) {
-		logger.error("Rate limiter unreachable", {
+		logger.error('Rate limiter unreachable', {
 			requestId,
 			error: error instanceof Error ? error.message : String(error),
 		});
-		return { kind: "unavailable" };
+		return { kind: 'unavailable' };
 	}
 
 	// A denied consume is a *verdict*, and the Durable Object delivers it as a
@@ -77,15 +77,15 @@ async function resolveRateLimit(pending: Promise<Response>, requestId: string): 
 	// whose outage path is deliberately non-fatal, that failed open: the tier
 	// never refused anything.
 	if (!response.ok && response.status !== HTTP.TooManyRequests) {
-		logger.error("Rate limiter failed", { status: response.status, requestId });
-		return { kind: "unavailable" };
+		logger.error('Rate limiter failed', { status: response.status, requestId });
+		return { kind: 'unavailable' };
 	}
 
 	const rateLimit = (await response.json()) as RateLimitResult;
 	if (!rateLimit.allowed) {
-		return { kind: "limited", retryAfter: retryAfterSeconds(rateLimit.resetAt) };
+		return { kind: 'limited', retryAfter: retryAfterSeconds(rateLimit.resetAt) };
 	}
-	return { kind: "ok" };
+	return { kind: 'ok' };
 }
 
 /**
@@ -111,18 +111,18 @@ async function resolveRowCeiling(
 		return undefined;
 	}
 	const decision = await resolveRateLimit(pending, requestId);
-	return decision.kind === "limited" ? decision.retryAfter : undefined;
+	return decision.kind === 'limited' ? decision.retryAfter : undefined;
 }
 
 const signRoute = createRoute({
-	method: "post",
-	path: "/",
-	summary: "Sign commit data",
-	description: "Sign git commit data using the stored GPG key",
+	method: 'post',
+	path: '/',
+	summary: 'Sign commit data',
+	description: 'Sign git commit data using the stored GPG key',
 	security: [{ oidcAuth: [] }, { serviceTokenAuth: [] }],
 	request: {
 		body: {
-			content: { "text/plain": { schema: SignRequestSchema } },
+			content: { 'text/plain': { schema: SignRequestSchema } },
 			required: true,
 		},
 		query: PublicKeyQuerySchema,
@@ -130,33 +130,33 @@ const signRoute = createRoute({
 	},
 	responses: {
 		[HTTP.OK]: {
-			content: { "text/plain": { schema: SignResponseSchema } },
-			description: "PGP Signature",
+			content: { 'text/plain': { schema: SignResponseSchema } },
+			description: 'PGP Signature',
 		},
 		[HTTP.BadRequest]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Bad Request",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Bad Request',
 		},
-		[HTTP.Unauthorized]: unauthorizedResponse("Missing, invalid, or untrusted signing credential"),
+		[HTTP.Unauthorized]: unauthorizedResponse('Missing, invalid, or untrusted signing credential'),
 		[HTTP.Forbidden]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Token not allowed to use this key",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Token not allowed to use this key',
 		},
 		[HTTP.NotFound]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Key not found",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Key not found',
 		},
 		[HTTP.TooManyRequests]: {
-			content: { "application/json": { schema: RateLimitErrorSchema } },
-			description: "Rate limit exceeded",
+			content: { 'application/json': { schema: RateLimitErrorSchema } },
+			description: 'Rate limit exceeded',
 		},
 		[HTTP.InternalServerError]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Internal Server Error",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Internal Server Error',
 		},
 		[HTTP.ServiceUnavailable]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Service Unavailable",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Service Unavailable',
 		},
 	},
 });
@@ -166,9 +166,9 @@ app.openapi(signRoute, async (c) => {
 	// and mints one otherwise. Reading it rather than re-deriving keeps this row
 	// joinable with the one the OIDC middleware may have written for the same
 	// request, and with the X-Request-ID echoed on the response.
-	const requestId = c.get("requestId");
-	const claims = c.get("oidcClaims") as ValidatedOIDCClaims;
-	const identity = c.get("identity") as Identity;
+	const requestId = c.get('requestId');
+	const claims = c.get('oidcClaims') as ValidatedOIDCClaims;
+	const identity = c.get('identity') as Identity;
 
 	// Validate request body early
 	const commitData = await c.req.text();
@@ -179,8 +179,8 @@ app.openapi(signRoute, async (c) => {
 	if (!bodyResult.success) {
 		return c.json(
 			{
-				error: "No commit data provided",
-				code: "INVALID_REQUEST" as const satisfies ErrorCode,
+				error: 'No commit data provided',
+				code: 'INVALID_REQUEST' as const satisfies ErrorCode,
 				requestId,
 			},
 			HTTP.BadRequest,
@@ -188,7 +188,7 @@ app.openapi(signRoute, async (c) => {
 	}
 
 	// Get key ID from query param or use default
-	const { keyId: keyIdQuery } = c.req.valid("query");
+	const { keyId: keyIdQuery } = c.req.valid('query');
 
 	// Format-check the caller's value before any I/O. `PublicKeyQuerySchema`
 	// declares keyId as a bare optional string, so `createKeyId` further down is
@@ -210,7 +210,7 @@ app.openapi(signRoute, async (c) => {
 		return c.json(
 			{
 				error: `Invalid key ID format: ${keyIdQuery}`,
-				code: "INVALID_REQUEST" as const satisfies ErrorCode,
+				code: 'INVALID_REQUEST' as const satisfies ErrorCode,
 				requestId,
 			},
 			HTTP.BadRequest,
@@ -248,13 +248,13 @@ app.openapi(signRoute, async (c) => {
 	// them together only ever overlapped the wire time, never the work.
 	//
 	// Absent on the service-token path, which is already metered per credential.
-	const subjectPolicyId = c.get("subjectPolicyId");
+	const subjectPolicyId = c.get('subjectPolicyId');
 	const consumeRowToken = subjectPolicyId
 		? () => fetchRateLimiter(c.env, createIdentity(SUBJECT_ROW_METER, subjectPolicyId), SUBJECT_ROW_LIMIT)
 		: undefined;
 
 	// Both auth paths may carry a key allowlist; enforce it before any signing.
-	const allowedKeyIds = c.get("allowedKeyIds");
+	const allowedKeyIds = c.get('allowedKeyIds');
 	if (allowedKeyIds && !allowedKeyIds.includes(keyIdParam)) {
 		// A trusted caller reaching past its own grant is the highest-signal event
 		// this service produces: either a misconfigured workflow or a credential
@@ -266,11 +266,11 @@ app.openapi(signRoute, async (c) => {
 		// caller is within its budget, so the denial cannot be used to flood the
 		// table it is recorded in.
 		const decision = await resolveRateLimit(rateLimitPromise, requestId);
-		if (decision.kind === "limited") {
+		if (decision.kind === 'limited') {
 			return rateLimitExceeded(c, decision.retryAfter);
 		}
 
-		if (decision.kind === "ok") {
+		if (decision.kind === 'ok') {
 			// The row ceiling governs this branch too. Without it the per-caller
 			// bucket is the only bound on the D1 write below, and that bucket is
 			// keyed on `sub` — so a row that can mint subjects could still flood
@@ -286,9 +286,9 @@ app.openapi(signRoute, async (c) => {
 				// at its ceiling silence the highest-signal event the service
 				// produces — the same reasoning as the limiter-unavailable branch
 				// below.
-				logger.warn("Key scope denied while the trusted row was at its signing ceiling", {
+				logger.warn('Key scope denied while the trusted row was at its signing ceiling', {
 					requestId,
-					subjectPolicy: c.get("subjectPolicyName"),
+					subjectPolicy: c.get('subjectPolicyName'),
 					subjectPolicyId,
 					issuer: claims.iss,
 					subject: claims.sub,
@@ -302,19 +302,19 @@ app.openapi(signRoute, async (c) => {
 				requestId,
 				logAuditEvent(c.env.AUDIT_DB, {
 					requestId,
-					action: "sign",
+					action: 'sign',
 					issuer: claims.iss,
 					subject: claims.sub,
 					keyId: keyIdParam,
 					success: false,
-					errorCode: "KEY_NOT_ALLOWED",
-					metadata: JSON.stringify({ subjectPolicy: c.get("subjectPolicyName") }),
+					errorCode: 'KEY_NOT_ALLOWED',
+					metadata: JSON.stringify({ subjectPolicy: c.get('subjectPolicyName') }),
 				}),
 			);
 		} else {
 			// Limiter unreachable: refuse anyway, but do not write unmetered. The
 			// log line keeps the denial from vanishing entirely.
-			logger.warn("Key scope denied while the rate limiter was unavailable", {
+			logger.warn('Key scope denied while the rate limiter was unavailable', {
 				requestId,
 				issuer: claims.iss,
 				subject: claims.sub,
@@ -328,14 +328,14 @@ app.openapi(signRoute, async (c) => {
 		// scope boundary, and an operator wants to know either way. Raised outside
 		// the metering branch on purpose: the audit row is what must stay metered,
 		// and Sentry's own quota is what bounds this.
-		captureRefusalEvent("Key scope denied", {
+		captureRefusalEvent('Key scope denied', {
 			requestId,
-			action: "sign",
-			errorCode: "KEY_NOT_ALLOWED",
+			action: 'sign',
+			errorCode: 'KEY_NOT_ALLOWED',
 			issuer: claims.iss,
 			subject: claims.sub,
 			keyId: keyIdParam,
-			subjectPolicy: c.get("subjectPolicyName"),
+			subjectPolicy: c.get('subjectPolicyName'),
 		});
 
 		return c.json(
@@ -344,7 +344,7 @@ app.openapi(signRoute, async (c) => {
 				// Not INVALID_REQUEST: the request was well formed and the credential
 				// valid. Filtering audit_logs for scope denials needs it to be
 				// distinguishable from a 400.
-				code: "KEY_NOT_ALLOWED" as const satisfies ErrorCode,
+				code: 'KEY_NOT_ALLOWED' as const satisfies ErrorCode,
 				requestId,
 			},
 			HTTP.Forbidden,
@@ -366,14 +366,14 @@ app.openapi(signRoute, async (c) => {
 		// Process rate limit. A 429 carries the verdict, not a failure — treating
 		// it as one turned every genuine per-caller refusal into a 503.
 		if (!rateLimitResponse.ok && rateLimitResponse.status !== HTTP.TooManyRequests) {
-			logger.error("Rate limiter failed", {
+			logger.error('Rate limiter failed', {
 				status: rateLimitResponse.status,
 				requestId,
 			});
 			return c.json(
 				{
-					error: "Service temporarily unavailable",
-					code: "RATE_LIMIT_ERROR" as const satisfies ErrorCode,
+					error: 'Service temporarily unavailable',
+					code: 'RATE_LIMIT_ERROR' as const satisfies ErrorCode,
 					requestId,
 				},
 				HTTP.ServiceUnavailable,
@@ -394,9 +394,9 @@ app.openapi(signRoute, async (c) => {
 		// no longer spends a token from the bucket its siblings share.
 		const rowRetryAfter = await resolveRowCeiling(consumeRowToken?.(), requestId);
 		if (rowRetryAfter !== undefined) {
-			logger.warn("Trusted row hit its signing ceiling", {
+			logger.warn('Trusted row hit its signing ceiling', {
 				requestId,
-				subjectPolicy: c.get("subjectPolicyName"),
+				subjectPolicy: c.get('subjectPolicyName'),
 				subjectPolicyId,
 			});
 			// The row ceiling refused, so the headers describe *it*, not the
@@ -408,7 +408,7 @@ app.openapi(signRoute, async (c) => {
 		// Process key response
 		if (!keyResponse.ok) {
 			const error = (await keyResponse.json()) as { error: string };
-			throw new Error(error.error || "Key not found");
+			throw new Error(error.error || 'Key not found');
 		}
 
 		storedKey = AnyStoredKeySchema.parse(await keyResponse.json());
@@ -424,7 +424,7 @@ app.openapi(signRoute, async (c) => {
 			requestId,
 			logAuditEvent(c.env.AUDIT_DB, {
 				requestId,
-				action: "sign",
+				action: 'sign',
 				issuer: claims.iss,
 				subject: claims.sub,
 				keyId: keyIdParam,
@@ -432,7 +432,7 @@ app.openapi(signRoute, async (c) => {
 				metadata: JSON.stringify({
 					repository: claims.repository || claims.project_path,
 					dataLength: commitData.length,
-					subjectPolicy: c.get("subjectPolicyName"),
+					subjectPolicy: c.get('subjectPolicyName'),
 				}),
 			}),
 		);
@@ -444,25 +444,25 @@ app.openapi(signRoute, async (c) => {
 
 		return c.text(result.signature, HTTP.OK);
 	} catch (error) {
-		const message = error instanceof Error ? error.message : "Signing failed";
+		const message = error instanceof Error ? error.message : 'Signing failed';
 
 		// Check if this is a rate limiter error from the fetch phase
-		if (message.includes("Rate limiter")) {
-			logger.error("Rate limiter critical failure", {
+		if (message.includes('Rate limiter')) {
+			logger.error('Rate limiter critical failure', {
 				error: message,
 				requestId,
 			});
 			return c.json(
 				{
-					error: "Service temporarily unavailable",
-					code: "RATE_LIMIT_ERROR" as const satisfies ErrorCode,
+					error: 'Service temporarily unavailable',
+					code: 'RATE_LIMIT_ERROR' as const satisfies ErrorCode,
 					requestId,
 				},
 				HTTP.ServiceUnavailable,
 			);
 		}
 
-		const isKeyNotFound = message === "Key not found" || message.includes("not found");
+		const isKeyNotFound = message === 'Key not found' || message.includes('not found');
 
 		// Log failed signing attempt (non-blocking)
 		await scheduleBackgroundTask(
@@ -470,13 +470,13 @@ app.openapi(signRoute, async (c) => {
 			requestId,
 			logAuditEvent(c.env.AUDIT_DB, {
 				requestId,
-				action: "sign",
+				action: 'sign',
 				issuer: claims.iss,
 				subject: claims.sub,
 				keyId: keyIdParam,
 				success: false,
-				errorCode: isKeyNotFound ? "KEY_NOT_FOUND" : "SIGN_ERROR",
-				metadata: JSON.stringify({ error: message, subjectPolicy: c.get("subjectPolicyName") }),
+				errorCode: isKeyNotFound ? 'KEY_NOT_FOUND' : 'SIGN_ERROR',
+				metadata: JSON.stringify({ error: message, subjectPolicy: c.get('subjectPolicyName') }),
 			}),
 		);
 
@@ -484,7 +484,7 @@ app.openapi(signRoute, async (c) => {
 			return c.json(
 				{
 					error: message,
-					code: "KEY_NOT_FOUND" as const satisfies ErrorCode,
+					code: 'KEY_NOT_FOUND' as const satisfies ErrorCode,
 					requestId,
 				},
 				HTTP.NotFound,
@@ -494,7 +494,7 @@ app.openapi(signRoute, async (c) => {
 		return c.json(
 			{
 				error: message,
-				code: "SIGN_ERROR" as const satisfies ErrorCode,
+				code: 'SIGN_ERROR' as const satisfies ErrorCode,
 				requestId,
 			},
 			HTTP.InternalServerError,

@@ -587,7 +587,7 @@ test:watch      → bunx vitest (watch mode)
 
 **Tools**:
 
-- ✅ dprint (formatter)
+- ✅ kprint (formatter)
 - ✅ ESLint
 - ✅ Biome (linter/formatter)
 - ✅ shfmt (shell scripts)
@@ -877,7 +877,7 @@ cp wrangler.toml wrangler.preview.toml
 # Add to CI workflow post-deploy
 - name: Health Check
 run: \
-	| curl -f https://gpg.kajkowalski.nl/health
+  | curl -f https://gpg.kajkowalski.nl/health
 curl -f https://gpg.kajkowalski.nl/admin/status -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 

@@ -1,5 +1,5 @@
-import { createRoute, z } from "@hono/zod-openapi";
-import { createOpenAPIApp, forbiddenResponse, unauthorizedResponse } from "#lib/openapi";
+import { createRoute, z } from '@hono/zod-openapi';
+import { createOpenAPIApp, forbiddenResponse, unauthorizedResponse } from '#lib/openapi';
 import {
 	AuditLogsResponseSchema,
 	AuditQuerySchema,
@@ -10,57 +10,57 @@ import {
 	KeyUploadSchema,
 	X509KeyResponseSchema,
 	X509KeyUploadSchema,
-} from "#schemas";
-import type { ErrorCode } from "#schemas/errors";
-import type { StoredKey } from "#schemas/keys";
-import { AnyStoredKeySchema, isX509Key, type StoredX509Key } from "#schemas/keys";
-import { createArmoredPrivateKey, createKeyId, HTTP, MediaType } from "#types";
-import { getAuditLogs, logAuditEvent } from "#utils/audit";
-import { fetchKeyStorage } from "#utils/durable-objects";
-import { scheduleBackgroundTask } from "#utils/execution";
-import { logger } from "#utils/logger";
-import { extractPublicKey, invalidateKeyCache, parseAndValidateKey } from "#utils/signing";
-import { parseAndValidateX509Key } from "#utils/x509";
+} from '#schemas';
+import type { ErrorCode } from '#schemas/errors';
+import type { StoredKey } from '#schemas/keys';
+import { AnyStoredKeySchema, isX509Key, type StoredX509Key } from '#schemas/keys';
+import { createArmoredPrivateKey, createKeyId, HTTP, MediaType } from '#types';
+import { getAuditLogs, logAuditEvent } from '#utils/audit';
+import { fetchKeyStorage } from '#utils/durable-objects';
+import { scheduleBackgroundTask } from '#utils/execution';
+import { logger } from '#utils/logger';
+import { extractPublicKey, invalidateKeyCache, parseAndValidateKey } from '#utils/signing';
+import { parseAndValidateX509Key } from '#utils/x509';
 
 const app = createOpenAPIApp();
 
 // Routes
 
 const uploadKeyRoute = createRoute({
-	method: "post",
-	path: "/keys",
-	summary: "Upload a new signing key",
-	description: "Upload a GPG private key for signing",
+	method: 'post',
+	path: '/keys',
+	summary: 'Upload a new signing key',
+	description: 'Upload a GPG private key for signing',
 	security: [{ bearerAuth: [] }],
 	request: {
 		body: {
-			content: { "application/json": { schema: KeyUploadSchema } },
+			content: { 'application/json': { schema: KeyUploadSchema } },
 			required: true,
 		},
 	},
 	responses: {
 		[HTTP.Created]: {
-			content: { "application/json": { schema: KeyResponseSchema } },
-			description: "Key uploaded successfully",
+			content: { 'application/json': { schema: KeyResponseSchema } },
+			description: 'Key uploaded successfully',
 		},
 		[HTTP.BadRequest]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Invalid request",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Invalid request',
 		},
-		[HTTP.Unauthorized]: unauthorizedResponse("Missing or invalid admin token"),
-		[HTTP.Forbidden]: forbiddenResponse("Read-only admin credential; uploading a key needs the full ADMIN_TOKEN"),
+		[HTTP.Unauthorized]: unauthorizedResponse('Missing or invalid admin token'),
+		[HTTP.Forbidden]: forbiddenResponse('Read-only admin credential; uploading a key needs the full ADMIN_TOKEN'),
 		[HTTP.InternalServerError]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Internal server error",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Internal server error',
 		},
 	},
 });
 
 app.openapi(uploadKeyRoute, async (c) => {
-	const requestId = c.get("requestId");
+	const requestId = c.get('requestId');
 
 	try {
-		const body = c.req.valid("json");
+		const body = c.req.valid('json');
 
 		// Validate and parse the key
 		const keyInfo = await parseAndValidateKey(body.armoredPrivateKey, c.env.KEY_PASSPHRASE);
@@ -74,22 +74,22 @@ app.openapi(uploadKeyRoute, async (c) => {
 		};
 
 		// Store in Durable Object
-		const storeResponse = await fetchKeyStorage(c.env, "/store-key", {
-			method: "POST",
+		const storeResponse = await fetchKeyStorage(c.env, '/store-key', {
+			method: 'POST',
 			body: JSON.stringify(storedKey),
-			headers: { "Content-Type": MediaType.ApplicationJson },
+			headers: { 'Content-Type': MediaType.ApplicationJson },
 		});
 
 		if (!storeResponse.ok) {
 			const error = (await storeResponse.json()) as { error: string };
-			throw new Error(error.error || "Failed to store key");
+			throw new Error(error.error || 'Failed to store key');
 		}
 
 		// Invalidate any cached decrypted key (in case of key rotation/overwrite)
 		invalidateKeyCache(body.keyId);
 
 		// Log key upload (non-blocking in production, blocking in tests)
-		logger.debug("Scheduling background task for upload success audit", {
+		logger.debug('Scheduling background task for upload success audit', {
 			requestId,
 		});
 		await scheduleBackgroundTask(
@@ -97,9 +97,9 @@ app.openapi(uploadKeyRoute, async (c) => {
 			requestId,
 			logAuditEvent(c.env.AUDIT_DB, {
 				requestId,
-				action: "key_upload",
-				issuer: "admin",
-				subject: "admin",
+				action: 'key_upload',
+				issuer: 'admin',
+				subject: 'admin',
 				keyId: body.keyId,
 				success: true,
 				metadata: JSON.stringify({
@@ -121,15 +121,15 @@ app.openapi(uploadKeyRoute, async (c) => {
 			HTTP.Created,
 		);
 	} catch (error) {
-		const message = error instanceof Error ? error.message : "Key upload failed";
+		const message = error instanceof Error ? error.message : 'Key upload failed';
 		// `logger.debug` is gated on `NODE_ENV === "development"`, so the only
 		// record a failed key upload used to leave in production was its D1 audit
 		// row -- which is written by the very call below, and so is missing
 		// exactly when D1 is what failed.
-		logger.error("Failed to upload key:", error, { requestId });
+		logger.error('Failed to upload key:', error, { requestId });
 
 		// Audit failed key upload attempt (non-blocking in production)
-		logger.debug("Scheduling background task for upload failure audit", {
+		logger.debug('Scheduling background task for upload failure audit', {
 			requestId,
 		});
 		await scheduleBackgroundTask(
@@ -137,12 +137,12 @@ app.openapi(uploadKeyRoute, async (c) => {
 			requestId,
 			logAuditEvent(c.env.AUDIT_DB, {
 				requestId,
-				action: "key_upload",
-				issuer: "admin",
-				subject: "admin",
-				keyId: "unknown",
+				action: 'key_upload',
+				issuer: 'admin',
+				subject: 'admin',
+				keyId: 'unknown',
 				success: false,
-				errorCode: "KEY_UPLOAD_ERROR",
+				errorCode: 'KEY_UPLOAD_ERROR',
 				metadata: JSON.stringify({ error: message }),
 			}),
 		);
@@ -150,7 +150,7 @@ app.openapi(uploadKeyRoute, async (c) => {
 		return c.json(
 			{
 				error: message,
-				code: "KEY_UPLOAD_ERROR" as const satisfies ErrorCode,
+				code: 'KEY_UPLOAD_ERROR' as const satisfies ErrorCode,
 				requestId,
 			},
 			HTTP.InternalServerError,
@@ -159,47 +159,47 @@ app.openapi(uploadKeyRoute, async (c) => {
 });
 
 const uploadX509KeyRoute = createRoute({
-	method: "post",
-	path: "/keys/x509",
-	summary: "Upload a new X.509 signing key",
+	method: 'post',
+	path: '/keys/x509',
+	summary: 'Upload a new X.509 signing key',
 	description:
-		"Upload a PKCS#8 private key and X.509 certificate for detached PKCS#7 commit signing (git gpg.format=x509)",
+		'Upload a PKCS#8 private key and X.509 certificate for detached PKCS#7 commit signing (git gpg.format=x509)',
 	security: [{ bearerAuth: [] }],
 	request: {
 		body: {
-			content: { "application/json": { schema: X509KeyUploadSchema } },
+			content: { 'application/json': { schema: X509KeyUploadSchema } },
 			required: true,
 		},
 	},
 	responses: {
 		[HTTP.Created]: {
-			content: { "application/json": { schema: X509KeyResponseSchema } },
-			description: "Key uploaded successfully",
+			content: { 'application/json': { schema: X509KeyResponseSchema } },
+			description: 'Key uploaded successfully',
 		},
 		[HTTP.BadRequest]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Invalid request",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Invalid request',
 		},
-		[HTTP.Unauthorized]: unauthorizedResponse("Missing or invalid admin token"),
-		[HTTP.Forbidden]: forbiddenResponse("Read-only admin credential; uploading a key needs the full ADMIN_TOKEN"),
+		[HTTP.Unauthorized]: unauthorizedResponse('Missing or invalid admin token'),
+		[HTTP.Forbidden]: forbiddenResponse('Read-only admin credential; uploading a key needs the full ADMIN_TOKEN'),
 		[HTTP.InternalServerError]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Internal server error",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Internal server error',
 		},
 	},
 });
 
 app.openapi(uploadX509KeyRoute, async (c) => {
-	const requestId = c.get("requestId");
+	const requestId = c.get('requestId');
 
 	try {
-		const body = c.req.valid("json");
+		const body = c.req.valid('json');
 
 		// Validate key material and key/certificate match
 		const keyInfo = await parseAndValidateX509Key(body.privateKeyPem, body.certificatePem, c.env.KEY_PASSPHRASE);
 
 		const storedKey: StoredX509Key = {
-			type: "x509",
+			type: 'x509',
 			keyId: body.keyId,
 			privateKeyPem: body.privateKeyPem,
 			certificatePem: body.certificatePem,
@@ -209,15 +209,15 @@ app.openapi(uploadX509KeyRoute, async (c) => {
 			algorithm: keyInfo.algorithm,
 		};
 
-		const storeResponse = await fetchKeyStorage(c.env, "/store-key", {
-			method: "POST",
+		const storeResponse = await fetchKeyStorage(c.env, '/store-key', {
+			method: 'POST',
 			body: JSON.stringify(storedKey),
-			headers: { "Content-Type": MediaType.ApplicationJson },
+			headers: { 'Content-Type': MediaType.ApplicationJson },
 		});
 
 		if (!storeResponse.ok) {
 			const error = (await storeResponse.json()) as { error: string };
-			throw new Error(error.error || "Failed to store key");
+			throw new Error(error.error || 'Failed to store key');
 		}
 
 		await scheduleBackgroundTask(
@@ -225,13 +225,13 @@ app.openapi(uploadX509KeyRoute, async (c) => {
 			requestId,
 			logAuditEvent(c.env.AUDIT_DB, {
 				requestId,
-				action: "key_upload",
-				issuer: "admin",
-				subject: "admin",
+				action: 'key_upload',
+				issuer: 'admin',
+				subject: 'admin',
 				keyId: body.keyId,
 				success: true,
 				metadata: JSON.stringify({
-					format: "x509",
+					format: 'x509',
 					fingerprint: keyInfo.fingerprint,
 					algorithm: keyInfo.algorithm,
 					subject: keyInfo.subject,
@@ -250,30 +250,30 @@ app.openapi(uploadX509KeyRoute, async (c) => {
 			HTTP.Created,
 		);
 	} catch (error) {
-		const message = error instanceof Error ? error.message : "Key upload failed";
+		const message = error instanceof Error ? error.message : 'Key upload failed';
 		// The X.509 path logged nothing at all: same gap as the OpenPGP upload
 		// above, without even a debug line to delete.
-		logger.error("Failed to upload X.509 key:", error, { requestId });
+		logger.error('Failed to upload X.509 key:', error, { requestId });
 
 		await scheduleBackgroundTask(
 			c,
 			requestId,
 			logAuditEvent(c.env.AUDIT_DB, {
 				requestId,
-				action: "key_upload",
-				issuer: "admin",
-				subject: "admin",
-				keyId: "unknown",
+				action: 'key_upload',
+				issuer: 'admin',
+				subject: 'admin',
+				keyId: 'unknown',
 				success: false,
-				errorCode: "KEY_UPLOAD_ERROR",
-				metadata: JSON.stringify({ format: "x509", error: message }),
+				errorCode: 'KEY_UPLOAD_ERROR',
+				metadata: JSON.stringify({ format: 'x509', error: message }),
 			}),
 		);
 
 		return c.json(
 			{
 				error: message,
-				code: "KEY_UPLOAD_ERROR" as const satisfies ErrorCode,
+				code: 'KEY_UPLOAD_ERROR' as const satisfies ErrorCode,
 				requestId,
 			},
 			HTTP.InternalServerError,
@@ -282,29 +282,29 @@ app.openapi(uploadX509KeyRoute, async (c) => {
 });
 
 const listKeysRoute = createRoute({
-	method: "get",
-	path: "/keys",
-	summary: "List all keys",
-	description: "List metadata for all stored keys",
+	method: 'get',
+	path: '/keys',
+	summary: 'List all keys',
+	description: 'List metadata for all stored keys',
 	security: [{ bearerAuth: [] }],
 	responses: {
 		[HTTP.OK]: {
-			content: { "application/json": { schema: KeyListResponseSchema } },
-			description: "List of keys",
+			content: { 'application/json': { schema: KeyListResponseSchema } },
+			description: 'List of keys',
 		},
-		[HTTP.Unauthorized]: unauthorizedResponse("Missing or invalid admin token"),
+		[HTTP.Unauthorized]: unauthorizedResponse('Missing or invalid admin token'),
 		[HTTP.InternalServerError]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Internal server error",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Internal server error',
 		},
 	},
 });
 
 app.openapi(listKeysRoute, async (c) => {
-	const requestId = c.get("requestId");
+	const requestId = c.get('requestId');
 
 	try {
-		const response = await fetchKeyStorage(c.env, "/list-keys");
+		const response = await fetchKeyStorage(c.env, '/list-keys');
 		if (!response.ok) {
 			throw new Error(`Key storage returned ${response.status}`);
 		}
@@ -319,11 +319,11 @@ app.openapi(listKeysRoute, async (c) => {
 		};
 		return c.json(result, HTTP.OK);
 	} catch (error) {
-		logger.error("Failed to list keys:", error, { requestId });
+		logger.error('Failed to list keys:', error, { requestId });
 		return c.json(
 			{
-				error: "Failed to retrieve keys",
-				code: "KEY_LIST_ERROR" as const satisfies ErrorCode,
+				error: 'Failed to retrieve keys',
+				code: 'KEY_LIST_ERROR' as const satisfies ErrorCode,
 			},
 			HTTP.InternalServerError,
 		);
@@ -331,42 +331,42 @@ app.openapi(listKeysRoute, async (c) => {
 });
 
 const getPublicKeyRoute = createRoute({
-	method: "get",
-	path: "/keys/{keyId}/public",
-	summary: "Get public key",
-	description: "Get the public key for a specific key ID",
+	method: 'get',
+	path: '/keys/{keyId}/public',
+	summary: 'Get public key',
+	description: 'Get the public key for a specific key ID',
 	security: [{ bearerAuth: [] }],
 	request: {
 		params: z.object({
 			keyId: z.string().openapi({
-				param: { name: "keyId", in: "path" },
-				example: "A1B2C3D4E5F6G7H8",
+				param: { name: 'keyId', in: 'path' },
+				example: 'A1B2C3D4E5F6G7H8',
 			}),
 		}),
 	},
 	responses: {
 		[HTTP.OK]: {
 			content: {
-				"application/pgp-keys": { schema: z.string() },
-				"application/pem-certificate-chain": { schema: z.string() },
+				'application/pgp-keys': { schema: z.string() },
+				'application/pem-certificate-chain': { schema: z.string() },
 			},
-			description: "Public key (PGP armored) or X.509 certificate (PEM)",
+			description: 'Public key (PGP armored) or X.509 certificate (PEM)',
 		},
-		[HTTP.Unauthorized]: unauthorizedResponse("Missing or invalid admin token"),
+		[HTTP.Unauthorized]: unauthorizedResponse('Missing or invalid admin token'),
 		[HTTP.NotFound]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Key not found",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Key not found',
 		},
 		[HTTP.InternalServerError]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Internal server error",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Internal server error',
 		},
 	},
 });
 
 app.openapi(getPublicKeyRoute, async (c) => {
-	const { keyId } = c.req.valid("param");
-	const requestId = c.get("requestId");
+	const { keyId } = c.req.valid('param');
+	const requestId = c.get('requestId');
 
 	try {
 		const keyResponse = await fetchKeyStorage(c.env, `/get-key?keyId=${encodeURIComponent(keyId)}`);
@@ -374,8 +374,8 @@ app.openapi(getPublicKeyRoute, async (c) => {
 		if (!keyResponse.ok) {
 			return c.json(
 				{
-					error: "Key not found",
-					code: "KEY_NOT_FOUND" as const satisfies ErrorCode,
+					error: 'Key not found',
+					code: 'KEY_NOT_FOUND' as const satisfies ErrorCode,
 				},
 				HTTP.NotFound,
 			);
@@ -385,14 +385,14 @@ app.openapi(getPublicKeyRoute, async (c) => {
 
 		if (isX509Key(storedKey)) {
 			return c.text(storedKey.certificatePem, HTTP.OK, {
-				"Content-Type": MediaType.ApplicationPemCertificateChain,
+				'Content-Type': MediaType.ApplicationPemCertificateChain,
 			});
 		}
 
 		const publicKey = await extractPublicKey(storedKey.armoredPrivateKey);
 
 		return c.text(publicKey, HTTP.OK, {
-			"Content-Type": MediaType.ApplicationPgpKeys,
+			'Content-Type': MediaType.ApplicationPgpKeys,
 		});
 	} catch (error) {
 		// `logger.error(message, error, context)`. Folded into the context object
@@ -400,11 +400,11 @@ app.openapi(getPublicKeyRoute, async (c) => {
 		// `JSON.stringify` renders a nested `Error` as `{}`, so the one line
 		// written for a key-storage or OpenPGP failure said nothing about what
 		// failed, and carried no id to reach the request that hit it.
-		logger.error("Failed to get public key:", error, { keyId, requestId });
+		logger.error('Failed to get public key:', error, { keyId, requestId });
 		return c.json(
 			{
-				error: "Failed to process key",
-				code: "KEY_PROCESSING_ERROR" as const satisfies ErrorCode,
+				error: 'Failed to process key',
+				code: 'KEY_PROCESSING_ERROR' as const satisfies ErrorCode,
 			},
 			HTTP.InternalServerError,
 		);
@@ -412,40 +412,40 @@ app.openapi(getPublicKeyRoute, async (c) => {
 });
 
 const deleteKeyRoute = createRoute({
-	method: "delete",
-	path: "/keys/{keyId}",
-	summary: "Delete a key",
-	description: "Delete a stored key",
+	method: 'delete',
+	path: '/keys/{keyId}',
+	summary: 'Delete a key',
+	description: 'Delete a stored key',
 	security: [{ bearerAuth: [] }],
 	request: {
 		params: z.object({
 			keyId: z.string().openapi({
-				param: { name: "keyId", in: "path" },
-				example: "A1B2C3D4E5F6G7H8",
+				param: { name: 'keyId', in: 'path' },
+				example: 'A1B2C3D4E5F6G7H8',
 			}),
 		}),
 	},
 	responses: {
 		[HTTP.OK]: {
-			content: { "application/json": { schema: KeyDeletionResponseSchema } },
-			description: "Key deleted",
+			content: { 'application/json': { schema: KeyDeletionResponseSchema } },
+			description: 'Key deleted',
 		},
-		[HTTP.Unauthorized]: unauthorizedResponse("Missing or invalid admin token"),
-		[HTTP.Forbidden]: forbiddenResponse("Read-only admin credential; deleting a key needs the full ADMIN_TOKEN"),
+		[HTTP.Unauthorized]: unauthorizedResponse('Missing or invalid admin token'),
+		[HTTP.Forbidden]: forbiddenResponse('Read-only admin credential; deleting a key needs the full ADMIN_TOKEN'),
 		[HTTP.InternalServerError]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Internal server error",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Internal server error',
 		},
 	},
 });
 
 app.openapi(deleteKeyRoute, async (c) => {
-	const { keyId } = c.req.valid("param");
-	const requestId = c.get("requestId");
+	const { keyId } = c.req.valid('param');
+	const requestId = c.get('requestId');
 
 	try {
 		const response = await fetchKeyStorage(c.env, `/delete-key?keyId=${encodeURIComponent(keyId)}`, {
-			method: "DELETE",
+			method: 'DELETE',
 		});
 
 		if (!response.ok) {
@@ -468,9 +468,9 @@ app.openapi(deleteKeyRoute, async (c) => {
 			requestId,
 			logAuditEvent(c.env.AUDIT_DB, {
 				requestId,
-				action: "key_rotate",
-				issuer: "admin",
-				subject: "admin",
+				action: 'key_rotate',
+				issuer: 'admin',
+				subject: 'admin',
 				keyId,
 				success: result.deleted,
 			}),
@@ -478,10 +478,10 @@ app.openapi(deleteKeyRoute, async (c) => {
 
 		return c.json(result, HTTP.OK);
 	} catch (error) {
-		const message = error instanceof Error ? error.message : "Delete failed";
+		const message = error instanceof Error ? error.message : 'Delete failed';
 		// Same nesting as the public-key path: the cause survives only in the
 		// error slot the logger unpacks into `{ message, name, stack }`.
-		logger.error("Failed to delete key:", error, { keyId, requestId });
+		logger.error('Failed to delete key:', error, { keyId, requestId });
 
 		// Audit failed deletion attempt (non-blocking in production)
 		await scheduleBackgroundTask(
@@ -489,20 +489,20 @@ app.openapi(deleteKeyRoute, async (c) => {
 			requestId,
 			logAuditEvent(c.env.AUDIT_DB, {
 				requestId,
-				action: "key_rotate",
-				issuer: "admin",
-				subject: "admin",
+				action: 'key_rotate',
+				issuer: 'admin',
+				subject: 'admin',
 				keyId,
 				success: false,
-				errorCode: "KEY_DELETE_ERROR",
+				errorCode: 'KEY_DELETE_ERROR',
 				metadata: JSON.stringify({ error: message }),
 			}),
 		);
 
 		return c.json(
 			{
-				error: "Failed to delete key",
-				code: "KEY_DELETE_ERROR" as const satisfies ErrorCode,
+				error: 'Failed to delete key',
+				code: 'KEY_DELETE_ERROR' as const satisfies ErrorCode,
 			},
 			HTTP.InternalServerError,
 		);
@@ -510,34 +510,34 @@ app.openapi(deleteKeyRoute, async (c) => {
 });
 
 const getAuditLogsRoute = createRoute({
-	method: "get",
-	path: "/audit",
-	summary: "Get audit logs",
-	description: "Retrieve audit logs with filtering",
+	method: 'get',
+	path: '/audit',
+	summary: 'Get audit logs',
+	description: 'Retrieve audit logs with filtering',
 	security: [{ bearerAuth: [] }],
 	request: { query: AuditQuerySchema },
 	responses: {
 		[HTTP.OK]: {
-			content: { "application/json": { schema: AuditLogsResponseSchema } },
-			description: "Audit logs",
+			content: { 'application/json': { schema: AuditLogsResponseSchema } },
+			description: 'Audit logs',
 		},
 		[HTTP.BadRequest]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Invalid request",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Invalid request',
 		},
-		[HTTP.Unauthorized]: unauthorizedResponse("Missing or invalid admin token"),
+		[HTTP.Unauthorized]: unauthorizedResponse('Missing or invalid admin token'),
 		[HTTP.InternalServerError]: {
-			content: { "application/json": { schema: ErrorResponseSchema } },
-			description: "Internal server error",
+			content: { 'application/json': { schema: ErrorResponseSchema } },
+			description: 'Internal server error',
 		},
 	},
 });
 
 app.openapi(getAuditLogsRoute, async (c) => {
-	const requestId = c.get("requestId");
+	const requestId = c.get('requestId');
 
 	try {
-		const { limit, offset, action, subject, startDate, endDate } = c.req.valid("query");
+		const { limit, offset, action, subject, startDate, endDate } = c.req.valid('query');
 
 		// Filter out undefined values for optional parameters
 		const auditOptions: Parameters<typeof getAuditLogs>[1] = { limit, offset };
@@ -551,11 +551,11 @@ app.openapi(getAuditLogsRoute, async (c) => {
 
 		return c.json({ logs, count: logs.length }, HTTP.OK);
 	} catch (error) {
-		logger.error("Failed to get audit logs:", error, { requestId });
+		logger.error('Failed to get audit logs:', error, { requestId });
 		return c.json(
 			{
-				error: "Failed to retrieve audit logs",
-				code: "AUDIT_ERROR" as const satisfies ErrorCode,
+				error: 'Failed to retrieve audit logs',
+				code: 'AUDIT_ERROR' as const satisfies ErrorCode,
 			},
 			HTTP.InternalServerError,
 		);

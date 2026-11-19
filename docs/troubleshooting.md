@@ -28,7 +28,7 @@ first.
 ```bash
 gpg-sign --json health
 curl --fail-with-body --silent --show-error "$GPG_SIGN_URL/doc" \
-	| jq '.info, .paths | keys'
+  | jq '.info, .paths | keys'
 ```
 
 `health` checks the key-storage Durable Object and D1. It does not validate a
@@ -72,7 +72,7 @@ verified token still needs a trusted subject. Check all of:
   `https://token.actions.githubusercontent.com`;
 - the token has not expired.
 
-Discovery and JWKS reachability is _not_ on that list any more: a deployment
+Discovery and JWKS reachability is *not* on that list any more: a deployment
 that cannot reach the issuer now answers
 [`503 SERVICE_DEGRADED`](errors.md#service_degraded) — or
 [`500 SERVICE_MISCONFIGURED`](errors.md#service_misconfigured), when the URL is
@@ -96,7 +96,7 @@ The `code` separates these, and the split matters because the fixes do:
 separate lines, so read those before working down the list.
 
 `AUTH_MISSING` has two messages, and the second is the one that misleads. The
-prefix test is for the word `Bearer` _followed by a space_, so a header that is
+prefix test is for the word `Bearer` *followed by a space*, so a header that is
 the bare word alone never reaches the token check and reports
 `Missing authorization header`, exactly as sending no header at all does.
 `Missing token` means the space was there and nothing came after it — the step

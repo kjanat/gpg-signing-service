@@ -5,10 +5,10 @@
  * required. Each token carries an optional key-id allowlist.
  */
 
-import { logger } from "#utils/logger";
+import { logger } from '#utils/logger';
 
 /** Prefix distinguishing service tokens from OIDC JWTs in the auth header. */
-export const SERVICE_TOKEN_PREFIX = "gst_";
+export const SERVICE_TOKEN_PREFIX = 'gst_';
 
 /** A verified token's identity and signing policy. */
 export interface ServiceTokenPolicy {
@@ -28,17 +28,17 @@ interface ServiceTokenRow {
 
 /** SHA-256 hex digest of a token string. */
 export async function hashToken(token: string): Promise<string> {
-	const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
-	return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+	return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 /** Generate a new token: `gst_` + 256 bits of base64url entropy. */
 export function generateToken(): string {
 	const bytes = crypto.getRandomValues(new Uint8Array(32));
 	const base64 = btoa(String.fromCharCode(...bytes))
-		.replaceAll("+", "-")
-		.replaceAll("/", "_")
-		.replaceAll("=", "");
+		.replaceAll('+', '-')
+		.replaceAll('/', '_')
+		.replaceAll('=', '');
 	return `${SERVICE_TOKEN_PREFIX}${base64}`;
 }
 
@@ -62,7 +62,7 @@ export async function insertServiceToken(
 			id,
 			input.name,
 			await hashToken(input.token),
-			input.keyIds.join(","),
+			input.keyIds.join(','),
 			new Date().toISOString(),
 			input.expiresAt,
 		)
@@ -96,18 +96,18 @@ export async function verifyServiceToken(db: D1Database, token: string): Promise
 	// Best-effort usage stamp; a failed write must not block signing.
 	try {
 		await db
-			.prepare("UPDATE service_tokens SET last_used_at = ? WHERE id = ?")
+			.prepare('UPDATE service_tokens SET last_used_at = ? WHERE id = ?')
 			.bind(new Date().toISOString(), row.id)
 			.run();
 	} catch (error) {
-		logger.warn("Failed to stamp service token usage", {
+		logger.warn('Failed to stamp service token usage', {
 			tokenId: row.id,
 			error: error instanceof Error ? error.message : String(error),
 		});
 	}
 
 	const keyIds = row.key_ids
-		.split(",")
+		.split(',')
 		.map((keyId) => keyId.trim())
 		.filter((keyId) => keyId.length > 0);
 
@@ -139,7 +139,7 @@ export async function listServiceTokens(db: D1Database): Promise<
 
 	return results.map((row) => {
 		const keyIds = row.key_ids
-			.split(",")
+			.split(',')
 			.map((keyId) => keyId.trim())
 			.filter((keyId) => keyId.length > 0);
 		return {
@@ -157,7 +157,7 @@ export async function listServiceTokens(db: D1Database): Promise<
 /** Revoke a token by id. Returns false when the id is unknown. */
 export async function revokeServiceToken(db: D1Database, id: string): Promise<boolean> {
 	const result = await db
-		.prepare("UPDATE service_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL")
+		.prepare('UPDATE service_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL')
 		.bind(new Date().toISOString(), id)
 		.run();
 	return result.meta.changes > 0;

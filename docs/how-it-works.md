@@ -95,7 +95,7 @@ is what Git produces itself: `git commit -S` shells out to `gpg -bsa` with no
 `--textmode`, and the resulting packet is `sigclass 0x00`.
 
 The alternative, canonical text (`0x01`), is not interchangeable here. A
-canonical-text signature rewrites every line ending to CRLF _before hashing_, so
+canonical-text signature rewrites every line ending to CRLF *before hashing*, so
 a payload whose lines end in LF and the same payload with CRLF line endings hash
 to the same value — one signature stays valid over two distinct commit objects,
 and neither is pinned to the bytes Git actually stored. The service never
@@ -118,7 +118,7 @@ gpg: Good signature from "..."
 
 `scripts/test-gnupg-interop.sh` runs this end to end against real `gpg` and
 `git` — it signs a genuine commit payload, checks the packet class against
-git's own, verifies with `gpg --verify`, asserts the signature is _rejected_
+git's own, verifies with `gpg --verify`, asserts the signature is *rejected*
 over a CRLF-rewritten payload, and finally reassembles the commit object and
 runs `git verify-commit` on it. `task test:gnupg-interop` runs it; it is part of
 `task test` and skips itself where `gpg` is unavailable.

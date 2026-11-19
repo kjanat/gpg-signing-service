@@ -242,7 +242,7 @@ clear was attempted four times.
 Test the code and not the status. `SERVICE_MISCONFIGURED` wears a `500` because
 `503` is the status intermediaries retry on their own account, and a retry loop
 one layer up cannot read a code — but an intermediary's own `500` carries no
-code at all, and that one _is_ worth another go. `IsServiceMisconfigured` is
+code at all, and that one *is* worth another go. `IsServiceMisconfigured` is
 false for it, correctly.
 
 #### Example
@@ -362,14 +362,14 @@ not retried either: the next attempt fails the same way, immediately.
 one is the deployment's own configuration and answers identically until an
 operator edits a variable, so `shouldRetry` declines it on the code. The status
 cannot carry that — an intermediary's unattributed `500` wears the same one and
-_is_ worth another go — and neither can the absent `Retry-After`, since
+*is* worth another go — and neither can the absent `Retry-After`, since
 `RATE_LIMIT_ERROR` is a retryable `503` that also sends none.
 
 Six things worth knowing:
 
 - `WithTimeout` bounds one attempt, not the operation. `http.Client` applies its
   timeout per request, so every attempt is handed a fresh one, and a server that
-  answers _promptly_ with a retryable status never trips it — `WithTimeout(30s)`
+  answers *promptly* with a retryable status never trips it — `WithTimeout(30s)`
   under the default policy is four attempts of up to 30s plus roughly 15s of
   backoff. Pass a context with a deadline when you need one budget for the whole
   call; the retrier checks it before every wait.
@@ -394,10 +394,10 @@ Six things worth knowing:
 - A caller-side deadline that expires while the policy is still waiting costs
   you the retry, not the answer. The last response received is returned and
   mapped as usual, so `IsRateLimitError` still holds for a throttled call whose
-  `context` ran out. The last _response_, not the last attempt: a transport
+  `context` ran out. The last *response*, not the last attempt: a transport
   fault after it is deliberately not allowed to displace it, so the status you
   get can predate the wait the deadline landed in by an attempt or more. A
-  context you _cancel_ is reported as cancelled, and so is a deadline that
+  context you *cancel* is reported as cancelled, and so is a deadline that
   expires before any attempt completes. `WithTimeout` is not covered by this:
   it bounds one attempt, so an attempt of its own that runs out of time is
   reported as the timeout it is, never as the status some earlier attempt
@@ -407,7 +407,7 @@ Six things worth knowing:
   `deleted:false` by the next attempt, so once a retry has happened this client
   reports success rather than `KEY_NOT_FOUND` — the postcondition holds either
   way, and the alternative is telling you nothing happened for work that did.
-  A `deleted:false` on the _first_ attempt is still a not-found.
+  A `deleted:false` on the *first* attempt is still a not-found.
 - `Sign` and `UploadKey` are retried like everything else. Neither carries an
   idempotency key, so a retried attempt is a second request the service will
   act on: `Sign` produces another signature and another `sign` audit row,

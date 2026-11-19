@@ -138,7 +138,7 @@ the preserved key material is there.
 
 It also imports each revocation certificate next to the key it names, in a
 keyring that has never held either, and makes gpg report the key revoked. An
-issuer id read off the packet only says the certificate was _written_ for that
+issuer id read off the packet only says the certificate was *written* for that
 key; a certificate that rotted in storage still says it, right up until the day
 you need it, and there is no way to make another one without the secret key.
 
@@ -155,8 +155,8 @@ on purpose:
 - **the retired key** arriving already revoked is **fine** — it is the end state
   this whole procedure is pushing towards, and re-running `validate` after
   publication must not be punished. But the certificate was not checked in that
-  state either, so the run says so in as many words and repeats it under _Not
-  proved by this run_ at the end, rather than printing the line that means it
+  state either, so the run says so in as many words and repeats it under *Not
+  proved by this run* at the end, rather than printing the line that means it
   was proved.
 
 If you already hold the passphrase and want to check it against the originals
@@ -181,9 +181,9 @@ the original, not the backup.
 
 ```bash
 bash scripts/key-handoff.sh verify-backup \
-	--private-backup /mnt/restored/replacement-secret.asc \
-	--passphrase-backup /mnt/restored-elsewhere/passphrase.txt \
-	--preserved-backup /mnt/restored/preserved-D8BC04E534E7706F.asc
+  --private-backup /mnt/restored/replacement-secret.asc \
+  --passphrase-backup /mnt/restored-elsewhere/passphrase.txt \
+  --preserved-backup /mnt/restored/preserved-D8BC04E534E7706F.asc
 ```
 
 All three paths are required, and all three are checked before anything is
@@ -217,7 +217,7 @@ What it proves, in order:
   proof below would succeed against any passphrase at all, including one
   belonging to a different key, over a private key sitting in the backup in the
   clear;
-- the passphrase from the _separate_ location **unlocks** it. This is a signing
+- the passphrase from the *separate* location **unlocks** it. This is a signing
   operation over a nonce, not an import: gpg imports an encrypted secret key
   without ever consulting the passphrase, so "it imported" is not evidence;
 - the preserved key `D8BC04E534E7706F` restores and unlocks the same way;
@@ -243,7 +243,7 @@ When it passes, publish:
 
 ```bash
 bash scripts/key-handoff.sh publish-revocation \
-	--handoff .keys/rotation-20260908 --confirm-publish
+  --handoff .keys/rotation-20260908 --confirm-publish
 ```
 
 The default targets are the ones [ADR-004] names:

@@ -1,11 +1,11 @@
 // Mock audit logging to avoid database errors in tests
-import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { env } from "cloudflare:workers";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import app from "#gpg-signing-service";
+import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import { env } from 'cloudflare:workers';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import app from '#gpg-signing-service';
 
-vi.mock("#utils/audit", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("#utils/audit")>();
+vi.mock('#utils/audit', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('#utils/audit')>();
 	return { ...actual, logAuditEvent: vi.fn(async () => undefined) };
 });
 
@@ -15,17 +15,17 @@ vi.mock("#utils/audit", async (importOriginal) => {
  * These tests verify that admin token comparison uses constant-time comparison
  * to prevent timing attacks that could leak information about the token.
  */
-describe("Timing Attack Protection", () => {
+describe('Timing Attack Protection', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});
 
-	describe("Admin Token Comparison", () => {
-		it("should reject invalid admin token", async () => {
+	describe('Admin Token Comparison', () => {
+		it('should reject invalid admin token', async () => {
 			const ctx = createExecutionContext();
 			const response = await app.fetch(
-				new Request("http://localhost/admin/keys", {
-					headers: { Authorization: "Bearer invalid-token" },
+				new Request('http://localhost/admin/keys', {
+					headers: { Authorization: 'Bearer invalid-token' },
 				}),
 				env,
 				ctx,
@@ -34,14 +34,14 @@ describe("Timing Attack Protection", () => {
 
 			expect(response.status).toBe(401);
 			const body = (await response.json()) as { code: string };
-			expect(body.code).toBe("AUTH_INVALID");
+			expect(body.code).toBe('AUTH_INVALID');
 		});
 
-		it("should reject admin token with wrong length", async () => {
+		it('should reject admin token with wrong length', async () => {
 			const ctx = createExecutionContext();
-			const shortToken = "short";
+			const shortToken = 'short';
 			const response = await app.fetch(
-				new Request("http://localhost/admin/keys", {
+				new Request('http://localhost/admin/keys', {
 					headers: { Authorization: `Bearer ${shortToken}` },
 				}),
 				env,
@@ -51,19 +51,19 @@ describe("Timing Attack Protection", () => {
 
 			expect(response.status).toBe(401);
 			const body = (await response.json()) as { code: string };
-			expect(body.code).toBe("AUTH_INVALID");
+			expect(body.code).toBe('AUTH_INVALID');
 		});
 
-		it("should reject admin token with partial match", async () => {
+		it('should reject admin token with partial match', async () => {
 			const ctx = createExecutionContext();
 			// Assume env.ADMIN_TOKEN is something like "admin-secret-token"
 			// Create a token that matches first half but not second half
 			const partialMatch =
 				env.ADMIN_TOKEN.slice(0, Math.floor(env.ADMIN_TOKEN.length / 2)) +
-				"X".repeat(Math.ceil(env.ADMIN_TOKEN.length / 2));
+				'X'.repeat(Math.ceil(env.ADMIN_TOKEN.length / 2));
 
 			const response = await app.fetch(
-				new Request("http://localhost/admin/keys", {
+				new Request('http://localhost/admin/keys', {
 					headers: { Authorization: `Bearer ${partialMatch}` },
 				}),
 				env,
@@ -73,13 +73,13 @@ describe("Timing Attack Protection", () => {
 
 			expect(response.status).toBe(401);
 			const body = (await response.json()) as { code: string };
-			expect(body.code).toBe("AUTH_INVALID");
+			expect(body.code).toBe('AUTH_INVALID');
 		});
 
-		it("should accept valid admin token", async () => {
+		it('should accept valid admin token', async () => {
 			const ctx = createExecutionContext();
 			const response = await app.fetch(
-				new Request("http://localhost/admin/keys", {
+				new Request('http://localhost/admin/keys', {
 					headers: { Authorization: `Bearer ${env.ADMIN_TOKEN}` },
 				}),
 				env,
@@ -91,7 +91,7 @@ describe("Timing Attack Protection", () => {
 			expect(response.status).not.toBe(401);
 		});
 
-		it("should use constant-time comparison", async () => {
+		it('should use constant-time comparison', async () => {
 			// This test verifies the BEHAVIOR of token comparison.
 			//
 			// Security Property: The implementation uses crypto.subtle.timingSafeEqual
@@ -112,15 +112,15 @@ describe("Timing Attack Protection", () => {
 			// partial matches) are properly rejected with the same error response.
 
 			const correctToken = env.ADMIN_TOKEN;
-			const wrongLength = "X".repeat(correctToken.length + 10);
-			const wrongPrefix = "X".repeat(correctToken.length);
+			const wrongLength = 'X'.repeat(correctToken.length + 10);
+			const wrongPrefix = 'X'.repeat(correctToken.length);
 			const partialMatch = `${correctToken.slice(0, correctToken.length - 1)}X`;
 
 			// Verify all invalid tokens are rejected identically
 			for (const token of [wrongLength, wrongPrefix, partialMatch]) {
 				const ctx = createExecutionContext();
 				const response = await app.fetch(
-					new Request("http://localhost/admin/keys", {
+					new Request('http://localhost/admin/keys', {
 						headers: { Authorization: `Bearer ${token}` },
 					}),
 					env,
@@ -130,16 +130,16 @@ describe("Timing Attack Protection", () => {
 
 				expect(response.status).toBe(401);
 				const body = (await response.json()) as { error: string; code: string };
-				expect(body.code).toBe("AUTH_INVALID");
-				expect(body.error).toBe("Invalid admin token");
+				expect(body.code).toBe('AUTH_INVALID');
+				expect(body.error).toBe('Invalid admin token');
 			}
 		});
 
-		it("should handle empty token", async () => {
+		it('should handle empty token', async () => {
 			const ctx = createExecutionContext();
 			const response = await app.fetch(
-				new Request("http://localhost/admin/keys", {
-					headers: { Authorization: "Bearer " },
+				new Request('http://localhost/admin/keys', {
+					headers: { Authorization: 'Bearer ' },
 				}),
 				env,
 				ctx,
@@ -149,21 +149,21 @@ describe("Timing Attack Protection", () => {
 			expect(response.status).toBe(401);
 		});
 
-		it("should handle missing Authorization header", async () => {
+		it('should handle missing Authorization header', async () => {
 			const ctx = createExecutionContext();
-			const response = await app.fetch(new Request("http://localhost/admin/keys"), env, ctx);
+			const response = await app.fetch(new Request('http://localhost/admin/keys'), env, ctx);
 			await waitOnExecutionContext(ctx);
 
 			expect(response.status).toBe(401);
 			const body = (await response.json()) as { code: string };
-			expect(body.code).toBe("AUTH_MISSING");
+			expect(body.code).toBe('AUTH_MISSING');
 		});
 
-		it("should handle malformed Authorization header", async () => {
+		it('should handle malformed Authorization header', async () => {
 			const ctx = createExecutionContext();
 			const response = await app.fetch(
-				new Request("http://localhost/admin/keys", {
-					headers: { Authorization: "InvalidFormat" },
+				new Request('http://localhost/admin/keys', {
+					headers: { Authorization: 'InvalidFormat' },
 				}),
 				env,
 				ctx,
@@ -172,16 +172,16 @@ describe("Timing Attack Protection", () => {
 
 			expect(response.status).toBe(401);
 			const body = (await response.json()) as { code: string };
-			expect(body.code).toBe("AUTH_MISSING");
+			expect(body.code).toBe('AUTH_MISSING');
 		});
 
-		it("should protect all admin endpoints with timing-safe comparison", async () => {
+		it('should protect all admin endpoints with timing-safe comparison', async () => {
 			const adminEndpoints = [
-				{ method: "GET", path: "/admin/keys" },
-				{ method: "POST", path: "/admin/keys" },
-				{ method: "GET", path: "/admin/keys/TESTKEY123/public" },
-				{ method: "DELETE", path: "/admin/keys/TESTKEY123" },
-				{ method: "GET", path: "/admin/audit" },
+				{ method: 'GET', path: '/admin/keys' },
+				{ method: 'POST', path: '/admin/keys' },
+				{ method: 'GET', path: '/admin/keys/TESTKEY123/public' },
+				{ method: 'DELETE', path: '/admin/keys/TESTKEY123' },
+				{ method: 'GET', path: '/admin/audit' },
 			];
 
 			for (const endpoint of adminEndpoints) {
@@ -189,7 +189,7 @@ describe("Timing Attack Protection", () => {
 				const response = await app.fetch(
 					new Request(`http://localhost${endpoint.path}`, {
 						method: endpoint.method,
-						headers: { Authorization: "Bearer wrong-token" },
+						headers: { Authorization: 'Bearer wrong-token' },
 					}),
 					env,
 					ctx,
@@ -198,13 +198,13 @@ describe("Timing Attack Protection", () => {
 
 				expect(response.status).toBe(401);
 				const body = (await response.json()) as { code: string };
-				expect(body.code).toBe("AUTH_INVALID");
+				expect(body.code).toBe('AUTH_INVALID');
 			}
 		});
 	});
 
-	describe("Timing Attack Mitigation Strategy", () => {
-		it("should pad shorter tokens to prevent length leakage", async () => {
+	describe('Timing Attack Mitigation Strategy', () => {
+		it('should pad shorter tokens to prevent length leakage', async () => {
 			// This test verifies the BEHAVIOR of length padding.
 			//
 			// Security Property: The timingSafeEqual function pads both inputs to the
@@ -219,13 +219,13 @@ describe("Timing Attack Protection", () => {
 			// with the same error response, documenting the padding behavior without
 			// relying on flaky timing measurements.
 
-			const tokens = ["a", "ab", "abc", "abcd", "X".repeat(env.ADMIN_TOKEN.length)];
+			const tokens = ['a', 'ab', 'abc', 'abcd', 'X'.repeat(env.ADMIN_TOKEN.length)];
 
 			// All tokens should be rejected identically regardless of length
 			for (const token of tokens) {
 				const ctx = createExecutionContext();
 				const response = await app.fetch(
-					new Request("http://localhost/admin/keys", {
+					new Request('http://localhost/admin/keys', {
 						headers: { Authorization: `Bearer ${token}` },
 					}),
 					env,
@@ -235,12 +235,12 @@ describe("Timing Attack Protection", () => {
 
 				expect(response.status).toBe(401);
 				const body = (await response.json()) as { error: string; code: string };
-				expect(body.code).toBe("AUTH_INVALID");
-				expect(body.error).toBe("Invalid admin token");
+				expect(body.code).toBe('AUTH_INVALID');
+				expect(body.error).toBe('Invalid admin token');
 			}
 		});
 
-		it("should use crypto.subtle.timingSafeEqual for comparison", async () => {
+		it('should use crypto.subtle.timingSafeEqual for comparison', async () => {
 			// This test verifies that the implementation uses the Web Crypto API's
 			// timingSafeEqual function, which is designed to prevent timing attacks.
 			//
@@ -255,17 +255,17 @@ describe("Timing Attack Protection", () => {
 			// on mismatch, which is what constant-time comparison prevents.
 
 			const attempts = [
-				env.ADMIN_TOKEN.slice(0, 5) + "X".repeat(env.ADMIN_TOKEN.length - 5),
-				env.ADMIN_TOKEN.slice(0, 10) + "X".repeat(env.ADMIN_TOKEN.length - 10),
-				env.ADMIN_TOKEN.slice(0, 15) + "X".repeat(env.ADMIN_TOKEN.length - 15),
-				"X".repeat(env.ADMIN_TOKEN.length),
+				env.ADMIN_TOKEN.slice(0, 5) + 'X'.repeat(env.ADMIN_TOKEN.length - 5),
+				env.ADMIN_TOKEN.slice(0, 10) + 'X'.repeat(env.ADMIN_TOKEN.length - 10),
+				env.ADMIN_TOKEN.slice(0, 15) + 'X'.repeat(env.ADMIN_TOKEN.length - 15),
+				'X'.repeat(env.ADMIN_TOKEN.length),
 			];
 
 			// All attempts should be rejected with the same response
 			for (const attempt of attempts) {
 				const ctx = createExecutionContext();
 				const response = await app.fetch(
-					new Request("http://localhost/admin/keys", {
+					new Request('http://localhost/admin/keys', {
 						headers: { Authorization: `Bearer ${attempt}` },
 					}),
 					env,
@@ -275,18 +275,18 @@ describe("Timing Attack Protection", () => {
 
 				expect(response.status).toBe(401);
 				const body = (await response.json()) as { error: string; code: string };
-				expect(body.code).toBe("AUTH_INVALID");
-				expect(body.error).toBe("Invalid admin token");
+				expect(body.code).toBe('AUTH_INVALID');
+				expect(body.error).toBe('Invalid admin token');
 			}
 		});
 	});
 
-	describe("Security Properties", () => {
-		it("should not leak token information through error messages", async () => {
+	describe('Security Properties', () => {
+		it('should not leak token information through error messages', async () => {
 			const ctx = createExecutionContext();
 			const response = await app.fetch(
-				new Request("http://localhost/admin/keys", {
-					headers: { Authorization: "Bearer wrong-token" },
+				new Request('http://localhost/admin/keys', {
+					headers: { Authorization: 'Bearer wrong-token' },
 				}),
 				env,
 				ctx,
@@ -298,12 +298,12 @@ describe("Timing Attack Protection", () => {
 
 			// Error message should be generic, not revealing any information
 			// about the actual token or how close the guess was
-			expect(body.error).toBe("Invalid admin token");
+			expect(body.error).toBe('Invalid admin token');
 			expect(body.error).not.toContain(env.ADMIN_TOKEN);
 			expect(body.error).not.toMatch(/character|position|length|match/i);
 		});
 
-		it("should not leak timing information through response delays", async () => {
+		it('should not leak timing information through response delays', async () => {
 			// This test verifies the BEHAVIOR of response timing consistency.
 			//
 			// Security Property: The adminAuth middleware (src/middleware/oidc.ts)
@@ -325,13 +325,13 @@ describe("Timing Attack Protection", () => {
 			// with the same error response every time, confirming that no conditional
 			// logic based on token content affects the response path.
 
-			const wrongToken = "X".repeat(env.ADMIN_TOKEN.length);
+			const wrongToken = 'X'.repeat(env.ADMIN_TOKEN.length);
 
 			// Verify that repeated requests get consistent responses
 			for (let i = 0; i < 5; i++) {
 				const ctx = createExecutionContext();
 				const response = await app.fetch(
-					new Request("http://localhost/admin/keys", {
+					new Request('http://localhost/admin/keys', {
 						headers: { Authorization: `Bearer ${wrongToken}` },
 					}),
 					env,
@@ -341,8 +341,8 @@ describe("Timing Attack Protection", () => {
 
 				expect(response.status).toBe(401);
 				const body = (await response.json()) as { error: string; code: string };
-				expect(body.code).toBe("AUTH_INVALID");
-				expect(body.error).toBe("Invalid admin token");
+				expect(body.code).toBe('AUTH_INVALID');
+				expect(body.error).toBe('Invalid admin token');
 			}
 		});
 	});

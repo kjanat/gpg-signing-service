@@ -40,23 +40,23 @@
  * to the route suites, which own the fixtures they need.
  */
 
-import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
-import app from "#index";
-import type { ErrorCode } from "#schemas/errors";
-import { ERROR_CODES, ErrorResponseSchema, RateLimitErrorSchema } from "#schemas/errors";
+import { createExecutionContext, env, waitOnExecutionContext } from 'cloudflare:test';
+import { describe, expect, it } from 'vitest';
+import app from '#index';
+import type { ErrorCode } from '#schemas/errors';
+import { ERROR_CODES, ErrorResponseSchema, RateLimitErrorSchema } from '#schemas/errors';
 // Inlined at build time by Vite: the Workers pool has no filesystem, so this is
 // the only way a test running inside it can read a document from the repo.
-import apiGuide from "../../API.md?raw";
-import apiOverview from "../../docs/api.md?raw";
-import authenticationGuide from "../../docs/authentication.md?raw";
-import errorReference from "../../docs/errors.md?raw";
-import selfHosting from "../../docs/self-hosting.md?raw";
-import troubleshooting from "../../docs/troubleshooting.md?raw";
+import apiGuide from '../../API.md?raw';
+import apiOverview from '../../docs/api.md?raw';
+import authenticationGuide from '../../docs/authentication.md?raw';
+import errorReference from '../../docs/errors.md?raw';
+import selfHosting from '../../docs/self-hosting.md?raw';
+import troubleshooting from '../../docs/troubleshooting.md?raw';
 // The shell example sorts a response by status alone, so its branch comments
 // are where a status carrying two codes gets described — or mis-described.
-import signCommitExample from "../../examples/bash/sign-commit.sh?raw";
-import readme from "../../README.md?raw";
+import signCommitExample from '../../examples/bash/sign-commit.sh?raw';
+import readme from '../../README.md?raw';
 
 /**
  * Every test file in this directory, keyed by name.
@@ -66,8 +66,8 @@ import readme from "../../README.md?raw";
  * `unpinnedStatuses` name a suite and have the name mean something.
  */
 const suites: Record<string, string> = Object.fromEntries(
-	Object.entries(import.meta.glob<string>("./*.test.ts", { query: "?raw", import: "default", eager: true })).map(
-		([path, source]) => [path.replace(/^\.\//, ""), source],
+	Object.entries(import.meta.glob<string>('./*.test.ts', { query: '?raw', import: 'default', eager: true })).map(
+		([path, source]) => [path.replace(/^\.\//, ''), source],
 	),
 );
 
@@ -103,7 +103,7 @@ function jsonExamples(name: string, markdown: string): Record<string, unknown>[]
 				);
 			}
 		})
-		.filter((value): value is Record<string, unknown> => typeof value === "object" && value !== null);
+		.filter((value): value is Record<string, unknown> => typeof value === 'object' && value !== null);
 }
 
 /**
@@ -131,13 +131,13 @@ function statusesFromReference(): Map<string, number> {
 function slug(heading: string): string {
 	return heading
 		.toLowerCase()
-		.replace(/[^\w\- ]+/g, "")
+		.replace(/[^\w\- ]+/g, '')
 		.trim()
-		.replace(/ +/g, "-");
+		.replace(/ +/g, '-');
 }
 
-describe("the documented status of every code", () => {
-	it("is the one API.md and the error reference both give it", () => {
+describe('the documented status of every code', () => {
+	it('is the one API.md and the error reference both give it', () => {
 		const fromApi = statusesFromApiTable();
 		const fromReference = statusesFromReference();
 
@@ -167,60 +167,60 @@ describe("the documented status of every code", () => {
  */
 const statusProbes: { code: ErrorCode; what: string; send: () => Promise<Response> }[] = [
 	{
-		code: "AUTH_MISSING",
-		what: "an admin route with no Authorization header",
-		send: () => request("/admin/audit"),
+		code: 'AUTH_MISSING',
+		what: 'an admin route with no Authorization header',
+		send: () => request('/admin/audit'),
 	},
 	{
-		code: "AUTH_INVALID",
-		what: "an admin route with a bearer that is not the admin token",
-		send: () => request("/admin/audit", { headers: { Authorization: "Bearer not-the-admin-token" } }),
+		code: 'AUTH_INVALID',
+		what: 'an admin route with a bearer that is not the admin token',
+		send: () => request('/admin/audit', { headers: { Authorization: 'Bearer not-the-admin-token' } }),
 	},
 	{
-		code: "NOT_FOUND",
-		what: "a path no route matches",
-		send: () => request("/no-such-route"),
+		code: 'NOT_FOUND',
+		what: 'a path no route matches',
+		send: () => request('/no-such-route'),
 	},
 	{
-		code: "NOT_FOUND",
-		what: "`/e/<CODE>` for a code this service does not define",
-		send: () => request("/e/NOPE"),
+		code: 'NOT_FOUND',
+		what: '`/e/<CODE>` for a code this service does not define',
+		send: () => request('/e/NOPE'),
 	},
 	{
-		code: "KEY_NOT_FOUND",
-		what: "`/public-key` for an id nothing is stored under",
-		send: () => request("/public-key?keyId=FFFFFFFFFFFFFFFF"),
+		code: 'KEY_NOT_FOUND',
+		what: '`/public-key` for an id nothing is stored under',
+		send: () => request('/public-key?keyId=FFFFFFFFFFFFFFFF'),
 	},
 	{
-		code: "INVALID_REQUEST",
+		code: 'INVALID_REQUEST',
 		what: "a query the route's schema rejects",
-		send: () => adminRequest("/admin/audit?limit=-1"),
+		send: () => adminRequest('/admin/audit?limit=-1'),
 	},
 	{
-		code: "AUTH_SCOPE_INSUFFICIENT",
-		what: "a state-changing admin route with the read-only admin bearer",
+		code: 'AUTH_SCOPE_INSUFFICIENT',
+		what: 'a state-changing admin route with the read-only admin bearer',
 		// The scope check is in the admin auth middleware, so this is refused
 		// before the route touches the key store: no seeded key, no stub, and the
 		// id in the path never has to exist.
 		send: () =>
-			request("/admin/keys/FFFFFFFFFFFFFFFF", {
-				method: "DELETE",
+			request('/admin/keys/FFFFFFFFFFFFFFFF', {
+				method: 'DELETE',
 				headers: { Authorization: `Bearer ${env.ADMIN_READONLY_TOKEN}` },
 			}),
 	},
 	{
-		code: "INTERNAL_ERROR",
-		what: "a handler that throws, caught by `app.onError`",
+		code: 'INTERNAL_ERROR',
+		what: 'a handler that throws, caught by `app.onError`',
 		send: async () => {
 			// `/public-key` does not guard the Durable Object lookup, so this reaches
 			// the app-level handler rather than a route's own catch — which is the
 			// path `INTERNAL_ERROR` documents.
 			const original = env.KEY_STORAGE.idFromName;
 			env.KEY_STORAGE.idFromName = () => {
-				throw new Error("Key storage failure");
+				throw new Error('Key storage failure');
 			};
 			try {
-				return await request("/public-key");
+				return await request('/public-key');
 			} finally {
 				env.KEY_STORAGE.idFromName = original;
 			}
@@ -237,22 +237,22 @@ const statusProbes: { code: ErrorCode; what: string; send: () => Promise<Respons
  * fails this file until someone decides whether it is cheap to reach.
  */
 const unpinnedStatuses: Record<string, { suite: string; needs: string }> = {
-	AUTH_SUBJECT_UNTRUSTED: { suite: "middleware.test.ts", needs: "a verified token with no trust row" },
-	KEY_NOT_ALLOWED: { suite: "sign.test.ts", needs: "a trust row carrying a key allowlist" },
-	KEY_PROCESSING_ERROR: { suite: "admin.test.ts", needs: "damaged key material in storage" },
-	KEY_LIST_ERROR: { suite: "admin.test.ts", needs: "the key-storage DO stubbed into failure" },
-	KEY_UPLOAD_ERROR: { suite: "admin.test.ts", needs: "the key-storage DO stubbed into failure" },
-	KEY_DELETE_ERROR: { suite: "admin.test.ts", needs: "the key-storage DO stubbed into failure" },
-	SIGN_ERROR: { suite: "sign.test.ts", needs: "a stored key and a signing failure" },
-	RATE_LIMITED: { suite: "sign.test.ts", needs: "the limiter stubbed into denial" },
-	RATE_LIMIT_ERROR: { suite: "sign.test.ts", needs: "the limiter stubbed into failure" },
-	AUDIT_ERROR: { suite: "admin.test.ts", needs: "D1 stubbed into failure" },
-	SERVICE_DEGRADED: { suite: "middleware.test.ts", needs: "an unreachable JWKS or store" },
-	SERVICE_MISCONFIGURED: { suite: "middleware.test.ts", needs: "an ALLOWED_ISSUERS entry the SSRF guard refuses" },
-	PAYLOAD_TOO_LARGE: { suite: "github-webhook.test.ts", needs: "the integration enabled and an oversize delivery" },
+	AUTH_SUBJECT_UNTRUSTED: { suite: 'middleware.test.ts', needs: 'a verified token with no trust row' },
+	KEY_NOT_ALLOWED: { suite: 'sign.test.ts', needs: 'a trust row carrying a key allowlist' },
+	KEY_PROCESSING_ERROR: { suite: 'admin.test.ts', needs: 'damaged key material in storage' },
+	KEY_LIST_ERROR: { suite: 'admin.test.ts', needs: 'the key-storage DO stubbed into failure' },
+	KEY_UPLOAD_ERROR: { suite: 'admin.test.ts', needs: 'the key-storage DO stubbed into failure' },
+	KEY_DELETE_ERROR: { suite: 'admin.test.ts', needs: 'the key-storage DO stubbed into failure' },
+	SIGN_ERROR: { suite: 'sign.test.ts', needs: 'a stored key and a signing failure' },
+	RATE_LIMITED: { suite: 'sign.test.ts', needs: 'the limiter stubbed into denial' },
+	RATE_LIMIT_ERROR: { suite: 'sign.test.ts', needs: 'the limiter stubbed into failure' },
+	AUDIT_ERROR: { suite: 'admin.test.ts', needs: 'D1 stubbed into failure' },
+	SERVICE_DEGRADED: { suite: 'middleware.test.ts', needs: 'an unreachable JWKS or store' },
+	SERVICE_MISCONFIGURED: { suite: 'middleware.test.ts', needs: 'an ALLOWED_ISSUERS entry the SSRF guard refuses' },
+	PAYLOAD_TOO_LARGE: { suite: 'github-webhook.test.ts', needs: 'the integration enabled and an oversize delivery' },
 };
 
-describe("the status a code actually arrives with", () => {
+describe('the status a code actually arrives with', () => {
 	const documented = statusesFromReference();
 
 	for (const probe of statusProbes) {
@@ -269,13 +269,13 @@ describe("the status a code actually arrives with", () => {
 		});
 	}
 
-	it("is pinned against a live response, or named as covered elsewhere", () => {
+	it('is pinned against a live response, or named as covered elsewhere', () => {
 		const pinned = new Set(statusProbes.map((probe) => probe.code));
 
 		expect(ERROR_CODES.filter((code) => !pinned.has(code)).sort()).toEqual(Object.keys(unpinnedStatuses).sort());
 	});
 
-	it("names a suite that exists and asserts the code", () => {
+	it('names a suite that exists and asserts the code', () => {
 		// A pointer at a file is a claim about the code, and an unchecked claim
 		// about the code is what this whole suite exists to stop. Three of these
 		// were wrong when the map was written — `AUTH_SUBJECT_UNTRUSTED` and
@@ -309,7 +309,7 @@ describe("the shell example's 503 branch", () => {
 		return arm[1] as string;
 	}
 
-	it("names every code the reference sorts onto a 503", () => {
+	it('names every code the reference sorts onto a 503', () => {
 		// The example branches on status, so one arm can be reached by codes that
 		// want different things — and its comment is the only place that says so.
 		// It claimed every 503 was SERVICE_DEGRADED and carried a `Retry-After`;
@@ -327,18 +327,18 @@ describe("the shell example's 503 branch", () => {
 	});
 });
 
-describe("every error example in the documentation", () => {
+describe('every error example in the documentation', () => {
 	// A caller copies these. An example that would not validate is a caller
 	// building a parser against a body the service never sends.
 	const documents = {
-		"API.md": apiGuide,
-		"docs/errors.md": errorReference,
-		"docs/troubleshooting.md": troubleshooting,
+		'API.md': apiGuide,
+		'docs/errors.md': errorReference,
+		'docs/troubleshooting.md': troubleshooting,
 	};
 
 	for (const [name, markdown] of Object.entries(documents)) {
 		it(`is a body ${name} could actually have received`, () => {
-			const errors = jsonExamples(name, markdown).filter((example) => typeof example.code === "string");
+			const errors = jsonExamples(name, markdown).filter((example) => typeof example.code === 'string');
 
 			// Guards the guard: a regex that stopped matching would leave this
 			// suite passing with nothing to check.
@@ -355,10 +355,10 @@ describe("every error example in the documentation", () => {
 				// send — and hides the field they are meant to follow.
 				expect({ code: example.code, docs: typeof example.docs }).toEqual({
 					code: example.code,
-					docs: "string",
+					docs: 'string',
 				});
 
-				const schema = "retryAfter" in example ? RateLimitErrorSchema : ErrorResponseSchema;
+				const schema = 'retryAfter' in example ? RateLimitErrorSchema : ErrorResponseSchema;
 				expect(schema.safeParse(example).error?.issues ?? []).toEqual([]);
 			}
 		});
@@ -366,79 +366,79 @@ describe("every error example in the documentation", () => {
 });
 
 describe("the envelope guarantee's exceptions", () => {
-	it("leaves the degraded /health body without a code or a docs link", async () => {
+	it('leaves the degraded /health body without a code or a docs link', async () => {
 		// The one non-2xx JSON body in the service that is not an error envelope:
 		// a HealthResponse reporting a failed check, not a refusal of the request.
 		// `errorDocs` has no code to build a link from, so it passes it through —
 		// which is why the documents may not promise `docs` on "every error".
 		const original = env.KEY_STORAGE.idFromName;
 		env.KEY_STORAGE.idFromName = () => {
-			throw new Error("Key storage failure");
+			throw new Error('Key storage failure');
 		};
 
 		try {
-			const response = await request("/health");
+			const response = await request('/health');
 
 			expect(response.status).toBe(503);
 			const body = await response.json<Record<string, unknown>>();
-			expect(body).toMatchObject({ status: "degraded" });
-			expect(body).not.toHaveProperty("code");
-			expect(body).not.toHaveProperty("docs");
+			expect(body).toMatchObject({ status: 'degraded' });
+			expect(body).not.toHaveProperty('code');
+			expect(body).not.toHaveProperty('docs');
 		} finally {
 			env.KEY_STORAGE.idFromName = original;
 		}
 	});
 
-	it("keeps requestId out of the 429 envelope, where the header is the only source", () => {
+	it('keeps requestId out of the 429 envelope, where the header is the only source', () => {
 		// Asserted on the schema because that is what declares the 429 body — the
 		// route builds it from `error`, `code` and `retryAfter` and nothing else.
 		// `docs/errors.md` and `docs/troubleshooting.md` both tell callers to read
 		// `X-Request-ID` here; this is what stops the field appearing without them
 		// noticing, and stops the advice going stale if it ever does.
-		expect(Object.keys(RateLimitErrorSchema.shape).sort()).toEqual(["code", "docs", "error", "hint", "retryAfter"]);
+		expect(Object.keys(RateLimitErrorSchema.shape).sort()).toEqual(['code', 'docs', 'error', 'hint', 'retryAfter']);
 	});
 
-	it("answers an unrouted path with a docs link and no requestId", async () => {
+	it('answers an unrouted path with a docs link and no requestId', async () => {
 		// The `mostly` in the envelope table, made concrete. The 404 handler builds
 		// its body by hand and does not read the context, so the id reaches the
 		// caller on the header alone.
-		const response = await request("/no-such-route");
+		const response = await request('/no-such-route');
 
 		expect(response.status).toBe(404);
 		const body = await response.json<Record<string, unknown>>();
-		expect(body.docs).toBe("https://sign.test/e/NOT_FOUND");
-		expect(body).not.toHaveProperty("requestId");
-		expect(response.headers.get("X-Request-ID")).toMatch(/^[0-9a-f-]{36}$/);
+		expect(body.docs).toBe('https://sign.test/e/NOT_FOUND');
+		expect(body).not.toHaveProperty('requestId');
+		expect(response.headers.get('X-Request-ID')).toMatch(/^[0-9a-f-]{36}$/);
 	});
 
-	it("adds an issues array to a validation 400, and echoes no value in it", async () => {
+	it('adds an issues array to a validation 400, and echoes no value in it', async () => {
 		// `issues` is the one envelope field a route does not build: the OpenAPI
 		// validator's `defaultHook` attaches it. Documented because
 		// `docs/troubleshooting.md` sends a reader to `issues[].path` to catch a
 		// shell-quoting mistake — advice that needs the array to be there, and
 		// needs the *path* rather than the message to be the informative part.
-		const response = await adminRequest("/admin/audit?limit=-1");
+		const response = await adminRequest('/admin/audit?limit=-1');
 
 		expect(response.status).toBe(400);
 		const body = await response.json<{ code: string; docs?: string; issues?: Record<string, unknown>[] }>();
-		expect(body.code).toBe("INVALID_REQUEST");
-		expect(typeof body.docs).toBe("string");
+		expect(body.code).toBe('INVALID_REQUEST');
+		expect(typeof body.docs).toBe('string');
 		expect(body.issues?.length).toBeGreaterThan(0);
 
 		for (const issue of body.issues ?? []) {
-			expect(Object.keys(issue).sort()).toEqual(expect.arrayContaining(["code", "message", "path"]));
+			expect(Object.keys(issue).sort()).toEqual(expect.arrayContaining(['code', 'message', 'path']));
 			// Zod drops the offending value from a finalized issue unless
 			// `reportInput` is set, and nothing here sets it. That is what makes the
 			// array safe to hand back: it names which field failed and what was
 			// expected, never what the caller sent. A `keyIds` element that came
 			// from an unexpanded shell variable is a path, not a secret.
-			expect(issue).not.toHaveProperty("input");
+			expect(issue).not.toHaveProperty('input');
 		}
 	});
 });
 
-describe("relative links into the error reference", () => {
-	it("land on a heading that exists", () => {
+describe('relative links into the error reference', () => {
+	it('land on a heading that exists', () => {
 		// The reference is linked by anchor from every document below, and an
 		// anchor is derived from a heading nobody thinks of as an identifier. A
 		// renamed section silently 404s every link into it. The set is every
@@ -452,13 +452,13 @@ describe("relative links into the error reference", () => {
 
 		const broken: string[] = [];
 		for (const [name, markdown] of Object.entries({
-			"API.md": apiGuide,
-			"README.md": readme,
-			"docs/api.md": apiOverview,
-			"docs/authentication.md": authenticationGuide,
-			"docs/errors.md": errorReference,
-			"docs/self-hosting.md": selfHosting,
-			"docs/troubleshooting.md": troubleshooting,
+			'API.md': apiGuide,
+			'README.md': readme,
+			'docs/api.md': apiOverview,
+			'docs/authentication.md': authenticationGuide,
+			'docs/errors.md': errorReference,
+			'docs/self-hosting.md': selfHosting,
+			'docs/troubleshooting.md': troubleshooting,
 		})) {
 			for (const [, anchor] of markdown.matchAll(/\]\((?:\.\.\/)?(?:docs\/)?errors\.md#([\w-]+)\)/g)) {
 				if (!headings.has(anchor as string)) {
@@ -466,7 +466,7 @@ describe("relative links into the error reference", () => {
 				}
 			}
 			// Same-document links, which errors.md uses to cross-reference codes.
-			if (name === "docs/errors.md") {
+			if (name === 'docs/errors.md') {
 				for (const [, anchor] of markdown.matchAll(/\]\(#([\w-]+)\)/g)) {
 					if (!headings.has(anchor as string)) {
 						broken.push(`${name} -> #${anchor}`);
@@ -494,84 +494,84 @@ describe("relative links into the error reference", () => {
  * is a response from a metered route that carries no budget because it was
  * built before — or instead of — the verdict.
  */
-describe("the routes the rate-limit headers appear on", () => {
-	const PAIR = ["X-RateLimit-Remaining", "X-RateLimit-Reset"] as const;
+describe('the routes the rate-limit headers appear on', () => {
+	const PAIR = ['X-RateLimit-Remaining', 'X-RateLimit-Reset'] as const;
 
 	const carries = (response: Response) => PAIR.every((name) => response.headers.has(name));
 
-	it("puts them on an /admin/* 401, because the meter runs ahead of the token check", async () => {
+	it('puts them on an /admin/* 401, because the meter runs ahead of the token check', async () => {
 		// The property that makes guessing ADMIN_TOKEN expensive: a request holding
 		// no credential has already spent from the bucket by the time it is
 		// refused. If this ever stops being true the limiter has moved behind
 		// `adminAuth` and the brute-force cost is gone, so this is a security
 		// assertion wearing a documentation test's clothes.
-		const response = await request("/admin/keys");
+		const response = await request('/admin/keys');
 
 		expect(response.status).toBe(401);
 		expect(carries(response)).toBe(true);
 	});
 
-	it("puts them on an authenticated /admin/* 404, because the meter also runs ahead of routing", async () => {
+	it('puts them on an authenticated /admin/* 404, because the meter also runs ahead of routing', async () => {
 		// API.md used to end its list with "and neither does a `404`", in the same
 		// sentence that said /admin/* carries them on every response. Both cannot
 		// hold: the meter is mounted on `/admin/*` as a whole, so an unrouted admin
 		// path is metered and *then* falls through to the 404 handler.
-		const response = await adminRequest("/admin/no-such-admin-route");
+		const response = await adminRequest('/admin/no-such-admin-route');
 
 		expect(response.status).toBe(404);
 		expect(carries(response)).toBe(true);
 	});
 
-	it("leaves them off the OPTIONS preflight to /admin/*, which never reaches the meter", async () => {
+	it('leaves them off the OPTIONS preflight to /admin/*, which never reaches the meter', async () => {
 		// `productionCors` is registered on the root app and answers OPTIONS before
 		// calling `next()`, so the /admin sub-app's middleware chain — limiter
 		// included — does not run at all. "Every response" was therefore false for
 		// the one request shape a browser makes first.
-		const response = await request("/admin/keys", {
-			method: "OPTIONS",
-			headers: { Origin: "https://example.test" },
+		const response = await request('/admin/keys', {
+			method: 'OPTIONS',
+			headers: { Origin: 'https://example.test' },
 		});
 
 		expect(response.status).toBe(204);
 		expect(PAIR.some((name) => response.headers.has(name))).toBe(false);
 	});
 
-	it("leaves them off a /sign refusal raised before the verdict is read", async () => {
+	it('leaves them off a /sign refusal raised before the verdict is read', async () => {
 		// The sign route sets the pair at exactly two places: the 200 path, and
 		// `rateLimitExceeded`. A malformed `keyId` is rejected before the
 		// `Promise.all` that reads the limiter's answer, so this 400 is past
 		// authentication and still carries no budget — which is why the documents
 		// may not promise the pair "once a request is past authentication".
-		const response = await request("/sign?keyId=NOT-A-HEX-KEYID", {
-			method: "POST",
-			headers: { Authorization: "Bearer not-a-real-token" },
-			body: "commit data",
+		const response = await request('/sign?keyId=NOT-A-HEX-KEYID', {
+			method: 'POST',
+			headers: { Authorization: 'Bearer not-a-real-token' },
+			body: 'commit data',
 		});
 
 		expect(PAIR.some((name) => response.headers.has(name))).toBe(false);
 	});
 
-	it("leaves them off the unmetered public routes and the top-level 404", async () => {
+	it('leaves them off the unmetered public routes and the top-level 404', async () => {
 		// The enumerated list in API.md and DOCUMENTATION.md, asserted as the list
 		// rather than as prose. `/e/{code}` is here because both documents once
 		// enumerated four public routes and there are five.
-		for (const path of ["/health", "/public-key", "/doc", "/ui", "/e/NOT_A_CODE", "/no-such-route"]) {
+		for (const path of ['/health', '/public-key', '/doc', '/ui', '/e/NOT_A_CODE', '/no-such-route']) {
 			const response = await request(path);
 			expect(PAIR.some((name) => response.headers.has(name))).toBe(false);
 		}
 	});
 
-	it("advertises exactly the pair a response actually carries", async () => {
+	it('advertises exactly the pair a response actually carries', async () => {
 		// `securityHeaders` builds `Access-Control-Expose-Headers` by filtering on
 		// presence, so it is a second, independent witness to the same fact — and
 		// it is the only thing that makes these headers readable by a browser at
 		// all. A response that carries the pair but does not expose it is one a
 		// cross-origin caller cannot act on.
-		const metered = await request("/admin/keys");
-		const unmetered = await request("/health");
+		const metered = await request('/admin/keys');
+		const unmetered = await request('/health');
 
-		expect(metered.headers.get("Access-Control-Expose-Headers")).toContain("X-RateLimit-Remaining");
-		expect(unmetered.headers.get("Access-Control-Expose-Headers")).not.toContain("X-RateLimit-");
+		expect(metered.headers.get('Access-Control-Expose-Headers')).toContain('X-RateLimit-Remaining');
+		expect(unmetered.headers.get('Access-Control-Expose-Headers')).not.toContain('X-RateLimit-');
 	});
 });
 
@@ -582,41 +582,41 @@ describe("the routes the rate-limit headers appear on", () => {
  * with anything. These read the figure out of the prose and check it against a
  * live response, so the documents cannot drift from the bucket again.
  */
-describe("the published rate limits", () => {
-	it("agrees with the budget /admin/* actually reports", async () => {
+describe('the published rate limits', () => {
+	it('agrees with the budget /admin/* actually reports', async () => {
 		// `X-RateLimit-Remaining` on the first request of a fresh bucket is
 		// capacity minus the one just spent, so the ceiling is derivable from a
 		// single live response — which is how the 60 was caught.
 		const documented = /\*\*Rate Limit\*\*: (\d+) requests\/minute, per client IP/.exec(apiGuide);
 		expect(documented).not.toBeNull();
 
-		const response = await request("/admin/keys", { headers: { "CF-Connecting-IP": "203.0.113.42" } });
-		const remaining = Number(response.headers.get("X-RateLimit-Remaining"));
+		const response = await request('/admin/keys', { headers: { 'CF-Connecting-IP': '203.0.113.42' } });
+		const remaining = Number(response.headers.get('X-RateLimit-Remaining'));
 
 		expect(remaining + 1).toBe(Number(documented?.[1]));
 	});
 
-	it("says per client IP, and means it — a second IP gets its own bucket", async () => {
+	it('says per client IP, and means it — a second IP gets its own bucket', async () => {
 		// The other half of the old claim. "Per admin token" is not merely wrong,
 		// it is unimplementable here: the meter runs before the bearer is read, so
 		// there is no token to key on. Two IPs spending in turn prove the key is
 		// the address.
-		const first = await request("/admin/keys", { headers: { "CF-Connecting-IP": "198.51.100.1" } });
-		const second = await request("/admin/keys", { headers: { "CF-Connecting-IP": "198.51.100.2" } });
+		const first = await request('/admin/keys', { headers: { 'CF-Connecting-IP': '198.51.100.1' } });
+		const second = await request('/admin/keys', { headers: { 'CF-Connecting-IP': '198.51.100.2' } });
 
-		expect(first.headers.get("X-RateLimit-Remaining")).toBe(second.headers.get("X-RateLimit-Remaining"));
+		expect(first.headers.get('X-RateLimit-Remaining')).toBe(second.headers.get('X-RateLimit-Remaining'));
 	});
 
-	it("keys on the IP rather than the bearer, so a token change does not reset the bucket", async () => {
+	it('keys on the IP rather than the bearer, so a token change does not reset the bucket', async () => {
 		// Stated as its own case because it is the security property the ordering
 		// buys. If these two diverged, the bucket would be per-credential and an
 		// attacker could reset it by varying the guess.
-		const ip = { "CF-Connecting-IP": "198.51.100.7" };
-		const anonymous = await request("/admin/keys", { headers: ip });
-		const guessing = await request("/admin/keys", { headers: { ...ip, Authorization: "Bearer wrong-guess" } });
+		const ip = { 'CF-Connecting-IP': '198.51.100.7' };
+		const anonymous = await request('/admin/keys', { headers: ip });
+		const guessing = await request('/admin/keys', { headers: { ...ip, Authorization: 'Bearer wrong-guess' } });
 
-		expect(Number(guessing.headers.get("X-RateLimit-Remaining"))).toBe(
-			Number(anonymous.headers.get("X-RateLimit-Remaining")) - 1,
+		expect(Number(guessing.headers.get('X-RateLimit-Remaining'))).toBe(
+			Number(anonymous.headers.get('X-RateLimit-Remaining')) - 1,
 		);
 	});
 });

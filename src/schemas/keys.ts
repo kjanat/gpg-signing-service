@@ -1,7 +1,7 @@
-import { z } from "@hono/zod-openapi";
-import { createArmoredPrivateKey, createKeyFingerprint, createKeyId } from "#types";
-import { PGP_PRIVATE_BEGIN, PGP_PRIVATE_END } from "#utils/armor";
-import { LIMITS } from "#utils/constants";
+import { z } from '@hono/zod-openapi';
+import { createArmoredPrivateKey, createKeyFingerprint, createKeyId } from '#types';
+import { PGP_PRIVATE_BEGIN, PGP_PRIVATE_END } from '#utils/armor';
+import { LIMITS } from '#utils/constants';
 
 /**
  * GPG Key ID validation
@@ -11,8 +11,8 @@ import { LIMITS } from "#utils/constants";
  */
 export const KeyIdSchema = z
 	.string()
-	.length(16, "Key ID must be exactly 16 characters")
-	.regex(/^[A-Fa-f0-9]{16}$/, "Key ID must be 16 hexadecimal characters")
+	.length(16, 'Key ID must be exactly 16 characters')
+	.regex(/^[A-Fa-f0-9]{16}$/, 'Key ID must be 16 hexadecimal characters')
 	.transform((s) => createKeyId(s.toUpperCase()));
 
 /**
@@ -23,8 +23,8 @@ export const KeyIdSchema = z
  */
 export const FingerprintSchema = z
 	.string()
-	.length(40, "Fingerprint must be exactly 40 characters")
-	.regex(/^[A-Fa-f0-9]{40}$/, "Fingerprint must be 40 hexadecimal characters")
+	.length(40, 'Fingerprint must be exactly 40 characters')
+	.regex(/^[A-Fa-f0-9]{40}$/, 'Fingerprint must be 40 hexadecimal characters')
 	.transform((s) => createKeyFingerprint(s.toUpperCase()));
 
 /**
@@ -36,24 +36,24 @@ export const FingerprintSchema = z
  */
 export const ArmoredPrivateKeySchema = z
 	.string()
-	.min(100, "Private key too short - minimum 100 characters")
+	.min(100, 'Private key too short - minimum 100 characters')
 	.max(LIMITS.MAX_KEY_SIZE, `Private key too large - maximum ${LIMITS.MAX_KEY_SIZE} characters`)
 	.refine(
 		(val) => {
 			// Match standard PGP private key block headers
-			const headerPattern = new RegExp(`^${PGP_PRIVATE_BEGIN}`, "m");
-			const footerPattern = new RegExp(`${PGP_PRIVATE_END}$`, "m");
+			const headerPattern = new RegExp(`^${PGP_PRIVATE_BEGIN}`, 'm');
+			const footerPattern = new RegExp(`${PGP_PRIVATE_END}$`, 'm');
 
 			return headerPattern.test(val) && footerPattern.test(val);
 		},
 		{
-			message: "Must be a valid PGP armored private key with BEGIN/END markers",
+			message: 'Must be a valid PGP armored private key with BEGIN/END markers',
 		},
 	)
 	.refine(
 		(val) => {
 			// Validate structure: header -> optional armor headers -> blank line -> base64 -> checksum -> footer
-			const lines = val.split("\n");
+			const lines = val.split('\n');
 
 			// Must have at least: header, blank, data, checksum, footer (5 lines minimum)
 			if (lines.length < 5) return false;
@@ -79,7 +79,7 @@ export const ArmoredPrivateKeySchema = z
 			return hasChecksum;
 		},
 		{
-			message: "Invalid PGP armored format - must include base64 data and checksum",
+			message: 'Invalid PGP armored format - must include base64 data and checksum',
 		},
 	)
 	.transform(createArmoredPrivateKey);
@@ -89,7 +89,7 @@ export const ArmoredPrivateKeySchema = z
  */
 export const KeyUploadSchema = z
 	.object({ armoredPrivateKey: ArmoredPrivateKeySchema, keyId: KeyIdSchema })
-	.openapi("KeyUpload");
+	.openapi('KeyUpload');
 
 /**
  * Key response schema
@@ -102,7 +102,7 @@ export const KeyResponseSchema = z
 		algorithm: z.string(),
 		userId: z.string(),
 	})
-	.openapi("KeyResponse");
+	.openapi('KeyResponse');
 
 /**
  * Stored key schema
@@ -124,12 +124,12 @@ export type StoredKey = z.infer<typeof StoredKeySchema>;
  */
 export const X509PrivateKeyPemSchema = z
 	.string()
-	.min(100, "Private key too short - minimum 100 characters")
+	.min(100, 'Private key too short - minimum 100 characters')
 	.max(LIMITS.MAX_KEY_SIZE, `Private key too large - maximum ${LIMITS.MAX_KEY_SIZE} characters`)
 	.refine(
 		(val) =>
 			/^-----BEGIN (?:ENCRYPTED )?PRIVATE KEY-----/m.test(val) && /-----END (?:ENCRYPTED )?PRIVATE KEY-----/m.test(val),
-		{ message: "Must be a PEM-encoded PKCS#8 private key (PRIVATE KEY or ENCRYPTED PRIVATE KEY block)" },
+		{ message: 'Must be a PEM-encoded PKCS#8 private key (PRIVATE KEY or ENCRYPTED PRIVATE KEY block)' },
 	);
 
 /**
@@ -137,10 +137,10 @@ export const X509PrivateKeyPemSchema = z
  */
 export const CertificatePemSchema = z
 	.string()
-	.min(100, "Certificate too short - minimum 100 characters")
+	.min(100, 'Certificate too short - minimum 100 characters')
 	.max(LIMITS.MAX_KEY_SIZE, `Certificate too large - maximum ${LIMITS.MAX_KEY_SIZE} characters`)
 	.refine((val) => /^-----BEGIN CERTIFICATE-----/m.test(val) && /-----END CERTIFICATE-----/m.test(val), {
-		message: "Must be a PEM-encoded X.509 certificate with BEGIN/END CERTIFICATE markers",
+		message: 'Must be a PEM-encoded X.509 certificate with BEGIN/END CERTIFICATE markers',
 	});
 
 /**
@@ -153,7 +153,7 @@ export const X509KeyUploadSchema = z
 		certificatePem: CertificatePemSchema,
 		chainPem: CertificatePemSchema.optional(),
 	})
-	.openapi("X509KeyUpload");
+	.openapi('X509KeyUpload');
 
 /**
  * X.509 key response schema
@@ -166,7 +166,7 @@ export const X509KeyResponseSchema = z
 		algorithm: z.string(),
 		subject: z.string(),
 	})
-	.openapi("X509KeyResponse");
+	.openapi('X509KeyResponse');
 
 /**
  * Stored X.509 key schema
@@ -174,7 +174,7 @@ export const X509KeyResponseSchema = z
  * legacy stored PGP keys have no `type` field.
  */
 export const StoredX509KeySchema = z.object({
-	type: z.literal("x509"),
+	type: z.literal('x509'),
 	keyId: KeyIdSchema,
 	privateKeyPem: X509PrivateKeyPemSchema,
 	certificatePem: CertificatePemSchema,
@@ -197,14 +197,14 @@ export type AnyStoredKey = z.infer<typeof AnyStoredKeySchema>;
 
 /** Narrow an AnyStoredKey to the X.509 variant */
 export function isX509Key(key: AnyStoredKey): key is StoredX509Key {
-	return "type" in key && key.type === "x509";
+	return 'type' in key && key.type === 'x509';
 }
 
 /**
  * Public key response schema (PGP armored public key)
  */
-export const PublicKeyResponseSchema = z.string().openapi("PublicKeyResponse", {
-	example: "-----BEGIN PGP PUBLIC KEY BLOCK-----\n...",
+export const PublicKeyResponseSchema = z.string().openapi('PublicKeyResponse', {
+	example: '-----BEGIN PGP PUBLIC KEY BLOCK-----\n...',
 });
 
 /**
@@ -217,16 +217,16 @@ export const KeyListItemSchema = z
 		createdAt: z.string(),
 		algorithm: z.string(),
 	})
-	.openapi("KeyListItem");
+	.openapi('KeyListItem');
 
 /**
  * Key list response schema
  */
-export const KeyListResponseSchema = z.object({ keys: z.array(KeyListItemSchema) }).openapi("KeyListResponse");
+export const KeyListResponseSchema = z.object({ keys: z.array(KeyListItemSchema) }).openapi('KeyListResponse');
 
 /**
  * Key deletion response schema
  */
 export const KeyDeletionResponseSchema = z
 	.object({ success: z.boolean(), deleted: z.boolean() })
-	.openapi("KeyDeletionResponse");
+	.openapi('KeyDeletionResponse');

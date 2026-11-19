@@ -106,10 +106,10 @@ BASE_URL="https://gpg.kajkowalski.nl"
 # Upload a new key
 echo "Uploading signing key..."
 RESPONSE=$(
-	curl -s -X POST "${BASE_URL}/admin/keys" \
-		-H "Authorization: Bearer ${ADMIN_TOKEN}" \
-		-H "Content-Type: application/json" \
-		-d @- <<EOF
+  curl -s -X POST "${BASE_URL}/admin/keys" \
+    -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d @- <<EOF
 {
   "keyId": "signing-key-prod-v1",
   "armoredPrivateKey": "$(cat signing-key.asc | jq -Rs .)"
@@ -123,8 +123,8 @@ echo "$RESPONSE" | jq .
 # List all keys
 echo "Available keys:"
 curl -s $BASE_URL/admin/keys \
-	-H "Authorization: Bearer ${ADMIN_TOKEN}" \
-	| jq '.keys[] | {keyId, fingerprint, algorithm}'
+  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+  | jq '.keys[] | {keyId, fingerprint, algorithm}'
 ```
 
 ### 4. Query Audit Logs
@@ -139,14 +139,14 @@ BASE_URL="https://gpg.kajkowalski.nl"
 YESTERDAY=$(date -u -d '1 day ago' +%Y-%m-%dT00:00:00Z)
 echo "Signing operations (last 24 hours):"
 curl -s "${BASE_URL}/admin/audit?action=sign&startDate=${YESTERDAY}" \
-	-H "Authorization: Bearer ${ADMIN_TOKEN}" \
-	| jq '.logs[] | {timestamp, subject, success}'
+  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+  | jq '.logs[] | {timestamp, subject, success}'
 
 # Find failed operations
 echo "Failed operations:"
 curl -s "${BASE_URL}/admin/audit" \
-	-H "Authorization: Bearer ${ADMIN_TOKEN}" \
-	| jq '.logs[] | select(.success == false) | {timestamp, action, errorCode}'
+  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+  | jq '.logs[] | select(.success == false) | {timestamp, action, errorCode}'
 ```
 
 ## Complete Examples
@@ -168,8 +168,8 @@ Read it in the repository, or run it:
 
 ```bash
 BASE_URL=https://gpg.kajkowalski.nl \
-	OIDC_TOKEN="${OIDC_TOKEN}" \
-	bash examples/bash/sign-commit.sh HEAD
+  OIDC_TOKEN="${OIDC_TOKEN}" \
+  bash examples/bash/sign-commit.sh HEAD
 ```
 
 </details>
@@ -476,59 +476,59 @@ ADMIN_TOKEN="${ADMIN_TOKEN}"
 BASE_URL="https://gpg.kajkowalski.nl"
 
 if [ -z "$ADMIN_TOKEN" ]; then
-	echo "Error: ADMIN_TOKEN not set"
-	exit 1
+  echo "Error: ADMIN_TOKEN not set"
+  exit 1
 fi
 
 # Helper functions
 query_logs() {
-	local query_params="$1"
-	curl -s "$BASE_URL/admin/audit?$query_params" \
-		-H "Authorization: Bearer $ADMIN_TOKEN"
+  local query_params="$1"
+  curl -s "$BASE_URL/admin/audit?$query_params" \
+    -H "Authorization: Bearer $ADMIN_TOKEN"
 }
 
 format_logs() {
-	jq -r '.logs[] | "\(.timestamp | split("T")[0]) \(.timestamp | split("T")[1]
+  jq -r '.logs[] | "\(.timestamp | split("T")[0]) \(.timestamp | split("T")[1]
 ) | \(.action:12) | \(.subject:20) | \(if .success then "✓" else "✗" end)"'
 }
 
 # Different query types
 case "${1:-all}" in
-	all)
-		echo "Recent audit logs:"
-		query_logs "limit=50" | format_logs
-		;;
+  all)
+    echo "Recent audit logs:"
+    query_logs "limit=50" | format_logs
+    ;;
 
-	signing)
-		echo "Signing operations:"
-		query_logs "action=sign&limit=100" | format_logs
-		;;
+  signing)
+    echo "Signing operations:"
+    query_logs "action=sign&limit=100" | format_logs
+    ;;
 
-	keys)
-		echo "Key management operations:"
-		query_logs "action=key_upload,key_rotate&limit=100" | format_logs
-		;;
+  keys)
+    echo "Key management operations:"
+    query_logs "action=key_upload,key_rotate&limit=100" | format_logs
+    ;;
 
-	failures)
-		echo "Failed operations:"
-		query_logs "limit=100" | jq '.logs[] | select(.success == false) |
+  failures)
+    echo "Failed operations:"
+    query_logs "limit=100" | jq '.logs[] | select(.success == false) |
       "\(.timestamp) | \(.action) | \(.errorCode // "unknown")"'
-		;;
+    ;;
 
-	by-repo)
-		local repo="$2"
-		if [ -z "$repo" ]; then
-			echo "Usage: $0 by-repo <subject>"
-			exit 1
-		fi
-		echo "Operations for subject: $repo"
-		query_logs "subject=$repo&limit=100" | format_logs
-		;;
+  by-repo)
+    local repo="$2"
+    if [ -z "$repo" ]; then
+      echo "Usage: $0 by-repo <subject>"
+      exit 1
+    fi
+    echo "Operations for subject: $repo"
+    query_logs "subject=$repo&limit=100" | format_logs
+    ;;
 
-	*)
-		echo "Usage: $0 {all|signing|keys|failures|by-repo <subject>}"
-		exit 1
-		;;
+  *)
+    echo "Usage: $0 {all|signing|keys|failures|by-repo <subject>}"
+    exit 1
+    ;;
 esac
 ```
 
@@ -572,15 +572,15 @@ python3 python/manage_keys.py list
 
 # Upload a key
 python3 python/manage_keys.py upload \
-	my-key signing-key.asc
+  my-key signing-key.asc
 
 # Query audit logs
 ./bash/query-audit.sh signing
 
 # Rotate keys
 python3 python/manage_keys.py rotate \
-	new-key-v2 signing-key-v2.asc \
-	--old-key-id old-key-v1
+  new-key-v2 signing-key-v2.asc \
+  --old-key-id old-key-v1
 ```
 
 ### Retry and Transport Behaviour (`bash/sign-commit.sh`)
@@ -593,7 +593,7 @@ choosing one itself.
 | ---------------- | ---------------------------- | ----------------------------------------------------- |
 | `BASE_URL`       | `https://gpg.kajkowalski.nl` | Service origin                                        |
 | `MAX_RETRIES`    | `3`                          | Total signing attempts, not retries after the first   |
-| `MAX_RETRY_WAIT` | `120`                        | Ceiling, in seconds, on a wait the _server_ asked for |
+| `MAX_RETRY_WAIT` | `120`                        | Ceiling, in seconds, on a wait the *server* asked for |
 
 Rules the script follows, and which the shell suite pins:
 
@@ -608,11 +608,11 @@ Rules the script follows, and which the shell suite pins:
   is a natural-language parser, so ungated it reads `tomorrow` as a day and
   `5 seconds` as five, and a malformed header would outrank a perfectly good
   `retryAfter` in the body. A value that is neither form — `soon-ish`, or a
-  negative number the delay-seconds grammar does not admit — counts as _no
-  hint_, and the next source answers instead. The `GMT` §5.6.7 requires on both
+  negative number the delay-seconds grammar does not admit — counts as *no
+  hint*, and the next source answers instead. The `GMT` §5.6.7 requires on both
   date forms is matched literally rather than as a zone abbreviation, because
   `date -d` resolves one: a date five minutes out labelled `CEST` came back as a
-  moment two hours _past_, which under header-first precedence is a hint of zero
+  moment two hours *past*, which under header-first precedence is a hint of zero
   overruling the body.
 - **A zero-delay header is a hint, not the absence of one.** `Retry-After: 0`
   and a date that has already come round both mean the wait is over, so they

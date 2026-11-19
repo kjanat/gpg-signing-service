@@ -14,7 +14,7 @@
  * where a log aggregator looks for it rather than where a mistake put it.
  */
 
-import { expect } from "vitest";
+import { expect } from 'vitest';
 
 /** One structured log line, as a log aggregator would receive it. */
 export interface LogEntry {
@@ -39,7 +39,7 @@ export async function captureLogEntries(body: () => Promise<unknown>): Promise<L
 	const lines: string[] = [];
 	const original = console.log;
 	console.log = (...args: unknown[]) => {
-		if (args.length === 1 && typeof args[0] === "string") {
+		if (args.length === 1 && typeof args[0] === 'string') {
 			lines.push(args[0]);
 		}
 	};
@@ -71,7 +71,7 @@ export async function captureLogEntries(body: () => Promise<unknown>): Promise<L
  * @returns The matching line
  */
 export function logLine(entries: LogEntry[], prefix: string): LogEntry {
-	const matches = entries.filter((entry) => typeof entry.message === "string" && entry.message.startsWith(prefix));
+	const matches = entries.filter((entry) => typeof entry.message === 'string' && entry.message.startsWith(prefix));
 
 	expect(matches).toHaveLength(1);
 

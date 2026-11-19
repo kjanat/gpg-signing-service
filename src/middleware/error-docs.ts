@@ -16,18 +16,18 @@
  * here because the content-type check comes first.
  */
 
-import type { MiddlewareHandler } from "hono";
-import { isErrorCode } from "#schemas/errors";
-import type { Env, Variables } from "#types";
-import { HTTP } from "#types";
-import { errorDocsUrl } from "#utils/error-docs";
+import type { MiddlewareHandler } from 'hono';
+import { isErrorCode } from '#schemas/errors';
+import type { Env, Variables } from '#types';
+import { HTTP } from '#types';
+import { errorDocsUrl } from '#utils/error-docs';
 
 /** Smallest status this middleware considers an error. */
 const FIRST_ERROR_STATUS = HTTP.BadRequest;
 
 /** Does this response carry a JSON body? */
 function isJson(response: Response): boolean {
-	return response.headers.get("content-type")?.includes("application/json") ?? false;
+	return response.headers.get('content-type')?.includes('application/json') ?? false;
 }
 
 export const errorDocs: MiddlewareHandler<{
@@ -52,7 +52,7 @@ export const errorDocs: MiddlewareHandler<{
 		return;
 	}
 
-	if (typeof body !== "object" || body === null || Array.isArray(body)) {
+	if (typeof body !== 'object' || body === null || Array.isArray(body)) {
 		return;
 	}
 
@@ -69,7 +69,7 @@ export const errorDocs: MiddlewareHandler<{
 	// JSON content type. Stamping that with a `docs` field promises documentation
 	// this service does not have, and a code whose link 404s is worse than no
 	// link, because the caller spends the trip finding that out.
-	if (typeof envelope.code !== "string" || !isErrorCode(envelope.code) || typeof envelope.docs === "string") {
+	if (typeof envelope.code !== 'string' || !isErrorCode(envelope.code) || typeof envelope.docs === 'string') {
 		return;
 	}
 
@@ -78,7 +78,7 @@ export const errorDocs: MiddlewareHandler<{
 	// is the exception: the body just grew by the length of the link, and a stale
 	// value there truncates the response at the client.
 	const headers = new Headers(response.headers);
-	headers.delete("content-length");
+	headers.delete('content-length');
 
 	// Cleared first because Hono's `set res` merges the *old* response's headers
 	// over the new one whenever `c.res` is already populated (context.ts:120) —

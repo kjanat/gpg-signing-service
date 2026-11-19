@@ -34,13 +34,13 @@
  * and the audit trail, and they are most of the diagnostic value.
  */
 
-import type { Breadcrumb, CloudflareOptions, ErrorEvent, Event } from "@sentry/cloudflare";
-import * as Sentry from "@sentry/cloudflare";
-import type { Env } from "#types";
-import { HEADERS } from "#types";
+import type { Breadcrumb, CloudflareOptions, ErrorEvent, Event } from '@sentry/cloudflare';
+import * as Sentry from '@sentry/cloudflare';
+import type { Env } from '#types';
+import { HEADERS } from '#types';
 
 /** What every redaction leaves behind. One token, so a test can grep for it. */
-export const REDACTED = "[redacted]";
+export const REDACTED = '[redacted]';
 
 /** Fraction of requests traced when a DSN is configured and no override is set. */
 export const DEFAULT_TRACES_SAMPLE_RATE = 0.1;
@@ -57,7 +57,7 @@ export const SENTRY_DATA_COLLECTION = {
 	databaseQueryData: false,
 	queues: false,
 	stackFrameVariables: false,
-} satisfies NonNullable<CloudflareOptions["dataCollection"]>;
+} satisfies NonNullable<CloudflareOptions['dataCollection']>;
 
 export const HONO_INTEGRATION_OPTIONS: NonNullable<Parameters<typeof Sentry.honoIntegration>[0]> = {
 	shouldHandleError: () => false,
@@ -71,33 +71,33 @@ const MAX_SCRUB_DEPTH = 12;
  * name so `KEY_PASSPHRASE`, `keyPassphrase` and `key-passphrase` are one entry.
  */
 const DENIED_KEYS: ReadonlySet<string> = new Set([
-	"adminreadonlytoken",
-	"admintoken",
-	"apikey",
-	"armoredkey",
-	"armoredprivatekey",
-	"authheader",
-	"authorization",
-	"bearer",
-	"cookie",
-	"credential",
-	"credentials",
-	"idtoken",
-	"jwt",
-	"keypassphrase",
-	"passphrase",
-	"password",
-	"privatekey",
-	"privatekeypem",
-	"proxyauthorization",
-	"refreshtoken",
-	"secret",
-	"sentrydsn",
-	"servicetoken",
-	"setcookie",
-	"token",
-	"tokens",
-	"xapikey",
+	'adminreadonlytoken',
+	'admintoken',
+	'apikey',
+	'armoredkey',
+	'armoredprivatekey',
+	'authheader',
+	'authorization',
+	'bearer',
+	'cookie',
+	'credential',
+	'credentials',
+	'idtoken',
+	'jwt',
+	'keypassphrase',
+	'passphrase',
+	'password',
+	'privatekey',
+	'privatekeypem',
+	'proxyauthorization',
+	'refreshtoken',
+	'secret',
+	'sentrydsn',
+	'servicetoken',
+	'setcookie',
+	'token',
+	'tokens',
+	'xapikey',
 	HEADERS.AUTHORIZATION.toLowerCase(),
 ]);
 
@@ -108,7 +108,7 @@ const DENIED_KEYS: ReadonlySet<string> = new Set([
  * of a service token that is safe to look at, and it is how an operator ties a
  * refusal to a row — so "token" is not on this list.
  */
-const DENIED_KEY_FRAGMENTS: readonly string[] = ["passphrase", "password", "privatekey", "secret", "authorization"];
+const DENIED_KEY_FRAGMENTS: readonly string[] = ['passphrase', 'password', 'privatekey', 'secret', 'authorization'];
 
 /**
  * The leading run of RFC 7235 `token68` characters — what an actually-presented
@@ -146,7 +146,7 @@ function redactCredential(match: string, scheme: string, candidate: string): str
 	if (afterHead.startsWith('="')) return match;
 
 	// Base64 padding belongs to the credential, not to the text after it.
-	const padding = /^=+/.exec(afterHead)?.[0] ?? "";
+	const padding = /^=+/.exec(afterHead)?.[0] ?? '';
 	return `${scheme} ${REDACTED}${afterHead.slice(padding.length)}`;
 }
 
@@ -174,7 +174,7 @@ const VALUE_PATTERNS: readonly { pattern: RegExp; replacement: (match: string, .
 
 /** Normalize a key for denylist comparison: case and separators do not matter. */
 function normalizeKey(key: string): string {
-	return key.toLowerCase().replace(/[^a-z0-9]/g, "");
+	return key.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 /** Whether a property name is one whose value must never leave the Worker. */
@@ -219,7 +219,7 @@ export function collectEnvSecrets(env: Partial<Env>): string[] {
 		env.GITHUB_APP_PRIVATE_KEY,
 		env.GITHUB_WEBHOOK_SECRET,
 	]) {
-		if (typeof value !== "string" || value.trim().length === 0) continue;
+		if (typeof value !== 'string' || value.trim().length === 0) continue;
 		collected.add(value);
 		collected.add(value.trim());
 	}
@@ -229,7 +229,7 @@ export function collectEnvSecrets(env: Partial<Env>): string[] {
 
 /** Escape a literal secret for use inside a RegExp. */
 function escapeRegExp(value: string): string {
-	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
@@ -247,7 +247,7 @@ export function redactString(value: string, secrets: readonly string[] = []): st
 	// Literal secrets last, so a value that survived the shape rules — because it
 	// is short, or spelled unlike anything above — is still swept out.
 	for (const secret of secrets) {
-		result = result.replace(new RegExp(escapeRegExp(secret), "g"), REDACTED);
+		result = result.replace(new RegExp(escapeRegExp(secret), 'g'), REDACTED);
 	}
 	return result;
 }
@@ -270,8 +270,8 @@ export function redactString(value: string, secrets: readonly string[] = []): st
  * that says which branch fired is a marker that says something about the data.
  */
 export function scrubValue<T>(value: T, secrets: readonly string[] = [], depth = 0, seen = new WeakSet<object>()): T {
-	if (typeof value === "string") return redactString(value, secrets) as T;
-	if (value === null || typeof value !== "object") return value;
+	if (typeof value === 'string') return redactString(value, secrets) as T;
+	if (value === null || typeof value !== 'object') return value;
 	if (depth >= MAX_SCRUB_DEPTH) return REDACTED as T;
 	if (seen.has(value)) return REDACTED as T;
 	seen.add(value);
@@ -352,7 +352,7 @@ export function scrubEvent<T extends Event>(event: T, secrets: readonly string[]
  * — leaving the object that is actually rethrown unmarked, and worth a second,
  * untagged event. `markCaptured` closes that case.
  */
-const ALREADY_CAPTURED = "__sentry_captured__";
+const ALREADY_CAPTURED = '__sentry_captured__';
 
 /**
  * Tell the SDK this value has been reported, so its own wrappers do not report
@@ -364,7 +364,7 @@ const ALREADY_CAPTURED = "__sentry_captured__";
  * object, which is why this cannot throw.
  */
 function markCaptured(value: unknown): void {
-	if (typeof value !== "object" || value === null) return;
+	if (typeof value !== 'object' || value === null) return;
 	try {
 		Object.defineProperty(value, ALREADY_CAPTURED, { value: true, enumerable: false });
 	} catch {
@@ -374,7 +374,7 @@ function markCaptured(value: unknown): void {
 
 /** Whether this deployment reports to Sentry at all. */
 export function isSentryConfigured(env: Partial<Env>): boolean {
-	return typeof env.SENTRY_DSN === "string" && env.SENTRY_DSN.trim().length > 0;
+	return typeof env.SENTRY_DSN === 'string' && env.SENTRY_DSN.trim().length > 0;
 }
 
 /**
@@ -410,7 +410,7 @@ export function buildSentryOptions(env: Partial<Env>): CloudflareOptions {
 		// `dsn` — so the disabled branch has to say "" rather than omit it. An
 		// empty string is falsy everywhere the SDK reads a DSN, and it is the only
 		// spelling that wins against `userOptions.dsn ?? getEnvVar(env, ...)`.
-		dsn: enabled && dsn ? dsn : "",
+		dsn: enabled && dsn ? dsn : '',
 		enabled,
 		// Never the caller's IP, headers-as-user, or cookies. The identities this
 		// service handles are CI workloads, and the parts of them worth having —
@@ -418,7 +418,7 @@ export function buildSentryOptions(env: Partial<Env>): CloudflareOptions {
 		// Sentry 11 collects every category below unless it is switched off.
 		dataCollection: SENTRY_DATA_COLLECTION,
 		// Keep transaction events on the path protected by beforeSendTransaction.
-		traceLifecycle: "static",
+		traceLifecycle: 'static',
 		tracesSampleRate: enabled ? tracesSampleRate(env) : 0,
 		...(env.ENVIRONMENT ? { environment: env.ENVIRONMENT } : {}),
 		// Development-only event forwarding, and it bypasses the DSN check. Pinned
@@ -431,7 +431,7 @@ export function buildSentryOptions(env: Partial<Env>): CloudflareOptions {
 		// wherever the SDK reads it, and unlike `undefined` it beats the `??` that
 		// would otherwise reach for the variable) so the configured DSN is the only
 		// thing that decides where anything is sent.
-		tunnel: "",
+		tunnel: '',
 		// `SENTRY_DEBUG` makes the SDK log to the console. Harmless when a DSN is
 		// configured and occasionally what an operator wants, but on the disabled
 		// branch it would break the one property this whole module promises: that
@@ -440,9 +440,9 @@ export function buildSentryOptions(env: Partial<Env>): CloudflareOptions {
 		...(enabled
 			? {
 					integrations: (defaults) => [
-						...defaults.filter((integration) => integration.name !== "HttpServer" && integration.name !== "Hono"),
+						...defaults.filter((integration) => integration.name !== 'HttpServer' && integration.name !== 'Hono'),
 						// Request bodies are never collected. See `scrubEvent`.
-						Sentry.httpServerIntegration({ maxRequestBodySize: "none" }),
+						Sentry.httpServerIntegration({ maxRequestBodySize: 'none' }),
 						// The SDK's Hono support captures from `app.onError` on its own.
 						// `logger.error` is this service's single capture chokepoint — it
 						// is what knows the `requestId`, `action` and `errorCode` — so the
@@ -484,7 +484,7 @@ export interface CaptureContext {
 	[key: string]: unknown;
 }
 
-const TAG_KEYS = ["requestId", "action", "errorCode"] as const;
+const TAG_KEYS = ['requestId', 'action', 'errorCode'] as const;
 
 function splitContext(context: CaptureContext): {
 	tags: Record<string, string>;
@@ -536,11 +536,11 @@ function reportingClient(): Sentry.CloudflareClient | undefined {
 function toReportableError(message: string, error: unknown): Error {
 	if (error instanceof Error) return error;
 
-	const bag = typeof error === "object" && error !== null ? (error as Record<string, unknown>) : undefined;
-	const detail = typeof bag?.error === "string" ? bag.error : undefined;
+	const bag = typeof error === 'object' && error !== null ? (error as Record<string, unknown>) : undefined;
+	const detail = typeof bag?.error === 'string' ? bag.error : undefined;
 	const reportable = new Error(detail ? `${message}: ${detail}` : message);
-	reportable.name = "LoggedError";
-	if (typeof bag?.stack === "string") reportable.stack = bag.stack;
+	reportable.name = 'LoggedError';
+	if (typeof bag?.stack === 'string') reportable.stack = bag.stack;
 	return reportable;
 }
 
@@ -558,7 +558,7 @@ export function captureError(message: string, error: unknown, context: CaptureCo
 	const eventId = Sentry.captureException(toReportableError(message, error), {
 		tags,
 		extra: { ...extra, logMessage: message },
-		level: "error",
+		level: 'error',
 	});
 
 	// The SDK marked whatever `toReportableError` returned. When that was a fresh
@@ -580,9 +580,9 @@ export function captureRefusalEvent(message: string, context: CaptureContext = {
 
 	const { tags, extra } = splitContext(context);
 	return Sentry.captureMessage(message, {
-		tags: { ...tags, refusal: "true" },
+		tags: { ...tags, refusal: 'true' },
 		extra,
-		level: "warning",
+		level: 'warning',
 	});
 }
 
@@ -599,8 +599,8 @@ export function addRefusalBreadcrumb(message: string, data: Record<string, unkno
 	if (!reportingClient()) return;
 
 	Sentry.addBreadcrumb({
-		category: "auth.refusal",
-		level: "warning",
+		category: 'auth.refusal',
+		level: 'warning',
 		message,
 		data,
 	});

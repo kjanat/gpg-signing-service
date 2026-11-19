@@ -16,10 +16,10 @@
  * already got right.
  */
 
-import type { ErrorCode } from "#schemas/errors";
+import type { ErrorCode } from '#schemas/errors';
 
 /** Path prefix the short links use. Kept to two characters on purpose. */
-export const ERROR_DOC_PREFIX = "/e/";
+export const ERROR_DOC_PREFIX = '/e/';
 
 /**
  * Where `/e/:code` sends a caller when the deployment names no other target.
@@ -32,7 +32,7 @@ export const ERROR_DOC_PREFIX = "/e/";
  * without stranding anything already archived. Set `ERROR_DOCS_URL` to point at
  * your own copy.
  */
-export const DEFAULT_ERROR_DOCS_URL = "https://github.com/kjanat/gpg-signing-service/blob/master/docs/errors.md";
+export const DEFAULT_ERROR_DOCS_URL = 'https://github.com/kjanat/gpg-signing-service/blob/master/docs/errors.md';
 
 /**
  * The parts of a request context these helpers touch.
@@ -57,7 +57,7 @@ export interface DocsEnv {
 
 /** Trim any trailing slashes so joins never produce `//`. */
 function withoutTrailingSlash(url: string): string {
-	return url.replace(/\/+$/, "");
+	return url.replace(/\/+$/, '');
 }
 
 /**
@@ -104,7 +104,7 @@ export function serviceBaseUrl(c: DocsContext): string {
 function absoluteHttpUrl(value: string): URL | null {
 	try {
 		const parsed = new URL(value);
-		return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed : null;
+		return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed : null;
 	} catch {
 		return null;
 	}

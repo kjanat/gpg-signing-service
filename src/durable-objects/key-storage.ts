@@ -1,7 +1,7 @@
-import type { AnyStoredKey } from "#schemas/keys";
-import { isX509Key } from "#schemas/keys";
-import { HTTP, MediaType } from "#types";
-import { logger } from "#utils/logger";
+import type { AnyStoredKey } from '#schemas/keys';
+import { isX509Key } from '#schemas/keys';
+import { HTTP, MediaType } from '#types';
+import { logger } from '#utils/logger';
 
 export class KeyStorage implements DurableObject {
 	private state: DurableObjectState;
@@ -16,33 +16,33 @@ export class KeyStorage implements DurableObject {
 
 		try {
 			switch (path) {
-				case "/get-key":
-					return await this.getKey(url.searchParams.get("keyId") || "default");
+				case '/get-key':
+					return await this.getKey(url.searchParams.get('keyId') || 'default');
 
-				case "/store-key":
-					if (request.method !== "POST") {
-						return new Response("Method not allowed", {
+				case '/store-key':
+					if (request.method !== 'POST') {
+						return new Response('Method not allowed', {
 							status: HTTP.MethodNotAllowed,
 						});
 					}
 					return await this.storeKey(await request.json());
 
-				case "/list-keys":
+				case '/list-keys':
 					return await this.listKeys();
 
-				case "/delete-key":
-					if (request.method !== "DELETE") {
-						return new Response("Method not allowed", {
+				case '/delete-key':
+					if (request.method !== 'DELETE') {
+						return new Response('Method not allowed', {
 							status: HTTP.MethodNotAllowed,
 						});
 					}
-					return await this.deleteKey(url.searchParams.get("keyId") || "");
+					return await this.deleteKey(url.searchParams.get('keyId') || '');
 
-				case "/health":
+				case '/health':
 					return await this.healthCheck();
 
 				default:
-					return new Response("Not found", { status: HTTP.NotFound });
+					return new Response('Not found', { status: HTTP.NotFound });
 			}
 		} catch (error) {
 			// Logged before it is turned into a 500 body. The caller across the stub
@@ -50,11 +50,11 @@ export class KeyStorage implements DurableObject {
 			// holds the private key is invisible in Workers Logs and — because
 			// nothing escapes this catch to the Sentry wrapper around the class —
 			// invisible to error reporting too.
-			logger.error("Key storage request failed", error, { action: "key-storage", path });
-			const message = error instanceof Error ? error.message : "Unknown error";
+			logger.error('Key storage request failed', error, { action: 'key-storage', path });
+			const message = error instanceof Error ? error.message : 'Unknown error';
 			return new Response(JSON.stringify({ error: message }), {
 				status: HTTP.InternalServerError,
-				headers: { "Content-Type": MediaType.ApplicationJson },
+				headers: { 'Content-Type': MediaType.ApplicationJson },
 			});
 		}
 	}
@@ -63,15 +63,15 @@ export class KeyStorage implements DurableObject {
 		const key = await this.state.storage.get<AnyStoredKey>(`key:${keyId}`);
 
 		if (!key) {
-			return new Response(JSON.stringify({ error: "Key not found" }), {
+			return new Response(JSON.stringify({ error: 'Key not found' }), {
 				status: HTTP.NotFound,
-				headers: { "Content-Type": MediaType.ApplicationJson },
+				headers: { 'Content-Type': MediaType.ApplicationJson },
 			});
 		}
 
 		return new Response(JSON.stringify(key), {
 			status: HTTP.OK,
-			headers: { "Content-Type": MediaType.ApplicationJson },
+			headers: { 'Content-Type': MediaType.ApplicationJson },
 		});
 	}
 
@@ -80,9 +80,9 @@ export class KeyStorage implements DurableObject {
 			? Boolean(data.privateKeyPem && data.certificatePem)
 			: Boolean(data.armoredPrivateKey);
 		if (!hasKeyMaterial || !data.keyId) {
-			return new Response(JSON.stringify({ error: "Missing required fields" }), {
+			return new Response(JSON.stringify({ error: 'Missing required fields' }), {
 				status: HTTP.BadRequest,
-				headers: { "Content-Type": MediaType.ApplicationJson },
+				headers: { 'Content-Type': MediaType.ApplicationJson },
 			});
 		}
 
@@ -96,13 +96,13 @@ export class KeyStorage implements DurableObject {
 			}),
 			{
 				status: HTTP.Created,
-				headers: { "Content-Type": MediaType.ApplicationJson },
+				headers: { 'Content-Type': MediaType.ApplicationJson },
 			},
 		);
 	}
 
 	private async listKeys(): Promise<Response> {
-		const keys = await this.state.storage.list<AnyStoredKey>({ prefix: "key:" });
+		const keys = await this.state.storage.list<AnyStoredKey>({ prefix: 'key:' });
 		const keyList = Array.from(keys.values()).map((key) => ({
 			keyId: key.keyId,
 			fingerprint: key.fingerprint,
@@ -112,15 +112,15 @@ export class KeyStorage implements DurableObject {
 
 		return new Response(JSON.stringify({ keys: keyList }), {
 			status: HTTP.OK,
-			headers: { "Content-Type": MediaType.ApplicationJson },
+			headers: { 'Content-Type': MediaType.ApplicationJson },
 		});
 	}
 
 	private async deleteKey(keyId: string): Promise<Response> {
 		if (!keyId) {
-			return new Response(JSON.stringify({ error: "Key ID required" }), {
+			return new Response(JSON.stringify({ error: 'Key ID required' }), {
 				status: HTTP.BadRequest,
-				headers: { "Content-Type": MediaType.ApplicationJson },
+				headers: { 'Content-Type': MediaType.ApplicationJson },
 			});
 		}
 
@@ -128,16 +128,16 @@ export class KeyStorage implements DurableObject {
 
 		return new Response(JSON.stringify({ success: true, deleted: existed }), {
 			status: HTTP.OK,
-			headers: { "Content-Type": MediaType.ApplicationJson },
+			headers: { 'Content-Type': MediaType.ApplicationJson },
 		});
 	}
 
 	private async healthCheck(): Promise<Response> {
-		const keyCount = (await this.state.storage.list({ prefix: "key:" })).size;
+		const keyCount = (await this.state.storage.list({ prefix: 'key:' })).size;
 
 		return new Response(JSON.stringify({ healthy: true, keyCount }), {
 			status: HTTP.OK,
-			headers: { "Content-Type": MediaType.ApplicationJson },
+			headers: { 'Content-Type': MediaType.ApplicationJson },
 		});
 	}
 }

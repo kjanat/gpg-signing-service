@@ -454,7 +454,7 @@ fi
 # ignoring the rest -- which is what `grep -oE "^  '''.*''',"` did -- makes the
 # check opt-in by formatting: an entry indented four spaces, or a multi-line
 # `'''` literal, was simply not looked at. Both are TOML the parser accepts and
-# `dprint check` passes a multi-line one, so an unanchored head-of-span entry
+# `kprint check` passes a multi-line one, so an unanchored head-of-span entry
 # could ship with this case green. Anything that is not exactly one anchored
 # entry per line is reported rather than skipped.
 new_case 'every allowlist regex is anchored to a whole match'

@@ -32,7 +32,7 @@
  * fixture is identical on every run and a failure reproduces from its seed.
  */
 
-import { PGP_PRIVATE_BEGIN, PGP_PRIVATE_END } from "#utils/armor";
+import { PGP_PRIVATE_BEGIN, PGP_PRIVATE_END } from '#utils/armor';
 
 /** Lehmer / Park-Miller. Full period over `[1, 2^31 - 2]`, so a seed never dies. */
 function advance(state: number): number {
@@ -85,15 +85,15 @@ export interface ArmoredPrivateKeyFixtureOptions {
  * everywhere the suites need one to be.
  */
 export function armoredPrivateKeyFixture(options: ArmoredPrivateKeyFixtureOptions = {}): string {
-	const { headers = [], lines = 8, seed = 1, checksum = "aBc1" } = options;
+	const { headers = [], lines = 8, seed = 1, checksum = 'aBc1' } = options;
 
 	// 64 base64 characters is 48 bytes, and `btoa` pads the tail rather than
 	// leaving a partial group, so the wrap lands on exact line boundaries.
 	const bytes = pseudoBytes(lines * 48, seed);
 	const body = wrap(btoa(String.fromCharCode(...bytes)), 64);
-	const preamble = headers.length > 0 ? `${headers.join("\n")}\n` : "";
+	const preamble = headers.length > 0 ? `${headers.join('\n')}\n` : '';
 
-	return `${PGP_PRIVATE_BEGIN}\n${preamble}\n${body.join("\n")}\n=${checksum}\n${PGP_PRIVATE_END}`;
+	return `${PGP_PRIVATE_BEGIN}\n${preamble}\n${body.join('\n')}\n=${checksum}\n${PGP_PRIVATE_END}`;
 }
 
 /**

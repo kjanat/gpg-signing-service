@@ -1,25 +1,25 @@
-import { cloudflareTest } from "@cloudflare/vitest-plugin";
-import { defineConfig } from "vitest/config";
+import { cloudflareTest } from '@cloudflare/vitest-plugin';
+import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
 	plugins: [
 		cloudflareTest({
-			wrangler: { configPath: "./wrangler.test.toml" },
+			wrangler: { configPath: './wrangler.test.toml' },
 		}),
 	],
 	test: {
-		setupFiles: ["./src/__tests__/helpers/workerd-vitest-compat.ts"],
+		setupFiles: ['./src/__tests__/helpers/workerd-vitest-compat.ts'],
 		sequence: { concurrent: false },
 		isolate: true,
-		reporters: process.env.GITHUB_ACTIONS ? ["github-actions", "dot", "junit", "json"] : ["default"], // "dot",
-		include: ["src/__tests__/**/*.{ts,js}"],
-		exclude: ["**/*.d.ts", "node_modules/**", "src/__tests__/helpers/**"],
+		reporters: process.env.GITHUB_ACTIONS ? ['github-actions', 'dot', 'junit', 'json'] : ['default'], // "dot",
+		include: ['src/__tests__/**/*.{ts,js}'],
+		exclude: ['**/*.d.ts', 'node_modules/**', 'src/__tests__/helpers/**'],
 		coverage: {
 			enabled: true,
-			provider: "istanbul",
-			reporter: ["text", "html", "json"],
-			include: ["src/**/*.ts"],
-			exclude: ["scripts", "dist", ".commitlintrc.ts", "vitest.config.ts"],
+			provider: 'istanbul',
+			reporter: ['text', 'html', 'json'],
+			include: ['src/**/*.ts'],
+			exclude: ['scripts', 'dist', '.commitlintrc.ts', 'vitest.config.ts'],
 			// strict thresholds, if you modify this, you are fired !!!
 			thresholds: { lines: 95, functions: 98, branches: 95, statements: 95 },
 		},

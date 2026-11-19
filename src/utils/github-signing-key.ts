@@ -44,11 +44,11 @@
  * Not here, and not at configuration time. See {@link loadSigningKey}.
  */
 
-import type { AnyStoredKey } from "#schemas/keys";
-import { AnyStoredKeySchema } from "#schemas/keys";
-import type { Env, KeyId, WebhookAuthorization } from "#types";
-import { createKeyId, HTTP, isKeyIdShaped } from "#types";
-import { fetchKeyStorage } from "#utils/durable-objects";
+import type { AnyStoredKey } from '#schemas/keys';
+import { AnyStoredKeySchema } from '#schemas/keys';
+import type { Env, KeyId, WebhookAuthorization } from '#types';
+import { createKeyId, HTTP, isKeyIdShaped } from '#types';
+import { fetchKeyStorage } from '#utils/durable-objects';
 
 /**
  * Why a delivery may not reach a key.
@@ -61,13 +61,13 @@ import { fetchKeyStorage } from "#utils/durable-objects";
  */
 export type SigningKeyRefusal =
 	/** The delivery is not `repository`-scoped, so there is no pair to bind a key to. */
-	| "not_repository_scope"
+	| 'not_repository_scope'
 	/** The pair is allowlisted, and the operator bound no key to it. */
-	| "no_key_bound"
+	| 'no_key_bound'
 	/** The entry binds a key id this deployment does not hold. */
-	| "key_missing"
+	| 'key_missing'
 	/** Key storage could not be reached, so nothing is known either way. */
-	| "key_storage_unavailable";
+	| 'key_storage_unavailable';
 
 /** The key this delivery may use, or the reason it may use none. */
 export type SigningKeyDecision = { allowed: true; keyId: KeyId } | { allowed: false; reason: SigningKeyRefusal };
@@ -87,12 +87,12 @@ export function requireSigningKey(authorization: WebhookAuthorization | undefine
 	// `installation` and `none` are refused by the same branch as "no
 	// authorization at all", and deliberately: all three mean the delivery names
 	// no allowlisted pair, and a pair is the only thing a key is ever bound to.
-	if (authorization === undefined || authorization.scope !== "repository") {
-		return { allowed: false, reason: "not_repository_scope" };
+	if (authorization === undefined || authorization.scope !== 'repository') {
+		return { allowed: false, reason: 'not_repository_scope' };
 	}
 
 	if (authorization.keyId === null) {
-		return { allowed: false, reason: "no_key_bound" };
+		return { allowed: false, reason: 'no_key_bound' };
 	}
 
 	// Re-checked, having already been validated at parse time. Not defensive
@@ -102,7 +102,7 @@ export function requireSigningKey(authorization: WebhookAuthorization | undefine
 	// regex on a 16-character string and it is what lets the return type be a
 	// branded `KeyId` rather than a cast.
 	if (!isKeyIdShaped(authorization.keyId)) {
-		return { allowed: false, reason: "no_key_bound" };
+		return { allowed: false, reason: 'no_key_bound' };
 	}
 
 	return { allowed: true, keyId: createKeyId(authorization.keyId) };
@@ -179,15 +179,15 @@ export async function loadSigningKey(
 		// correct. The thrown value is deliberately not carried out of here — it
 		// comes from the object that holds private keys, and the caller has a
 		// reason and a key id, which is what it can act on.
-		return { allowed: false, reason: "key_storage_unavailable" };
+		return { allowed: false, reason: 'key_storage_unavailable' };
 	}
 
 	if (response.status === HTTP.NotFound) {
-		return { allowed: false, reason: "key_missing" };
+		return { allowed: false, reason: 'key_missing' };
 	}
 
 	if (!response.ok) {
-		return { allowed: false, reason: "key_storage_unavailable" };
+		return { allowed: false, reason: 'key_storage_unavailable' };
 	}
 
 	let key: AnyStoredKey;
@@ -197,7 +197,7 @@ export async function loadSigningKey(
 		// Present and unreadable. Reported as unavailable rather than missing for
 		// the reason above: the entry names a key that is there, so the allowlist
 		// is not what is wrong.
-		return { allowed: false, reason: "key_storage_unavailable" };
+		return { allowed: false, reason: 'key_storage_unavailable' };
 	}
 
 	return { allowed: true, keyId: decision.keyId, key };

@@ -1,7 +1,7 @@
-import type { RateLimitResult } from "#types";
-import { createRateLimitAllowed, createRateLimitDenied, HTTP, MediaType } from "#types";
-import { logger } from "#utils/logger";
-import { retryAfterSeconds } from "#utils/rate-limit";
+import type { RateLimitResult } from '#types';
+import { createRateLimitAllowed, createRateLimitDenied, HTTP, MediaType } from '#types';
+import { logger } from '#utils/logger';
+import { retryAfterSeconds } from '#utils/rate-limit';
 
 interface TokenBucket {
 	tokens: number;
@@ -33,7 +33,7 @@ export class RateLimiter implements DurableObject {
 	private readonly deleteChunk = 128; // Storage delete() takes at most 128 keys
 	// Where the last sweep stopped. Outside the `bucket:` prefix so it is neither
 	// listed nor reaped by the sweep it drives.
-	private readonly sweepCursorKey = "sweep:cursor";
+	private readonly sweepCursorKey = 'sweep:cursor';
 
 	constructor(state: DurableObjectState) {
 		this.state = state;
@@ -45,39 +45,39 @@ export class RateLimiter implements DurableObject {
 
 		try {
 			switch (path) {
-				case "/check":
+				case '/check':
 					return await this.checkLimit(
-						url.searchParams.get("identity") || "default",
-						this.parseLimit(url.searchParams.get("limit")),
+						url.searchParams.get('identity') || 'default',
+						this.parseLimit(url.searchParams.get('limit')),
 					);
 
-				case "/consume":
+				case '/consume':
 					return await this.consumeToken(
-						url.searchParams.get("identity") || "default",
-						this.parseLimit(url.searchParams.get("limit")),
+						url.searchParams.get('identity') || 'default',
+						this.parseLimit(url.searchParams.get('limit')),
 					);
 
-				case "/reset":
-					if (request.method !== "POST") {
-						return new Response("Method not allowed", {
+				case '/reset':
+					if (request.method !== 'POST') {
+						return new Response('Method not allowed', {
 							status: HTTP.MethodNotAllowed,
 						});
 					}
-					return await this.resetLimit(url.searchParams.get("identity") || "");
+					return await this.resetLimit(url.searchParams.get('identity') || '');
 
 				default:
-					return new Response("Not found", { status: HTTP.NotFound });
+					return new Response('Not found', { status: HTTP.NotFound });
 			}
 		} catch (error) {
 			// Same reasoning as `KeyStorage.fetch`: this catch is the end of the
 			// line, so the fault has to be reported here or not at all. The identity
 			// is deliberately not logged — it is the caller's subject, and the path
 			// is what says which operation failed.
-			logger.error("Rate limiter request failed", error, { action: "rate-limit", path });
-			const message = error instanceof Error ? error.message : "Unknown error";
+			logger.error('Rate limiter request failed', error, { action: 'rate-limit', path });
+			const message = error instanceof Error ? error.message : 'Unknown error';
 			return new Response(JSON.stringify({ error: message }), {
 				status: HTTP.InternalServerError,
-				headers: { "Content-Type": MediaType.ApplicationJson },
+				headers: { 'Content-Type': MediaType.ApplicationJson },
 			});
 		}
 	}
@@ -128,7 +128,7 @@ export class RateLimiter implements DurableObject {
 
 		return new Response(JSON.stringify(result), {
 			status: HTTP.OK,
-			headers: { "Content-Type": MediaType.ApplicationJson },
+			headers: { 'Content-Type': MediaType.ApplicationJson },
 		});
 	}
 
@@ -143,11 +143,11 @@ export class RateLimiter implements DurableObject {
 			return new Response(JSON.stringify(result), {
 				status: HTTP.TooManyRequests,
 				headers: {
-					"Content-Type": MediaType.ApplicationJson,
+					'Content-Type': MediaType.ApplicationJson,
 					// The same floor the body's `retryAfter` gets, from the same
 					// function: this header and that field describe one wait, and two
 					// spellings of one expression are two things that can drift.
-					"Retry-After": String(retryAfterSeconds(retryAt)),
+					'Retry-After': String(retryAfterSeconds(retryAt)),
 				},
 			});
 		}
@@ -163,15 +163,15 @@ export class RateLimiter implements DurableObject {
 
 		return new Response(JSON.stringify(result), {
 			status: HTTP.OK,
-			headers: { "Content-Type": MediaType.ApplicationJson },
+			headers: { 'Content-Type': MediaType.ApplicationJson },
 		});
 	}
 
 	private async resetLimit(identity: string): Promise<Response> {
 		if (!identity) {
-			return new Response(JSON.stringify({ error: "Identity required" }), {
+			return new Response(JSON.stringify({ error: 'Identity required' }), {
 				status: HTTP.BadRequest,
-				headers: { "Content-Type": MediaType.ApplicationJson },
+				headers: { 'Content-Type': MediaType.ApplicationJson },
 			});
 		}
 
@@ -179,7 +179,7 @@ export class RateLimiter implements DurableObject {
 
 		return new Response(JSON.stringify({ success: true }), {
 			status: HTTP.OK,
-			headers: { "Content-Type": MediaType.ApplicationJson },
+			headers: { 'Content-Type': MediaType.ApplicationJson },
 		});
 	}
 
@@ -258,7 +258,7 @@ export class RateLimiter implements DurableObject {
 		// re-arms it at a second, forever.
 		const cursor = await this.state.storage.get<string>(this.sweepCursorKey);
 		const buckets = await this.state.storage.list<TokenBucket>({
-			prefix: "bucket:",
+			prefix: 'bucket:',
 			...(cursor === undefined ? {} : { startAfter: cursor }),
 			limit: this.sweepBatch,
 		});
@@ -295,7 +295,7 @@ export class RateLimiter implements DurableObject {
 		// left stops waking itself, and `scheduleSweep` re-arms it on the next
 		// consume. Note that a wide bucket is never reaped, so in practice only the
 		// admin limiter and an unused signing limiter ever reach that quiescence.
-		const remaining = await this.state.storage.list<TokenBucket>({ prefix: "bucket:", limit: 1 });
+		const remaining = await this.state.storage.list<TokenBucket>({ prefix: 'bucket:', limit: 1 });
 		if (remaining.size > 0) {
 			await this.state.storage.setAlarm(now + this.sweepIntervalMs);
 		}

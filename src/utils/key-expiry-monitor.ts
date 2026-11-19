@@ -31,10 +31,10 @@
  * alert may and may not say, and why the sending sits outside the guarded work.
  */
 
-import type { AnyStoredKey } from "#schemas/keys";
-import { isX509Key } from "#schemas/keys";
-import type { Env } from "#types";
-import { fetchKeyStorage } from "#utils/durable-objects";
+import type { AnyStoredKey } from '#schemas/keys';
+import { isX509Key } from '#schemas/keys';
+import type { Env } from '#types';
+import { fetchKeyStorage } from '#utils/durable-objects';
 import type {
 	ActiveKeySet,
 	DeclaredDefaultKey,
@@ -43,7 +43,7 @@ import type {
 	MonitorFailureKind,
 	ReportContext,
 	ReportDocument,
-} from "#utils/key-expiry";
+} from '#utils/key-expiry';
 import {
 	actionableRows,
 	classifyExpiry,
@@ -53,13 +53,13 @@ import {
 	renderFailureReport,
 	renderReport,
 	resolveActiveKeys,
-} from "#utils/key-expiry";
-import { logger } from "#utils/logger";
-import { listOIDCSubjects } from "#utils/oidc-subjects";
-import { listServiceTokens } from "#utils/service-tokens";
+} from '#utils/key-expiry';
+import { logger } from '#utils/logger';
+import { listOIDCSubjects } from '#utils/oidc-subjects';
+import { listServiceTokens } from '#utils/service-tokens';
 
 /** Name this service calls itself by in a subject line */
-const SERVICE_NAME = "gpg-signing-service";
+const SERVICE_NAME = 'gpg-signing-service';
 
 /** An alert, in both bodies, ready for the mail boundary */
 export type AlertMail = ReportDocument;
@@ -80,7 +80,7 @@ export type AlertMail = ReportDocument;
  * find out. Text is written for operators and may be reworded, so a log
  * classification that depended on it would be one rewrite away from lying.
  */
-export type AlertKind = "key-expiry" | "monitor-failure";
+export type AlertKind = 'key-expiry' | 'monitor-failure';
 
 /**
  * Whether a delivery attempt reached the operator or died at the boundary.
@@ -92,7 +92,7 @@ export type AlertKind = "key-expiry" | "monitor-failure";
  * go quiet in the one case an operator most needs it: when the mail binding
  * itself is the thing that has broken.
  */
-export type AlertOutcome = "sent" | "failed";
+export type AlertOutcome = 'sent' | 'failed';
 
 /**
  * One delivery attempt, as the call site classifies it.
@@ -103,7 +103,7 @@ export type AlertOutcome = "sent" | "failed";
  * copy is chosen from — a word from a four-value set, not an exception, not its
  * message, and not anything else read back out of the failure.
  */
-export type AlertDelivery = { alert: "key-expiry" } | { alert: "monitor-failure"; failure: MonitorFailureKind };
+export type AlertDelivery = { alert: 'key-expiry' } | { alert: 'monitor-failure'; failure: MonitorFailureKind };
 
 /**
  * The message every delivery attempt is logged under.
@@ -113,13 +113,13 @@ export type AlertDelivery = { alert: "key-expiry" } | { alert: "monitor-failure"
  * them can pick up rendered content.
  */
 const ALERT_MESSAGE: Record<AlertKind, Record<AlertOutcome, string>> = {
-	"key-expiry": {
-		sent: "Key expiry alert sent",
-		failed: "Key expiry alert could not be sent",
+	'key-expiry': {
+		sent: 'Key expiry alert sent',
+		failed: 'Key expiry alert could not be sent',
 	},
-	"monitor-failure": {
-		sent: "Key expiry monitor self-failure alert sent",
-		failed: "Key expiry monitor self-failure alert could not be sent",
+	'monitor-failure': {
+		sent: 'Key expiry monitor self-failure alert sent',
+		failed: 'Key expiry monitor self-failure alert could not be sent',
 	},
 };
 
@@ -133,11 +133,11 @@ const ALERT_MESSAGE: Record<AlertKind, Record<AlertOutcome, string>> = {
  */
 function alertEvent(delivery: AlertDelivery, outcome: AlertOutcome, to: string) {
 	return {
-		action: "key-expiry-alert",
+		action: 'key-expiry-alert',
 		alert: delivery.alert,
 		outcome,
 		to,
-		...(delivery.alert === "monitor-failure" ? { failure: delivery.failure } : {}),
+		...(delivery.alert === 'monitor-failure' ? { failure: delivery.failure } : {}),
 	};
 }
 
@@ -174,14 +174,14 @@ export interface MailConfig {
  */
 export function mailConfig(env: Env): MailConfig {
 	const missing = [
-		env.KEY_EXPIRY_ALERTS ? null : "the KEY_EXPIRY_ALERTS send_email binding",
-		env.KEY_EXPIRY_ALERT_FROM?.trim() ? null : "the KEY_EXPIRY_ALERT_FROM variable",
-		env.KEY_EXPIRY_ALERT_TO?.trim() ? null : "the KEY_EXPIRY_ALERT_TO variable",
+		env.KEY_EXPIRY_ALERTS ? null : 'the KEY_EXPIRY_ALERTS send_email binding',
+		env.KEY_EXPIRY_ALERT_FROM?.trim() ? null : 'the KEY_EXPIRY_ALERT_FROM variable',
+		env.KEY_EXPIRY_ALERT_TO?.trim() ? null : 'the KEY_EXPIRY_ALERT_TO variable',
 	].filter((entry): entry is string => entry !== null);
 
 	if (missing.length > 0) {
 		throw new Error(
-			`Key expiry monitor cannot send mail: ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} not configured.`,
+			`Key expiry monitor cannot send mail: ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not configured.`,
 		);
 	}
 
@@ -239,7 +239,7 @@ export function bindingMailSender(env: Env): MailSender {
 			// is written by the mail provider, and this event has to stay safe to
 			// read in bulk; `outcome` and `alert` already say what happened, and
 			// the exception itself reaches the cron invocation intact.
-			logger.error(ALERT_MESSAGE[delivery.alert].failed, undefined, alertEvent(delivery, "failed", to));
+			logger.error(ALERT_MESSAGE[delivery.alert].failed, undefined, alertEvent(delivery, 'failed', to));
 			throw error;
 		}
 
@@ -247,7 +247,7 @@ export function bindingMailSender(env: Env): MailSender {
 		// out of `mail`: what was sent is the operator's copy, and the log line
 		// records which of the two things the monitor had to say — never either
 		// body, which is where the key ids and the deployment's state live.
-		logger.info(ALERT_MESSAGE[delivery.alert].sent, { ...alertEvent(delivery, "sent", to), messageId });
+		logger.info(ALERT_MESSAGE[delivery.alert].sent, { ...alertEvent(delivery, 'sent', to), messageId });
 	};
 }
 
@@ -329,8 +329,8 @@ export async function runKeyExpiryMonitor(env: Env, options: MonitorOptions = {}
 	const checkedNothing = rows.length === 0;
 
 	if (actionable.length === 0 && !checkedNothing) {
-		logger.info("Key expiry check clear", {
-			action: "key-expiry-check",
+		logger.info('Key expiry check clear', {
+			action: 'key-expiry-check',
 			checked: rows.length,
 			warnDays,
 		});
@@ -343,8 +343,8 @@ export async function runKeyExpiryMonitor(env: Env, options: MonitorOptions = {}
 		// through the same channel as any other finding, because the dashboard is
 		// not a channel anyone watches and a green light earned by an empty set
 		// is the failure this monitor exists to prevent.
-		logger.warn("Key expiry check verified nothing: no active signing key was resolved", {
-			action: "key-expiry-check",
+		logger.warn('Key expiry check verified nothing: no active signing key was resolved', {
+			action: 'key-expiry-check',
 			checked: 0,
 			declaredKeyId: scope.defaultKey.keyId,
 			liveGrantCount: scope.liveGrantCount,
@@ -352,15 +352,15 @@ export async function runKeyExpiryMonitor(env: Env, options: MonitorOptions = {}
 			warnDays,
 		});
 	} else {
-		logger.warn("Key expiry check found keys needing attention", {
-			action: "key-expiry-check",
+		logger.warn('Key expiry check found keys needing attention', {
+			action: 'key-expiry-check',
 			checked: rows.length,
 			actionable: actionable.map((row) => ({ keyId: row.keyId, state: row.state, daysRemaining: row.daysRemaining })),
 			warnDays,
 		});
 	}
 
-	await sendMail(report, { alert: "key-expiry" });
+	await sendMail(report, { alert: 'key-expiry' });
 
 	return { rows, actionable, scope, report, checkedNothing, alerted: true };
 }
@@ -388,7 +388,7 @@ class StagedFailure extends Error {
 
 	constructor(kind: MonitorFailureKind, failure: unknown) {
 		super(`Key expiry monitor failed while reading ${kind}`);
-		this.name = "StagedFailure";
+		this.name = 'StagedFailure';
 		this.kind = kind;
 		this.failure = failure;
 	}
@@ -406,7 +406,7 @@ async function inStage<T>(kind: MonitorFailureKind, run: () => Promise<T> | T): 
 
 /** Which class of failure to report; anything untagged is the generic one */
 function failureKindOf(error: unknown): MonitorFailureKind {
-	return error instanceof StagedFailure ? error.kind : "report";
+	return error instanceof StagedFailure ? error.kind : 'report';
 }
 
 /** The failure as originally thrown, so the rethrow loses nothing */
@@ -424,11 +424,11 @@ function failureCause(error: unknown): unknown {
  * rather than merely guarded against.
  */
 async function checkKeys(env: Env, now: Date): Promise<CheckedKeys> {
-	const warnDays = await inStage("threshold", () => parseWarnDays(env.KEY_EXPIRY_WARN_DAYS));
-	const stored = await inStage("key-storage", () => storedKeyIds(env));
-	const grants = await inStage("grants", () => readGrants(env));
+	const warnDays = await inStage('threshold', () => parseWarnDays(env.KEY_EXPIRY_WARN_DAYS));
+	const stored = await inStage('key-storage', () => storedKeyIds(env));
+	const grants = await inStage('grants', () => readGrants(env));
 
-	const scope = await inStage("report", () =>
+	const scope = await inStage('report', () =>
 		resolveActiveKeys({ storedKeyIds: stored, defaultKey: defaultKeyOf(env), grants, now }),
 	);
 
@@ -436,7 +436,7 @@ async function checkKeys(env: Env, now: Date): Promise<CheckedKeys> {
 	for (const key of scope.keys) {
 		rows.push(
 			key.stored
-				? classifyExpiry(key.keyId, await inStage("key-storage", () => storedKeyExpiry(env, key.keyId)), now, warnDays)
+				? classifyExpiry(key.keyId, await inStage('key-storage', () => storedKeyExpiry(env, key.keyId)), now, warnDays)
 				: missingKeyRow(key),
 		);
 	}
@@ -458,16 +458,16 @@ async function reportSelfFailure(
 	context: { service: string; now: Date },
 ): Promise<void> {
 	const kind = failureKindOf(error);
-	logger.error("Key expiry monitor could not complete", failureCause(error), {
-		action: "key-expiry-check",
+	logger.error('Key expiry monitor could not complete', failureCause(error), {
+		action: 'key-expiry-check',
 		failure: kind,
 	});
 
 	try {
-		await sendMail(renderFailureReport(kind, context), { alert: "monitor-failure", failure: kind });
+		await sendMail(renderFailureReport(kind, context), { alert: 'monitor-failure', failure: kind });
 	} catch (sendError) {
-		logger.error("Key expiry monitor could not report its own failure", sendError, {
-			action: "key-expiry-check",
+		logger.error('Key expiry monitor could not report its own failure', sendError, {
+			action: 'key-expiry-check',
 			failure: kind,
 		});
 	}
@@ -488,7 +488,7 @@ function defaultKeyOf(env: Env): DeclaredDefaultKey {
 
 /** Key ids the `KeyStorage` Durable Object holds */
 async function storedKeyIds(env: Env): Promise<string[]> {
-	const response = await fetchKeyStorage(env, "/list-keys");
+	const response = await fetchKeyStorage(env, '/list-keys');
 	if (!response.ok) {
 		throw new Error(`Key expiry monitor could not list stored keys: key storage answered ${response.status}`);
 	}
@@ -507,7 +507,7 @@ async function storedKeyIds(env: Env): Promise<string[]> {
 async function storedKeyExpiry(env: Env, keyId: string) {
 	const response = await fetchKeyStorage(env, `/get-key?keyId=${encodeURIComponent(keyId)}`);
 	if (!response.ok) {
-		return { kind: "unknown", reason: `key storage answered ${response.status} for this key` } as const;
+		return { kind: 'unknown', reason: `key storage answered ${response.status} for this key` } as const;
 	}
 
 	const stored = (await response.json()) as AnyStoredKey;
@@ -527,7 +527,7 @@ async function readGrants(env: Env): Promise<KeyGrant[]> {
 	return [
 		...subjects.map(
 			(subject): KeyGrant => ({
-				kind: "oidc-subject",
+				kind: 'oidc-subject',
 				name: subject.name,
 				keyIds: subject.keyIds,
 				expiresAt: subject.expiresAt,
@@ -536,7 +536,7 @@ async function readGrants(env: Env): Promise<KeyGrant[]> {
 		),
 		...tokens.map(
 			(token): KeyGrant => ({
-				kind: "service-token",
+				kind: 'service-token',
 				name: token.name,
 				keyIds: token.keyIds,
 				expiresAt: token.expiresAt,

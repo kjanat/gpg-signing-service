@@ -219,7 +219,7 @@ def entries(text: str) -> list[tuple[int, str]]:
     """`(line number, regex)` for each `'''...'''` allowlist entry.
 
     Raises rather than skipping a line it does not recognise. One entry written
-    across several lines -- which `dprint check` accepts -- would otherwise go
+    across several lines -- which `kprint check` accepts -- would otherwise go
     unread, and a checker that quietly reads nothing reports nothing;
     `scripts/test-gitleaks-contract.sh` refuses that shape for the same reason it
     refuses a scanner error that looks like a clean scan.

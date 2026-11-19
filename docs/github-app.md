@@ -195,7 +195,7 @@ out to be.
 
 It is the one part of this integration that needs a permission the rest does
 not: **`Checks: Read and write`**. That is a permission an installation has to
-_approve_ after it is added to the App, so folding it into `GITHUB_APP_ENABLED`
+*approve* after it is added to the App, so folding it into `GITHUB_APP_ENABLED`
 would mean every deployment that upgraded started calling an endpoint its
 installation had not granted, and answering `403` on each delivery.
 
@@ -205,7 +205,7 @@ signing behaves exactly as it does without this feature.
 ### And why it needs no new subscribed event
 
 `push` is enough. A pull request's head branch lives in a repository, pushes to
-it raise `push` there, and a check run is attached to a _commit_ — which is what
+it raise `push` there, and a check run is attached to a *commit* — which is what
 a pull request displays. Subscribing to `pull_request` as well would widen the
 payload surface this service accepts to gain nothing it does not already have.
 
@@ -219,14 +219,14 @@ push signing has.
 The sha is read back from the ref, never taken from `payload.after`. GitHub's
 `verification.payload` and `verification.signature` for that commit are folded
 back into a commit object and hashed; the result must equal the sha, which is
-what makes the verdict a statement about _this commit_ rather than about bytes
+what makes the verdict a statement about *this commit* rather than about bytes
 an API reported. Then the signature is verified here, against the public half of
 the key the allowlist bound.
 
 | State               | Conclusion | What it says                                                                 |
 | ------------------- | ---------- | ---------------------------------------------------------------------------- |
 | `service_key_valid` | `success`  | An OpenPGP signature by the bound key, verified here over the commit's bytes |
-| `invalid_signature` | `failure`  | A signature _naming the bound key_ that does not verify under it             |
+| `invalid_signature` | `failure`  | A signature *naming the bound key* that does not verify under it             |
 | `other_signer`      | `neutral`  | Signed by somebody else. **No claim** about whether that signature is good   |
 | `unsigned`          | `neutral`  | No signature at all                                                          |
 | `unverifiable`      | `neutral`  | The reported bytes could not be tied to the commit, so nothing was shown     |
@@ -263,8 +263,8 @@ it.
 ### Retry and idempotency: converging, not at-most-once
 
 A check run is **not** protected by the [delivery ledger](#replay-protection), and that is deliberate. Signing rewrites history,
-so it is guarded by a one-way claim. A check run _states what is already true of
-a commit_, so the same report published twice has to converge rather than be
+so it is guarded by a one-way claim. A check run *states what is already true of
+a commit*, so the same report published twice has to converge rather than be
 prevented.
 
 Both halves of a check's address are fixed before anything is written — the
@@ -290,7 +290,7 @@ later report — from a redelivery, a retry, or a fresh event about the same
 commit — lands on that same run.
 
 The residual, since GitHub's Checks API has no conditional create: two reports
-for the _identical_ sha that are both in flight through the lookup can both
+for the *identical* sha that are both in flight through the lookup can both
 create a run. Nothing available over this API closes that window. What closes it
 afterwards is the ordering rule — the runs are sorted by id and the **earliest**
 is the one updated — so every later report converges on the same one rather than
@@ -348,8 +348,8 @@ So the author is authorized separately, against GitHub:
 GET /repos/{owner}/{repo}/collaborators/{login}/permission
 ```
 
-and must come back `admin` or `write`. That field is GitHub's _legacy base
-role_, which is deliberately the one to read: it collapses `maintain` into
+and must come back `admin` or `write`. That field is GitHub's *legacy base
+role*, which is deliberately the one to read: it collapses `maintain` into
 `write`, `triage` into `read`, and every custom role onto whichever base role it
 was built from — a closed set of four values with a defined meaning.
 `role_name` is open-ended, and a check written against it would be a check
@@ -367,7 +367,7 @@ Everything that is not an unambiguous grant refuses:
 | `404`, and the repository is still visible | `actor_not_permitted`, nothing started   |
 | `404`, and the repository is **not**       | `permission_lookup_failed`, fails closed |
 | `403`, `5xx`, a timeout                    | `permission_lookup_failed`, fails closed |
-| An answer about a _different_ login        | `permission_lookup_failed`, fails closed |
+| An answer about a *different* login        | `permission_lookup_failed`, fails closed |
 
 Two rows are worth naming.
 
@@ -416,7 +416,7 @@ The dispatch carries four inputs and **no comment text**:
 | Input          | Value                                                    |
 | -------------- | -------------------------------------------------------- |
 | `issue_number` | The issue or pull request the comment is on              |
-| `comment_id`   | The comment. Its body is _fetched_ by the run            |
+| `comment_id`   | The comment. Its body is *fetched* by the run            |
 | `requested_by` | The author, already authorized here and re-checked there |
 | `delivery_id`  | The webhook delivery, for correlation                    |
 
@@ -433,7 +433,7 @@ choose it would be able to choose the code that runs. Neither has a default:
 a default workflow would be this service picking which of somebody's workflows a
 comment may start.
 
-`.github/scripts/claude-agent-harness.sh` then asks GitHub the _same_ permission
+`.github/scripts/claude-agent-harness.sh` then asks GitHub the *same* permission
 question again, on the other side of the dispatch, and refuses the run if the
 answer is not `write` or `admin`, if the fetched comment was written by somebody
 other than `requested_by`, if it belongs to a different issue, or if it never
@@ -454,8 +454,8 @@ redelivery of a push meets a head commit that is already signed. Comment
 dispatch has nothing to meet, so a flag on the request context would not be
 enough: an isolate evicted between the POST and the settle would leave a
 reservation that lapses in five minutes, after which a redelivery starts a
-second session. The ledger therefore has a third phase between _reserved_ and
-_committed_ — **held**, durable for the full retention window from the moment
+second session. The ledger therefore has a third phase between *reserved* and
+*committed* — **held**, durable for the full retention window from the moment
 the request leaves, and still releasable by the one request that can learn
 nothing happened. A hold that does not land refuses the dispatch outright, and
 nothing is sent.
@@ -509,7 +509,7 @@ and volume is the reason:
 | No trigger phrase, an edit, a delete, an unreadable payload  | No  |
 
 The two named refusals earn a row because both are rare by construction and both
-are security-significant: `actor_is_not_human` only fires on a comment that _does_
+are security-significant: `actor_is_not_human` only fires on a comment that *does*
 invoke the phrase, which is the App recognising its own completion comment, and
 `unreadable_actor` is a shape a real `issue_comment.created` never has. The rest
 is weather — a comment with no phrase in it is not an event, and a row per one of
@@ -548,7 +548,7 @@ Settings → Developer settings → GitHub Apps → New GitHub App.
   fails closed and says which one — a check run reports `403` in a
   `check_report` audit row, and a dispatch refuses with
   `permission_lookup_failed` rather than starting anything. Subscribing to a new
-  _event_ needs no approval, but a delivery whose feature is unapproved is a
+  *event* needs no approval, but a delivery whose feature is unapproved is a
   delivery that does nothing.
 
   `Metadata: Read` is granted to every installation and needs no action; it is
@@ -602,7 +602,7 @@ GITHUB_APP_DISPATCH_REF      = "master"
 ```
 
 **Before turning `GITHUB_APP_COMMENT_DISPATCH` on, migrate the workflow.** The
-dispatched workflow has to accept `workflow_dispatch` _and_ stop subscribing to
+dispatched workflow has to accept `workflow_dispatch` *and* stop subscribing to
 `issue_comment` — GitHub raises that event for the same comment, so a workflow
 that still listens for it starts a second session alongside the dispatched one.
 In this repository that is one move:
@@ -705,7 +705,7 @@ that is working exactly as provisioned.
 
 The 404 is byte-identical to the one an unrouted path returns, on purpose: a
 distinguishable answer would let anyone enumerate which deployments have the
-integration configured. The 500 is deliberately _not_ hidden that way — an
+integration configured. The 500 is deliberately *not* hidden that way — an
 operator who opted in and cannot receive deliveries needs to be able to tell
 that apart from a deployment that never opted in, or the integration silently
 receives nothing.
@@ -751,7 +751,7 @@ does not establish.
 - **The feature gate runs before the limiter**, so a deployment that never opted
   in spends nothing at all on a request to this path.
 - **The body is bounded before it is buffered.** The limiter caps request
-  _count_; the MAC has to run over the whole body, and Workers will accept up to
+  *count*; the MAC has to run over the whole body, and Workers will accept up to
   100 MB against a 128 MB isolate memory limit, so the bytes are capped
   separately at GitHub's own 25 MiB (26214400-byte) payload cap. Above that
   figure a delivery is not truncated by GitHub, it is [not sent](https://docs.github.com/en/webhooks/webhook-events-and-payloads#payload-cap)
@@ -786,7 +786,7 @@ GITHUB_APP_ALLOWED_REPOSITORIES = "12345678:kjanat/gpg-signing-service, 12345678
 ### Why the entries are pairs
 
 Not two lists — allowed installations, allowed repositories — because two lists
-authorize every _combination_ of their members, and most of those combinations
+authorize every *combination* of their members, and most of those combinations
 are grants nobody wrote. Installation A, which legitimately holds the App's
 secret, could name repository R belonging to installation B and be waved through
 by a repository list that never meant to give A anything. One entry binds the
@@ -834,7 +834,7 @@ short one.
 
 ## Which key a delivery may sign with
 
-Authorization says a delivery may be _about_ `owner/repo`. It does not say the
+Authorization says a delivery may be *about* `owner/repo`. It does not say the
 service will sign anything for it, and those are different grants: a repository
 can be allowlisted so its events are received without being allowed to make a
 signing service sign.
@@ -851,7 +851,7 @@ nothing to sign; its deliveries are still received, authorized and logged.
 ### Why the key is in the entry and not in its own variable
 
 A second variable is a second list, and two lists have to be kept in step by
-hand. Anything that can drift can drift _open_ — a key entry for a pair nobody
+hand. Anything that can drift can drift *open* — a key entry for a pair nobody
 authorized, or a pair whose authorization was edited and whose key entry was
 not. With one entry there is nothing to reconcile, because there is only ever
 one string to read, and the atomic unit of configuration is the whole grant:
@@ -866,7 +866,7 @@ Not `KEY_ID`, not the only key in storage, not the last key uploaded. A pair
 with no `=<keyId>` suffix may not cause a signature, full stop.
 
 `KEY_ID` is the default for `POST /sign`, and that is a different situation: a
-caller there has authenticated with OIDC or a service token and had _its own_
+caller there has authenticated with OIDC or a service token and had *its own*
 key grant checked before the default is reached. A webhook delivery is a
 different caller with a different grant, and letting it inherit the API's
 default would mean every allowlisted repository silently acquired authority over
@@ -885,7 +885,7 @@ remember to handle.
 Same rule as the repository, and for the same reason. No function involved in
 resolving a key takes a payload argument at all, so a delivery cannot name a key
 it would like used, cannot add one at a level someone might later read, and
-cannot widen the one its own grant gave it. A delivery that names a _different_
+cannot widen the one its own grant gave it. A delivery that names a *different*
 repository matches a different entry, or none — it does not borrow the key of
 the one it was checked against.
 
@@ -909,7 +909,7 @@ with whatever spelling the operator used for the pair.
   keystroke. `=` with nothing after it is refused for the same reason — it is a
   binding someone started writing.
 - **A pair may appear at most once.** A repeated pair refuses the whole list
-  _even when the two entries agree_, because resolution takes the first match:
+  *even when the two entries agree*, because resolution takes the first match:
   a second entry is either dead configuration or a second opinion about which
   key a repository may use that nobody will notice being ignored. Compared
   case-insensitively, so the conflict cannot be hidden by spelling the
@@ -945,7 +945,7 @@ answers with the key or with `key_missing` / `key_storage_unavailable`. No
 separate check, therefore no cache, no staleness and no window — the same
 boundary `POST /sign` already uses.
 
-The _storage fetch_ is what the two share, not the whole boundary: `/sign` also
+The *storage fetch* is what the two share, not the whole boundary: `/sign` also
 meters its caller and writes an audit row, and `loadSigningKey` does neither.
 A caller that acts on the key owes both, and the push handler provides them —
 [the signing budget](#the-signing-budget) and
@@ -988,7 +988,7 @@ id produce exactly one winner, and there is a test that says so.
 
 Ids are retained for **four days**: [GitHub lists deliveries from the past
 3 days](https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/viewing-webhook-deliveries)
-and that listing _is_ the redelivery affordance, so three days is the window in
+and that listing *is* the redelivery affordance, so three days is the window in
 which a legitimate repeat can occur, plus a day for clock skew and the boundary
 itself. Expiry is decided by each record's own timestamp, so a late sweep can
 waste storage but never a refusal.
@@ -1094,7 +1094,7 @@ meets the handler's own idempotence: a head this service already signed is
 
 ### A missing id is refused, not defaulted
 
-A placeholder for a delivery with no `X-GitHub-Delivery` would be a _shared_
+A placeholder for a delivery with no `X-GitHub-Delivery` would be a *shared*
 key: every id-less delivery would dedupe against every other, so the first one
 claimed would silently suppress the rest — and one signed request with no id
 does that on purpose. An id must be 8 to 200 characters of `[A-Za-z0-9._-]`,
@@ -1117,7 +1117,7 @@ token.
 
 - **The destination is pinned.** Everything goes to `api.github.com`, and
   `githubApiUrl` asserts the resolved origin rather than calling `validateUrl`.
-  That guard exists to sift _caller-controlled_ URLs for private address space,
+  That guard exists to sift *caller-controlled* URLs for private address space,
   and it answers the wrong question when the hostname is a constant — it would
   pass `https://api.github.com.evil.example` and every other public host.
 - **Installation ids are validated before use.** A positive safe integer or
@@ -1156,8 +1156,8 @@ signing push does.
 **An acknowledged-and-discarded delivery is not audited**, and that is
 deliberate: `audit_logs` records operations on keys and credentials, and a row
 per event nothing acted on would be a D1 write for nothing. Those are logged at
-info instead, with the _authorized_ repository rather than the payload's, so a
-log line cannot be made to name a repository nobody granted. The _action_ is
+info instead, with the *authorized* repository rather than the payload's, so a
+log line cannot be made to name a repository nobody granted. The *action* is
 what earns a record — and a new one costs an `AuditAction` value and a migration
 widening the table's `CHECK` constraint, which is what `0005` and `0006` are.
 

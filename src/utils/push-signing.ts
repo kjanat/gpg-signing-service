@@ -51,13 +51,13 @@
  * practice, which is the seconds this operation takes.
  */
 
-import type { AnyStoredKey, StoredKey } from "#schemas/keys";
-import { isX509Key } from "#schemas/keys";
-import { commitObjectId, commitPayload, signedCommitObject } from "#utils/git-commit";
-import type { PushRefusal } from "#utils/github-push";
-import { signableRun } from "#utils/github-push";
-import type { RepositoryClient } from "#utils/github-repo";
-import { signCommitData } from "#utils/signing";
+import type { AnyStoredKey, StoredKey } from '#schemas/keys';
+import { isX509Key } from '#schemas/keys';
+import { commitObjectId, commitPayload, signedCommitObject } from '#utils/git-commit';
+import type { PushRefusal } from '#utils/github-push';
+import { signableRun } from '#utils/github-push';
+import type { RepositoryClient } from '#utils/github-repo';
+import { signCommitData } from '#utils/signing';
 
 /** What the caller must provide around the two moments this module cannot decide. */
 export interface PushSigningHooks {
@@ -69,7 +69,7 @@ export interface PushSigningHooks {
 	 * because a signature is the unit of work being bounded — one delivery
 	 * carrying twenty commits is twenty signatures.
 	 */
-	reserveBudget(commits: number): Promise<"ok" | "limited" | "unavailable">;
+	reserveBudget(commits: number): Promise<'ok' | 'limited' | 'unavailable'>;
 	/**
 	 * Called once, immediately before the branch is moved.
 	 *
@@ -84,11 +84,11 @@ export interface PushSigningHooks {
 /** How a push-signing attempt ended. */
 export type PushSigningResult =
 	/** The branch was moved. `published` is implied and unconditional. */
-	| { outcome: "signed"; branch: string; previousHead: string; head: string; commits: number }
+	| { outcome: 'signed'; branch: string; previousHead: string; head: string; commits: number }
 	/** There was nothing to do, and nothing was done. */
-	| { outcome: "skipped"; reason: PushRefusal | "branch_moved" | "unsupported_key" }
+	| { outcome: 'skipped'; reason: PushRefusal | 'branch_moved' | 'unsupported_key' }
 	/** The budget refused. Nothing was done. */
-	| { outcome: "refused"; reason: "rate_limited" | "limiter_unavailable" }
+	| { outcome: 'refused'; reason: 'rate_limited' | 'limiter_unavailable' }
 	/**
 	 * Something went wrong.
 	 *
@@ -96,7 +96,7 @@ export type PushSigningResult =
 	 * and it is the field the caller's replay decision turns on: false means the
 	 * repository is untouched and a redelivery is a real retry.
 	 */
-	| { outcome: "failed"; reason: string; published: boolean };
+	| { outcome: 'failed'; reason: string; published: boolean };
 
 /**
  * Sign the unsigned commits at the tip of `branch`, and move it to them.
@@ -119,7 +119,7 @@ export async function signPushedCommits(
 	// attempted: a signature GitHub stores and cannot verify is worse than no
 	// signature, because it looks like one.
 	if (isX509Key(key)) {
-		return { outcome: "skipped", reason: "unsupported_key" };
+		return { outcome: 'skipped', reason: 'unsupported_key' };
 	}
 
 	// The reads, together, because a failure in any of them means the same thing:
@@ -128,33 +128,33 @@ export async function signPushedCommits(
 	// from a publish failure and therefore has to assume the worse of the two —
 	// turning a transient token or API error into a delivery that can never be
 	// redelivered.
-	let start: Awaited<ReturnType<RepositoryClient["getBranch"]>>;
+	let start: Awaited<ReturnType<RepositoryClient['getBranch']>>;
 	let run: Awaited<ReturnType<typeof signableRun>>;
 	try {
 		start = await client.getBranch(branch);
 		if (start === null) {
-			return { outcome: "skipped", reason: "branch_missing" };
+			return { outcome: 'skipped', reason: 'branch_missing' };
 		}
 
 		run = await signableRun(start.sha, (sha) => client.getCommit(sha));
 	} catch (error) {
 		return {
-			outcome: "failed",
-			reason: error instanceof Error ? error.message : "Could not read the repository",
+			outcome: 'failed',
+			reason: error instanceof Error ? error.message : 'Could not read the repository',
 			published: false,
 		};
 	}
 
 	if (!run.act) {
-		return { outcome: "skipped", reason: run.reason };
+		return { outcome: 'skipped', reason: run.reason };
 	}
 
 	const budget = await hooks.reserveBudget(run.commits.length);
-	if (budget === "limited") {
-		return { outcome: "refused", reason: "rate_limited" };
+	if (budget === 'limited') {
+		return { outcome: 'refused', reason: 'rate_limited' };
 	}
-	if (budget === "unavailable") {
-		return { outcome: "refused", reason: "limiter_unavailable" };
+	if (budget === 'unavailable') {
+		return { outcome: 'refused', reason: 'limiter_unavailable' };
 	}
 
 	// The id the previous iteration produced. Seeded with the run's base so the
@@ -187,8 +187,8 @@ export async function signPushedCommits(
 			signature = (await signCommitData(payload, key as StoredKey, passphrase)).signature;
 		} catch (error) {
 			return {
-				outcome: "failed",
-				reason: `Signing failed: ${error instanceof Error ? error.message : "unknown error"}`,
+				outcome: 'failed',
+				reason: `Signing failed: ${error instanceof Error ? error.message : 'unknown error'}`,
 				published: false,
 			};
 		}
@@ -207,8 +207,8 @@ export async function signPushedCommits(
 			});
 		} catch (error) {
 			return {
-				outcome: "failed",
-				reason: error instanceof Error ? error.message : "Commit creation failed",
+				outcome: 'failed',
+				reason: error instanceof Error ? error.message : 'Commit creation failed',
 				published: false,
 			};
 		}
@@ -221,8 +221,8 @@ export async function signPushedCommits(
 		// nothing but the call.
 		if (created !== expected) {
 			return {
-				outcome: "failed",
-				reason: "GitHub assembled a different commit object than the one signed",
+				outcome: 'failed',
+				reason: 'GitHub assembled a different commit object than the one signed',
 				published: false,
 			};
 		}
@@ -233,21 +233,21 @@ export async function signPushedCommits(
 	// Re-read, and require the branch to be where the plan assumed. A push that
 	// landed while this was working would otherwise be discarded by the force
 	// update below, silently, and the only trace would be the reflog.
-	let current: Awaited<ReturnType<RepositoryClient["getBranch"]>>;
+	let current: Awaited<ReturnType<RepositoryClient['getBranch']>>;
 	try {
 		current = await client.getBranch(branch);
 	} catch (error) {
 		// Still before the boundary: a re-read that fails means the branch was not
 		// confirmed, so it is not moved.
 		return {
-			outcome: "failed",
-			reason: error instanceof Error ? error.message : "Could not re-read the branch",
+			outcome: 'failed',
+			reason: error instanceof Error ? error.message : 'Could not re-read the branch',
 			published: false,
 		};
 	}
 
 	if (current === null || current.sha !== start.sha) {
-		return { outcome: "skipped", reason: "branch_moved" };
+		return { outcome: 'skipped', reason: 'branch_moved' };
 	}
 
 	// Non-null here: the loop ran at least once, because `signableRun` answers
@@ -264,14 +264,14 @@ export async function signPushedCommits(
 		// been lost, and repeating a force update on that assumption is how a
 		// branch gets moved twice.
 		return {
-			outcome: "failed",
-			reason: error instanceof Error ? error.message : "Branch update failed",
+			outcome: 'failed',
+			reason: error instanceof Error ? error.message : 'Branch update failed',
 			published: true,
 		};
 	}
 
 	return {
-		outcome: "signed",
+		outcome: 'signed',
 		branch,
 		previousHead: start.sha,
 		head,

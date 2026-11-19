@@ -76,11 +76,11 @@
  * reports; this starts it.
  */
 
-import type { Env } from "#types";
-import { GitHubAppError } from "#utils/github-app";
-import { LOGIN_PATTERN } from "#utils/github-authorization";
-import type { ActorPermission, RepositoryClient } from "#utils/github-repo";
-import { GitHubApiError, RepositoryNotVisibleError } from "#utils/github-repo";
+import type { Env } from '#types';
+import { GitHubAppError } from '#utils/github-app';
+import { LOGIN_PATTERN } from '#utils/github-authorization';
+import type { ActorPermission, RepositoryClient } from '#utils/github-repo';
+import { GitHubApiError, RepositoryNotVisibleError } from '#utils/github-repo';
 
 /**
  * The commands a comment must contain, matched case-insensitively at the start
@@ -89,7 +89,7 @@ import { GitHubApiError, RepositoryNotVisibleError } from "#utils/github-repo";
  * The workflow's own `if:` and `.github/scripts/claude-agent-harness.sh` apply
  * the same rule. GitHub expression `contains()` folds case for strings.
  */
-export const TRIGGER_PHRASES = ["/beep", "/beepboop", "/boop"] as const;
+export const TRIGGER_PHRASES = ['/beep', '/beepboop', '/boop'] as const;
 
 /** Whether `body` invokes one of {@link TRIGGER_PHRASES}. */
 export function invokesTrigger(body: string): boolean {
@@ -114,10 +114,10 @@ export function invokesTrigger(body: string): boolean {
 export const DISPATCH_LIMIT = 10;
 
 /** Is comment dispatch switched on for this deployment? */
-export function commentDispatchEnabled(env: Pick<Env, "GITHUB_APP_COMMENT_DISPATCH">): boolean {
+export function commentDispatchEnabled(env: Pick<Env, 'GITHUB_APP_COMMENT_DISPATCH'>): boolean {
 	// A literal `"true"`, the third flag to use this rule and for the reason
 	// `githubAppEnabled` states: a near-miss must read as off.
-	return env.GITHUB_APP_COMMENT_DISPATCH === "true";
+	return env.GITHUB_APP_COMMENT_DISPATCH === 'true';
 }
 
 /**
@@ -164,21 +164,21 @@ export interface DispatchTarget {
  * prompt, which tool allowlist and which permissions.
  */
 export function requireDispatchTarget(
-	env: Pick<Env, "GITHUB_APP_DISPATCH_WORKFLOW" | "GITHUB_APP_DISPATCH_REF">,
+	env: Pick<Env, 'GITHUB_APP_DISPATCH_WORKFLOW' | 'GITHUB_APP_DISPATCH_REF'>,
 ): DispatchTarget {
 	const workflow = env.GITHUB_APP_DISPATCH_WORKFLOW?.trim();
 	const ref = env.GITHUB_APP_DISPATCH_REF?.trim();
 
 	const missing: string[] = [];
 	if (!workflow) {
-		missing.push("GITHUB_APP_DISPATCH_WORKFLOW");
+		missing.push('GITHUB_APP_DISPATCH_WORKFLOW');
 	}
 	if (!ref) {
-		missing.push("GITHUB_APP_DISPATCH_REF");
+		missing.push('GITHUB_APP_DISPATCH_REF');
 	}
 
 	if (!workflow || !ref) {
-		throw new GitHubAppError(`GITHUB_APP_COMMENT_DISPATCH is true but ${missing.join(" and ")} is not set`, {
+		throw new GitHubAppError(`GITHUB_APP_COMMENT_DISPATCH is true but ${missing.join(' and ')} is not set`, {
 			misconfigured: true,
 		});
 	}
@@ -190,7 +190,7 @@ export function requireDispatchTarget(
 		);
 	}
 
-	if (!REF_PATTERN.test(ref) || ref.includes("..")) {
+	if (!REF_PATTERN.test(ref) || ref.includes('..')) {
 		throw new GitHubAppError(`GITHUB_APP_DISPATCH_REF is not a ref name this service will hand to GitHub`, {
 			misconfigured: true,
 		});
@@ -202,27 +202,27 @@ export function requireDispatchTarget(
 /** Why a comment started nothing. Logged and audited; never sent in this detail. */
 export type CommentDispatchRefusal =
 	/** `GITHUB_APP_COMMENT_DISPATCH` is not `"true"`. No GitHub call was made. */
-	| "disabled"
+	| 'disabled'
 	/** The delivery is an `edited` or `deleted` comment, not a new one. */
-	| "not_created"
+	| 'not_created'
 	/** The comment does not contain the trigger phrase. */
-	| "no_trigger_phrase"
+	| 'no_trigger_phrase'
 	/** The payload has no usable issue number, comment id or body. */
-	| "unreadable_comment"
+	| 'unreadable_comment'
 	/** No usable author login, or a sender that disagrees with the comment's author. */
-	| "unreadable_actor"
+	| 'unreadable_actor'
 	/** The comment was written by a bot, or posted through a GitHub App. */
-	| "actor_is_not_human"
+	| 'actor_is_not_human'
 	/** The author holds `read` or no access to the authorized repository. */
-	| "actor_not_permitted"
+	| 'actor_not_permitted'
 	/** GitHub could not be asked what the author may do. Fails closed. */
-	| "permission_lookup_failed"
+	| 'permission_lookup_failed'
 	/** The per-repository dispatch budget refused this comment. */
-	| "rate_limited"
+	| 'rate_limited'
 	/** The budget could not be consulted. Fails closed. */
-	| "budget_unavailable"
+	| 'budget_unavailable'
 	/** The delivery id could not be durably held before dispatching. Fails closed. */
-	| "ledger_unavailable";
+	| 'ledger_unavailable';
 
 /** What a dispatchable comment is, once the payload has been read defensively. */
 export interface CommentDispatchPlan {
@@ -241,12 +241,12 @@ export type CommentPlan = { act: true; plan: CommentDispatchPlan } | { act: fals
 
 /** Is `value` a JSON object (and not null, and not an array)? */
 function isObject(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** A positive integer as GitHub numbers its issues and comments. */
 function positiveId(value: unknown): number | null {
-	return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+	return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
 /**
@@ -263,14 +263,14 @@ function humanLogin(value: unknown): string | null {
 	}
 
 	const login = value.login;
-	if (typeof login !== "string" || !LOGIN_PATTERN.test(login)) {
+	if (typeof login !== 'string' || !LOGIN_PATTERN.test(login)) {
 		return null;
 	}
 
 	// Absent `type` is refused rather than assumed to be a user. Every real
 	// payload carries it, so the only thing an assumption would buy is accepting
 	// a payload shape GitHub does not send.
-	return value.type === "User" ? login : null;
+	return value.type === 'User' ? login : null;
 }
 
 /**
@@ -288,22 +288,22 @@ function humanLogin(value: unknown): string | null {
  */
 export function planCommentDispatch(payload: unknown): CommentPlan {
 	if (!isObject(payload)) {
-		return { act: false, reason: "unreadable_comment" };
+		return { act: false, reason: 'unreadable_comment' };
 	}
 
-	if (payload.action !== "created") {
-		return { act: false, reason: "not_created" };
+	if (payload.action !== 'created') {
+		return { act: false, reason: 'not_created' };
 	}
 
 	const comment = payload.comment;
 	const issue = payload.issue;
 	if (!isObject(comment) || !isObject(issue)) {
-		return { act: false, reason: "unreadable_comment" };
+		return { act: false, reason: 'unreadable_comment' };
 	}
 
 	const body = comment.body;
-	if (typeof body !== "string") {
-		return { act: false, reason: "unreadable_comment" };
+	if (typeof body !== 'string') {
+		return { act: false, reason: 'unreadable_comment' };
 	}
 
 	// Case-insensitively, matching the entrypoint this replaces. A comment that
@@ -312,13 +312,13 @@ export function planCommentDispatch(payload: unknown): CommentPlan {
 	// workflow that reads the comment rather than with the transport that
 	// forwards it.
 	if (!invokesTrigger(body)) {
-		return { act: false, reason: "no_trigger_phrase" };
+		return { act: false, reason: 'no_trigger_phrase' };
 	}
 
 	const issueNumber = positiveId(issue.number);
 	const commentId = positiveId(comment.id);
 	if (issueNumber === null || commentId === null) {
-		return { act: false, reason: "unreadable_comment" };
+		return { act: false, reason: 'unreadable_comment' };
 	}
 
 	const author = humanLogin(comment.user);
@@ -331,7 +331,7 @@ export function planCommentDispatch(payload: unknown): CommentPlan {
 		// from the answer, and neither shape is one this service acts on.
 		return {
 			act: false,
-			reason: isObject(comment.user) || isObject(payload.sender) ? "actor_is_not_human" : "unreadable_actor",
+			reason: isObject(comment.user) || isObject(payload.sender) ? 'actor_is_not_human' : 'unreadable_actor',
 		};
 	}
 
@@ -339,7 +339,7 @@ export function planCommentDispatch(payload: unknown): CommentPlan {
 	// costs nothing on a real delivery and means the one identity that gets
 	// authorized is unambiguously the one that wrote the instruction.
 	if (author.toLowerCase() !== sender.toLowerCase()) {
-		return { act: false, reason: "unreadable_actor" };
+		return { act: false, reason: 'unreadable_actor' };
 	}
 
 	// A comment posted through an App, by an App. Refused even though `type` said
@@ -349,7 +349,7 @@ export function planCommentDispatch(payload: unknown): CommentPlan {
 	// is refused too, and comments again from the web UI. Erring the other way
 	// costs a session that starts sessions.
 	if (comment.performed_via_github_app !== undefined && comment.performed_via_github_app !== null) {
-		return { act: false, reason: "actor_is_not_human" };
+		return { act: false, reason: 'actor_is_not_human' };
 	}
 
 	return {
@@ -366,7 +366,7 @@ export function planCommentDispatch(payload: unknown): CommentPlan {
 }
 
 /** The roles that may start a privileged run. */
-const PERMITTED = new Set(["admin", "write"]);
+const PERMITTED = new Set(['admin', 'write']);
 
 /**
  * What a refused lookup was refused *for*, in one word, for the audit row.
@@ -379,13 +379,13 @@ const PERMITTED = new Set(["admin", "write"]);
  */
 export type ActorLookupDetail =
 	/** GitHub answered, and the role it named is not enough. */
-	| "insufficient_permission"
+	| 'insufficient_permission'
 	/** GitHub 404'd the lookup and the repository is still visible: an outsider. */
-	| "not_a_collaborator"
+	| 'not_a_collaborator'
 	/** The installation can no longer see the repository. An operator's problem. */
-	| "repository_not_visible"
+	| 'repository_not_visible'
 	/** Anything else: a 403, a 5xx, a timeout, an unreadable answer. */
-	| "lookup_failed";
+	| 'lookup_failed';
 
 /** How the actor question was answered, or why it could not be. */
 export type ActorAuthorization =
@@ -435,22 +435,22 @@ export async function authorizeActor(client: RepositoryClient, login: string): P
 		// operator to different pages of the App's settings.
 		return {
 			allowed: false,
-			reason: "permission_lookup_failed",
+			reason: 'permission_lookup_failed',
 			status: error instanceof GitHubApiError ? error.status : null,
-			detail: error instanceof RepositoryNotVisibleError ? "repository_not_visible" : "lookup_failed",
+			detail: error instanceof RepositoryNotVisibleError ? 'repository_not_visible' : 'lookup_failed',
 		};
 	}
 
 	if (!PERMITTED.has(answer.permission)) {
 		return {
 			allowed: false,
-			reason: "actor_not_permitted",
+			reason: 'actor_not_permitted',
 			status: null,
 			// Both are settled and both refuse; they differ only in what an operator
 			// reads. `not_a_collaborator` is only ever reached through a *visible*
 			// repository — the invisible case threw above and never gets this far —
 			// so it says "an outsider asked", not "we could not tell".
-			detail: answer.collaborator ? "insufficient_permission" : "not_a_collaborator",
+			detail: answer.collaborator ? 'insufficient_permission' : 'not_a_collaborator',
 		};
 	}
 
@@ -465,7 +465,7 @@ export interface CommentDispatchHooks {
 	 * Called before the actor lookup, because the lookup is the first GitHub call
 	 * an arbitrary commenter can cause.
 	 */
-	reserveBudget: () => Promise<"ok" | "limited" | "unavailable">;
+	reserveBudget: () => Promise<'ok' | 'limited' | 'unavailable'>;
 	/**
 	 * Record durably, before the dispatch request leaves, that it left.
 	 *
@@ -480,7 +480,7 @@ export interface CommentDispatchHooks {
 	 * afterwards — and an isolate evicted between the dispatch and that write is
 	 * precisely the case at-most-once exists for.
 	 */
-	beforeDispatch: () => Promise<"held" | "unavailable">;
+	beforeDispatch: () => Promise<'held' | 'unavailable'>;
 }
 
 /**
@@ -493,17 +493,17 @@ export interface CommentDispatchHooks {
  * means either something did, or nothing ever will.
  */
 export type CommentDispatchResult =
-	| { outcome: "dispatched"; plan: CommentDispatchPlan; workflow: string; ref: string; retryable: false }
+	| { outcome: 'dispatched'; plan: CommentDispatchPlan; workflow: string; ref: string; retryable: false }
 	| {
-			outcome: "skipped";
+			outcome: 'skipped';
 			reason: CommentDispatchRefusal;
 			retryable: boolean;
 			/** Which shape of refusal, for the audit row. Null when there is nothing to add. */
 			detail: ActorLookupDetail | null;
 	  }
 	| {
-			outcome: "failed";
-			reason: CommentDispatchRefusal | "dispatch_refused" | "dispatch_unknown";
+			outcome: 'failed';
+			reason: CommentDispatchRefusal | 'dispatch_refused' | 'dispatch_unknown';
 			retryable: boolean;
 			/** GitHub's status, when GitHub answered. Logged, never sent. */
 			status: number | null;
@@ -532,12 +532,12 @@ export async function dispatchCommentRequest(
 	hooks: CommentDispatchHooks,
 ): Promise<CommentDispatchResult> {
 	const budget = await hooks.reserveBudget();
-	if (budget !== "ok") {
+	if (budget !== 'ok') {
 		// Both are transient by nature: a refused budget recovers on its own and an
 		// unreachable limiter is an outage. Nothing was asked of GitHub either way.
 		return {
-			outcome: "failed",
-			reason: budget === "limited" ? "rate_limited" : "budget_unavailable",
+			outcome: 'failed',
+			reason: budget === 'limited' ? 'rate_limited' : 'budget_unavailable',
 			retryable: true,
 			status: null,
 			detail: null,
@@ -546,32 +546,32 @@ export async function dispatchCommentRequest(
 
 	const actor = await authorizeActor(client, plan.actor);
 	if (!actor.allowed) {
-		if (actor.reason === "actor_not_permitted") {
+		if (actor.reason === 'actor_not_permitted') {
 			// A settled answer about who this person is — and settled is exactly what
 			// the visibility check above establishes, because the same 404 with the
 			// repository gone would not be. A redelivery would reach the same
 			// answer, so the id stays spent; granting them access and redelivering is
 			// not a workflow anybody wants and asking again is one comment.
-			return { outcome: "skipped", reason: actor.reason, retryable: false, detail: actor.detail };
+			return { outcome: 'skipped', reason: actor.reason, retryable: false, detail: actor.detail };
 		}
 
 		// Could not be established. Fails closed *and* stays retryable — the two
 		// are not in tension: nothing started, so an operator who fixes the
 		// installation's permissions, or puts the repository back on it, can
 		// redeliver into the fix.
-		return { outcome: "failed", reason: actor.reason, retryable: true, status: actor.status, detail: actor.detail };
+		return { outcome: 'failed', reason: actor.reason, retryable: true, status: actor.status, detail: actor.detail };
 	}
 
 	// The last recoverable instant. After this the delivery is spent whatever
 	// happens, because a request that left and a request whose answer was lost
 	// are the same thing from here — so the record of it is durable before the
 	// request rather than after the answer.
-	if ((await hooks.beforeDispatch()) !== "held") {
+	if ((await hooks.beforeDispatch()) !== 'held') {
 		// The hold did not land, so nothing may be sent: dispatching now would be
 		// dispatching with no durable record that it happened, which is the one
 		// state that lets a redelivery start a second session. Nothing has left,
 		// so this is a real retry.
-		return { outcome: "failed", reason: "ledger_unavailable", retryable: true, status: null, detail: null };
+		return { outcome: 'failed', reason: 'ledger_unavailable', retryable: true, status: null, detail: null };
 	}
 
 	const dispatched = await client.dispatchWorkflow(target.workflow, target.ref, {
@@ -581,17 +581,17 @@ export async function dispatchCommentRequest(
 		delivery_id: deliveryId,
 	});
 
-	if (dispatched.outcome === "accepted") {
-		return { outcome: "dispatched", plan, workflow: target.workflow, ref: target.ref, retryable: false };
+	if (dispatched.outcome === 'accepted') {
+		return { outcome: 'dispatched', plan, workflow: target.workflow, ref: target.ref, retryable: false };
 	}
 
 	return {
-		outcome: "failed",
-		reason: dispatched.outcome === "refused" ? "dispatch_refused" : "dispatch_unknown",
+		outcome: 'failed',
+		reason: dispatched.outcome === 'refused' ? 'dispatch_refused' : 'dispatch_unknown',
 		// A 4xx is GitHub stating it created nothing, so the delivery goes back —
 		// which is a *release* of the hold taken above, not merely a decision not to
 		// commit it. Anything else leaves it spent — see the module comment.
-		retryable: dispatched.outcome === "refused",
+		retryable: dispatched.outcome === 'refused',
 		status: dispatched.status,
 		detail: null,
 	};

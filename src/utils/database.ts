@@ -2,9 +2,9 @@
  * Type-safe D1 database utilities
  */
 
-import { z } from "@hono/zod-openapi";
-import type { AuditAction, AuditLogEntry } from "#schemas/audit";
-import type { ErrorCode } from "#schemas/errors";
+import { z } from '@hono/zod-openapi';
+import type { AuditAction, AuditLogEntry } from '#schemas/audit';
+import type { ErrorCode } from '#schemas/errors';
 
 /**
  * D1 row schema for audit_logs table
@@ -66,7 +66,7 @@ export class D1QueryBuilder {
 		return this;
 	}
 
-	orderBy(column: string, direction: "ASC" | "DESC" = "DESC"): this {
+	orderBy(column: string, direction: 'ASC' | 'DESC' = 'DESC'): this {
 		this.query += ` ORDER BY ${column} ${direction}`;
 		return this;
 	}
@@ -79,7 +79,7 @@ export class D1QueryBuilder {
 
 	build(): { query: string; params: (string | number)[] } {
 		if (this.conditions.length > 0) {
-			this.query += ` WHERE ${this.conditions.join(" AND ")}`;
+			this.query += ` WHERE ${this.conditions.join(' AND ')}`;
 		}
 		return { query: this.query, params: this.params };
 	}

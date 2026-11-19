@@ -18,12 +18,12 @@
  *   inside the safety margin is required to be ignored.
  */
 
-import { env } from "cloudflare:workers";
-import { decodeProtectedHeader, importSPKI, jwtVerify } from "jose";
-import { exportPkcs1Pem, exportPkcs8Pem, exportSpkiPem } from "micro509/keys";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Env as ServiceEnv } from "#types";
-import { TIME } from "#types";
+import { env } from 'cloudflare:workers';
+import { decodeProtectedHeader, importSPKI, jwtVerify } from 'jose';
+import { exportPkcs1Pem, exportPkcs8Pem, exportSpkiPem } from 'micro509/keys';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Env as ServiceEnv } from '#types';
+import { TIME } from '#types';
 import {
 	GITHUB_API_ORIGIN,
 	GitHubAppError,
@@ -33,9 +33,9 @@ import {
 	installationTokenCacheKey,
 	mintAppJwt,
 	requireAppConfig,
-} from "#utils/github-app";
-import { verifyWebhookSignature } from "#utils/github-webhook";
-import { collectEnvSecrets, scrubValue } from "#utils/sentry";
+} from '#utils/github-app';
+import { verifyWebhookSignature } from '#utils/github-webhook';
+import { collectEnvSecrets, scrubValue } from '#utils/sentry';
 import {
 	PKCS8_ENCRYPTED_BEGIN,
 	PKCS8_ENCRYPTED_END,
@@ -43,9 +43,9 @@ import {
 	PKCS8_PRIVATE_END,
 	RSA_PRIVATE_BEGIN,
 	RSA_PRIVATE_END,
-} from "./helpers/armor";
+} from './helpers/armor';
 
-const APP_ID = "123456";
+const APP_ID = '123456';
 
 /**
  * One RSA key pair for the whole suite, in every form the code has to handle.
@@ -62,8 +62,8 @@ let keys: {
 
 /** Verifies an App JWT with jose, independently of the micro509 code that minted it. */
 async function verifyAppJwt(jwt: string) {
-	const { payload } = await jwtVerify(jwt, await importSPKI(keys.publicSpkiPem, "RS256"), {
-		algorithms: ["RS256"],
+	const { payload } = await jwtVerify(jwt, await importSPKI(keys.publicSpkiPem, 'RS256'), {
+		algorithms: ['RS256'],
 		issuer: APP_ID,
 	});
 	return payload;
@@ -72,9 +72,9 @@ async function verifyAppJwt(jwt: string) {
 beforeEach(async () => {
 	if (!keys) {
 		const pair = (await crypto.subtle.generateKey(
-			{ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+			{ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
 			true,
-			["sign", "verify"],
+			['sign', 'verify'],
 		)) as CryptoKeyPair;
 
 		keys = {
@@ -93,29 +93,29 @@ afterEach(() => {
 function configured(overrides: Record<string, unknown> = {}): ServiceEnv {
 	return {
 		...env,
-		GITHUB_APP_ENABLED: "true",
+		GITHUB_APP_ENABLED: 'true',
 		GITHUB_APP_ID: APP_ID,
 		GITHUB_APP_PRIVATE_KEY: keys.pkcs8Pem,
 		...overrides,
 	} as unknown as ServiceEnv;
 }
 
-describe("the feature flag", () => {
+describe('the feature flag', () => {
 	it.each([
-		["true", true],
-		["false", false],
-		["TRUE", false],
-		["True", false],
-		["1", false],
-		["yes", false],
-		[" true", false],
-		["true ", false],
-		["", false],
-	])("reads %o as %s", (value, expected) => {
+		['true', true],
+		['false', false],
+		['TRUE', false],
+		['True', false],
+		['1', false],
+		['yes', false],
+		[' true', false],
+		['true ', false],
+		['', false],
+	])('reads %o as %s', (value, expected) => {
 		expect(githubAppEnabled({ GITHUB_APP_ENABLED: value })).toBe(expected);
 	});
 
-	it("reads an unset flag as off", () => {
+	it('reads an unset flag as off', () => {
 		// Separate from the table because `exactOptionalPropertyTypes` makes
 		// "absent" and "present and undefined" different things, and absent is what
 		// a deployment that never heard of the feature actually has.
@@ -123,76 +123,76 @@ describe("the feature flag", () => {
 	});
 });
 
-describe("the App configuration guard", () => {
-	it("accepts a complete configuration", () => {
+describe('the App configuration guard', () => {
+	it('accepts a complete configuration', () => {
 		expect(requireAppConfig({ GITHUB_APP_ID: APP_ID, GITHUB_APP_PRIVATE_KEY: keys.pkcs8Pem })).toEqual({
 			appId: APP_ID,
 			privateKey: keys.pkcs8Pem.trim(),
 		});
 	});
 
-	it("names both settings when both are missing", () => {
+	it('names both settings when both are missing', () => {
 		// One deploy, not two: an operator who set neither should not have to
 		// discover the second one after fixing the first.
 		expect(() => requireAppConfig({})).toThrow(/GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY/);
 	});
 
 	it.each([
-		["the id", { GITHUB_APP_PRIVATE_KEY: "key" }, "GITHUB_APP_ID"],
-		["the key", { GITHUB_APP_ID: APP_ID }, "GITHUB_APP_PRIVATE_KEY"],
-	])("names %s when only that is missing", (_name, config, expected) => {
+		['the id', { GITHUB_APP_PRIVATE_KEY: 'key' }, 'GITHUB_APP_ID'],
+		['the key', { GITHUB_APP_ID: APP_ID }, 'GITHUB_APP_PRIVATE_KEY'],
+	])('names %s when only that is missing', (_name, config, expected) => {
 		expect(() => requireAppConfig(config)).toThrow(expected);
 	});
 
 	it.each([
-		["an empty id", { GITHUB_APP_ID: "", GITHUB_APP_PRIVATE_KEY: "key" }],
-		["a whitespace id", { GITHUB_APP_ID: "   ", GITHUB_APP_PRIVATE_KEY: "key" }],
-		["an empty key", { GITHUB_APP_ID: APP_ID, GITHUB_APP_PRIVATE_KEY: "" }],
-		["a whitespace key", { GITHUB_APP_ID: APP_ID, GITHUB_APP_PRIVATE_KEY: "  \n  " }],
-	])("treats %s as unset", (_name, config) => {
+		['an empty id', { GITHUB_APP_ID: '', GITHUB_APP_PRIVATE_KEY: 'key' }],
+		['a whitespace id', { GITHUB_APP_ID: '   ', GITHUB_APP_PRIVATE_KEY: 'key' }],
+		['an empty key', { GITHUB_APP_ID: APP_ID, GITHUB_APP_PRIVATE_KEY: '' }],
+		['a whitespace key', { GITHUB_APP_ID: APP_ID, GITHUB_APP_PRIVATE_KEY: '  \n  ' }],
+	])('treats %s as unset', (_name, config) => {
 		// An unset `wrangler secret` and one put with an empty value are the same
 		// thing to a Worker. Accepting the second would mean signing with a
 		// zero-length key.
 		expect(() => requireAppConfig(config)).toThrow(GitHubAppError);
 	});
 
-	it("reports a missing configuration as a misconfiguration, not a refusal", () => {
+	it('reports a missing configuration as a misconfiguration, not a refusal', () => {
 		// The flag the webhook path maps onto SERVICE_MISCONFIGURED. Getting it
 		// wrong would answer 503 for a fault no retry can fix.
 		try {
 			requireAppConfig({});
-			expect.unreachable("expected a throw");
+			expect.unreachable('expected a throw');
 		} catch (error) {
 			expect(error).toBeInstanceOf(GitHubAppError);
 			expect((error as GitHubAppError).misconfigured).toBe(true);
 		}
 	});
 
-	it("never puts the key in the message", () => {
+	it('never puts the key in the message', () => {
 		try {
-			requireAppConfig({ GITHUB_APP_ID: "", GITHUB_APP_PRIVATE_KEY: keys.pkcs8Pem });
-			expect.unreachable("expected a throw");
+			requireAppConfig({ GITHUB_APP_ID: '', GITHUB_APP_PRIVATE_KEY: keys.pkcs8Pem });
+			expect.unreachable('expected a throw');
 		} catch (error) {
 			expect((error as Error).message).not.toContain(keys.pkcs8Pem.slice(40, 90));
 		}
 	});
 });
 
-describe("destination pinning", () => {
-	it("builds a URL on api.github.com", () => {
-		expect(githubApiUrl("/app/installations/1/access_tokens").toString()).toBe(
+describe('destination pinning', () => {
+	it('builds a URL on api.github.com', () => {
+		expect(githubApiUrl('/app/installations/1/access_tokens').toString()).toBe(
 			`${GITHUB_API_ORIGIN}/app/installations/1/access_tokens`,
 		);
 	});
 
 	it.each([
-		["a protocol-relative reference", "//evil.example/app"],
-		["an absolute URL", "https://evil.example/app"],
-		["an absolute URL on a lookalike host", "https://api.github.com.evil.example/app"],
-		["a relative path", "app/installations"],
-		["an empty path", ""],
-		["a scheme-only value", "javascript:alert(1)"],
-	])("refuses %s", (_name, path) => {
+		['a protocol-relative reference', '//evil.example/app'],
+		['an absolute URL', 'https://evil.example/app'],
+		['an absolute URL on a lookalike host', 'https://api.github.com.evil.example/app'],
+		['a relative path', 'app/installations'],
+		['an empty path', ''],
+		['a scheme-only value', 'javascript:alert(1)'],
+	])('refuses %s', (_name, path) => {
 		// `validateUrl` — the SSRF guard the OIDC path uses — passes four of these
 		// six, because it answers a different question: it sifts caller-controlled
 		// URLs for private address space, and every one of these is a perfectly
@@ -201,34 +201,34 @@ describe("destination pinning", () => {
 		expect(() => githubApiUrl(path)).toThrow(GitHubAppError);
 	});
 
-	it("refuses a backslash the prefix check does not see", () => {
+	it('refuses a backslash the prefix check does not see', () => {
 		// The case that makes the origin assertion load-bearing rather than
 		// belt-and-braces. WHATWG URL parsing treats `\\` as `/` for special
 		// schemes, so `/\\evil.example/x` normalises to `//evil.example/x` and
 		// resolves to a different host — while starting with a single `/` and
 		// sailing straight past the literal prefix check above it.
-		expect(new URL(String.raw`/\evil.example/x`, GITHUB_API_ORIGIN).origin).toBe("https://evil.example");
+		expect(new URL(String.raw`/\evil.example/x`, GITHUB_API_ORIGIN).origin).toBe('https://evil.example');
 		expect(() => githubApiUrl(String.raw`/\evil.example/x`)).toThrow(/resolved off/);
 	});
 
-	it("cannot be walked off the origin by path traversal", () => {
+	it('cannot be walked off the origin by path traversal', () => {
 		// `..` normalises inside the origin rather than escaping it, so this is
 		// about the path staying on the host — the installation id is separately
 		// required to be a positive integer before it is ever interpolated.
-		expect(githubApiUrl("/app/../../../../etc/passwd").origin).toBe(GITHUB_API_ORIGIN);
+		expect(githubApiUrl('/app/../../../../etc/passwd').origin).toBe(GITHUB_API_ORIGIN);
 	});
 });
 
-describe("private key handling", () => {
+describe('private key handling', () => {
 	it.each([
-		["a value with no PEM block", "not a key at all"],
-		["an encrypted PKCS#8 block", `${PKCS8_ENCRYPTED_BEGIN}\nAAAA\n${PKCS8_ENCRYPTED_END}`],
-		["a certificate", "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----"],
-		["a PKCS#1 header whose body is not base64", `${RSA_PRIVATE_BEGIN}\n!!!!\n${RSA_PRIVATE_END}`],
-	])("refuses %s as a misconfiguration", async (_name, pem) => {
+		['a value with no PEM block', 'not a key at all'],
+		['an encrypted PKCS#8 block', `${PKCS8_ENCRYPTED_BEGIN}\nAAAA\n${PKCS8_ENCRYPTED_END}`],
+		['a certificate', '-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----'],
+		['a PKCS#1 header whose body is not base64', `${RSA_PRIVATE_BEGIN}\n!!!!\n${RSA_PRIVATE_END}`],
+	])('refuses %s as a misconfiguration', async (_name, pem) => {
 		try {
 			await mintAppJwt(configured({ GITHUB_APP_PRIVATE_KEY: pem }));
-			expect.unreachable("expected a throw");
+			expect.unreachable('expected a throw');
 		} catch (error) {
 			expect(error).toBeInstanceOf(GitHubAppError);
 			expect((error as GitHubAppError).misconfigured).toBe(true);
@@ -236,15 +236,15 @@ describe("private key handling", () => {
 	});
 });
 
-describe("the App JWT", () => {
-	it("is an RS256 token GitHub could verify", async () => {
+describe('the App JWT', () => {
+	it('is an RS256 token GitHub could verify', async () => {
 		// Verified against the real public key rather than merely decoded: a JWT
 		// with the right claims and a wrong signature is what a broken key import
 		// silently produces.
 		const jwt = await mintAppJwt(configured());
 		const payload = await verifyAppJwt(jwt);
 
-		expect(decodeProtectedHeader(jwt).alg).toBe("RS256");
+		expect(decodeProtectedHeader(jwt).alg).toBe('RS256');
 		expect(payload.iss).toBe(APP_ID);
 	});
 
@@ -256,7 +256,7 @@ describe("the App JWT", () => {
 		const jwt = await mintAppJwt(configured());
 		const { iat, exp } = await verifyAppJwt(jwt);
 		if (iat === undefined || exp === undefined) {
-			throw new Error("App JWT carries no iat or exp");
+			throw new Error('App JWT carries no iat or exp');
 		}
 
 		expect(iat).toBeLessThanOrEqual(before - 59);
@@ -264,25 +264,25 @@ describe("the App JWT", () => {
 		expect(exp).toBeGreaterThan(before);
 	});
 
-	it("mints from the PKCS#1 form as readily as the PKCS#8 one", async () => {
+	it('mints from the PKCS#1 form as readily as the PKCS#8 one', async () => {
 		const jwt = await mintAppJwt(configured({ GITHUB_APP_PRIVATE_KEY: keys.pkcs1Pem }));
 
 		await expect(verifyAppJwt(jwt)).resolves.toMatchObject({ iss: APP_ID });
 	});
 
-	it("reports an unimportable key without quoting it", async () => {
+	it('reports an unimportable key without quoting it', async () => {
 		// A failing key import is the single most likely place for a library to
 		// quote the input it choked on straight back into a message.
-		const nonsense = `${PKCS8_PRIVATE_BEGIN}\n${btoa("this is not a key")}\n${PKCS8_PRIVATE_END}`;
+		const nonsense = `${PKCS8_PRIVATE_BEGIN}\n${btoa('this is not a key')}\n${PKCS8_PRIVATE_END}`;
 
 		try {
 			await mintAppJwt(configured({ GITHUB_APP_PRIVATE_KEY: nonsense }));
-			expect.unreachable("expected a throw");
+			expect.unreachable('expected a throw');
 		} catch (error) {
 			expect(error).toBeInstanceOf(GitHubAppError);
 			expect((error as GitHubAppError).misconfigured).toBe(true);
-			expect((error as Error).message).not.toContain("this is not a key");
-			expect((error as Error).message).not.toContain("BEGIN PRIVATE KEY");
+			expect((error as Error).message).not.toContain('this is not a key');
+			expect((error as Error).message).not.toContain('BEGIN PRIVATE KEY');
 		}
 	});
 
@@ -290,30 +290,30 @@ describe("the App JWT", () => {
 		// The importer already says precisely what is wrong with a key that is not
 		// a PEM block at all. Wrapping that in the generic "could not be imported"
 		// message would throw away the only sentence that names the fix.
-		await expect(mintAppJwt(configured({ GITHUB_APP_PRIVATE_KEY: "not a key at all" }))).rejects.toThrow(
+		await expect(mintAppJwt(configured({ GITHUB_APP_PRIVATE_KEY: 'not a key at all' }))).rejects.toThrow(
 			/BEGIN RSA PRIVATE KEY/,
 		);
 	});
 
-	it("refuses to mint without a configuration", async () => {
+	it('refuses to mint without a configuration', async () => {
 		await expect(mintAppJwt({})).rejects.toThrow(GitHubAppError);
 	});
 });
 
-describe("the installation-token cache key", () => {
-	it("is namespaced away from the JWKS entries sharing the namespace", () => {
+describe('the installation-token cache key', () => {
+	it('is namespaced away from the JWKS entries sharing the namespace', () => {
 		const key = installationTokenCacheKey(APP_ID, 42);
 
-		expect(key.startsWith("gh-app:")).toBe(true);
-		expect(key.startsWith("jwks:")).toBe(false);
+		expect(key.startsWith('gh-app:')).toBe(true);
+		expect(key.startsWith('jwks:')).toBe(false);
 	});
 
-	it("distinguishes installations and Apps", () => {
+	it('distinguishes installations and Apps', () => {
 		// The App id is in the key because re-registering the App is how an
 		// operator responds to a leaked private key, and the new App must not serve
 		// tokens the old one minted.
 		expect(installationTokenCacheKey(APP_ID, 1)).not.toBe(installationTokenCacheKey(APP_ID, 2));
-		expect(installationTokenCacheKey("1", 1)).not.toBe(installationTokenCacheKey("2", 1));
+		expect(installationTokenCacheKey('1', 1)).not.toBe(installationTokenCacheKey('2', 1));
 	});
 });
 
@@ -321,7 +321,7 @@ describe("the installation-token cache key", () => {
 function stubGitHub(handler: (request: Request) => Response | Promise<Response>) {
 	const calls: Request[] = [];
 
-	vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+	vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
 		const request = new Request(input as RequestInfo, init as RequestInit);
 		calls.push(request);
 
@@ -342,25 +342,25 @@ function stubGitHub(handler: (request: Request) => Response | Promise<Response>)
 function tokenResponse(token: string, minutes: number, status = 201): Response {
 	return new Response(
 		JSON.stringify({ token, expires_at: new Date(Date.now() + minutes * TIME.MINUTE).toISOString() }),
-		{ status, headers: { "Content-Type": "application/json" } },
+		{ status, headers: { 'Content-Type': 'application/json' } },
 	);
 }
 
-describe("minting an installation token", () => {
+describe('minting an installation token', () => {
 	/** A KV double, so the cache can be inspected and made to fail. */
-	function kv(store = new Map<string, { value: string; ttl?: number }>(), broken?: "get" | "put") {
+	function kv(store = new Map<string, { value: string; ttl?: number }>(), broken?: 'get' | 'put') {
 		return {
 			store,
 			get(key: string, _type?: string) {
-				if (broken === "get") {
-					return Promise.reject(new Error("kv unavailable"));
+				if (broken === 'get') {
+					return Promise.reject(new Error('kv unavailable'));
 				}
 				const entry = store.get(key);
 				return Promise.resolve(entry ? (JSON.parse(entry.value) as unknown) : null);
 			},
 			put(key: string, value: string, options?: { expirationTtl?: number }) {
-				if (broken === "put") {
-					return Promise.reject(new Error("kv unavailable"));
+				if (broken === 'put') {
+					return Promise.reject(new Error('kv unavailable'));
 				}
 				store.set(key, { value, ...(options?.expirationTtl !== undefined && { ttl: options.expirationTtl }) });
 				return Promise.resolve();
@@ -368,38 +368,38 @@ describe("minting an installation token", () => {
 		};
 	}
 
-	it("posts to the pinned endpoint with the App JWT", async () => {
+	it('posts to the pinned endpoint with the App JWT', async () => {
 		const cache = kv();
-		const calls = stubGitHub(() => tokenResponse("ghs_installationtoken", 60));
+		const calls = stubGitHub(() => tokenResponse('ghs_installationtoken', 60));
 
 		const issued = await getInstallationToken(configured({ JWKS_CACHE: cache }), 42);
 
-		expect(issued.token).toBe("ghs_installationtoken");
+		expect(issued.token).toBe('ghs_installationtoken');
 		expect(calls).toHaveLength(1);
 
 		const request = calls[0] as Request;
 		expect(request.url).toBe(`${GITHUB_API_ORIGIN}/app/installations/42/access_tokens`);
-		expect(request.method).toBe("POST");
-		expect(request.headers.get("Accept")).toBe("application/vnd.github+json");
-		expect(request.headers.get("X-GitHub-Api-Version")).toBe("2022-11-28");
+		expect(request.method).toBe('POST');
+		expect(request.headers.get('Accept')).toBe('application/vnd.github+json');
+		expect(request.headers.get('X-GitHub-Api-Version')).toBe('2022-11-28');
 
 		// The bearer really is the App JWT — not, say, a token left over from
 		// somewhere else — so the credential exchange is proven end to end.
-		const bearer = (request.headers.get("Authorization") as string).slice("Bearer ".length);
+		const bearer = (request.headers.get('Authorization') as string).slice('Bearer '.length);
 		expect((await verifyAppJwt(bearer)).iss).toBe(APP_ID);
 	});
 
 	it.each([
-		["zero", 0],
-		["a negative id", -1],
-		["a fractional id", 1.5],
-		["an unsafe integer", 2 ** 53],
-		["NaN", Number.NaN],
-	])("refuses %s without calling GitHub", async (_name, installationId) => {
+		['zero', 0],
+		['a negative id', -1],
+		['a fractional id', 1.5],
+		['an unsafe integer', 2 ** 53],
+		['NaN', Number.NaN],
+	])('refuses %s without calling GitHub', async (_name, installationId) => {
 		// The id arrives inside a webhook payload and is interpolated into a URL
 		// path. `githubApiUrl` catches an origin change but not a value that stays
 		// on the host and addresses something else.
-		const calls = stubGitHub(() => tokenResponse("nope", 60));
+		const calls = stubGitHub(() => tokenResponse('nope', 60));
 
 		await expect(getInstallationToken(configured({ JWKS_CACHE: kv() }), installationId)).rejects.toThrow(
 			/positive integer/,
@@ -407,10 +407,10 @@ describe("minting an installation token", () => {
 		expect(calls).toHaveLength(0);
 	});
 
-	it("serves the second call from cache", async () => {
+	it('serves the second call from cache', async () => {
 		const cache = kv();
 		const app = configured({ JWKS_CACHE: cache });
-		const calls = stubGitHub(() => tokenResponse("ghs_cached", 60));
+		const calls = stubGitHub(() => tokenResponse('ghs_cached', 60));
 
 		const first = await getInstallationToken(app, 42);
 		const second = await getInstallationToken(app, 42);
@@ -419,13 +419,13 @@ describe("minting an installation token", () => {
 		expect(calls).toHaveLength(1);
 	});
 
-	it("gives the entry a TTL that expires before the token does", async () => {
+	it('gives the entry a TTL that expires before the token does', async () => {
 		// The property, stated against GitHub's own `expires_at` rather than
 		// against a constant: a cached token must never come back out after it has
 		// stopped working, because that failure is indistinguishable from a revoked
 		// App and the retry lands on the same cached value.
 		const store = new Map<string, { value: string; ttl?: number }>();
-		stubGitHub(() => tokenResponse("ghs_ttl", 60));
+		stubGitHub(() => tokenResponse('ghs_ttl', 60));
 
 		await getInstallationToken(configured({ JWKS_CACHE: kv(store) }), 42);
 
@@ -438,108 +438,108 @@ describe("minting an installation token", () => {
 		expect(entry?.ttl).toBeGreaterThan(0);
 	});
 
-	it("does not cache a token that is about to expire", async () => {
+	it('does not cache a token that is about to expire', async () => {
 		// Under KV's own 60-second floor once the safety margin is taken off, so
 		// there is no TTL that would be both accepted and honest.
 		const store = new Map<string, { value: string; ttl?: number }>();
-		stubGitHub(() => tokenResponse("ghs_brief", 5));
+		stubGitHub(() => tokenResponse('ghs_brief', 5));
 
 		const issued = await getInstallationToken(configured({ JWKS_CACHE: kv(store) }), 42);
 
-		expect(issued.token).toBe("ghs_brief");
+		expect(issued.token).toBe('ghs_brief');
 		expect(store.size).toBe(0);
 	});
 
-	it("ignores a stored token inside the safety margin", async () => {
+	it('ignores a stored token inside the safety margin', async () => {
 		// Belt to KV expiry's braces: an entry written by an older release, or one
 		// KV is still serving inside its eventual-consistency window.
 		const store = new Map<string, { value: string; ttl?: number }>();
 		store.set(installationTokenCacheKey(APP_ID, 42), {
 			value: JSON.stringify({
-				token: "ghs_stale",
+				token: 'ghs_stale',
 				expires_at: new Date(Date.now() + TIME.MINUTE).toISOString(),
 			}),
 		});
-		const calls = stubGitHub(() => tokenResponse("ghs_fresh", 60));
+		const calls = stubGitHub(() => tokenResponse('ghs_fresh', 60));
 
 		const issued = await getInstallationToken(configured({ JWKS_CACHE: kv(store) }), 42);
 
-		expect(issued.token).toBe("ghs_fresh");
+		expect(issued.token).toBe('ghs_fresh');
 		expect(calls).toHaveLength(1);
 	});
 
-	it("ignores a stored entry that is not an access-token response", async () => {
+	it('ignores a stored entry that is not an access-token response', async () => {
 		const store = new Map<string, { value: string; ttl?: number }>();
 		store.set(installationTokenCacheKey(APP_ID, 42), { value: JSON.stringify({ nonsense: true }) });
-		stubGitHub(() => tokenResponse("ghs_fresh", 60));
+		stubGitHub(() => tokenResponse('ghs_fresh', 60));
 
-		expect((await getInstallationToken(configured({ JWKS_CACHE: kv(store) }), 42)).token).toBe("ghs_fresh");
+		expect((await getInstallationToken(configured({ JWKS_CACHE: kv(store) }), 42)).token).toBe('ghs_fresh');
 	});
 
-	it("mints anyway when the cache cannot be read", async () => {
-		stubGitHub(() => tokenResponse("ghs_despite_kv", 60));
+	it('mints anyway when the cache cannot be read', async () => {
+		stubGitHub(() => tokenResponse('ghs_despite_kv', 60));
 
-		expect((await getInstallationToken(configured({ JWKS_CACHE: kv(undefined, "get") }), 42)).token).toBe(
-			"ghs_despite_kv",
+		expect((await getInstallationToken(configured({ JWKS_CACHE: kv(undefined, 'get') }), 42)).token).toBe(
+			'ghs_despite_kv',
 		);
 	});
 
-	it("returns the token even when it cannot be cached", async () => {
+	it('returns the token even when it cannot be cached', async () => {
 		// A degraded cache is a slow path, not a broken integration.
-		stubGitHub(() => tokenResponse("ghs_uncacheable", 60));
+		stubGitHub(() => tokenResponse('ghs_uncacheable', 60));
 
-		expect((await getInstallationToken(configured({ JWKS_CACHE: kv(undefined, "put") }), 42)).token).toBe(
-			"ghs_uncacheable",
+		expect((await getInstallationToken(configured({ JWKS_CACHE: kv(undefined, 'put') }), 42)).token).toBe(
+			'ghs_uncacheable',
 		);
 	});
 
-	it("reports a refusal by status, without the response body", async () => {
+	it('reports a refusal by status, without the response body', async () => {
 		// A 401 body from this endpoint describes the App credential that was
 		// refused. Quoting it into a message is how that ends up in a log.
 		stubGitHub(
-			() => new Response(JSON.stringify({ message: "A JWT signed with ghs_leaky is invalid" }), { status: 401 }),
+			() => new Response(JSON.stringify({ message: 'A JWT signed with ghs_leaky is invalid' }), { status: 401 }),
 		);
 
 		try {
 			await getInstallationToken(configured({ JWKS_CACHE: kv() }), 42);
-			expect.unreachable("expected a throw");
+			expect.unreachable('expected a throw');
 		} catch (error) {
-			expect((error as Error).message).toContain("401");
-			expect((error as Error).message).not.toContain("ghs_leaky");
+			expect((error as Error).message).toContain('401');
+			expect((error as Error).message).not.toContain('ghs_leaky');
 		}
 	});
 
-	it("refuses a response it cannot read", async () => {
-		stubGitHub(() => new Response(JSON.stringify({ token: "" }), { status: 201 }));
+	it('refuses a response it cannot read', async () => {
+		stubGitHub(() => new Response(JSON.stringify({ token: '' }), { status: 201 }));
 
 		await expect(getInstallationToken(configured({ JWKS_CACHE: kv() }), 42)).rejects.toThrow(/unreadable/);
 	});
 
-	it("refuses a response with no expiry to bound the cache with", async () => {
-		stubGitHub(() => new Response(JSON.stringify({ token: "ghs_x" }), { status: 201 }));
+	it('refuses a response with no expiry to bound the cache with', async () => {
+		stubGitHub(() => new Response(JSON.stringify({ token: 'ghs_x' }), { status: 201 }));
 
 		await expect(getInstallationToken(configured({ JWKS_CACHE: kv() }), 42)).rejects.toThrow(/unreadable/);
 	});
 
-	it("reports an unreachable GitHub without leaking the JWT", async () => {
+	it('reports an unreachable GitHub without leaking the JWT', async () => {
 		// The JWT was in the request that failed, and a runtime's network error can
 		// carry anything from the attempt.
-		vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("connection reset"));
+		vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('connection reset'));
 
 		try {
 			await getInstallationToken(configured({ JWKS_CACHE: kv() }), 42);
-			expect.unreachable("expected a throw");
+			expect.unreachable('expected a throw');
 		} catch (error) {
 			expect(error).toBeInstanceOf(GitHubAppError);
-			expect((error as Error).message).toContain("Could not reach GitHub");
-			expect((error as Error).message).not.toContain("eyJ");
+			expect((error as Error).message).toContain('Could not reach GitHub');
+			expect((error as Error).message).not.toContain('eyJ');
 		}
 	});
 
-	it("refuses before any network call when the App is not configured", async () => {
-		const calls = stubGitHub(() => tokenResponse("nope", 60));
+	it('refuses before any network call when the App is not configured', async () => {
+		const calls = stubGitHub(() => tokenResponse('nope', 60));
 
-		await expect(getInstallationToken(configured({ GITHUB_APP_ID: "", JWKS_CACHE: kv() }), 42)).rejects.toThrow(
+		await expect(getInstallationToken(configured({ GITHUB_APP_ID: '', JWKS_CACHE: kv() }), 42)).rejects.toThrow(
 			GitHubAppError,
 		);
 		expect(calls).toHaveLength(0);
@@ -547,49 +547,49 @@ describe("minting an installation token", () => {
 });
 
 describe("the verifier's own unset-secret guard", () => {
-	it("answers false rather than throwing", async () => {
+	it('answers false rather than throwing', async () => {
 		// The middleware refuses an unset secret before the verifier is reached, so
 		// this is the second of two independent guards. It matters because
 		// `importKey` rejects a zero-length HMAC key with a DataError — which would
 		// surface as a 500, and a 500 is what a caller retries.
-		const body = new TextEncoder().encode("{}").buffer as ArrayBuffer;
+		const body = new TextEncoder().encode('{}').buffer as ArrayBuffer;
 
-		await expect(verifyWebhookSignature("", body, `sha256=${"0".repeat(64)}`)).resolves.toBe(false);
+		await expect(verifyWebhookSignature('', body, `sha256=${'0'.repeat(64)}`)).resolves.toBe(false);
 	});
 
-	it("answers false for an absent header without touching the body", async () => {
-		const body = new TextEncoder().encode("{}").buffer as ArrayBuffer;
+	it('answers false for an absent header without touching the body', async () => {
+		const body = new TextEncoder().encode('{}').buffer as ArrayBuffer;
 
-		await expect(verifyWebhookSignature("secret", body, undefined)).resolves.toBe(false);
+		await expect(verifyWebhookSignature('secret', body, undefined)).resolves.toBe(false);
 	});
 });
 
-describe("the new secrets in the Sentry scrubber", () => {
-	it("collects both as literal values to redact", () => {
+describe('the new secrets in the Sentry scrubber', () => {
+	it('collects both as literal values to redact', () => {
 		// The scrubber's key-name denylist already catches `githubAppPrivateKey`
 		// and `githubWebhookSecret` by their fragments. This is the other half: the
 		// rule that catches a secret arriving under a name nobody anticipated,
 		// which is the one that has to name every value the deployment holds.
 		const secrets = collectEnvSecrets({
-			GITHUB_APP_PRIVATE_KEY: "app-private-key-value",
-			GITHUB_WEBHOOK_SECRET: "webhook-secret-value",
+			GITHUB_APP_PRIVATE_KEY: 'app-private-key-value',
+			GITHUB_WEBHOOK_SECRET: 'webhook-secret-value',
 		});
 
-		expect(secrets).toContain("app-private-key-value");
-		expect(secrets).toContain("webhook-secret-value");
+		expect(secrets).toContain('app-private-key-value');
+		expect(secrets).toContain('webhook-secret-value');
 	});
 
-	it("redacts them wherever they appear in an event", () => {
+	it('redacts them wherever they appear in an event', () => {
 		const secrets = collectEnvSecrets({
-			GITHUB_APP_PRIVATE_KEY: "app-private-key-value",
-			GITHUB_WEBHOOK_SECRET: "webhook-secret-value",
+			GITHUB_APP_PRIVATE_KEY: 'app-private-key-value',
+			GITHUB_WEBHOOK_SECRET: 'webhook-secret-value',
 		});
 
 		const scrubbed = JSON.stringify(
-			scrubValue({ note: "signed with app-private-key-value and webhook-secret-value" }, secrets),
+			scrubValue({ note: 'signed with app-private-key-value and webhook-secret-value' }, secrets),
 		);
 
-		expect(scrubbed).not.toContain("app-private-key-value");
-		expect(scrubbed).not.toContain("webhook-secret-value");
+		expect(scrubbed).not.toContain('app-private-key-value');
+		expect(scrubbed).not.toContain('webhook-secret-value');
 	});
 });

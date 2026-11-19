@@ -1,21 +1,21 @@
-import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { env } from "cloudflare:workers";
-import * as openpgp from "openpgp";
-import { describe, expect, it } from "vitest";
-import app from "#gpg-signing-service";
-import { openApiConfig } from "#lib/openapi";
+import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import { env } from 'cloudflare:workers';
+import * as openpgp from 'openpgp';
+import { describe, expect, it } from 'vitest';
+import app from '#gpg-signing-service';
+import { openApiConfig } from '#lib/openapi';
 
-describe("Public Key Route", () => {
-	it("should return public key for valid keyId", async () => {
+describe('Public Key Route', () => {
+	it('should return public key for valid keyId', async () => {
 		const ctx = createExecutionContext();
-		const keyId = "FEDCBA9876543210";
+		const keyId = 'FEDCBA9876543210';
 
 		// 1. Generate a valid key
 		const { privateKey } = await openpgp.generateKey({
-			type: "ecc",
-			curve: "ed25519Legacy",
-			userIDs: [{ name: "Test", email: "test@example.com" }],
-			format: "armored",
+			type: 'ecc',
+			curve: 'ed25519Legacy',
+			userIDs: [{ name: 'Test', email: 'test@example.com' }],
+			format: 'armored',
 		});
 
 		// Parse the key to get real fingerprint
@@ -23,19 +23,19 @@ describe("Public Key Route", () => {
 		const fingerprint = parsedKey.getFingerprint();
 
 		// 2. Store the key
-		const keyStorageId = env.KEY_STORAGE.idFromName("global");
+		const keyStorageId = env.KEY_STORAGE.idFromName('global');
 		const keyStorage = env.KEY_STORAGE.get(keyStorageId);
 		await keyStorage.fetch(
-			new Request("http://internal/store-key", {
-				method: "POST",
+			new Request('http://internal/store-key', {
+				method: 'POST',
 				body: JSON.stringify({
 					armoredPrivateKey: privateKey,
 					keyId,
 					fingerprint,
 					createdAt: new Date().toISOString(),
-					algorithm: "EdDSA",
+					algorithm: 'EdDSA',
 				}),
-				headers: { "Content-Type": "application/json" },
+				headers: { 'Content-Type': 'application/json' },
 			}),
 		);
 
@@ -45,52 +45,52 @@ describe("Public Key Route", () => {
 
 		// 4. Verify response
 		expect(response.status).toBe(200);
-		expect(response.headers.get("Content-Type")).toBe("application/pgp-keys");
+		expect(response.headers.get('Content-Type')).toBe('application/pgp-keys');
 		const body = await response.text();
-		expect(body).toContain("-----BEGIN PGP PUBLIC KEY BLOCK-----");
+		expect(body).toContain('-----BEGIN PGP PUBLIC KEY BLOCK-----');
 	});
 
-	it("should return 404 for a key that was never stored", async () => {
+	it('should return 404 for a key that was never stored', async () => {
 		const ctx = createExecutionContext();
-		const response = await app.fetch(new Request("http://localhost/public-key?keyId=EEEEEEEEEEEEEEEE"), env, ctx);
+		const response = await app.fetch(new Request('http://localhost/public-key?keyId=EEEEEEEEEEEEEEEE'), env, ctx);
 		await waitOnExecutionContext(ctx);
 
 		expect(response.status).toBe(404);
 		const body = (await response.json()) as { code: string };
-		expect(body.code).toBe("KEY_NOT_FOUND");
+		expect(body.code).toBe('KEY_NOT_FOUND');
 	});
 });
 
-describe("Global Error Handling", () => {
-	it("should handle errors in publicKeyRoute", async () => {
+describe('Global Error Handling', () => {
+	it('should handle errors in publicKeyRoute', async () => {
 		const ctx = createExecutionContext();
 
 		// 1. Store a key with INVALID content to cause openpgp.readPrivateKey to throw
-		const keyStorageId = env.KEY_STORAGE.idFromName("global");
+		const keyStorageId = env.KEY_STORAGE.idFromName('global');
 		const keyStorage = env.KEY_STORAGE.get(keyStorageId);
 		await keyStorage.fetch(
-			new Request("http://internal/store-key", {
-				method: "POST",
+			new Request('http://internal/store-key', {
+				method: 'POST',
 				body: JSON.stringify({
-					armoredPrivateKey: "invalid-key-content",
-					keyId: "9999999999999999",
-					fingerprint: "0123456789ABCDEF0123456789ABCDEF01234567",
+					armoredPrivateKey: 'invalid-key-content',
+					keyId: '9999999999999999',
+					fingerprint: '0123456789ABCDEF0123456789ABCDEF01234567',
 					createdAt: new Date().toISOString(),
-					algorithm: "RSA",
+					algorithm: 'RSA',
 				}),
-				headers: { "Content-Type": "application/json" },
+				headers: { 'Content-Type': 'application/json' },
 			}),
 		);
 
-		const response = await app.fetch(new Request("http://localhost/public-key?keyId=9999999999999999"), env, ctx);
+		const response = await app.fetch(new Request('http://localhost/public-key?keyId=9999999999999999'), env, ctx);
 		await waitOnExecutionContext(ctx);
 
 		expect(response.status).toBe(500);
 		const body = (await response.json()) as { code: string };
-		expect(body.code).toBe("KEY_PROCESSING_ERROR");
+		expect(body.code).toBe('KEY_PROCESSING_ERROR');
 	});
 
-	it("should handle unhandled errors via the global error handler", async () => {
+	it('should handle unhandled errors via the global error handler', async () => {
 		// Cause an error that's NOT caught by route handlers: a null DO stub
 		// blows up when the route tries to call .fetch() on it.
 		const originalGet = env.KEY_STORAGE.get;
@@ -100,12 +100,12 @@ describe("Global Error Handling", () => {
 
 		try {
 			const ctx = createExecutionContext();
-			const response = await app.fetch(new Request("http://localhost/public-key"), env, ctx);
+			const response = await app.fetch(new Request('http://localhost/public-key'), env, ctx);
 			await waitOnExecutionContext(ctx);
 
 			expect(response.status).toBe(500);
 			const body = (await response.json()) as { code: string; requestId: string };
-			expect(body.code).toBe("INTERNAL_ERROR");
+			expect(body.code).toBe('INTERNAL_ERROR');
 			expect(body.requestId).toBeTruthy();
 		} finally {
 			// Restore
@@ -114,10 +114,10 @@ describe("Global Error Handling", () => {
 	});
 });
 
-describe("API Documentation Routes", () => {
-	it("should serve the OpenAPI spec at /doc", async () => {
+describe('API Documentation Routes', () => {
+	it('should serve the OpenAPI spec at /doc', async () => {
 		const ctx = createExecutionContext();
-		const response = await app.fetch(new Request("http://localhost/doc"), env, ctx);
+		const response = await app.fetch(new Request('http://localhost/doc'), env, ctx);
 		await waitOnExecutionContext(ctx);
 
 		expect(response.status).toBe(200);
@@ -126,9 +126,9 @@ describe("API Documentation Routes", () => {
 		expect(Object.keys(spec.paths).length).toBeGreaterThan(0);
 	});
 
-	it("should define every security scheme the routes reference at /doc", async () => {
+	it('should define every security scheme the routes reference at /doc', async () => {
 		const ctx = createExecutionContext();
-		const response = await app.fetch(new Request("http://localhost/doc"), env, ctx);
+		const response = await app.fetch(new Request('http://localhost/doc'), env, ctx);
 		await waitOnExecutionContext(ctx);
 
 		const spec = (await response.json()) as {
@@ -137,7 +137,7 @@ describe("API Documentation Routes", () => {
 		};
 
 		const defined = Object.keys(spec.components?.securitySchemes ?? {});
-		expect(defined).toEqual(expect.arrayContaining(["oidcAuth", "bearerAuth", "serviceTokenAuth"]));
+		expect(defined).toEqual(expect.arrayContaining(['oidcAuth', 'bearerAuth', 'serviceTokenAuth']));
 
 		// A `security` requirement naming a scheme the document never defines makes
 		// the spec invalid and strips the Authorize button out of the Swagger UI.
@@ -153,9 +153,9 @@ describe("API Documentation Routes", () => {
 		}
 	});
 
-	it("should declare a 401 on every operation that requires a credential", async () => {
+	it('should declare a 401 on every operation that requires a credential', async () => {
 		const ctx = createExecutionContext();
-		const response = await app.fetch(new Request("http://localhost/doc"), env, ctx);
+		const response = await app.fetch(new Request('http://localhost/doc'), env, ctx);
 		await waitOnExecutionContext(ctx);
 
 		const spec = (await response.json()) as {
@@ -189,21 +189,21 @@ describe("API Documentation Routes", () => {
 		expect(authenticated.length).toBeGreaterThan(0);
 
 		for (const { id, operation } of authenticated) {
-			const unauthorized = operation.responses["401"];
+			const unauthorized = operation.responses['401'];
 			expect(unauthorized, `${id} declares no 401`).toBeDefined();
-			expect(unauthorized?.content?.["application/json"]?.schema?.$ref, `${id} 401 schema`).toBe(
-				"#/components/schemas/ErrorResponse",
+			expect(unauthorized?.content?.['application/json']?.schema?.$ref, `${id} 401 schema`).toBe(
+				'#/components/schemas/ErrorResponse',
 			);
 			// RFC 9110 §11.6.1 requires the challenge on a 401. It is part of the
 			// contract the moment the status is, and a caller reading the document
 			// to build a credential helper has no other way to learn the scheme.
-			expect(Object.keys(unauthorized?.headers ?? {}), `${id} 401 headers`).toContain("WWW-Authenticate");
+			expect(Object.keys(unauthorized?.headers ?? {}), `${id} 401 headers`).toContain('WWW-Authenticate');
 		}
 	});
 
-	it("should declare a security requirement on every route mounted behind auth", async () => {
+	it('should declare a security requirement on every route mounted behind auth', async () => {
 		const ctx = createExecutionContext();
-		const response = await app.fetch(new Request("http://localhost/doc"), env, ctx);
+		const response = await app.fetch(new Request('http://localhost/doc'), env, ctx);
 		await waitOnExecutionContext(ctx);
 
 		const spec = (await response.json()) as {
@@ -221,7 +221,7 @@ describe("API Documentation Routes", () => {
 		// behind callerAuth the moment it is added and has to be caught here —
 		// while a bare `startsWith` would also claim a future top-level
 		// `/administration`, which nothing mounts behind adminAuth.
-		const AUTH_MOUNTS = ["/sign", "/admin"];
+		const AUTH_MOUNTS = ['/sign', '/admin'];
 		const behindAuth = Object.entries(spec.paths).filter(([path]) =>
 			AUTH_MOUNTS.some((mount) => path === mount || path.startsWith(`${mount}/`)),
 		);
@@ -237,38 +237,38 @@ describe("API Documentation Routes", () => {
 		}
 	});
 
-	it("should include security schemes when generating a document directly", () => {
+	it('should include security schemes when generating a document directly', () => {
 		const spec = app.getOpenAPIDocument(openApiConfig);
 		expect(Object.keys(spec.components?.securitySchemes ?? {})).toEqual(
-			expect.arrayContaining(["oidcAuth", "bearerAuth", "serviceTokenAuth"]),
+			expect.arrayContaining(['oidcAuth', 'bearerAuth', 'serviceTokenAuth']),
 		);
 	});
 
-	it("should serve the Swagger UI at /ui with a usable CSP", async () => {
+	it('should serve the Swagger UI at /ui with a usable CSP', async () => {
 		const ctx = createExecutionContext();
-		const response = await app.fetch(new Request("http://localhost/ui"), env, ctx);
+		const response = await app.fetch(new Request('http://localhost/ui'), env, ctx);
 		await waitOnExecutionContext(ctx);
 
 		expect(response.status).toBe(200);
 		const html = await response.text();
 		expect(html).toContain('id="swagger-ui"');
-		expect(html).toContain("SwaggerUIBundle");
+		expect(html).toContain('SwaggerUIBundle');
 
 		// The page is useless unless the CSP allows the CDN assets and the
 		// inline bootstrap that mounts SwaggerUIBundle.
-		const csp = response.headers.get("Content-Security-Policy") ?? "";
-		expect(csp).toContain("https://cdn.jsdelivr.net");
+		const csp = response.headers.get('Content-Security-Policy') ?? '';
+		expect(csp).toContain('https://cdn.jsdelivr.net');
 		expect(csp).toContain("'unsafe-inline'");
 	});
 
-	it("should allow every remote asset the Swagger UI page actually references", async () => {
+	it('should allow every remote asset the Swagger UI page actually references', async () => {
 		const ctx = createExecutionContext();
-		const response = await app.fetch(new Request("http://localhost/ui"), env, ctx);
+		const response = await app.fetch(new Request('http://localhost/ui'), env, ctx);
 		await waitOnExecutionContext(ctx);
 
 		const html = await response.text();
-		const csp = response.headers.get("Content-Security-Policy") ?? "";
-		const directive = (name: string): string => csp.split("; ").find((entry) => entry.startsWith(`${name} `)) ?? "";
+		const csp = response.headers.get('Content-Security-Policy') ?? '';
+		const directive = (name: string): string => csp.split('; ').find((entry) => entry.startsWith(`${name} `)) ?? '';
 
 		const originsIn = (pattern: RegExp): string[] => [
 			...new Set(
@@ -290,16 +290,16 @@ describe("API Documentation Routes", () => {
 		expect(styleOrigins.length).toBeGreaterThan(0);
 
 		for (const origin of scriptOrigins) {
-			expect(directive("script-src")).toContain(origin);
+			expect(directive('script-src')).toContain(origin);
 		}
 		for (const origin of styleOrigins) {
-			expect(directive("style-src")).toContain(origin);
+			expect(directive('style-src')).toContain(origin);
 		}
 	});
 
-	it("should disable the third-party Swagger validator badge", async () => {
+	it('should disable the third-party Swagger validator badge', async () => {
 		const ctx = createExecutionContext();
-		const response = await app.fetch(new Request("http://localhost/ui"), env, ctx);
+		const response = await app.fetch(new Request('http://localhost/ui'), env, ctx);
 		await waitOnExecutionContext(ctx);
 
 		// Left at its default, Swagger UI loads an <img> from validator.swagger.io,

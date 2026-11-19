@@ -45,13 +45,13 @@
  * a Durable Object round trip on requests that already told us the answer.
  */
 
-import type { MiddlewareHandler } from "hono";
-import type { ErrorCode } from "#schemas/errors";
-import type { Env, RateLimitResult, Variables } from "#types";
-import { HEADERS, HTTP, TIME } from "#types";
-import { serviceDegraded, serviceMisconfigured, unauthorized } from "#utils/errors";
-import { githubAppEnabled } from "#utils/github-app";
-import { ALLOWLIST_VAR, authorizeDelivery, parseRepositoryAllowlist } from "#utils/github-authorization";
+import type { MiddlewareHandler } from 'hono';
+import type { ErrorCode } from '#schemas/errors';
+import type { Env, RateLimitResult, Variables } from '#types';
+import { HEADERS, HTTP, TIME } from '#types';
+import { serviceDegraded, serviceMisconfigured, unauthorized } from '#utils/errors';
+import { githubAppEnabled } from '#utils/github-app';
+import { ALLOWLIST_VAR, authorizeDelivery, parseRepositoryAllowlist } from '#utils/github-authorization';
 import {
 	acknowledgement,
 	DELIVERY_HEADER,
@@ -62,16 +62,16 @@ import {
 	readBodyWithin,
 	SIGNATURE_HEADER,
 	verifyWebhookSignature,
-} from "#utils/github-webhook";
-import { logger } from "#utils/logger";
-import { rateLimitExceeded, retryAfterSeconds } from "#utils/rate-limit";
+} from '#utils/github-webhook';
+import { logger } from '#utils/logger';
+import { rateLimitExceeded, retryAfterSeconds } from '#utils/rate-limit';
 import {
 	commitDelivery,
 	DELIVERY_RESERVATION_MS,
 	isDeliveryId,
 	releaseDelivery,
 	reserveDelivery,
-} from "#utils/webhook-replay";
+} from '#utils/webhook-replay';
 
 /**
  * Rate-limiter namespace for webhook deliveries.
@@ -80,7 +80,7 @@ import {
  * consumes, so a burst of deliveries cannot exhaust an operator's ability to
  * reach `/admin` and vice versa.
  */
-const WEBHOOK_METER = "webhook";
+const WEBHOOK_METER = 'webhook';
 
 /**
  * What a delivery refused by an unreachable ledger is told to wait.
@@ -123,7 +123,7 @@ type WebhookMiddleware = MiddlewareHandler<{ Bindings: Env; Variables: Variables
  * on one.
  */
 function notFound(c: Parameters<WebhookMiddleware>[0]) {
-	return c.json({ error: "Not found", code: "NOT_FOUND" as const satisfies ErrorCode }, HTTP.NotFound);
+	return c.json({ error: 'Not found', code: 'NOT_FOUND' as const satisfies ErrorCode }, HTTP.NotFound);
 }
 
 /**
@@ -154,9 +154,9 @@ export const githubWebhookGate: WebhookMiddleware = async (c, next) => {
 		// secret" is the most useful sentence an attacker could be handed. Same
 		// posture as the two `adminAuth` configuration guards.
 		logger.error(
-			"GITHUB_APP_ENABLED is true but GITHUB_WEBHOOK_SECRET is not set; refusing every delivery. Put one with `wrangler secret put GITHUB_WEBHOOK_SECRET` and set the same value on the App.",
+			'GITHUB_APP_ENABLED is true but GITHUB_WEBHOOK_SECRET is not set; refusing every delivery. Put one with `wrangler secret put GITHUB_WEBHOOK_SECRET` and set the same value on the App.',
 		);
-		return serviceMisconfigured(c, "GitHub webhook delivery is not configured");
+		return serviceMisconfigured(c, 'GitHub webhook delivery is not configured');
 	}
 
 	return next();
@@ -178,8 +178,8 @@ export const githubWebhookGate: WebhookMiddleware = async (c, next) => {
 function tooLarge(c: Parameters<WebhookMiddleware>[0]) {
 	return c.json(
 		{
-			error: "Webhook payload too large",
-			code: "PAYLOAD_TOO_LARGE" as const satisfies ErrorCode,
+			error: 'Webhook payload too large',
+			code: 'PAYLOAD_TOO_LARGE' as const satisfies ErrorCode,
 			hint: `Deliveries are limited to ${MAX_WEBHOOK_BODY_BYTES} bytes, GitHub's own payload cap. A delivery larger than that is not sent by GitHub at all.`,
 		},
 		HTTP.ContentTooLarge,
@@ -202,13 +202,13 @@ function tooLarge(c: Parameters<WebhookMiddleware>[0]) {
  * `githubWebhookAuth` counts the octets again as it reads them.
  */
 export const webhookBodyLimit: WebhookMiddleware = async (c, next) => {
-	const declared = declaredBodyLength(c.req.header("Content-Length"));
+	const declared = declaredBodyLength(c.req.header('Content-Length'));
 
 	if (declared !== null && declared > MAX_WEBHOOK_BODY_BYTES) {
 		// At info: an oversize declaration is this gate working, and the volume is
 		// the caller's to choose, not ours to page on.
-		logger.info("Webhook delivery declared a body over the ceiling", {
-			requestId: c.get("requestId"),
+		logger.info('Webhook delivery declared a body over the ceiling', {
+			requestId: c.get('requestId'),
 			declared,
 			limit: MAX_WEBHOOK_BODY_BYTES,
 		});
@@ -240,7 +240,7 @@ export const webhookBodyLimit: WebhookMiddleware = async (c, next) => {
  */
 export const webhookRateLimit: WebhookMiddleware = async (c, next) => {
 	const clientIp =
-		c.req.header("CF-Connecting-IP") || c.req.header("X-Forwarded-For")?.split(",")[0]?.trim() || "unknown";
+		c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() || 'unknown';
 	const identity = `webhook:${clientIp}`;
 
 	try {
@@ -269,14 +269,14 @@ export const webhookRateLimit: WebhookMiddleware = async (c, next) => {
 
 		return next();
 	} catch (error) {
-		logger.error("Webhook rate limiter failed", {
+		logger.error('Webhook rate limiter failed', {
 			error: error instanceof Error ? error.message : String(error),
 			clientIp,
 		});
 		return c.json(
 			{
-				error: "Service temporarily unavailable",
-				code: "RATE_LIMIT_ERROR" as const satisfies ErrorCode,
+				error: 'Service temporarily unavailable',
+				code: 'RATE_LIMIT_ERROR' as const satisfies ErrorCode,
 			},
 			HTTP.ServiceUnavailable,
 		);
@@ -302,7 +302,7 @@ export const githubWebhookAuth: WebhookMiddleware = async (c, next) => {
 	const signature = c.req.header(SIGNATURE_HEADER);
 
 	if (signature === undefined) {
-		return unauthorized(c, "Missing webhook signature", "AUTH_MISSING", {
+		return unauthorized(c, 'Missing webhook signature', 'AUTH_MISSING', {
 			hint: `Deliveries must carry ${SIGNATURE_HEADER}. GitHub sends it whenever the App has a webhook secret configured; an App with no secret set sends nothing and cannot be accepted.`,
 		});
 	}
@@ -324,19 +324,19 @@ export const githubWebhookAuth: WebhookMiddleware = async (c, next) => {
 		// than an accident of ordering: a body over GitHub's own cap did not come
 		// from GitHub, so there is no signature worth the CPU to check. It also
 		// keeps the refusal identical to the declared-length one — see `tooLarge`.
-		logger.info("Webhook delivery exceeded the ceiling while being read", {
-			requestId: c.get("requestId"),
+		logger.info('Webhook delivery exceeded the ceiling while being read', {
+			requestId: c.get('requestId'),
 			limit: MAX_WEBHOOK_BODY_BYTES,
-			declared: declaredBodyLength(c.req.header("Content-Length")),
+			declared: declaredBodyLength(c.req.header('Content-Length')),
 		});
 		return tooLarge(c);
 	}
 
-	if (!(await verifyWebhookSignature(c.env.GITHUB_WEBHOOK_SECRET ?? "", raw, signature))) {
+	if (!(await verifyWebhookSignature(c.env.GITHUB_WEBHOOK_SECRET ?? '', raw, signature))) {
 		// No detail about *why*. A caller learning that its digest was well-formed
 		// but wrong, as against malformed, is being told where to spend its next
 		// attempt.
-		return unauthorized(c, "Invalid webhook signature", "AUTH_INVALID", {
+		return unauthorized(c, 'Invalid webhook signature', 'AUTH_INVALID', {
 			hint: "The delivery did not verify against this deployment's GITHUB_WEBHOOK_SECRET. The same value must be set on the GitHub App and here.",
 		});
 	}
@@ -349,14 +349,14 @@ export const githubWebhookAuth: WebhookMiddleware = async (c, next) => {
 		// sender proved it holds the secret — so it is a 400, and it is worth a
 		// log line because it means GitHub sent something this service cannot
 		// read.
-		logger.warn("Verified webhook delivery did not contain JSON", {
+		logger.warn('Verified webhook delivery did not contain JSON', {
 			event: c.req.header(EVENT_HEADER),
 			delivery: c.req.header(DELIVERY_HEADER),
 		});
 		return c.json(
 			{
-				error: "Webhook payload is not valid JSON",
-				code: "INVALID_REQUEST" as const satisfies ErrorCode,
+				error: 'Webhook payload is not valid JSON',
+				code: 'INVALID_REQUEST' as const satisfies ErrorCode,
 			},
 			HTTP.BadRequest,
 		);
@@ -364,9 +364,9 @@ export const githubWebhookAuth: WebhookMiddleware = async (c, next) => {
 
 	const deliveryId = c.req.header(DELIVERY_HEADER);
 
-	c.set("webhookPayload", payload);
-	c.set("webhookDelivery", {
-		event: c.req.header(EVENT_HEADER) ?? "unknown",
+	c.set('webhookPayload', payload);
+	c.set('webhookDelivery', {
+		event: c.req.header(EVENT_HEADER) ?? 'unknown',
 		// Null rather than a placeholder, and that is a correctness choice rather
 		// than tidiness. A default like `"unknown"` is a *shared* name: two
 		// deliveries that both arrived without an id would dedupe against each
@@ -401,13 +401,13 @@ export const githubWebhookAuth: WebhookMiddleware = async (c, next) => {
  * way to enumerate the allowlist.
  */
 export const githubWebhookAuthorize: WebhookMiddleware = async (c, next) => {
-	const delivery = c.get("webhookDelivery");
+	const delivery = c.get('webhookDelivery');
 
 	if (!delivery) {
 		// Unreachable behind `githubWebhookAuth`. Present so a change to the
 		// mounting fails closed rather than authorizing an unverified payload.
-		logger.error("Webhook authorization reached without a verified delivery on the context");
-		return serviceMisconfigured(c, "Webhook authorization is not correctly mounted");
+		logger.error('Webhook authorization reached without a verified delivery on the context');
+		return serviceMisconfigured(c, 'Webhook authorization is not correctly mounted');
 	}
 
 	let allowlist: ReturnType<typeof parseRepositoryAllowlist>;
@@ -422,33 +422,33 @@ export const githubWebhookAuthorize: WebhookMiddleware = async (c, next) => {
 		// Handing it one object puts the request id inside the *error* payload and
 		// leaves Sentry's context empty, which loses the only field that
 		// correlates the report with the delivery log line beside it.
-		logger.error("GITHUB_APP_ALLOWED_REPOSITORIES could not be parsed; refusing every delivery", error, {
-			requestId: c.get("requestId"),
+		logger.error('GITHUB_APP_ALLOWED_REPOSITORIES could not be parsed; refusing every delivery', error, {
+			requestId: c.get('requestId'),
 			event: delivery.event,
 		});
-		return serviceMisconfigured(c, "GitHub webhook authorization is not configured");
+		return serviceMisconfigured(c, 'GitHub webhook authorization is not configured');
 	}
 
-	const decision = authorizeDelivery(allowlist, c.get("webhookPayload"));
+	const decision = authorizeDelivery(allowlist, c.get('webhookPayload'));
 
 	if (!decision.allowed) {
 		// At warn with the reason and the subject the delivery claimed: all three
 		// are values the sender chose, and together they are what an operator needs
 		// to tell "I forgot to allowlist this repo" from "something is delivering
 		// events I never installed".
-		logger.warn("GitHub webhook delivery is not authorized", {
-			requestId: c.get("requestId"),
+		logger.warn('GitHub webhook delivery is not authorized', {
+			requestId: c.get('requestId'),
 			event: delivery.event,
 			reason: decision.reason,
 			installationId: delivery.installationId,
 		});
 
-		return unauthorized(c, "Webhook delivery is not authorized for this deployment", "AUTH_SUBJECT_UNTRUSTED", {
+		return unauthorized(c, 'Webhook delivery is not authorized for this deployment', 'AUTH_SUBJECT_UNTRUSTED', {
 			hint: `The installation and repository this delivery names are not paired in ${ALLOWLIST_VAR}. Entries are comma-separated \`<installationId>:<owner>/<repo>[=<keyId>]\`.`,
 		});
 	}
 
-	c.set("webhookAuthorization", decision.authorization);
+	c.set('webhookAuthorization', decision.authorization);
 
 	return next();
 };
@@ -511,11 +511,11 @@ export const githubWebhookAuthorize: WebhookMiddleware = async (c, next) => {
  * retention window whether or not this settle lands.
  */
 export const webhookReplayGuard: WebhookMiddleware = async (c, next) => {
-	const delivery = c.get("webhookDelivery");
+	const delivery = c.get('webhookDelivery');
 
 	if (!delivery) {
-		logger.error("Webhook replay guard reached without a verified delivery on the context");
-		return serviceMisconfigured(c, "Webhook replay protection is not correctly mounted");
+		logger.error('Webhook replay guard reached without a verified delivery on the context');
+		return serviceMisconfigured(c, 'Webhook replay protection is not correctly mounted');
 	}
 
 	if (delivery.id === null) {
@@ -523,14 +523,14 @@ export const webhookReplayGuard: WebhookMiddleware = async (c, next) => {
 		// it holds the secret — but there is no id to dedupe on, so this delivery
 		// cannot be protected from being repeated, and accepting it would mean
 		// accepting the one shape a replay attack would choose.
-		logger.warn("Verified webhook delivery carried no usable delivery id", {
-			requestId: c.get("requestId"),
+		logger.warn('Verified webhook delivery carried no usable delivery id', {
+			requestId: c.get('requestId'),
 			event: delivery.event,
 		});
 		return c.json(
 			{
-				error: "Webhook delivery has no usable delivery id",
-				code: "INVALID_REQUEST" as const satisfies ErrorCode,
+				error: 'Webhook delivery has no usable delivery id',
+				code: 'INVALID_REQUEST' as const satisfies ErrorCode,
 				hint: `Deliveries must carry a ${DELIVERY_HEADER} of 8 to 200 characters from [A-Za-z0-9._-]. GitHub sends a GUID; a delivery without one cannot be protected against replay and is refused.`,
 			},
 			HTTP.BadRequest,
@@ -546,19 +546,19 @@ export const webhookReplayGuard: WebhookMiddleware = async (c, next) => {
 		// Same three-argument form as the allowlist failure above, and as
 		// `WebhookDeliveries`: the thrown value is the error, the request id and
 		// the event are context.
-		logger.error("Delivery ledger failed", error, {
-			requestId: c.get("requestId"),
+		logger.error('Delivery ledger failed', error, {
+			requestId: c.get('requestId'),
 			event: delivery.event,
 		});
-		return serviceDegraded(c, "Webhook replay protection is unavailable", {
+		return serviceDegraded(c, 'Webhook replay protection is unavailable', {
 			retryAfter: LEDGER_RETRY_AFTER_SECONDS,
 			hint: "The delivery was not accepted, because it could not be checked against ones already handled. Redeliver it from the App's Advanced tab.",
 		});
 	}
 
 	if (!reservation.reserved) {
-		logger.info("GitHub webhook delivery is a repeat", {
-			requestId: c.get("requestId"),
+		logger.info('GitHub webhook delivery is a repeat', {
+			requestId: c.get('requestId'),
 			event: delivery.event,
 			delivery: deliveryId,
 			firstSeen: new Date(reservation.firstSeen).toISOString(),
@@ -570,10 +570,10 @@ export const webhookReplayGuard: WebhookMiddleware = async (c, next) => {
 			held: reservation.held,
 		});
 
-		return c.json(acknowledgement(delivery, c.get("webhookAuthorization"), { duplicate: true }), HTTP.OK);
+		return c.json(acknowledgement(delivery, c.get('webhookAuthorization'), { duplicate: true }), HTTP.OK);
 	}
 
-	c.set("webhookReplay", { firstSeen: reservation.firstSeen });
+	c.set('webhookReplay', { firstSeen: reservation.firstSeen });
 
 	// `finally`, so that every way out of the handler settles the id — asserted by
 	// requiring a thrown handler's record to be *committed* rather than merely
@@ -590,7 +590,7 @@ export const webhookReplayGuard: WebhookMiddleware = async (c, next) => {
 	let published = true;
 	try {
 		await next();
-		published = c.get("webhookRetryable") !== true;
+		published = c.get('webhookRetryable') !== true;
 	} finally {
 		await settleDelivery(c, deliveryId, published);
 	}
@@ -620,22 +620,22 @@ async function settleDelivery(c: Parameters<WebhookMiddleware>[0], deliveryId: s
 		// afterwards either way — commit writes one when it finds none — so this is
 		// not a failure; it says the handler outran its own reservation, which is
 		// the state that used to leave an irreversible delivery recorded nowhere.
-		if ((await commitDelivery(c.env, deliveryId)) === "committed_without_reservation") {
-			logger.warn("Delivery committed after its reservation had lapsed", {
-				requestId: c.get("requestId"),
+		if ((await commitDelivery(c.env, deliveryId)) === 'committed_without_reservation') {
+			logger.warn('Delivery committed after its reservation had lapsed', {
+				requestId: c.get('requestId'),
 				delivery: deliveryId,
 				reservationMs: DELIVERY_RESERVATION_MS,
 			});
 		}
 	} catch (error) {
-		logger.error("Delivery ledger could not settle a delivery", error, {
-			requestId: c.get("requestId"),
+		logger.error('Delivery ledger could not settle a delivery', error, {
+			requestId: c.get('requestId'),
 			delivery: deliveryId,
 			// Which way it was going, because the consequences differ: a failed
 			// commit leaves a reservation that lapses and lets a redelivery through,
 			// and a failed release leaves one that lapses and lets a redelivery
 			// through slightly later. Both are recoverable; neither is silent.
-			intent: commit ? "commit" : "release",
+			intent: commit ? 'commit' : 'release',
 		});
 	}
 }

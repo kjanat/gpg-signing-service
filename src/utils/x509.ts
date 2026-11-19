@@ -15,11 +15,11 @@ import {
 	parseCertificatePemOrThrow,
 	splitPemBlocksOrThrow,
 	unwrap,
-} from "micro509";
-import type { StoredX509Key } from "#schemas/keys";
-import type { KeyFingerprint } from "#types";
-import { createKeyFingerprint } from "#types";
-import { PKCS8_ENCRYPTED_BEGIN } from "#utils/armor";
+} from 'micro509';
+import type { StoredX509Key } from '#schemas/keys';
+import type { KeyFingerprint } from '#types';
+import { createKeyFingerprint } from '#types';
+import { PKCS8_ENCRYPTED_BEGIN } from '#utils/armor';
 
 /** Result of validating an uploaded X.509 key pair */
 export interface X509KeyInfo {
@@ -43,10 +43,10 @@ function importX509PrivateKey(privateKeyPem: string, passphrase: string): Promis
 /** Human-readable algorithm description derived from a CryptoKey */
 function describeKeyAlgorithm(key: CryptoKey): string {
 	const algorithm = key.algorithm;
-	if ("namedCurve" in algorithm && typeof algorithm.namedCurve === "string") {
+	if ('namedCurve' in algorithm && typeof algorithm.namedCurve === 'string') {
 		return `${algorithm.name} ${algorithm.namedCurve}`;
 	}
-	if ("modulusLength" in algorithm && typeof algorithm.modulusLength === "number") {
+	if ('modulusLength' in algorithm && typeof algorithm.modulusLength === 'number') {
 		return `${algorithm.name} ${algorithm.modulusLength}`;
 	}
 	return algorithm.name;
@@ -69,17 +69,17 @@ export async function parseAndValidateX509Key(
 	const certificate = parseCertificatePemOrThrow(certificatePem);
 
 	if (!(await certificateMatchesPrivateKey(certificate, privateKey))) {
-		throw new Error("Private key does not match certificate public key");
+		throw new Error('Private key does not match certificate public key');
 	}
 
 	// SHA-1 is the classic X.509 fingerprint form; its 40 hex chars match the
 	// service-wide FingerprintSchema shared with PGP fingerprints.
-	const fingerprint = await certificateFingerprint(certificate, "SHA-1");
+	const fingerprint = await certificateFingerprint(certificate, 'SHA-1');
 
 	return {
 		fingerprint: createKeyFingerprint(fingerprint.hex.toUpperCase()),
 		algorithm: describeKeyAlgorithm(privateKey),
-		subject: certificate.subject.values.commonName ?? "unknown",
+		subject: certificate.subject.values.commonName ?? 'unknown',
 	};
 }
 
@@ -96,7 +96,7 @@ export async function signCommitDataX509(
 
 	const additionalCertificates = storedKey.chainPem
 		? splitPemBlocksOrThrow(storedKey.chainPem)
-				.filter((block) => block.label === "CERTIFICATE")
+				.filter((block) => block.label === 'CERTIFICATE')
 				.map((block) => block.bytes)
 		: undefined;
 

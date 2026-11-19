@@ -1,27 +1,27 @@
-import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { env } from "cloudflare:workers";
+import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import { env } from 'cloudflare:workers';
 import {
 	createSelfSignedCertificate,
 	exportEncryptedPkcs8Pem,
 	parsePkcs7SignedDataPem,
 	verifyPkcs7SignedData,
-} from "micro509";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import app from "#gpg-signing-service";
-import type { StoredX509Key } from "#schemas/keys";
-import { StoredX509KeySchema } from "#schemas/keys";
-import { parseAndValidateX509Key, signCommitDataX509 } from "#utils/x509";
-import { exportTestJwk, generateTestKeyPair, TestJwt } from "./helpers/jwt";
-import { seedTrustedSubjects } from "./helpers/oidc-subjects";
+} from 'micro509';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import app from '#gpg-signing-service';
+import type { StoredX509Key } from '#schemas/keys';
+import { StoredX509KeySchema } from '#schemas/keys';
+import { parseAndValidateX509Key, signCommitDataX509 } from '#utils/x509';
+import { exportTestJwk, generateTestKeyPair, TestJwt } from './helpers/jwt';
+import { seedTrustedSubjects } from './helpers/oidc-subjects';
 
 // Mock fetch for JWKS
 const { x509FetchMock } = vi.hoisted(() => ({ x509FetchMock: vi.fn() }));
 
-vi.mock("#utils/fetch", () => ({ fetchWithTimeout: x509FetchMock }));
+vi.mock('#utils/fetch', () => ({ fetchWithTimeout: x509FetchMock }));
 
 // Mock audit logging to avoid D1 dependency in tests
-vi.mock("#utils/audit", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("#utils/audit")>();
+vi.mock('#utils/audit', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('#utils/audit')>();
 	return { ...actual, logAuditEvent: vi.fn(async () => undefined) };
 });
 
@@ -35,7 +35,7 @@ interface X509Fixture {
 async function generateX509Fixture(commonName: string): Promise<X509Fixture> {
 	const { certificate, keyPair } = await createSelfSignedCertificate({
 		subject: { commonName },
-		algorithm: { kind: "ecdsa", curve: "P-256" },
+		algorithm: { kind: 'ecdsa', curve: 'P-256' },
 	});
 	const encryptedKeyPem = await exportEncryptedPkcs8Pem(keyPair.privateKey, {
 		password: env.KEY_PASSPHRASE,
@@ -45,7 +45,7 @@ async function generateX509Fixture(commonName: string): Promise<X509Fixture> {
 
 function storedKeyFor(fixture: X509Fixture, keyId: string, fingerprint: string, algorithm: string): StoredX509Key {
 	return StoredX509KeySchema.parse({
-		type: "x509",
+		type: 'x509',
 		keyId,
 		privateKeyPem: fixture.encryptedKeyPem,
 		certificatePem: fixture.certificatePem,
@@ -67,49 +67,49 @@ async function adminRequest(path: string, options: RequestInit = {}): Promise<Re
 		...options,
 		headers: {
 			Authorization: `Bearer ${env.ADMIN_TOKEN}`,
-			"Content-Type": "application/json",
+			'Content-Type': 'application/json',
 			...options.headers,
 		},
 	});
 }
 
-describe("X.509 signing utilities", () => {
+describe('X.509 signing utilities', () => {
 	let fixture: X509Fixture;
 
 	beforeAll(async () => {
-		fixture = await generateX509Fixture("x509-test-signer");
+		fixture = await generateX509Fixture('x509-test-signer');
 	});
 
-	it("validates key material and reports metadata", async () => {
+	it('validates key material and reports metadata', async () => {
 		const info = await parseAndValidateX509Key(fixture.encryptedKeyPem, fixture.certificatePem, env.KEY_PASSPHRASE);
 
 		expect(info.fingerprint).toMatch(/^[A-F0-9]{40}$/);
-		expect(info.algorithm).toBe("ECDSA P-256");
-		expect(info.subject).toBe("x509-test-signer");
+		expect(info.algorithm).toBe('ECDSA P-256');
+		expect(info.subject).toBe('x509-test-signer');
 	});
 
-	it("rejects a private key that does not match the certificate", async () => {
-		const other = await generateX509Fixture("some-other-signer");
+	it('rejects a private key that does not match the certificate', async () => {
+		const other = await generateX509Fixture('some-other-signer');
 
 		await expect(
 			parseAndValidateX509Key(fixture.encryptedKeyPem, other.certificatePem, env.KEY_PASSPHRASE),
-		).rejects.toThrow("does not match");
+		).rejects.toThrow('does not match');
 	});
 
-	it("rejects a wrong passphrase", async () => {
+	it('rejects a wrong passphrase', async () => {
 		await expect(
-			parseAndValidateX509Key(fixture.encryptedKeyPem, fixture.certificatePem, "wrong-passphrase"),
+			parseAndValidateX509Key(fixture.encryptedKeyPem, fixture.certificatePem, 'wrong-passphrase'),
 		).rejects.toThrow();
 	});
 
-	it("produces a detached PKCS#7 signature that verifies against the commit data", async () => {
+	it('produces a detached PKCS#7 signature that verifies against the commit data', async () => {
 		const info = await parseAndValidateX509Key(fixture.encryptedKeyPem, fixture.certificatePem, env.KEY_PASSPHRASE);
-		const storedKey = storedKeyFor(fixture, "A1B2C3D4E5F60001", info.fingerprint, info.algorithm);
-		const commitData = "tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147\nauthor Test <t@t> 0 +0000\n\nmsg";
+		const storedKey = storedKeyFor(fixture, 'A1B2C3D4E5F60001', info.fingerprint, info.algorithm);
+		const commitData = 'tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147\nauthor Test <t@t> 0 +0000\n\nmsg';
 
 		const { signature } = await signCommitDataX509(commitData, storedKey, env.KEY_PASSPHRASE);
 
-		expect(signature).toContain("-----BEGIN PKCS7-----");
+		expect(signature).toContain('-----BEGIN PKCS7-----');
 
 		// Detached: content must not be embedded
 		const parsed = parsePkcs7SignedDataPem(signature);
@@ -132,76 +132,76 @@ describe("X.509 signing utilities", () => {
 		expect(tampered.ok).toBe(false);
 	});
 
-	it("accepts a plain (unencrypted) PKCS#8 private key", async () => {
+	it('accepts a plain (unencrypted) PKCS#8 private key', async () => {
 		const { certificate, keyPair } = await createSelfSignedCertificate({
-			subject: { commonName: "plain-key-signer" },
-			algorithm: { kind: "ecdsa", curve: "P-256" },
+			subject: { commonName: 'plain-key-signer' },
+			algorithm: { kind: 'ecdsa', curve: 'P-256' },
 		});
 		const plainKeyPem = await keyPair.exportPkcs8Pem();
 
 		const info = await parseAndValidateX509Key(plainKeyPem, certificate.pem, env.KEY_PASSPHRASE);
-		expect(info.subject).toBe("plain-key-signer");
+		expect(info.subject).toBe('plain-key-signer');
 
 		const storedKey = StoredX509KeySchema.parse({
-			type: "x509",
-			keyId: "A1B2C3D4E5F60003",
+			type: 'x509',
+			keyId: 'A1B2C3D4E5F60003',
 			privateKeyPem: plainKeyPem,
 			certificatePem: certificate.pem,
 			fingerprint: info.fingerprint,
 			createdAt: new Date().toISOString(),
 			algorithm: info.algorithm,
 		});
-		const { signature } = await signCommitDataX509("plain key commit", storedKey, env.KEY_PASSPHRASE);
+		const { signature } = await signCommitDataX509('plain key commit', storedKey, env.KEY_PASSPHRASE);
 		const verified = await verifyPkcs7SignedData(signature, {
-			content: new TextEncoder().encode("plain key commit"),
+			content: new TextEncoder().encode('plain key commit'),
 		});
 		expect(verified.ok).toBe(true);
 	});
 
-	it("describes RSA keys by modulus length", async () => {
+	it('describes RSA keys by modulus length', async () => {
 		const { certificate, keyPair } = await createSelfSignedCertificate({
-			subject: { commonName: "rsa-signer" },
-			algorithm: { kind: "rsa", modulusLength: 2048 },
+			subject: { commonName: 'rsa-signer' },
+			algorithm: { kind: 'rsa', modulusLength: 2048 },
 		});
 		const keyPem = await exportEncryptedPkcs8Pem(keyPair.privateKey, {
 			password: env.KEY_PASSPHRASE,
 		});
 
 		const info = await parseAndValidateX509Key(keyPem, certificate.pem, env.KEY_PASSPHRASE);
-		expect(info.algorithm).toContain("2048");
+		expect(info.algorithm).toContain('2048');
 	});
 
 	it("falls back to 'unknown' when the certificate has no common name", async () => {
 		const { certificate, keyPair } = await createSelfSignedCertificate({
-			subject: { organization: "No CN Corp" },
-			algorithm: { kind: "ecdsa", curve: "P-256" },
+			subject: { organization: 'No CN Corp' },
+			algorithm: { kind: 'ecdsa', curve: 'P-256' },
 		});
 		const keyPem = await exportEncryptedPkcs8Pem(keyPair.privateKey, {
 			password: env.KEY_PASSPHRASE,
 		});
 
 		const info = await parseAndValidateX509Key(keyPem, certificate.pem, env.KEY_PASSPHRASE);
-		expect(info.subject).toBe("unknown");
+		expect(info.subject).toBe('unknown');
 	});
 
-	it("describes Ed25519 keys by name alone", async () => {
+	it('describes Ed25519 keys by name alone', async () => {
 		const { certificate, keyPair } = await createSelfSignedCertificate({
-			subject: { commonName: "ed25519-signer" },
-			algorithm: { kind: "ed25519" },
+			subject: { commonName: 'ed25519-signer' },
+			algorithm: { kind: 'ed25519' },
 		});
 		const keyPem = await exportEncryptedPkcs8Pem(keyPair.privateKey, {
 			password: env.KEY_PASSPHRASE,
 		});
 
 		const info = await parseAndValidateX509Key(keyPem, certificate.pem, env.KEY_PASSPHRASE);
-		expect(info.algorithm).toBe("Ed25519");
+		expect(info.algorithm).toBe('Ed25519');
 	});
 
-	it("embeds additional chain certificates when chainPem is present", async () => {
+	it('embeds additional chain certificates when chainPem is present', async () => {
 		const info = await parseAndValidateX509Key(fixture.encryptedKeyPem, fixture.certificatePem, env.KEY_PASSPHRASE);
 		const chained = StoredX509KeySchema.parse({
-			type: "x509",
-			keyId: "A1B2C3D4E5F60002",
+			type: 'x509',
+			keyId: 'A1B2C3D4E5F60002',
 			privateKeyPem: fixture.encryptedKeyPem,
 			certificatePem: fixture.certificatePem,
 			chainPem: fixture.certificatePem,
@@ -210,34 +210,34 @@ describe("X.509 signing utilities", () => {
 			algorithm: info.algorithm,
 		});
 
-		const { signature } = await signCommitDataX509("chained commit", chained, env.KEY_PASSPHRASE);
+		const { signature } = await signCommitDataX509('chained commit', chained, env.KEY_PASSPHRASE);
 		const verified = await verifyPkcs7SignedData(signature, {
-			content: new TextEncoder().encode("chained commit"),
+			content: new TextEncoder().encode('chained commit'),
 		});
 		expect(verified.ok).toBe(true);
 	});
 });
 
-describe("X.509 admin endpoints", () => {
+describe('X.509 admin endpoints', () => {
 	let fixture: X509Fixture;
 
 	beforeAll(async () => {
-		fixture = await generateX509Fixture("x509-admin-test");
+		fixture = await generateX509Fixture('x509-admin-test');
 	});
 
 	beforeEach(() => {
-		vi.spyOn(env.JWKS_CACHE, "get").mockResolvedValue(null as unknown as Map<string, unknown>);
+		vi.spyOn(env.JWKS_CACHE, 'get').mockResolvedValue(null as unknown as Map<string, unknown>);
 	});
 
 	afterEach(() => {
 		vi.restoreAllMocks();
 	});
 
-	it("uploads an X.509 key and returns its metadata", async () => {
-		const response = await adminRequest("/keys/x509", {
-			method: "POST",
+	it('uploads an X.509 key and returns its metadata', async () => {
+		const response = await adminRequest('/keys/x509', {
+			method: 'POST',
 			body: JSON.stringify({
-				keyId: "B1B2C3D4E5F60001",
+				keyId: 'B1B2C3D4E5F60001',
 				privateKeyPem: fixture.encryptedKeyPem,
 				certificatePem: fixture.certificatePem,
 			}),
@@ -252,36 +252,36 @@ describe("X.509 admin endpoints", () => {
 			subject: string;
 		}>(response);
 		expect(body.success).toBe(true);
-		expect(body.keyId).toBe("B1B2C3D4E5F60001");
+		expect(body.keyId).toBe('B1B2C3D4E5F60001');
 		expect(body.fingerprint).toMatch(/^[A-F0-9]{40}$/);
-		expect(body.algorithm).toBe("ECDSA P-256");
-		expect(body.subject).toBe("x509-admin-test");
+		expect(body.algorithm).toBe('ECDSA P-256');
+		expect(body.subject).toBe('x509-admin-test');
 	});
 
-	it("serves the certificate as the public material", async () => {
-		await adminRequest("/keys/x509", {
-			method: "POST",
+	it('serves the certificate as the public material', async () => {
+		await adminRequest('/keys/x509', {
+			method: 'POST',
 			body: JSON.stringify({
-				keyId: "B1B2C3D4E5F60002",
+				keyId: 'B1B2C3D4E5F60002',
 				privateKeyPem: fixture.encryptedKeyPem,
 				certificatePem: fixture.certificatePem,
 			}),
 		});
 
-		const response = await adminRequest("/keys/B1B2C3D4E5F60002/public");
+		const response = await adminRequest('/keys/B1B2C3D4E5F60002/public');
 
 		expect(response.status).toBe(200);
-		expect(response.headers.get("Content-Type")).toContain("application/pem-certificate-chain");
-		expect(await response.text()).toContain("-----BEGIN CERTIFICATE-----");
+		expect(response.headers.get('Content-Type')).toContain('application/pem-certificate-chain');
+		expect(await response.text()).toContain('-----BEGIN CERTIFICATE-----');
 	});
 
-	it("rejects an upload whose key does not match the certificate", async () => {
-		const other = await generateX509Fixture("mismatched-signer");
+	it('rejects an upload whose key does not match the certificate', async () => {
+		const other = await generateX509Fixture('mismatched-signer');
 
-		const response = await adminRequest("/keys/x509", {
-			method: "POST",
+		const response = await adminRequest('/keys/x509', {
+			method: 'POST',
 			body: JSON.stringify({
-				keyId: "B1B2C3D4E5F60003",
+				keyId: 'B1B2C3D4E5F60003',
 				privateKeyPem: fixture.encryptedKeyPem,
 				certificatePem: other.certificatePem,
 			}),
@@ -289,27 +289,27 @@ describe("X.509 admin endpoints", () => {
 
 		expect(response.status).toBe(500);
 		const body = await parseJson<{ code: string }>(response);
-		expect(body.code).toBe("KEY_UPLOAD_ERROR");
+		expect(body.code).toBe('KEY_UPLOAD_ERROR');
 	});
 
-	it("rejects a structurally invalid upload body", async () => {
-		const response = await adminRequest("/keys/x509", {
-			method: "POST",
-			body: JSON.stringify({ keyId: "B1B2C3D4E5F60004", privateKeyPem: "not a pem" }),
+	it('rejects a structurally invalid upload body', async () => {
+		const response = await adminRequest('/keys/x509', {
+			method: 'POST',
+			body: JSON.stringify({ keyId: 'B1B2C3D4E5F60004', privateKeyPem: 'not a pem' }),
 		});
 
 		expect(response.status).toBe(400);
 	});
 
-	it("returns 500 when key storage fails", async () => {
-		vi.spyOn(env.KEY_STORAGE, "get").mockReturnValue({
-			fetch: async () => new Response(JSON.stringify({ error: "Storage error" }), { status: 500 }),
+	it('returns 500 when key storage fails', async () => {
+		vi.spyOn(env.KEY_STORAGE, 'get').mockReturnValue({
+			fetch: async () => new Response(JSON.stringify({ error: 'Storage error' }), { status: 500 }),
 		} as unknown as DurableObjectStub);
 
-		const response = await adminRequest("/keys/x509", {
-			method: "POST",
+		const response = await adminRequest('/keys/x509', {
+			method: 'POST',
 			body: JSON.stringify({
-				keyId: "B1B2C3D4E5F60005",
+				keyId: 'B1B2C3D4E5F60005',
 				privateKeyPem: fixture.encryptedKeyPem,
 				certificatePem: fixture.certificatePem,
 			}),
@@ -317,14 +317,14 @@ describe("X.509 admin endpoints", () => {
 
 		expect(response.status).toBe(500);
 		const body = await parseJson<{ error: string }>(response);
-		expect(body.error).toBe("Storage error");
+		expect(body.error).toBe('Storage error');
 	});
 
-	it("accepts an upload with a certificate chain", async () => {
-		const response = await adminRequest("/keys/x509", {
-			method: "POST",
+	it('accepts an upload with a certificate chain', async () => {
+		const response = await adminRequest('/keys/x509', {
+			method: 'POST',
 			body: JSON.stringify({
-				keyId: "B1B2C3D4E5F60007",
+				keyId: 'B1B2C3D4E5F60007',
 				privateKeyPem: fixture.encryptedKeyPem,
 				certificatePem: fixture.certificatePem,
 				chainPem: fixture.certificatePem,
@@ -337,27 +337,27 @@ describe("X.509 admin endpoints", () => {
 	// The X.509 upload path had no `logger` call in its catch at all, so a
 	// failure left nothing behind but a D1 audit row. Asserts on the JSON the
 	// logger emits, not on the call arguments, so the serialization is proven.
-	it("logs the cause and the request id when the X.509 upload fails", async () => {
-		vi.spyOn(env.KEY_STORAGE, "get").mockReturnValue({
-			fetch: async () => new Response(JSON.stringify({ error: "x509 store-key refused" }), { status: 500 }),
+	it('logs the cause and the request id when the X.509 upload fails', async () => {
+		vi.spyOn(env.KEY_STORAGE, 'get').mockReturnValue({
+			fetch: async () => new Response(JSON.stringify({ error: 'x509 store-key refused' }), { status: 500 }),
 		} as unknown as DurableObjectStub);
-		const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 		const requestId = crypto.randomUUID();
 
 		let response: Response;
 		let entries: { level?: string; message?: string; requestId?: string; error?: { message?: string } }[];
 		try {
-			response = await adminRequest("/keys/x509", {
-				method: "POST",
-				headers: { "X-Request-ID": requestId },
+			response = await adminRequest('/keys/x509', {
+				method: 'POST',
+				headers: { 'X-Request-ID': requestId },
 				body: JSON.stringify({
-					keyId: "B1B2C3D4E5F60008",
+					keyId: 'B1B2C3D4E5F60008',
 					privateKeyPem: fixture.encryptedKeyPem,
 					certificatePem: fixture.certificatePem,
 				}),
 			});
 			entries = consoleSpy.mock.calls.flatMap(([line]) => {
-				if (typeof line !== "string") return [];
+				if (typeof line !== 'string') return [];
 				try {
 					return [JSON.parse(line)];
 				} catch {
@@ -371,22 +371,22 @@ describe("X.509 admin endpoints", () => {
 
 		expect(response.status).toBe(500);
 
-		const entry = entries.find((e) => e.level === "error" && e.message === "Failed to upload X.509 key:");
+		const entry = entries.find((e) => e.level === 'error' && e.message === 'Failed to upload X.509 key:');
 		expect(entry).toBeDefined();
-		expect(entry?.error?.message).toBe("x509 store-key refused");
+		expect(entry?.error?.message).toBe('x509 store-key refused');
 		expect(entry?.requestId).toBe(requestId);
-		expect(entry?.requestId).toBe(response.headers.get("X-Request-ID"));
+		expect(entry?.requestId).toBe(response.headers.get('X-Request-ID'));
 	});
 
-	it("uses the fallback message when storage fails without detail", async () => {
-		vi.spyOn(env.KEY_STORAGE, "get").mockReturnValue({
+	it('uses the fallback message when storage fails without detail', async () => {
+		vi.spyOn(env.KEY_STORAGE, 'get').mockReturnValue({
 			fetch: async () => new Response(JSON.stringify({}), { status: 500 }),
 		} as unknown as DurableObjectStub);
 
-		const response = await adminRequest("/keys/x509", {
-			method: "POST",
+		const response = await adminRequest('/keys/x509', {
+			method: 'POST',
 			body: JSON.stringify({
-				keyId: "B1B2C3D4E5F60006",
+				keyId: 'B1B2C3D4E5F60006',
 				privateKeyPem: fixture.encryptedKeyPem,
 				certificatePem: fixture.certificatePem,
 			}),
@@ -394,21 +394,21 @@ describe("X.509 admin endpoints", () => {
 
 		expect(response.status).toBe(500);
 		const body = await parseJson<{ error: string }>(response);
-		expect(body.error).toBe("Failed to store key");
+		expect(body.error).toBe('Failed to store key');
 	});
 });
 
-describe("X.509 sign route", () => {
+describe('X.509 sign route', () => {
 	let fixture: X509Fixture;
 	let oidcPrivateKey: CryptoKey;
 	let oidcPublicKey: CryptoKey;
-	const issuer = "https://token.actions.githubusercontent.com";
-	const kid = "x509-test-key";
+	const issuer = 'https://token.actions.githubusercontent.com';
+	const kid = 'x509-test-key';
 
 	beforeAll(async () => {
 		// The OIDC path now requires a trusted-subject row.
 		await seedTrustedSubjects(env.AUDIT_DB);
-		fixture = await generateX509Fixture("x509-sign-test");
+		fixture = await generateX509Fixture('x509-sign-test');
 		const keys = await generateTestKeyPair();
 		oidcPrivateKey = keys.privateKey;
 		oidcPublicKey = keys.publicKey;
@@ -416,13 +416,13 @@ describe("X.509 sign route", () => {
 
 	beforeEach(() => {
 		vi.resetAllMocks();
-		vi.spyOn(env.JWKS_CACHE, "get").mockResolvedValue(null as unknown as Map<string, unknown>);
+		vi.spyOn(env.JWKS_CACHE, 'get').mockResolvedValue(null as unknown as Map<string, unknown>);
 	});
 
 	async function setupJWKSMock() {
 		const jwk = await exportTestJwk(oidcPublicKey);
 		jwk.kid = kid;
-		jwk.use = "sig";
+		jwk.use = 'sig';
 
 		x509FetchMock.mockImplementation(async (url: string) => {
 			if (url === `${issuer}/.well-known/openid-configuration`) {
@@ -431,19 +431,19 @@ describe("X.509 sign route", () => {
 			if (url === `${issuer}/jwks`) {
 				return new Response(JSON.stringify({ keys: [jwk] }));
 			}
-			return new Response("Not Found", { status: 404 });
+			return new Response('Not Found', { status: 404 });
 		});
 	}
 
 	async function createToken(): Promise<string> {
 		return new TestJwt({
 			iss: issuer,
-			sub: "repo:user/repo:ref:refs/heads/main",
-			aud: "gpg-signing-service",
+			sub: 'repo:user/repo:ref:refs/heads/main',
+			aud: 'gpg-signing-service',
 		})
-			.setProtectedHeader({ alg: "RS256", kid })
+			.setProtectedHeader({ alg: 'RS256', kid })
 			.setIssuedAt()
-			.setExpirationTime("1h")
+			.setExpirationTime('1h')
 			.sign(oidcPrivateKey);
 	}
 
@@ -451,43 +451,43 @@ describe("X.509 sign route", () => {
 		await setupJWKSMock();
 		const token = await createToken();
 
-		vi.spyOn(env.KEY_STORAGE, "get").mockReturnValue({
+		vi.spyOn(env.KEY_STORAGE, 'get').mockReturnValue({
 			fetch: async () => new Response(JSON.stringify({}), { status: 500 }),
 		} as unknown as DurableObjectStub);
 
-		const response = await makeRequest("/sign?keyId=C1B2C3D4E5F60002", {
-			method: "POST",
+		const response = await makeRequest('/sign?keyId=C1B2C3D4E5F60002', {
+			method: 'POST',
 			headers: { Authorization: `Bearer ${token}` },
-			body: "some commit data",
+			body: 'some commit data',
 		});
 
 		expect(response.status).toBe(404);
 		const body = await parseJson<{ error: string }>(response);
-		expect(body.error).toBe("Key not found");
+		expect(body.error).toBe('Key not found');
 	});
 
-	it("signs commit data with a stored X.509 key (detached PKCS#7)", async () => {
+	it('signs commit data with a stored X.509 key (detached PKCS#7)', async () => {
 		await setupJWKSMock();
-		await adminRequest("/keys/x509", {
-			method: "POST",
+		await adminRequest('/keys/x509', {
+			method: 'POST',
 			body: JSON.stringify({
-				keyId: "C1B2C3D4E5F60001",
+				keyId: 'C1B2C3D4E5F60001',
 				privateKeyPem: fixture.encryptedKeyPem,
 				certificatePem: fixture.certificatePem,
 			}),
 		});
 		const token = await createToken();
-		const commitData = "tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147\nx509 route commit";
+		const commitData = 'tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147\nx509 route commit';
 
-		const response = await makeRequest("/sign?keyId=C1B2C3D4E5F60001", {
-			method: "POST",
+		const response = await makeRequest('/sign?keyId=C1B2C3D4E5F60001', {
+			method: 'POST',
 			headers: { Authorization: `Bearer ${token}` },
 			body: commitData,
 		});
 
 		expect(response.status).toBe(200);
 		const signature = await response.text();
-		expect(signature).toContain("-----BEGIN PKCS7-----");
+		expect(signature).toContain('-----BEGIN PKCS7-----');
 
 		const verified = await verifyPkcs7SignedData(signature, {
 			content: new TextEncoder().encode(commitData),

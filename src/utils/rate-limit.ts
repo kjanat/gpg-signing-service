@@ -2,10 +2,10 @@
  * The one place a rate-limit refusal is built.
  */
 
-import type { Context } from "hono";
+import type { Context } from 'hono';
 
-import type { ErrorCode } from "#schemas/errors";
-import { HEADERS, HTTP, TIME } from "#types";
+import type { ErrorCode } from '#schemas/errors';
+import { HEADERS, HTTP, TIME } from '#types';
 
 /**
  * A denial's `resetAt` as whole seconds to wait, floored at one.
@@ -55,7 +55,7 @@ export function retryAfterSeconds(resetAt: number): number {
  */
 function rateLimitDeniedHeaders(retryAfter: number): Record<string, string> {
 	return {
-		[HEADERS.RATE_LIMIT_REMAINING]: "0",
+		[HEADERS.RATE_LIMIT_REMAINING]: '0',
 		[HEADERS.RATE_LIMIT_RESET]: String(Math.ceil(Date.now() / TIME.SECOND) + retryAfter),
 	};
 }
@@ -83,10 +83,10 @@ function rateLimitDeniedHeaders(retryAfter: number): Record<string, string> {
 export function rateLimitExceeded(c: Context, retryAfter: number) {
 	return c.json(
 		{
-			error: "Rate limit exceeded",
+			error: 'Rate limit exceeded',
 			// No `requestId`: `RateLimitErrorSchema` does not declare one, and the
 			// documents point callers at the `X-Request-ID` header here instead.
-			code: "RATE_LIMITED" as const satisfies ErrorCode,
+			code: 'RATE_LIMITED' as const satisfies ErrorCode,
 			retryAfter,
 		},
 		HTTP.TooManyRequests,

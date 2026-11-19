@@ -1,14 +1,14 @@
-import { WorkerEntrypoint } from "cloudflare:workers";
-import * as openpgp from "openpgp";
-import type { StoredKey } from "#schemas/keys";
-import { AnyStoredKeySchema, isX509Key } from "#schemas/keys";
-import type { Env } from "#types";
-import { createIdentity } from "#types";
-import { logAuditEvent } from "#utils/audit";
-import { fetchKeyStorage, fetchRateLimiter } from "#utils/durable-objects";
-import { signCommitData } from "#utils/signing";
+import { WorkerEntrypoint } from 'cloudflare:workers';
+import * as openpgp from 'openpgp';
+import type { StoredKey } from '#schemas/keys';
+import { AnyStoredKeySchema, isX509Key } from '#schemas/keys';
+import type { Env } from '#types';
+import { createIdentity } from '#types';
+import { logAuditEvent } from '#utils/audit';
+import { fetchKeyStorage, fetchRateLimiter } from '#utils/durable-objects';
+import { signCommitData } from '#utils/signing';
 
-export const BINDING_ISSUER = "service-binding";
+export const BINDING_ISSUER = 'service-binding';
 
 export interface SigningIdentity {
 	publicKey: string;
@@ -21,7 +21,7 @@ export class Signer extends WorkerEntrypoint<Env> {
 		const key = await openpgp.readPrivateKey({ armoredKey: (await this.key()).armoredPrivateKey });
 		const { user } = await key.getPrimaryUser();
 		const userId = user.userID?.userID;
-		if (!userId) throw new Error("Signing key has no user ID");
+		if (!userId) throw new Error('Signing key has no user ID');
 		return { publicKey: key.toPublic().armor(), userId };
 	}
 
@@ -31,7 +31,7 @@ export class Signer extends WorkerEntrypoint<Env> {
 		const key = await this.key();
 		const entry = {
 			requestId: crypto.randomUUID(),
-			action: "sign",
+			action: 'sign',
 			issuer: BINDING_ISSUER,
 			subject: caller,
 			keyId: key.keyId,
@@ -45,7 +45,7 @@ export class Signer extends WorkerEntrypoint<Env> {
 			});
 			return signature;
 		} catch (error) {
-			await logAuditEvent(this.env.AUDIT_DB, { ...entry, success: false, errorCode: "SIGN_ERROR" });
+			await logAuditEvent(this.env.AUDIT_DB, { ...entry, success: false, errorCode: 'SIGN_ERROR' });
 			throw error;
 		}
 	}

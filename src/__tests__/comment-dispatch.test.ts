@@ -27,13 +27,13 @@
  *   the dispatched session's own completion comment produces.
  */
 
-import { createExecutionContext, runInDurableObject, waitOnExecutionContext } from "cloudflare:test";
-import { env } from "cloudflare:workers";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { WebhookDeliveries } from "#durable-objects/webhook-deliveries";
-import app from "#gpg-signing-service";
-import { dispatchBudgetIdentity } from "#routes/github-webhook";
-import type { WebhookAuthorization } from "#types";
+import { createExecutionContext, runInDurableObject, waitOnExecutionContext } from 'cloudflare:test';
+import { env } from 'cloudflare:workers';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { WebhookDeliveries } from '#durable-objects/webhook-deliveries';
+import app from '#gpg-signing-service';
+import { dispatchBudgetIdentity } from '#routes/github-webhook';
+import type { WebhookAuthorization } from '#types';
 import {
 	authorizeActor,
 	commentDispatchEnabled,
@@ -42,20 +42,20 @@ import {
 	planCommentDispatch,
 	requireDispatchTarget,
 	TRIGGER_PHRASES,
-} from "#utils/comment-dispatch";
-import { GITHUB_API_ORIGIN, GitHubAppError } from "#utils/github-app";
-import { RepositoryClient } from "#utils/github-repo";
-import { SIGNATURE_PREFIX } from "#utils/github-webhook";
-import { DELIVERY_RESERVATION_MS, DELIVERY_RETENTION_MS } from "#utils/webhook-replay";
-import { PKCS8_PRIVATE_BEGIN, PKCS8_PRIVATE_END } from "./helpers/armor";
+} from '#utils/comment-dispatch';
+import { GITHUB_API_ORIGIN, GitHubAppError } from '#utils/github-app';
+import { RepositoryClient } from '#utils/github-repo';
+import { SIGNATURE_PREFIX } from '#utils/github-webhook';
+import { DELIVERY_RESERVATION_MS, DELIVERY_RETENTION_MS } from '#utils/webhook-replay';
+import { PKCS8_PRIVATE_BEGIN, PKCS8_PRIVATE_END } from './helpers/armor';
 
-const SECRET = "test-webhook-secret";
+const SECRET = 'test-webhook-secret';
 const INSTALLATION = 12_345_678;
-const REPOSITORY = "kjanat/gpg-signing-service";
-const OTHER_REPOSITORY = "kjanat/other-repo";
-const OWNER = "kjanat";
-const WORKFLOW = "claude.yml";
-const REF = "master";
+const REPOSITORY = 'kjanat/gpg-signing-service';
+const OTHER_REPOSITORY = 'kjanat/other-repo';
+const OWNER = 'kjanat';
+const WORKFLOW = 'claude.yml';
+const REF = 'master';
 
 /**
  * A real RSA key for the App, so the token exchange mints a real JWT.
@@ -66,7 +66,7 @@ const REF = "master";
  * `RepositoryClient` too, and `getInstallationToken` imports the key before it
  * ever reaches the stubbed `fetch`.
  */
-let APP_PRIVATE_KEY = "";
+let APP_PRIVATE_KEY = '';
 
 beforeAll(async () => {
 	APP_PRIVATE_KEY = await generateAppKey();
@@ -74,7 +74,7 @@ beforeAll(async () => {
 
 /** A `<installation, repository>` grant, as the allowlist would resolve one. */
 function grant(repository = REPOSITORY): WebhookAuthorization {
-	return { scope: "repository", installationId: INSTALLATION, repository, keyId: null };
+	return { scope: 'repository', installationId: INSTALLATION, repository, keyId: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -95,28 +95,28 @@ function commentPayload(
 		repository?: string;
 	} = {},
 ) {
-	const author = "author" in overrides ? overrides.author : { login: OWNER, type: "User" };
+	const author = 'author' in overrides ? overrides.author : { login: OWNER, type: 'User' };
 
 	return {
-		action: overrides.action ?? "created",
+		action: overrides.action ?? 'created',
 		issue: {
-			number: "issueNumber" in overrides ? overrides.issueNumber : 26,
-			...(overrides.pullRequest ? { pull_request: { url: "https://api.github.com/x" } } : {}),
+			number: 'issueNumber' in overrides ? overrides.issueNumber : 26,
+			...(overrides.pullRequest ? { pull_request: { url: 'https://api.github.com/x' } } : {}),
 		},
 		comment: {
-			id: "commentId" in overrides ? overrides.commentId : 5_479_945_207,
-			body: "body" in overrides ? overrides.body : "/beep please do the thing",
+			id: 'commentId' in overrides ? overrides.commentId : 5_479_945_207,
+			body: 'body' in overrides ? overrides.body : '/beep please do the thing',
 			user: author,
-			...("viaApp" in overrides ? { performed_via_github_app: overrides.viaApp } : {}),
+			...('viaApp' in overrides ? { performed_via_github_app: overrides.viaApp } : {}),
 		},
-		sender: "sender" in overrides ? overrides.sender : author,
+		sender: 'sender' in overrides ? overrides.sender : author,
 		installation: { id: INSTALLATION },
 		repository: { full_name: overrides.repository ?? REPOSITORY },
 	};
 }
 
-describe("planCommentDispatch", () => {
-	it("reads a new comment that invokes the phrase", () => {
+describe('planCommentDispatch', () => {
+	it('reads a new comment that invokes the phrase', () => {
 		const plan = planCommentDispatch(commentPayload());
 
 		expect(plan).toEqual({
@@ -125,117 +125,117 @@ describe("planCommentDispatch", () => {
 		});
 	});
 
-	it("marks a comment on a pull request as one", () => {
+	it('marks a comment on a pull request as one', () => {
 		const plan = planCommentDispatch(commentPayload({ pullRequest: true }));
 
 		expect(plan.act && plan.plan.isPullRequest).toBe(true);
 	});
 
-	it.each(["edited", "deleted"])("refuses a %s comment", (action) => {
+	it.each(['edited', 'deleted'])('refuses a %s comment', (action) => {
 		// The sharp one. An `edited` delivery is a comment somebody changed, and
 		// accepting it would mean a year-old comment can be edited into a fresh
 		// request — and edited again, each edit a new delivery id the replay ledger
 		// has no reason to refuse.
-		expect(planCommentDispatch(commentPayload({ action }))).toEqual({ act: false, reason: "not_created" });
+		expect(planCommentDispatch(commentPayload({ action }))).toEqual({ act: false, reason: 'not_created' });
 	});
 
-	it("refuses a comment without the phrase", () => {
-		expect(planCommentDispatch(commentPayload({ body: "looks good to me" }))).toEqual({
+	it('refuses a comment without the phrase', () => {
+		expect(planCommentDispatch(commentPayload({ body: 'looks good to me' }))).toEqual({
 			act: false,
-			reason: "no_trigger_phrase",
+			reason: 'no_trigger_phrase',
 		});
 	});
 
-	it("accepts the phrase in any case, matching the entrypoint it replaces", () => {
+	it('accepts the phrase in any case, matching the entrypoint it replaces', () => {
 		// GitHub expression `contains()` folds case and the harness greps with -i.
 		// A dispatch path that were stricter would silently drop requests the old
 		// trigger accepted.
-		expect(planCommentDispatch(commentPayload({ body: "/BEEP do it" })).act).toBe(true);
+		expect(planCommentDispatch(commentPayload({ body: '/BEEP do it' })).act).toBe(true);
 	});
 
-	it.each([...TRIGGER_PHRASES])("accepts %s at the start, after a space and on a later line", (phrase) => {
+	it.each([...TRIGGER_PHRASES])('accepts %s at the start, after a space and on a later line', (phrase) => {
 		for (const body of [`${phrase} do it`, `please ${phrase}`, `context\r\n${phrase} go`]) {
 			expect(planCommentDispatch(commentPayload({ body })).act).toBe(true);
 		}
 	});
 
-	it("ignores a command inside a word or a URL path", () => {
+	it('ignores a command inside a word or a URL path', () => {
 		for (const body of [
-			"see https://github.com/apps/beepboop-by-kjanat",
-			"kjanat/beepboop#10",
-			"x/boop",
-			"@claude do it",
+			'see https://github.com/apps/beepboop-by-kjanat',
+			'kjanat/beepboop#10',
+			'x/boop',
+			'@claude do it',
 		]) {
 			expect(invokesTrigger(body)).toBe(false);
-			expect(planCommentDispatch(commentPayload({ body }))).toEqual({ act: false, reason: "no_trigger_phrase" });
+			expect(planCommentDispatch(commentPayload({ body }))).toEqual({ act: false, reason: 'no_trigger_phrase' });
 		}
 	});
 
-	it("refuses a comment written by a bot", () => {
+	it('refuses a comment written by a bot', () => {
 		// The exact shape the dispatched session's own completion comment has. This
 		// is the loop, and it is caught on the identity GitHub attaches rather than
 		// on anything the body says.
-		const bot = { login: "claude", type: "Bot" };
+		const bot = { login: 'claude', type: 'Bot' };
 
 		expect(planCommentDispatch(commentPayload({ author: bot, sender: bot }))).toEqual({
 			act: false,
-			reason: "actor_is_not_human",
+			reason: 'actor_is_not_human',
 		});
 	});
 
-	it("refuses a comment whose sender is a bot even when the author looks human", () => {
-		expect(planCommentDispatch(commentPayload({ sender: { login: "some-app", type: "Bot" } })).act).toBe(false);
+	it('refuses a comment whose sender is a bot even when the author looks human', () => {
+		expect(planCommentDispatch(commentPayload({ sender: { login: 'some-app', type: 'Bot' } })).act).toBe(false);
 	});
 
-	it("refuses a comment posted through a GitHub App", () => {
-		expect(planCommentDispatch(commentPayload({ viaApp: { id: 42, slug: "some-app" } }))).toEqual({
+	it('refuses a comment posted through a GitHub App', () => {
+		expect(planCommentDispatch(commentPayload({ viaApp: { id: 42, slug: 'some-app' } }))).toEqual({
 			act: false,
-			reason: "actor_is_not_human",
+			reason: 'actor_is_not_human',
 		});
 	});
 
-	it("accepts a comment whose performed_via_github_app is explicitly null", () => {
+	it('accepts a comment whose performed_via_github_app is explicitly null', () => {
 		// Which is what GitHub sends for an ordinary web-UI comment. Refusing null
 		// as well would refuse every real request.
 		expect(planCommentDispatch(commentPayload({ viaApp: null })).act).toBe(true);
 	});
 
 	it("refuses when the sender is not the comment's author", () => {
-		expect(planCommentDispatch(commentPayload({ sender: { login: "someone-else", type: "User" } }))).toEqual({
+		expect(planCommentDispatch(commentPayload({ sender: { login: 'someone-else', type: 'User' } }))).toEqual({
 			act: false,
-			reason: "unreadable_actor",
+			reason: 'unreadable_actor',
 		});
 	});
 
-	it("accepts a sender spelled with different case than the author", () => {
-		expect(planCommentDispatch(commentPayload({ sender: { login: "KJANAT", type: "User" } })).act).toBe(true);
+	it('accepts a sender spelled with different case than the author', () => {
+		expect(planCommentDispatch(commentPayload({ sender: { login: 'KJANAT', type: 'User' } })).act).toBe(true);
 	});
 
 	it.each([
-		["a missing type", { login: OWNER }],
-		["a login with a slash", { login: "kjanat/x", type: "User" }],
-		["a login that is not a string", { login: 7, type: "User" }],
-		["an empty login", { login: "", type: "User" }],
-		["a login starting with a hyphen", { login: "-kjanat", type: "User" }],
-		["a login over 39 characters", { login: "a".repeat(40), type: "User" }],
-		["a non-object", "kjanat"],
-		["null", null],
-	])("refuses %s as an actor", (_label, author) => {
+		['a missing type', { login: OWNER }],
+		['a login with a slash', { login: 'kjanat/x', type: 'User' }],
+		['a login that is not a string', { login: 7, type: 'User' }],
+		['an empty login', { login: '', type: 'User' }],
+		['a login starting with a hyphen', { login: '-kjanat', type: 'User' }],
+		['a login over 39 characters', { login: 'a'.repeat(40), type: 'User' }],
+		['a non-object', 'kjanat'],
+		['null', null],
+	])('refuses %s as an actor', (_label, author) => {
 		expect(planCommentDispatch(commentPayload({ author, sender: author })).act).toBe(false);
 	});
 
 	it.each([
-		["a missing issue number", { issueNumber: undefined as unknown as number }],
-		["a zero issue number", { issueNumber: 0 }],
-		["a negative issue number", { issueNumber: -1 }],
-		["a string issue number", { issueNumber: "26" }],
-		["a fractional comment id", { commentId: 1.5 }],
-		["a body that is not a string", { body: 42 }],
-	])("refuses %s", (_label, overrides) => {
+		['a missing issue number', { issueNumber: undefined as unknown as number }],
+		['a zero issue number', { issueNumber: 0 }],
+		['a negative issue number', { issueNumber: -1 }],
+		['a string issue number', { issueNumber: '26' }],
+		['a fractional comment id', { commentId: 1.5 }],
+		['a body that is not a string', { body: 42 }],
+	])('refuses %s', (_label, overrides) => {
 		expect(planCommentDispatch(commentPayload(overrides)).act).toBe(false);
 	});
 
-	it.each([undefined, null, "a string", [], {}, { action: "created" }])("refuses the payload %s", (payload) => {
+	it.each([undefined, null, 'a string', [], {}, { action: 'created' }])('refuses the payload %s', (payload) => {
 		expect(planCommentDispatch(payload).act).toBe(false);
 	});
 });
@@ -244,19 +244,19 @@ describe("planCommentDispatch", () => {
 // The configured target
 // ---------------------------------------------------------------------------
 
-describe("requireDispatchTarget", () => {
+describe('requireDispatchTarget', () => {
 	it("returns the operator's workflow and ref", () => {
 		expect(
-			requireDispatchTarget({ GITHUB_APP_DISPATCH_WORKFLOW: " claude.yml ", GITHUB_APP_DISPATCH_REF: " master " }),
+			requireDispatchTarget({ GITHUB_APP_DISPATCH_WORKFLOW: ' claude.yml ', GITHUB_APP_DISPATCH_REF: ' master ' }),
 		).toEqual({ workflow: WORKFLOW, ref: REF });
 	});
 
 	it.each([
-		["neither set", {}],
-		["only the workflow", { GITHUB_APP_DISPATCH_WORKFLOW: WORKFLOW }],
-		["only the ref", { GITHUB_APP_DISPATCH_REF: REF }],
-		["an empty workflow", { GITHUB_APP_DISPATCH_WORKFLOW: "  ", GITHUB_APP_DISPATCH_REF: REF }],
-	])("refuses %s as misconfigured", (_label, config) => {
+		['neither set', {}],
+		['only the workflow', { GITHUB_APP_DISPATCH_WORKFLOW: WORKFLOW }],
+		['only the ref', { GITHUB_APP_DISPATCH_REF: REF }],
+		['an empty workflow', { GITHUB_APP_DISPATCH_WORKFLOW: '  ', GITHUB_APP_DISPATCH_REF: REF }],
+	])('refuses %s as misconfigured', (_label, config) => {
 		// No default, deliberately: a default workflow would be this service picking
 		// which of somebody's workflows a comment may start.
 		let thrown: unknown;
@@ -270,8 +270,8 @@ describe("requireDispatchTarget", () => {
 		expect((thrown as GitHubAppError).misconfigured).toBe(true);
 	});
 
-	it.each(["../../etc/passwd", ".github/workflows/claude.yml", "claude", "claude.txt", "-claude.yml", "claude.yml/x"])(
-		"refuses %s as a workflow name",
+	it.each(['../../etc/passwd', '.github/workflows/claude.yml', 'claude', 'claude.txt', '-claude.yml', 'claude.yml/x'])(
+		'refuses %s as a workflow name',
 		(workflow) => {
 			expect(() =>
 				requireDispatchTarget({ GITHUB_APP_DISPATCH_WORKFLOW: workflow, GITHUB_APP_DISPATCH_REF: REF }),
@@ -279,32 +279,32 @@ describe("requireDispatchTarget", () => {
 		},
 	);
 
-	it.each(["claude.yml", "claude.yaml", "claude-agent.yml", "claude_agent.yml"])("accepts %s", (workflow) => {
+	it.each(['claude.yml', 'claude.yaml', 'claude-agent.yml', 'claude_agent.yml'])('accepts %s', (workflow) => {
 		expect(
 			requireDispatchTarget({ GITHUB_APP_DISPATCH_WORKFLOW: workflow, GITHUB_APP_DISPATCH_REF: REF }).workflow,
 		).toBe(workflow);
 	});
 
-	it.each(["--upload-pack=x", "refs/heads/../x", "", "a b"])("refuses %s as a ref", (ref) => {
+	it.each(['--upload-pack=x', 'refs/heads/../x', '', 'a b'])('refuses %s as a ref', (ref) => {
 		expect(() =>
 			requireDispatchTarget({ GITHUB_APP_DISPATCH_WORKFLOW: WORKFLOW, GITHUB_APP_DISPATCH_REF: ref }),
 		).toThrow(GitHubAppError);
 	});
 
-	it.each(["master", "main", "release/2026-08", "v1.2.3"])("accepts %s as a ref", (ref) => {
+	it.each(['master', 'main', 'release/2026-08', 'v1.2.3'])('accepts %s as a ref', (ref) => {
 		expect(requireDispatchTarget({ GITHUB_APP_DISPATCH_WORKFLOW: WORKFLOW, GITHUB_APP_DISPATCH_REF: ref }).ref).toBe(
 			ref,
 		);
 	});
 });
 
-describe("commentDispatchEnabled", () => {
-	it.each([undefined, "false", "1", "yes", "TRUE", "True", " true"])("stays off for %s", (value) => {
+describe('commentDispatchEnabled', () => {
+	it.each([undefined, 'false', '1', 'yes', 'TRUE', 'True', ' true'])('stays off for %s', (value) => {
 		expect(commentDispatchEnabled(value === undefined ? {} : { GITHUB_APP_COMMENT_DISPATCH: value })).toBe(false);
 	});
 
-	it("is on for exactly true", () => {
-		expect(commentDispatchEnabled({ GITHUB_APP_COMMENT_DISPATCH: "true" })).toBe(true);
+	it('is on for exactly true', () => {
+		expect(commentDispatchEnabled({ GITHUB_APP_COMMENT_DISPATCH: 'true' })).toBe(true);
 	});
 });
 
@@ -314,13 +314,13 @@ describe("commentDispatchEnabled", () => {
 
 /** A client bound to the authorized pair, over a stubbed `fetch`. */
 function clientOver(handler: (request: Request) => Response | Promise<Response>): RepositoryClient {
-	vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+	vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
 		const request = new Request(input as RequestInfo, init as RequestInit);
 		const url = new URL(request.url);
 
-		if (url.pathname.endsWith("/access_tokens")) {
+		if (url.pathname.endsWith('/access_tokens')) {
 			return Promise.resolve(
-				Response.json({ token: "ghs_installation_token", expires_at: new Date(Date.now() + 3_600_000).toISOString() }),
+				Response.json({ token: 'ghs_installation_token', expires_at: new Date(Date.now() + 3_600_000).toISOString() }),
 			);
 		}
 
@@ -335,18 +335,18 @@ function appEnv(overrides: Record<string, unknown> = {}) {
 	return { ...env, ...enabled(`${INSTALLATION}:${REPOSITORY}`), ...overrides } as typeof env;
 }
 
-describe("authorizeActor", () => {
+describe('authorizeActor', () => {
 	beforeEach(() => {
 		vi.restoreAllMocks();
 	});
 
-	it.each(["admin", "write"])("allows %s", async (permission) => {
+	it.each(['admin', 'write'])('allows %s', async (permission) => {
 		const client = clientOver(() => Response.json({ permission, user: { login: OWNER } }));
 
 		await expect(authorizeActor(client, OWNER)).resolves.toEqual({ allowed: true, permission });
 	});
 
-	it.each(["read", "none", "triage", "maintain", "WRITE", "admin,write"])("refuses %s", async (permission) => {
+	it.each(['read', 'none', 'triage', 'maintain', 'WRITE', 'admin,write'])('refuses %s', async (permission) => {
 		// `read` covers triage and `write` covers maintain in this field's legacy
 		// vocabulary, so a literal `maintain` or `triage` is a value GitHub does not
 		// send here — and an unrecognised value is not a grant, because mapping an
@@ -357,18 +357,18 @@ describe("authorizeActor", () => {
 
 		await expect(authorizeActor(client, OWNER)).resolves.toEqual({
 			allowed: false,
-			reason: "actor_not_permitted",
+			reason: 'actor_not_permitted',
 			status: null,
 			// Every one of these is a *body* GitHub sent about this person, so the
 			// detail is `insufficient_permission` even for the literal `none` — the
 			// outsider's `not_a_collaborator` is the 404 path and is tested below.
 			// The one that matters is the value that is not here: an unreadable
 			// answer can never be reported as either.
-			detail: "insufficient_permission",
+			detail: 'insufficient_permission',
 		});
 	});
 
-	it("refuses a real outsider on a repository the App can still see", async () => {
+	it('refuses a real outsider on a repository the App can still see', async () => {
 		// The ordinary case, and the one the 404 disambiguation must not break: a
 		// 404 from the collaborator endpoint is what everybody who has ever
 		// commented on a public repository produces. It is settled — the delivery is
@@ -378,104 +378,104 @@ describe("authorizeActor", () => {
 		const client = clientOver((request) => {
 			const path = new URL(request.url).pathname;
 			paths.push(path);
-			return path.endsWith("/permission")
-				? new Response("{}", { status: 404 })
+			return path.endsWith('/permission')
+				? new Response('{}', { status: 404 })
 				: Response.json({ full_name: REPOSITORY });
 		});
 
-		await expect(authorizeActor(client, "a-stranger")).resolves.toEqual({
+		await expect(authorizeActor(client, 'a-stranger')).resolves.toEqual({
 			allowed: false,
-			reason: "actor_not_permitted",
+			reason: 'actor_not_permitted',
 			status: null,
-			detail: "not_a_collaborator",
+			detail: 'not_a_collaborator',
 		});
 		expect(paths).toEqual([`/repos/${REPOSITORY}/collaborators/a-stranger/permission`, `/repos/${REPOSITORY}`]);
 	});
 
-	it("fails closed when the repository has been removed from the installation", async () => {
+	it('fails closed when the repository has been removed from the installation', async () => {
 		// The blocker this test exists for. `getInstallationToken` still succeeds —
 		// the installation is fine, it just no longer covers this repository — so
 		// the 404 surfaces on the collaborator endpoint and nowhere earlier, wearing
 		// exactly the outsider's clothes. Read as an outsider it would answer *every*
 		// comment, the owner's included, with "the author is not trusted", burn the
 		// delivery id non-retryably, and point the audit row at the wrong party.
-		const client = clientOver(() => new Response("{}", { status: 404 }));
+		const client = clientOver(() => new Response('{}', { status: 404 }));
 
 		await expect(authorizeActor(client, OWNER)).resolves.toEqual({
 			allowed: false,
-			reason: "permission_lookup_failed",
+			reason: 'permission_lookup_failed',
 			status: 404,
-			detail: "repository_not_visible",
+			detail: 'repository_not_visible',
 		});
 	});
 
-	it("fails closed when the visibility question itself cannot be answered", async () => {
+	it('fails closed when the visibility question itself cannot be answered', async () => {
 		// Neither "not a collaborator" nor "the repository is gone" — an unanswerable
 		// second question is still an unanswerable question, and the direction is
 		// the same one every other failure here takes.
 		const client = clientOver((request) =>
-			new URL(request.url).pathname.endsWith("/permission")
-				? new Response("{}", { status: 404 })
-				: new Response("{}", { status: 500 }),
+			new URL(request.url).pathname.endsWith('/permission')
+				? new Response('{}', { status: 404 })
+				: new Response('{}', { status: 500 }),
 		);
 
 		await expect(authorizeActor(client, OWNER)).resolves.toEqual({
 			allowed: false,
-			reason: "permission_lookup_failed",
+			reason: 'permission_lookup_failed',
 			status: 500,
-			detail: "lookup_failed",
+			detail: 'lookup_failed',
 		});
 	});
 
-	it("fails closed when the installation may not read collaborators", async () => {
-		const client = clientOver(() => new Response("{}", { status: 403 }));
+	it('fails closed when the installation may not read collaborators', async () => {
+		const client = clientOver(() => new Response('{}', { status: 403 }));
 
 		await expect(authorizeActor(client, OWNER)).resolves.toEqual({
 			allowed: false,
-			reason: "permission_lookup_failed",
+			reason: 'permission_lookup_failed',
 			status: 403,
-			detail: "lookup_failed",
+			detail: 'lookup_failed',
 		});
 	});
 
-	it("fails closed on an answer about a different user", async () => {
+	it('fails closed on an answer about a different user', async () => {
 		// A renamed account, a redirect, anything. An answer about somebody else is
 		// not an answer, and taking it would authorize this comment with another
 		// account's access.
-		const client = clientOver(() => Response.json({ permission: "admin", user: { login: "someone-else" } }));
+		const client = clientOver(() => Response.json({ permission: 'admin', user: { login: 'someone-else' } }));
 
 		await expect(authorizeActor(client, OWNER)).resolves.toMatchObject({
 			allowed: false,
-			reason: "permission_lookup_failed",
+			reason: 'permission_lookup_failed',
 		});
 	});
 
-	it("allows an answer whose login differs only in case", async () => {
-		const client = clientOver(() => Response.json({ permission: "admin", user: { login: "KJanat" } }));
+	it('allows an answer whose login differs only in case', async () => {
+		const client = clientOver(() => Response.json({ permission: 'admin', user: { login: 'KJanat' } }));
 
 		await expect(authorizeActor(client, OWNER)).resolves.toMatchObject({ allowed: true });
 	});
 
 	it.each([
-		["no permission field", { role_name: "maintain" }],
-		["an empty permission", { permission: "", user: { login: OWNER } }],
-		["a permission that is not a string", { permission: 7, user: { login: OWNER } }],
-	])("fails closed on %s", async (_label, answer) => {
+		['no permission field', { role_name: 'maintain' }],
+		['an empty permission', { permission: '', user: { login: OWNER } }],
+		['a permission that is not a string', { permission: 7, user: { login: OWNER } }],
+	])('fails closed on %s', async (_label, answer) => {
 		// An answer this service cannot read is not an answer, and reading it as
 		// "no permission, carry on" would be carrying on past the gate.
 		const client = clientOver(() => Response.json(answer));
 
 		await expect(authorizeActor(client, OWNER)).resolves.toMatchObject({
-			reason: "permission_lookup_failed",
-			detail: "lookup_failed",
+			reason: 'permission_lookup_failed',
+			detail: 'lookup_failed',
 		});
 	});
 
-	it("asks about the authorized repository and nothing else", async () => {
+	it('asks about the authorized repository and nothing else', async () => {
 		const paths: string[] = [];
 		const client = clientOver((request) => {
 			paths.push(new URL(request.url).pathname);
-			return Response.json({ permission: "admin", user: { login: OWNER } });
+			return Response.json({ permission: 'admin', user: { login: OWNER } });
 		});
 
 		await authorizeActor(client, OWNER);
@@ -487,16 +487,16 @@ describe("authorizeActor", () => {
 		expect(paths).toEqual([`/repos/${REPOSITORY}/collaborators/${OWNER}/permission`]);
 	});
 
-	it("asks the visibility question about the authorized repository", async () => {
+	it('asks the visibility question about the authorized repository', async () => {
 		// Not the payload's repository, and not one taken from the login: the client
 		// has no parameter through which either could be said.
 		const paths: string[] = [];
 		const client = clientOver((request) => {
 			paths.push(new URL(request.url).pathname);
-			return new Response("{}", { status: 404 });
+			return new Response('{}', { status: 404 });
 		});
 
-		await authorizeActor(client, "kjanat");
+		await authorizeActor(client, 'kjanat');
 
 		expect(paths).toEqual([`/repos/${REPOSITORY}/collaborators/kjanat/permission`, `/repos/${REPOSITORY}`]);
 	});
@@ -507,25 +507,25 @@ describe("authorizeActor", () => {
 // ---------------------------------------------------------------------------
 
 /** Hooks that record the order the two boundaries were crossed in. */
-function hooks(budget: "ok" | "limited" | "unavailable" = "ok", hold: "held" | "unavailable" = "held") {
+function hooks(budget: 'ok' | 'limited' | 'unavailable' = 'ok', hold: 'held' | 'unavailable' = 'held') {
 	const order: string[] = [];
 
 	return {
 		order,
 		hooks: {
 			reserveBudget: async () => {
-				order.push("budget");
+				order.push('budget');
 				return budget;
 			},
 			beforeDispatch: async () => {
-				order.push("hold");
+				order.push('hold');
 				return hold;
 			},
 		},
 	};
 }
 
-describe("dispatchCommentRequest", () => {
+describe('dispatchCommentRequest', () => {
 	const plan = { issueNumber: 26, commentId: 99, actor: OWNER, isPullRequest: false };
 
 	beforeEach(() => {
@@ -536,185 +536,185 @@ describe("dispatchCommentRequest", () => {
 		let sent: { path: string; body: unknown } | null = null;
 		const client = clientOver(async (request) => {
 			const url = new URL(request.url);
-			if (url.pathname.endsWith("/permission")) {
-				return Response.json({ permission: "admin", user: { login: OWNER } });
+			if (url.pathname.endsWith('/permission')) {
+				return Response.json({ permission: 'admin', user: { login: OWNER } });
 			}
 			sent = { path: url.pathname, body: await request.json() };
 			return new Response(null, { status: 204 });
 		});
 
 		const { hooks: h, order } = hooks();
-		const result = await dispatchCommentRequest(client, { workflow: WORKFLOW, ref: REF }, plan, "delivery-1", h);
+		const result = await dispatchCommentRequest(client, { workflow: WORKFLOW, ref: REF }, plan, 'delivery-1', h);
 
-		expect(result).toMatchObject({ outcome: "dispatched", workflow: WORKFLOW, ref: REF, retryable: false });
+		expect(result).toMatchObject({ outcome: 'dispatched', workflow: WORKFLOW, ref: REF, retryable: false });
 		expect(sent).toEqual({
 			path: `/repos/${REPOSITORY}/actions/workflows/${WORKFLOW}/dispatches`,
 			body: {
 				ref: REF,
-				inputs: { issue_number: "26", comment_id: "99", requested_by: OWNER, delivery_id: "delivery-1" },
+				inputs: { issue_number: '26', comment_id: '99', requested_by: OWNER, delivery_id: 'delivery-1' },
 			},
 		});
 		// No comment body anywhere in the inputs. A body arriving as a workflow
 		// input is a body one `${{ }}` away from a command line.
-		expect(JSON.stringify(sent)).not.toContain("please do the thing");
+		expect(JSON.stringify(sent)).not.toContain('please do the thing');
 		// Budget first, then the lookup, then the durable hold, then the request.
-		expect(order).toEqual(["budget", "hold"]);
+		expect(order).toEqual(['budget', 'hold']);
 	});
 
-	it("spends the budget before the permission lookup", async () => {
+	it('spends the budget before the permission lookup', async () => {
 		// The lookup is the first GitHub call an arbitrary commenter can cause, so
 		// it is what the budget has to sit in front of. A budget behind it bounds
 		// the dispatches and not the calls.
 		let reached = 0;
 		const client = clientOver(() => {
 			reached += 1;
-			return Response.json({ permission: "admin", user: { login: OWNER } });
+			return Response.json({ permission: 'admin', user: { login: OWNER } });
 		});
 
 		const result = await dispatchCommentRequest(
 			client,
 			{ workflow: WORKFLOW, ref: REF },
 			plan,
-			"d",
-			hooks("limited").hooks,
+			'd',
+			hooks('limited').hooks,
 		);
 
-		expect(result).toMatchObject({ outcome: "failed", reason: "rate_limited", retryable: true });
+		expect(result).toMatchObject({ outcome: 'failed', reason: 'rate_limited', retryable: true });
 		expect(reached).toBe(0);
 	});
 
-	it("stays retryable when the limiter cannot be reached", async () => {
-		const client = clientOver(() => Response.json({ permission: "admin", user: { login: OWNER } }));
+	it('stays retryable when the limiter cannot be reached', async () => {
+		const client = clientOver(() => Response.json({ permission: 'admin', user: { login: OWNER } }));
 
 		await expect(
-			dispatchCommentRequest(client, { workflow: WORKFLOW, ref: REF }, plan, "d", hooks("unavailable").hooks),
-		).resolves.toMatchObject({ reason: "budget_unavailable", retryable: true });
+			dispatchCommentRequest(client, { workflow: WORKFLOW, ref: REF }, plan, 'd', hooks('unavailable').hooks),
+		).resolves.toMatchObject({ reason: 'budget_unavailable', retryable: true });
 	});
 
-	it("does not reach the irreversible boundary when the actor is refused", async () => {
+	it('does not reach the irreversible boundary when the actor is refused', async () => {
 		const { hooks: h, order } = hooks();
-		const client = clientOver(() => Response.json({ permission: "read", user: { login: OWNER } }));
+		const client = clientOver(() => Response.json({ permission: 'read', user: { login: OWNER } }));
 
-		const result = await dispatchCommentRequest(client, { workflow: WORKFLOW, ref: REF }, plan, "d", h);
+		const result = await dispatchCommentRequest(client, { workflow: WORKFLOW, ref: REF }, plan, 'd', h);
 
 		expect(result).toEqual({
-			outcome: "skipped",
-			reason: "actor_not_permitted",
+			outcome: 'skipped',
+			reason: 'actor_not_permitted',
 			retryable: false,
-			detail: "insufficient_permission",
+			detail: 'insufficient_permission',
 		});
-		expect(order).toEqual(["budget"]);
+		expect(order).toEqual(['budget']);
 	});
 
-	it("does not reach the irreversible boundary when the repository is no longer visible", async () => {
+	it('does not reach the irreversible boundary when the repository is no longer visible', async () => {
 		// The 404 that is not about the commenter. It must not spend the delivery,
 		// because the fix is an operator putting the repository back on the
 		// installation and redelivering into it.
 		const { hooks: h, order } = hooks();
-		const client = clientOver(() => new Response("{}", { status: 404 }));
+		const client = clientOver(() => new Response('{}', { status: 404 }));
 
-		const result = await dispatchCommentRequest(client, { workflow: WORKFLOW, ref: REF }, plan, "d", h);
+		const result = await dispatchCommentRequest(client, { workflow: WORKFLOW, ref: REF }, plan, 'd', h);
 
 		expect(result).toEqual({
-			outcome: "failed",
-			reason: "permission_lookup_failed",
+			outcome: 'failed',
+			reason: 'permission_lookup_failed',
 			retryable: true,
 			status: 404,
-			detail: "repository_not_visible",
+			detail: 'repository_not_visible',
 		});
-		expect(order).toEqual(["budget"]);
+		expect(order).toEqual(['budget']);
 	});
 
-	it("dispatches nothing when the delivery could not be held", async () => {
+	it('dispatches nothing when the delivery could not be held', async () => {
 		// The hold has to have *landed*. Dispatching with no durable record that it
 		// happened is the one state in which a redelivery starts a second session,
 		// so an unreachable ledger refuses the dispatch rather than proceeding on a
 		// flag — and refuses it retryably, because nothing left.
 		let reached = 0;
-		const { hooks: h, order } = hooks("ok", "unavailable");
+		const { hooks: h, order } = hooks('ok', 'unavailable');
 		const client = clientOver((request) => {
-			if (new URL(request.url).pathname.endsWith("/permission")) {
-				return Response.json({ permission: "admin", user: { login: OWNER } });
+			if (new URL(request.url).pathname.endsWith('/permission')) {
+				return Response.json({ permission: 'admin', user: { login: OWNER } });
 			}
 			reached += 1;
 			return new Response(null, { status: 204 });
 		});
 
-		const result = await dispatchCommentRequest(client, { workflow: WORKFLOW, ref: REF }, plan, "d", h);
+		const result = await dispatchCommentRequest(client, { workflow: WORKFLOW, ref: REF }, plan, 'd', h);
 
 		expect(result).toEqual({
-			outcome: "failed",
-			reason: "ledger_unavailable",
+			outcome: 'failed',
+			reason: 'ledger_unavailable',
 			retryable: true,
 			status: null,
 			detail: null,
 		});
 		expect(reached).toBe(0);
-		expect(order).toEqual(["budget", "hold"]);
+		expect(order).toEqual(['budget', 'hold']);
 	});
 
-	it("hands the delivery back when GitHub definitely created nothing", async () => {
+	it('hands the delivery back when GitHub definitely created nothing', async () => {
 		// A 4xx is GitHub stating it made no run: an unknown workflow, a ref it is
 		// not on, a permission never granted. All operator-fixable.
 		for (const status of [404, 403, 422]) {
 			const client = clientOver((request) =>
-				new URL(request.url).pathname.endsWith("/permission")
-					? Response.json({ permission: "admin", user: { login: OWNER } })
-					: new Response("{}", { status }),
+				new URL(request.url).pathname.endsWith('/permission')
+					? Response.json({ permission: 'admin', user: { login: OWNER } })
+					: new Response('{}', { status }),
 			);
 
 			await expect(
-				dispatchCommentRequest(client, { workflow: WORKFLOW, ref: REF }, plan, "d", hooks().hooks),
-			).resolves.toMatchObject({ outcome: "failed", reason: "dispatch_refused", retryable: true, status });
+				dispatchCommentRequest(client, { workflow: WORKFLOW, ref: REF }, plan, 'd', hooks().hooks),
+			).resolves.toMatchObject({ outcome: 'failed', reason: 'dispatch_refused', retryable: true, status });
 		}
 	});
 
-	it.each([500, 502, 503])("keeps the delivery spent when GitHub answered %s", async (status) => {
+	it.each([500, 502, 503])('keeps the delivery spent when GitHub answered %s', async (status) => {
 		// A 5xx could have applied. There is no idempotency key on this endpoint, so
 		// the ambiguous direction is at-most-once.
 		const client = clientOver((request) =>
-			new URL(request.url).pathname.endsWith("/permission")
-				? Response.json({ permission: "admin", user: { login: OWNER } })
-				: new Response("{}", { status }),
+			new URL(request.url).pathname.endsWith('/permission')
+				? Response.json({ permission: 'admin', user: { login: OWNER } })
+				: new Response('{}', { status }),
 		);
 
 		await expect(
-			dispatchCommentRequest(client, { workflow: WORKFLOW, ref: REF }, plan, "d", hooks().hooks),
-		).resolves.toMatchObject({ outcome: "failed", reason: "dispatch_unknown", retryable: false, status });
+			dispatchCommentRequest(client, { workflow: WORKFLOW, ref: REF }, plan, 'd', hooks().hooks),
+		).resolves.toMatchObject({ outcome: 'failed', reason: 'dispatch_unknown', retryable: false, status });
 	});
 
-	it("keeps the delivery spent when the answer never came back", async () => {
+	it('keeps the delivery spent when the answer never came back', async () => {
 		// The case the whole ordering exists for: the request left, the answer was
 		// lost. Indistinguishable from a request that never arrived, and resolved
 		// the way that cannot start two agents.
 		const { hooks: h, order } = hooks();
 		const client = clientOver((request) => {
-			if (new URL(request.url).pathname.endsWith("/permission")) {
-				return Response.json({ permission: "admin", user: { login: OWNER } });
+			if (new URL(request.url).pathname.endsWith('/permission')) {
+				return Response.json({ permission: 'admin', user: { login: OWNER } });
 			}
-			throw new Error("connection reset");
+			throw new Error('connection reset');
 		});
 
-		const result = await dispatchCommentRequest(client, { workflow: WORKFLOW, ref: REF }, plan, "d", h);
+		const result = await dispatchCommentRequest(client, { workflow: WORKFLOW, ref: REF }, plan, 'd', h);
 
-		expect(result).toMatchObject({ outcome: "failed", reason: "dispatch_unknown", retryable: false });
+		expect(result).toMatchObject({ outcome: 'failed', reason: 'dispatch_unknown', retryable: false });
 		// The hold was taken before the request left, which is what makes that
 		// answer available at all.
-		expect(order).toEqual(["budget", "hold"]);
+		expect(order).toEqual(['budget', 'hold']);
 	});
 
-	it.each([200, 204])("treats %s as acceptance", async (status) => {
+	it.each([200, 204])('treats %s as acceptance', async (status) => {
 		// GitHub used to answer 204 with no body and now answers 200 with the run it
 		// created. Neither status is asserted to be the one.
 		const client = clientOver((request) =>
-			new URL(request.url).pathname.endsWith("/permission")
-				? Response.json({ permission: "admin", user: { login: OWNER } })
-				: new Response(status === 204 ? null : "{}", { status }),
+			new URL(request.url).pathname.endsWith('/permission')
+				? Response.json({ permission: 'admin', user: { login: OWNER } })
+				: new Response(status === 204 ? null : '{}', { status }),
 		);
 
 		await expect(
-			dispatchCommentRequest(client, { workflow: WORKFLOW, ref: REF }, plan, "d", hooks().hooks),
-		).resolves.toMatchObject({ outcome: "dispatched" });
+			dispatchCommentRequest(client, { workflow: WORKFLOW, ref: REF }, plan, 'd', hooks().hooks),
+		).resolves.toMatchObject({ outcome: 'dispatched' });
 	});
 });
 
@@ -724,48 +724,48 @@ describe("dispatchCommentRequest", () => {
 
 async function generateAppKey(): Promise<string> {
 	const pair = (await crypto.subtle.generateKey(
-		{ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+		{ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
 		true,
-		["sign", "verify"],
+		['sign', 'verify'],
 	)) as CryptoKeyPair;
-	const der = new Uint8Array((await crypto.subtle.exportKey("pkcs8", pair.privateKey)) as ArrayBuffer);
-	let binary = "";
+	const der = new Uint8Array((await crypto.subtle.exportKey('pkcs8', pair.privateKey)) as ArrayBuffer);
+	let binary = '';
 	for (const byte of der) {
 		binary += String.fromCharCode(byte);
 	}
 
-	return `${PKCS8_PRIVATE_BEGIN}\n${btoa(binary).replace(/(.{64})/g, "$1\n")}\n${PKCS8_PRIVATE_END}\n`;
+	return `${PKCS8_PRIVATE_BEGIN}\n${btoa(binary).replace(/(.{64})/g, '$1\n')}\n${PKCS8_PRIVATE_END}\n`;
 }
 
 /** Everything a delivery needs to reach the acting handler. */
 function enabled(allowlist: string) {
 	return {
-		GITHUB_APP_ENABLED: "true",
+		GITHUB_APP_ENABLED: 'true',
 		GITHUB_WEBHOOK_SECRET: SECRET,
 		GITHUB_APP_ALLOWED_REPOSITORIES: allowlist,
-		GITHUB_APP_ID: "123456",
+		GITHUB_APP_ID: '123456',
 		GITHUB_APP_PRIVATE_KEY: APP_PRIVATE_KEY,
 	};
 }
 
 /** The three vars that turn dispatching on. */
 const DISPATCHING = {
-	GITHUB_APP_COMMENT_DISPATCH: "true",
+	GITHUB_APP_COMMENT_DISPATCH: 'true',
 	GITHUB_APP_DISPATCH_WORKFLOW: WORKFLOW,
 	GITHUB_APP_DISPATCH_REF: REF,
 };
 
 async function hmac(body: string): Promise<string> {
 	const key = await crypto.subtle.importKey(
-		"raw",
+		'raw',
 		new TextEncoder().encode(SECRET),
-		{ name: "HMAC", hash: "SHA-256" },
+		{ name: 'HMAC', hash: 'SHA-256' },
 		false,
-		["sign"],
+		['sign'],
 	);
-	const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body)));
+	const mac = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(body)));
 
-	return SIGNATURE_PREFIX + [...mac].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+	return SIGNATURE_PREFIX + [...mac].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 /**
@@ -787,7 +787,7 @@ function stubGitHub(
 ) {
 	const calls: { method: string; path: string; body?: unknown }[] = [];
 
-	vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+	vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
 		const request = new Request(input as RequestInfo, init as RequestInit);
 		const url = new URL(request.url);
 
@@ -795,9 +795,9 @@ function stubGitHub(
 			throw new Error(`off-host request to ${url.origin}`);
 		}
 
-		if (url.pathname.endsWith("/access_tokens")) {
+		if (url.pathname.endsWith('/access_tokens')) {
 			return Response.json({
-				token: "ghs_installation_token",
+				token: 'ghs_installation_token',
 				expires_at: new Date(Date.now() + 3_600_000).toISOString(),
 			});
 		}
@@ -806,28 +806,28 @@ function stubGitHub(
 			throw new Error(`request outside the authorized repository: ${url.pathname}`);
 		}
 
-		const body = request.method === "POST" ? await request.clone().json() : undefined;
+		const body = request.method === 'POST' ? await request.clone().json() : undefined;
 		calls.push({ method: request.method, path: url.pathname, body });
 
 		if (url.pathname === `/repos/${REPOSITORY}`) {
 			// The visibility question, asked only after an ambiguous 404. `visible`
 			// false is the App having been removed from the repository: the token
 			// still mints, and this is where that shows up.
-			return options.visible === false ? new Response("{}", { status: 404 }) : Response.json({ full_name: REPOSITORY });
+			return options.visible === false ? new Response('{}', { status: 404 }) : Response.json({ full_name: REPOSITORY });
 		}
 
-		if (url.pathname.endsWith("/permission")) {
+		if (url.pathname.endsWith('/permission')) {
 			if (options.permissionStatus !== undefined && options.permissionStatus !== 200) {
-				return new Response("{}", { status: options.permissionStatus });
+				return new Response('{}', { status: options.permissionStatus });
 			}
 			// The login is echoed back from the path, as GitHub does. A stub that
 			// always answered about the owner would make the "answered about somebody
 			// else" refusal fire on every non-owner test for the wrong reason.
-			const asked = url.pathname.split("/").at(-2) ?? OWNER;
-			return Response.json({ permission: options.permission ?? "admin", user: { login: asked } });
+			const asked = url.pathname.split('/').at(-2) ?? OWNER;
+			return Response.json({ permission: options.permission ?? 'admin', user: { login: asked } });
 		}
 
-		if (url.pathname.includes("/actions/workflows/")) {
+		if (url.pathname.includes('/actions/workflows/')) {
 			return options.dispatch ? options.dispatch() : new Response(null, { status: 204 });
 		}
 
@@ -836,7 +836,7 @@ function stubGitHub(
 
 	return {
 		calls: () => calls,
-		dispatches: () => calls.filter((call) => call.path.includes("/actions/workflows/")),
+		dispatches: () => calls.filter((call) => call.path.includes('/actions/workflows/')),
 		reset: () => calls.splice(0, calls.length),
 	};
 }
@@ -851,14 +851,14 @@ async function deliverComment(options: {
 	const body = JSON.stringify(options.payload);
 	const ctx = createExecutionContext();
 	const response = await app.fetch(
-		new Request("https://sign.test/github/webhook", {
-			method: "POST",
+		new Request('https://sign.test/github/webhook', {
+			method: 'POST',
 			body,
 			headers: {
-				"Content-Type": "application/json",
-				"X-Hub-Signature-256": await hmac(body),
-				"X-GitHub-Event": "issue_comment",
-				"X-GitHub-Delivery": options.deliveryId ?? crypto.randomUUID(),
+				'Content-Type': 'application/json',
+				'X-Hub-Signature-256': await hmac(body),
+				'X-GitHub-Event': 'issue_comment',
+				'X-GitHub-Delivery': options.deliveryId ?? crypto.randomUUID(),
 			},
 		}),
 		{
@@ -889,8 +889,8 @@ function limiterAnswering(dispatchMeter: () => Response) {
 			idFromName: () => ({}),
 			get: () => ({
 				fetch: (request: Request) => {
-					const identity = new URL(request.url).searchParams.get("identity") ?? "";
-					if (identity.startsWith("github-dispatch:")) {
+					const identity = new URL(request.url).searchParams.get('identity') ?? '';
+					if (identity.startsWith('github-dispatch:')) {
 						return Promise.resolve(dispatchMeter());
 					}
 					return Promise.resolve(Response.json({ allowed: true, remaining: 99, resetAt: Date.now() + 60_000 }));
@@ -900,7 +900,7 @@ function limiterAnswering(dispatchMeter: () => Response) {
 	};
 }
 
-describe("through the endpoint", () => {
+describe('through the endpoint', () => {
 	beforeAll(async () => {
 		// The audit table with the constraint migration 0007 leaves behind. Written
 		// out rather than relaxed to TEXT, so an insert of `comment_dispatch` is
@@ -929,7 +929,7 @@ describe("through the endpoint", () => {
 		vi.restoreAllMocks();
 	});
 
-	it("dispatches for a commenter with write access", async () => {
+	it('dispatches for a commenter with write access', async () => {
 		const github = stubGitHub();
 
 		const { response, body } = await deliverComment({ payload: commentPayload() });
@@ -940,7 +940,7 @@ describe("through the endpoint", () => {
 		expect(github.dispatches()[0]?.body).toMatchObject({ ref: REF });
 	});
 
-	it("makes no GitHub call at all when dispatching is off", async () => {
+	it('makes no GitHub call at all when dispatching is off', async () => {
 		// Not merely "does not dispatch". An upgraded deployment that has not
 		// granted `Actions: write` must behave exactly as it did before, and the
 		// assertion is against the network rather than against the module.
@@ -948,38 +948,38 @@ describe("through the endpoint", () => {
 
 		const { response, body } = await deliverComment({
 			payload: commentPayload(),
-			overrides: { GITHUB_APP_COMMENT_DISPATCH: "false" },
+			overrides: { GITHUB_APP_COMMENT_DISPATCH: 'false' },
 		});
 
 		expect(response.status).toBe(202);
-		expect(body.skipped).toBe("dispatch_disabled");
+		expect(body.skipped).toBe('dispatch_disabled');
 		expect(github.calls()).toHaveLength(0);
 	});
 
-	it("costs a read-only commenter no dispatch and starts nothing", async () => {
-		const github = stubGitHub({ permission: "read" });
+	it('costs a read-only commenter no dispatch and starts nothing', async () => {
+		const github = stubGitHub({ permission: 'read' });
 
 		const { response, body } = await deliverComment({ payload: commentPayload() });
 
 		expect(response.status).toBe(202);
-		expect(body.skipped).toBe("actor_not_permitted");
+		expect(body.skipped).toBe('actor_not_permitted');
 		expect(github.dispatches()).toHaveLength(0);
 		// The lookup happened and nothing else did.
 		expect(github.calls().map((call) => call.path)).toEqual([`/repos/${REPOSITORY}/collaborators/${OWNER}/permission`]);
 	});
 
-	it("costs an outside account nothing beyond the lookup", async () => {
-		const github = stubGitHub({ permission: "none" });
+	it('costs an outside account nothing beyond the lookup', async () => {
+		const github = stubGitHub({ permission: 'none' });
 
 		const { body } = await deliverComment({
-			payload: commentPayload({ author: { login: "a-stranger", type: "User" } }),
+			payload: commentPayload({ author: { login: 'a-stranger', type: 'User' } }),
 		});
 
-		expect(body.skipped).toBe("actor_not_permitted");
+		expect(body.skipped).toBe('actor_not_permitted');
 		expect(github.dispatches()).toHaveLength(0);
 	});
 
-	it("asks GitHub about the authorized repository, not the one the payload names", async () => {
+	it('asks GitHub about the authorized repository, not the one the payload names', async () => {
 		// Cross-repository confusion. The stub throws on any path outside the
 		// allowlisted repository, so a handler that read `payload.repository` would
 		// 500 here rather than pass.
@@ -994,7 +994,7 @@ describe("through the endpoint", () => {
 		expect(github.calls().every((call) => call.path.startsWith(`/repos/${REPOSITORY}/`))).toBe(true);
 	});
 
-	it("refuses a comment about a repository paired with another installation", async () => {
+	it('refuses a comment about a repository paired with another installation', async () => {
 		const github = stubGitHub();
 
 		const { response } = await deliverComment({
@@ -1006,7 +1006,7 @@ describe("through the endpoint", () => {
 		expect(github.calls()).toHaveLength(0);
 	});
 
-	it("refuses a comment about a repository nobody allowlisted", async () => {
+	it('refuses a comment about a repository nobody allowlisted', async () => {
 		const github = stubGitHub();
 
 		const { response } = await deliverComment({
@@ -1018,7 +1018,7 @@ describe("through the endpoint", () => {
 		expect(github.calls()).toHaveLength(0);
 	});
 
-	it("refuses to dispatch when the operator named no workflow", async () => {
+	it('refuses to dispatch when the operator named no workflow', async () => {
 		const github = stubGitHub();
 		const id = crypto.randomUUID();
 
@@ -1038,7 +1038,7 @@ describe("through the endpoint", () => {
 		expect(github.dispatches()).toHaveLength(1);
 	});
 
-	it("answers a repeat without dispatching again", async () => {
+	it('answers a repeat without dispatching again', async () => {
 		const github = stubGitHub();
 		const id = crypto.randomUUID();
 		const payload = commentPayload();
@@ -1052,7 +1052,7 @@ describe("through the endpoint", () => {
 		expect(github.dispatches()).toHaveLength(1);
 	});
 
-	it("dispatches exactly once for concurrent copies of one delivery", async () => {
+	it('dispatches exactly once for concurrent copies of one delivery', async () => {
 		// The case that matters: a double-click on Redeliver, or somebody sending
 		// the same bytes twice on purpose. Two agent sessions on one request is two
 		// sessions pushing to one branch.
@@ -1067,8 +1067,8 @@ describe("through the endpoint", () => {
 		expect(results.filter((result) => result.body.duplicate === true)).toHaveLength(7);
 	});
 
-	it("stays redeliverable after GitHub definitely created nothing", async () => {
-		const github = stubGitHub({ dispatch: () => new Response("{}", { status: 404 }) });
+	it('stays redeliverable after GitHub definitely created nothing', async () => {
+		const github = stubGitHub({ dispatch: () => new Response('{}', { status: 404 }) });
 		const id = crypto.randomUUID();
 
 		const first = await deliverComment({ payload: commentPayload(), deliveryId: id });
@@ -1085,10 +1085,10 @@ describe("through the endpoint", () => {
 		expect(retried.dispatches()).toHaveLength(1);
 	});
 
-	it("does not re-dispatch after an answer was lost", async () => {
+	it('does not re-dispatch after an answer was lost', async () => {
 		const github = stubGitHub({
 			dispatch: () => {
-				throw new Error("connection reset");
+				throw new Error('connection reset');
 			},
 		});
 		const id = crypto.randomUUID();
@@ -1105,13 +1105,13 @@ describe("through the endpoint", () => {
 		expect(retried.dispatches()).toHaveLength(0);
 	});
 
-	it("stays redeliverable when the actor lookup could not be made", async () => {
-		vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+	it('stays redeliverable when the actor lookup could not be made', async () => {
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
 			const url = new URL(new Request(input as RequestInfo, init as RequestInit).url);
-			if (url.pathname.endsWith("/access_tokens")) {
-				return Response.json({ token: "t", expires_at: new Date(Date.now() + 3_600_000).toISOString() });
+			if (url.pathname.endsWith('/access_tokens')) {
+				return Response.json({ token: 't', expires_at: new Date(Date.now() + 3_600_000).toISOString() });
 			}
-			return new Response("{}", { status: 500 });
+			return new Response('{}', { status: 500 });
 		});
 		const id = crypto.randomUUID();
 
@@ -1126,7 +1126,7 @@ describe("through the endpoint", () => {
 		expect(retried.dispatches()).toHaveLength(1);
 	});
 
-	it("stays redeliverable when the repository is over its dispatch budget", async () => {
+	it('stays redeliverable when the repository is over its dispatch budget', async () => {
 		const github = stubGitHub();
 		const id = crypto.randomUUID();
 
@@ -1147,25 +1147,25 @@ describe("through the endpoint", () => {
 		expect(github.dispatches()).toHaveLength(1);
 	});
 
-	it("fails closed and stays redeliverable when the limiter is unreachable", async () => {
+	it('fails closed and stays redeliverable when the limiter is unreachable', async () => {
 		const github = stubGitHub();
 
 		const { response } = await deliverComment({
 			payload: commentPayload(),
-			overrides: limiterAnswering(() => new Response("boom", { status: 500 })),
+			overrides: limiterAnswering(() => new Response('boom', { status: 500 })),
 		});
 
 		expect(response.status).toBe(500);
 		expect(github.calls()).toHaveLength(0);
 	});
 
-	it("meters dispatches in a bucket of their own", () => {
+	it('meters dispatches in a bucket of their own', () => {
 		// Disjoint from the signing budget and from the per-IP webhook meter, and
 		// built entirely from the authorization decision so a payload cannot move
 		// itself into a fresh bucket.
 		const identity = dispatchBudgetIdentity(grant());
 
-		expect(identity).toContain("github-dispatch:");
+		expect(identity).toContain('github-dispatch:');
 		expect(identity).toContain(String(INSTALLATION));
 		expect(identity).toContain(REPOSITORY);
 	});
@@ -1174,23 +1174,23 @@ describe("through the endpoint", () => {
 		// End to end, through the pipeline, with the exact payload the dispatched
 		// run's `gh issue comment` produces. This is the loop.
 		const github = stubGitHub();
-		const bot = { login: "claude", type: "Bot" };
+		const bot = { login: 'claude', type: 'Bot' };
 
 		const { response, body } = await deliverComment({
 			payload: commentPayload({
 				author: bot,
 				sender: bot,
 				body: "**Claude finished @kjanat's task** — see /beep above",
-				viaApp: { id: 1, slug: "claude" },
+				viaApp: { id: 1, slug: 'claude' },
 			}),
 		});
 
 		expect(response.status).toBe(202);
-		expect(body.skipped).toBe("actor_is_not_human");
+		expect(body.skipped).toBe('actor_is_not_human');
 		expect(github.calls()).toHaveLength(0);
 	});
 
-	it("starts nothing for a delivery that names no repository", async () => {
+	it('starts nothing for a delivery that names no repository', async () => {
 		// `installation` scope: the delivery names an allowlisted installation and
 		// no repository, so there is no pair and no client to build. GitHub does not
 		// send an `issue_comment` shaped like this, and a signed payload can be —
@@ -1203,11 +1203,11 @@ describe("through the endpoint", () => {
 		const { response, body } = await deliverComment({ payload });
 
 		expect(response.status).toBe(202);
-		expect(body.skipped).toBe("not_repository_scope");
+		expect(body.skipped).toBe('not_repository_scope');
 		expect(github.calls()).toHaveLength(0);
 	});
 
-	it("dispatches for a comment on a pull request and records it as one", async () => {
+	it('dispatches for a comment on a pull request and records it as one', async () => {
 		stubGitHub();
 
 		const { body } = await deliverComment({ payload: commentPayload({ pullRequest: true }) });
@@ -1218,25 +1218,25 @@ describe("through the endpoint", () => {
 			"SELECT metadata FROM audit_logs WHERE action = 'comment_dispatch' ORDER BY rowid DESC LIMIT 1",
 		).first<{ metadata: string }>();
 
-		expect(JSON.parse(row?.metadata ?? "{}")).toMatchObject({ pullRequest: true });
+		expect(JSON.parse(row?.metadata ?? '{}')).toMatchObject({ pullRequest: true });
 	});
 
-	it("starts nothing for an edited comment", async () => {
+	it('starts nothing for an edited comment', async () => {
 		const github = stubGitHub();
 
-		const { body } = await deliverComment({ payload: commentPayload({ action: "edited" }) });
+		const { body } = await deliverComment({ payload: commentPayload({ action: 'edited' }) });
 
-		expect(body.skipped).toBe("not_created");
+		expect(body.skipped).toBe('not_created');
 		expect(github.calls()).toHaveLength(0);
 	});
 
-	it("never puts the installation token in the response", async () => {
+	it('never puts the installation token in the response', async () => {
 		stubGitHub();
 
 		const { text } = await deliverComment({ payload: commentPayload() });
 
-		expect(text).not.toContain("ghs_installation_token");
-		expect(text).not.toContain("PRIVATE KEY");
+		expect(text).not.toContain('ghs_installation_token');
+		expect(text).not.toContain('PRIVATE KEY');
 	});
 
 	// -------------------------------------------------------------------------
@@ -1245,7 +1245,7 @@ describe("through the endpoint", () => {
 
 	/** The delivery ledger's record for `id`, read straight out of storage. */
 	async function ledgerRecord(id: string) {
-		const stub = env.WEBHOOK_DELIVERIES.get(env.WEBHOOK_DELIVERIES.idFromName("deliveries"));
+		const stub = env.WEBHOOK_DELIVERIES.get(env.WEBHOOK_DELIVERIES.idFromName('deliveries'));
 
 		return await runInDurableObject(stub, async (_instance: WebhookDeliveries, state) =>
 			state.storage.get<{ firstSeen: number; expiresAt: number; committed: boolean; held?: boolean }>(`d:${id}`),
@@ -1254,7 +1254,7 @@ describe("through the endpoint", () => {
 
 	/** Put a record back exactly as it was, which is what "the settle never ran" leaves. */
 	async function restoreLedgerRecord(id: string, record: unknown) {
-		const stub = env.WEBHOOK_DELIVERIES.get(env.WEBHOOK_DELIVERIES.idFromName("deliveries"));
+		const stub = env.WEBHOOK_DELIVERIES.get(env.WEBHOOK_DELIVERIES.idFromName('deliveries'));
 
 		await runInDurableObject(stub, async (_instance: WebhookDeliveries, state) => {
 			await state.storage.put(`d:${id}`, record);
@@ -1267,12 +1267,12 @@ describe("through the endpoint", () => {
 		// readable. A redelivery reaches the same answer, so the id stays spent.
 		const github = stubGitHub({ permissionStatus: 404, visible: true });
 		const id = crypto.randomUUID();
-		const payload = commentPayload({ author: { login: "a-stranger", type: "User" } });
+		const payload = commentPayload({ author: { login: 'a-stranger', type: 'User' } });
 
 		const { response, body } = await deliverComment({ payload, deliveryId: id });
 
 		expect(response.status).toBe(202);
-		expect(body.skipped).toBe("actor_not_permitted");
+		expect(body.skipped).toBe('actor_not_permitted');
 		expect(github.dispatches()).toHaveLength(0);
 		expect(github.calls().map((call) => call.path)).toEqual([
 			`/repos/${REPOSITORY}/collaborators/a-stranger/permission`,
@@ -1286,14 +1286,14 @@ describe("through the endpoint", () => {
 		const row = await env.AUDIT_DB.prepare(
 			"SELECT error_code, metadata FROM audit_logs WHERE action = 'comment_dispatch' ORDER BY rowid DESC LIMIT 1",
 		).first<{ error_code: string; metadata: string }>();
-		expect(row?.error_code).toBe("AUTH_SUBJECT_UNTRUSTED");
-		expect(JSON.parse(row?.metadata ?? "{}")).toMatchObject({
-			reason: "actor_not_permitted",
-			detail: "not_a_collaborator",
+		expect(row?.error_code).toBe('AUTH_SUBJECT_UNTRUSTED');
+		expect(JSON.parse(row?.metadata ?? '{}')).toMatchObject({
+			reason: 'actor_not_permitted',
+			detail: 'not_a_collaborator',
 		});
 	});
 
-	it("does not burn the delivery when the repository has been removed from the installation", async () => {
+	it('does not burn the delivery when the repository has been removed from the installation', async () => {
 		// **The blocker.** The same 404, wearing the same clothes, meaning something
 		// else entirely: the App can no longer see this repository, so *every*
 		// comment — the owner's included — would otherwise be answered "the author
@@ -1306,16 +1306,16 @@ describe("through the endpoint", () => {
 		const { response, body } = await deliverComment({ payload: commentPayload(), deliveryId: id });
 
 		expect(response.status).toBe(500);
-		expect(body.code).toBe("INTERNAL_ERROR");
+		expect(body.code).toBe('INTERNAL_ERROR');
 		expect(github.dispatches()).toHaveLength(0);
 
 		// The audit row names the installation's problem rather than the author's.
 		const row = await env.AUDIT_DB.prepare(
 			"SELECT error_code, metadata FROM audit_logs WHERE action = 'comment_dispatch' ORDER BY rowid DESC LIMIT 1",
 		).first<{ error_code: string; metadata: string }>();
-		expect(JSON.parse(row?.metadata ?? "{}")).toMatchObject({
-			reason: "permission_lookup_failed",
-			detail: "repository_not_visible",
+		expect(JSON.parse(row?.metadata ?? '{}')).toMatchObject({
+			reason: 'permission_lookup_failed',
+			detail: 'repository_not_visible',
 			status: 404,
 			retryable: true,
 		});
@@ -1330,7 +1330,7 @@ describe("through the endpoint", () => {
 		expect(repaired.dispatches()).toHaveLength(1);
 	});
 
-	it("has already recorded the delivery durably by the time the dispatch leaves", async () => {
+	it('has already recorded the delivery durably by the time the dispatch leaves', async () => {
 		// The other blocker, asserted where it lives: *during* the outbound POST,
 		// not after the response. A boundary that only set a flag on the request
 		// context would show a five-minute reservation here — and an isolate evicted
@@ -1341,11 +1341,11 @@ describe("through the endpoint", () => {
 		const github = stubGitHub({
 			dispatch: () => new Response(null, { status: 204 }),
 		});
-		const inspect = vi.spyOn(globalThis, "fetch");
+		const inspect = vi.spyOn(globalThis, 'fetch');
 		const underlying = inspect.getMockImplementation();
 		inspect.mockImplementation(async (input, init) => {
 			const url = new URL(new Request(input as RequestInfo, init as RequestInit).url);
-			if (url.pathname.includes("/actions/workflows/")) {
+			if (url.pathname.includes('/actions/workflows/')) {
 				atDispatch = await ledgerRecord(id);
 			}
 			return (await underlying?.(input, init)) as Response;
@@ -1362,7 +1362,7 @@ describe("through the endpoint", () => {
 		expect(atDispatch?.expiresAt).toBeGreaterThan(Date.now() + DELIVERY_RETENTION_MS - 60_000);
 	});
 
-	it("cannot be made to dispatch twice by a settlement that never landed", async () => {
+	it('cannot be made to dispatch twice by a settlement that never landed', async () => {
 		// Process death after the irreversible boundary, simulated exactly: the
 		// ledger is rolled back to the state the hold left it in — which is what an
 		// isolate evicted between the POST and the guard's `finally` would leave —
@@ -1370,11 +1370,11 @@ describe("through the endpoint", () => {
 		let held: unknown;
 		const id = crypto.randomUUID();
 		const github = stubGitHub();
-		const inspect = vi.spyOn(globalThis, "fetch");
+		const inspect = vi.spyOn(globalThis, 'fetch');
 		const underlying = inspect.getMockImplementation();
 		inspect.mockImplementation(async (input, init) => {
 			const url = new URL(new Request(input as RequestInfo, init as RequestInit).url);
-			if (url.pathname.includes("/actions/workflows/")) {
+			if (url.pathname.includes('/actions/workflows/')) {
 				held = await ledgerRecord(id);
 			}
 			return (await underlying?.(input, init)) as Response;
@@ -1396,13 +1396,13 @@ describe("through the endpoint", () => {
 		expect(redelivered.calls()).toHaveLength(0);
 	});
 
-	it("hands the delivery back when GitHub answered a definite 4xx after the hold", async () => {
+	it('hands the delivery back when GitHub answered a definite 4xx after the hold', async () => {
 		// The one answer that reopens a held id: GitHub stating it created nothing.
 		// Asserted against the ledger as well as against the retry, because "the
 		// record is gone" and "a redelivery dispatched" are two different claims and
 		// only both together mean the release happened rather than the record having
 		// never been written.
-		const github = stubGitHub({ dispatch: () => new Response("{}", { status: 422 }) });
+		const github = stubGitHub({ dispatch: () => new Response('{}', { status: 422 }) });
 		const id = crypto.randomUUID();
 
 		const first = await deliverComment({ payload: commentPayload(), deliveryId: id });
@@ -1419,11 +1419,11 @@ describe("through the endpoint", () => {
 		expect(repaired.dispatches()).toHaveLength(1);
 	});
 
-	it("leaves a 5xx spent, with the record it wrote before the request", async () => {
+	it('leaves a 5xx spent, with the record it wrote before the request', async () => {
 		// The ambiguous direction. GitHub may have created the run, so the id stays
 		// spent — and it is spent by a *committed* record, which release cannot
 		// touch even if something later tried.
-		const github = stubGitHub({ dispatch: () => new Response("{}", { status: 503 }) });
+		const github = stubGitHub({ dispatch: () => new Response('{}', { status: 503 }) });
 		const id = crypto.randomUUID();
 
 		const first = await deliverComment({ payload: commentPayload(), deliveryId: id });
@@ -1440,7 +1440,7 @@ describe("through the endpoint", () => {
 		expect(redelivered.dispatches()).toHaveLength(0);
 	});
 
-	it("dispatches nothing when the delivery could not be held", async () => {
+	it('dispatches nothing when the delivery could not be held', async () => {
 		// An unreachable ledger at the boundary refuses the dispatch outright. The
 		// reservation is still in place, so the response is a retryable failure and
 		// no run was started on a delivery nothing had recorded.
@@ -1452,8 +1452,8 @@ describe("through the endpoint", () => {
 					idFromName: () => ({}),
 					get: () => ({
 						fetch: (request: Request) =>
-							new URL(request.url).pathname === "/hold"
-								? Promise.reject(new Error("ledger down"))
+							new URL(request.url).pathname === '/hold'
+								? Promise.reject(new Error('ledger down'))
 								: Promise.resolve(Response.json({ reserved: true, firstSeen: Date.now(), committed: false })),
 					}),
 				},
@@ -1464,16 +1464,16 @@ describe("through the endpoint", () => {
 		expect(github.dispatches()).toHaveLength(0);
 	});
 
-	it("audits the refusal that stops the loop", async () => {
+	it('audits the refusal that stops the loop', async () => {
 		// `actor_is_not_human` is rare by construction — it only fires on a comment
 		// that *does* invoke the phrase — and it is the App recognising its own
 		// completion comment. The Actions run list shows what ran and never what was
 		// declined, so this row is the only place that refusal exists.
 		stubGitHub();
-		const bot = { login: "claude", type: "Bot" };
+		const bot = { login: 'claude', type: 'Bot' };
 
 		await deliverComment({
-			payload: commentPayload({ author: bot, sender: bot, body: "/beep done", viaApp: { id: 1, slug: "claude" } }),
+			payload: commentPayload({ author: bot, sender: bot, body: '/beep done', viaApp: { id: 1, slug: 'claude' } }),
 		});
 
 		const row = await env.AUDIT_DB.prepare(
@@ -1482,11 +1482,11 @@ describe("through the endpoint", () => {
 
 		expect(row?.subject).toBe(REPOSITORY);
 		expect(row?.success).toBe(0);
-		expect(row?.error_code).toBe("AUTH_SUBJECT_UNTRUSTED");
-		expect(JSON.parse(row?.metadata ?? "{}")).toEqual({ reason: "actor_is_not_human" });
+		expect(row?.error_code).toBe('AUTH_SUBJECT_UNTRUSTED');
+		expect(JSON.parse(row?.metadata ?? '{}')).toEqual({ reason: 'actor_is_not_human' });
 	});
 
-	it("writes no row for the weather", async () => {
+	it('writes no row for the weather', async () => {
 		// A comment with no trigger phrase in it is not an event. A row per one of
 		// those would be a D1 write per comment on the repository, which is the
 		// volume argument that does not apply to the two refusals above.
@@ -1495,7 +1495,7 @@ describe("through the endpoint", () => {
 			"SELECT COUNT(*) AS n FROM audit_logs WHERE action = 'comment_dispatch'",
 		).first<{ n: number }>();
 
-		await deliverComment({ payload: commentPayload({ body: "looks good to me" }) });
+		await deliverComment({ payload: commentPayload({ body: 'looks good to me' }) });
 
 		const after = await env.AUDIT_DB.prepare(
 			"SELECT COUNT(*) AS n FROM audit_logs WHERE action = 'comment_dispatch'",
@@ -1504,7 +1504,7 @@ describe("through the endpoint", () => {
 		expect(after?.n).toBe(before?.n);
 	});
 
-	it("writes one comment_dispatch row per decision", async () => {
+	it('writes one comment_dispatch row per decision', async () => {
 		stubGitHub();
 		const before = await env.AUDIT_DB.prepare(
 			"SELECT COUNT(*) AS n FROM audit_logs WHERE action = 'comment_dispatch'",
@@ -1519,11 +1519,11 @@ describe("through the endpoint", () => {
 		expect(after?.subject).toBe(REPOSITORY);
 		// No key is involved in dispatching, which is a different statement from
 		// admin's "a key was involved and we could not name it".
-		expect(after?.key_id).toBe("none");
+		expect(after?.key_id).toBe('none');
 		expect(after?.success).toBe(1);
-		expect(JSON.parse(after?.metadata ?? "{}")).toMatchObject({ workflow: WORKFLOW, ref: REF, actor: OWNER });
+		expect(JSON.parse(after?.metadata ?? '{}')).toMatchObject({ workflow: WORKFLOW, ref: REF, actor: OWNER });
 		// And the metadata carries nothing it should not.
-		expect(after?.metadata).not.toContain("ghs_");
+		expect(after?.metadata).not.toContain('ghs_');
 		expect(before).toBeTruthy();
 	});
 });

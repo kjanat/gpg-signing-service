@@ -16,7 +16,7 @@ work — and repairs the toolchain if the environment was never configured.
 
 ## What a bare cloud session gets wrong
 
-Cloud VMs ship Ubuntu 24.04 with `bun`, `go`, `node`, `dprint`, `jq`, and
+Cloud VMs ship Ubuntu 24.04 with `bun`, `go`, `node`, `jq`, and
 `golangci-lint` preinstalled. Four things still break:
 
 1. **`task` and `mise` are not installed.** `CLAUDE.md` requires every command
@@ -42,8 +42,8 @@ Cloud VMs ship Ubuntu 24.04 with `bun`, `go`, `node`, `dprint`, `jq`, and
    golangci-lint is lower than the targeted Go version (1.27)
    ```
 
-   This breaks more than Go linting: `task format` and `dprint fmt` shell out
-   to `golangci-lint` for `.go` files, so _formatting the whole repo fails_,
+   This breaks more than Go linting: `task format` and `kprint fmt` shell out
+   to `golangci-lint` for `.go` files, so *formatting the whole repo fails*,
    including on files that have nothing to do with Go.
 
    **A binary being on `PATH` therefore proves nothing here** — the base image
@@ -62,7 +62,7 @@ Cloud VMs ship Ubuntu 24.04 with `bun`, `go`, `node`, `dprint`, `jq`, and
 
    `.mise.toml` asks mise for a prebuilt `golangci-lint`, which today resolves
    to a binary compiled with a current Go, so once mise is installed and its
-   shims are on `PATH` this resolves itself. Nothing _holds_ that, though — the
+   shims are on `PATH` this resolves itself. Nothing *holds* that, though — the
    entry is `latest` and there is no `mise.lock` — so pin an exact version there
    if the mismatch ever comes back.
 
@@ -70,7 +70,7 @@ Cloud VMs ship Ubuntu 24.04 with `bun`, `go`, `node`, `dprint`, `jq`, and
    supply a usable binary and it has to be built locally.
 
    There, reinstalling is not enough on its own. A plain `go install` builds
-   golangci-lint with the Go version _its own_ `go.mod` asks for — currently
+   golangci-lint with the Go version *its own* `go.mod` asks for — currently
    older than ours — reproducing the same error. The build has to be pinned to
    the toolchain this repo targets.
 
@@ -92,7 +92,7 @@ Cloud VMs ship Ubuntu 24.04 with `bun`, `go`, `node`, `dprint`, `jq`, and
    backends are both GitHub-API-backed (`cargo-binstall` exits 94; with
    `binstall_only = true` there is no compile fallback), so `cargo:runner-run`
    never lands and `task typecheck`, `task lint` and `task format` all break.
-   Provisioning runs on a network where that API _is_ reachable, which is
+   Provisioning runs on a network where that API *is* reachable, which is
    exactly why the session must inherit its work rather than repeat it.
 
    The fix is `MISE_DATA_DIR`, set in the environment-variables box below so
@@ -200,9 +200,9 @@ curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh || true
 # hook report a missing tool instead of installing it.)
 session_user="$(stat -c %U /home/* 2>/dev/null | grep -v '^root$' | head -1)"
 if [ -n "$session_user" ]; then
-	chown -R "$session_user" "$MISE_DATA_DIR" || true
+  chown -R "$session_user" "$MISE_DATA_DIR" || true
 else
-	chmod -R a+rwX "$MISE_DATA_DIR" || true
+  chmod -R a+rwX "$MISE_DATA_DIR" || true
 fi
 
 # Fallbacks, in case the mise install above did not take. Harmless when it did.
@@ -221,15 +221,15 @@ command -v task >/dev/null 2>&1 || npm install -g @go-task/cli || true
 # rebuild is pointless, because go install would use golangci-lint's own older
 # toolchain.
 (cd "$repo/client" && golangci-lint config path --config=.golangci.yml) \
-	>/dev/null 2>&1 \
-	|| GOBIN=/usr/local/bin go install \
-		github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2 || true
+  >/dev/null 2>&1 \
+  || GOBIN=/usr/local/bin go install \
+    github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2 || true
 
 # Optional: the released gpg-sign CLI. Use the direct download URL — the
 # releases API returns 403 through the proxy, but the asset URL itself is fine.
 curl -sSLf -o /usr/local/bin/gpg-sign \
-	https://github.com/kjanat/gpg-signing-service/releases/latest/download/gpg-sign-linux-amd64 \
-	&& chmod +x /usr/local/bin/gpg-sign || true
+  https://github.com/kjanat/gpg-signing-service/releases/latest/download/gpg-sign-linux-amd64 \
+  && chmod +x /usr/local/bin/gpg-sign || true
 
 exit 0
 ```
@@ -244,7 +244,7 @@ Budget roughly 60 seconds when mise succeeds, or 90 when the fallback
 golangci-lint build runs. Either is well inside the five-minute limit, and it
 only runs when the cache is cold.
 
-### What the hook does _not_ redo
+### What the hook does *not* redo
 
 The hook checks each tool with `mise which` and runs `mise install` only for the
 ones actually missing. That is deliberate: the session cannot reach
@@ -260,7 +260,7 @@ that warning, the fix belongs in this setup script, not in the hook.
 The snapshot is rebuilt when you edit the setup script or the allowed-domain
 list, and when the cache expires after about seven days. Resuming an existing
 session never re-runs it. The snapshot keeps files, not processes — so anything
-that needs to be _running_ has to start per session.
+that needs to be *running* has to start per session.
 
 ## Network access
 

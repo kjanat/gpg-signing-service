@@ -62,12 +62,12 @@
  * behaviour is the permissive one.
  */
 
-import type { KeyId, WebhookAuthorization } from "#types";
-import { createKeyId, isKeyIdShaped } from "#types";
-import { GitHubAppError } from "#utils/github-app";
+import type { KeyId, WebhookAuthorization } from '#types';
+import { createKeyId, isKeyIdShaped } from '#types';
+import { GitHubAppError } from '#utils/github-app';
 
 /** The variable an operator writes the allowlist into. */
-export const ALLOWLIST_VAR = "GITHUB_APP_ALLOWED_REPOSITORIES";
+export const ALLOWLIST_VAR = 'GITHUB_APP_ALLOWED_REPOSITORIES';
 
 /**
  * One `<installation, repository>` grant.
@@ -107,7 +107,7 @@ interface AllowlistEntry {
  * characters at most. Nothing conservative is given up here — this *is*
  * GitHub's rule — so a login this refuses is not a login.
  */
-const OWNER_SEGMENT = "[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})";
+const OWNER_SEGMENT = '[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})';
 
 /**
  * The same rule, anchored, for validating a login on its own.
@@ -131,7 +131,7 @@ export const LOGIN_PATTERN = new RegExp(`^${OWNER_SEGMENT}$`);
  * The value still reaches a URL path, which is why that exclusion is here and
  * not left to the caller.
  */
-const REPO_SEGMENT = "(?!\\.{1,2}(?:$|/))[A-Za-z0-9._-]{1,100}";
+const REPO_SEGMENT = '(?!\\.{1,2}(?:$|/))[A-Za-z0-9._-]{1,100}';
 
 /** `owner/repo`, anchored. */
 const FULL_NAME_PATTERN = new RegExp(`^${OWNER_SEGMENT}/${REPO_SEGMENT}$`);
@@ -160,9 +160,9 @@ export function parseRepositoryAllowlist(raw: string | undefined): AllowlistEntr
 
 	const entries: AllowlistEntry[] = [];
 
-	for (const piece of raw.split(",")) {
+	for (const piece of raw.split(',')) {
 		const entry = piece.trim();
-		if (entry === "") {
+		if (entry === '') {
 			// A trailing comma, or a line an operator broke across two. Skipped
 			// rather than refused: it grants nothing and means nothing, so failing
 			// on it would be a deployment broken by whitespace.
@@ -174,7 +174,7 @@ export function parseRepositoryAllowlist(raw: string | undefined): AllowlistEntr
 		// grammar". Neither `owner` nor `repo` may contain `=`, so the first one
 		// is the separator wherever it appears — a second `=` lands inside the key
 		// text and is refused there, named as a key problem, which is what it is.
-		const separator = entry.indexOf("=");
+		const separator = entry.indexOf('=');
 		const pairText = separator === -1 ? entry : entry.slice(0, separator);
 		const keyText = separator === -1 ? null : entry.slice(separator + 1);
 
@@ -257,7 +257,7 @@ interface DeliverySubject {
 
 /** Is `value` a JSON object (and not null, and not an array)? */
 function isObject(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -285,7 +285,7 @@ export function deliverySubject(payload: unknown): DeliverySubject {
 	let installationId: number | null = null;
 	if (isObject(installation)) {
 		const id = installation.id;
-		installationId = typeof id === "number" && Number.isSafeInteger(id) && id > 0 ? id : null;
+		installationId = typeof id === 'number' && Number.isSafeInteger(id) && id > 0 ? id : null;
 	}
 
 	const repository = payload.repository;
@@ -293,7 +293,7 @@ export function deliverySubject(payload: unknown): DeliverySubject {
 	let repositoryFullName: string | null = null;
 	if (isObject(repository)) {
 		const fullName = repository.full_name;
-		repositoryFullName = typeof fullName === "string" && isRepositoryFullName(fullName) ? fullName : null;
+		repositoryFullName = typeof fullName === 'string' && isRepositoryFullName(fullName) ? fullName : null;
 	}
 
 	return { installationPresent, installationId, repositoryPresent, repositoryFullName };
@@ -302,15 +302,15 @@ export function deliverySubject(payload: unknown): DeliverySubject {
 /** Why a delivery was refused. Logged; never sent to the caller in this detail. */
 export type AuthorizationRefusal =
 	/** An `installation` object whose id is missing, negative, or not a number. */
-	| "installation_unreadable"
+	| 'installation_unreadable'
 	/** A `repository` object with no usable `full_name`. */
-	| "repository_unnameable"
+	| 'repository_unnameable'
 	/** A repository-scoped delivery that names no installation to scope it to. */
-	| "repository_without_installation"
+	| 'repository_without_installation'
 	/** The `<installation, repository>` pair is not on the allowlist. */
-	| "pair_not_allowed"
+	| 'pair_not_allowed'
 	/** The installation appears in no allowlist entry. */
-	| "installation_not_allowed";
+	| 'installation_not_allowed';
 
 /** Authorized, with the scope; or refused, with the reason. */
 export type AuthorizationDecision =
@@ -334,12 +334,12 @@ export function authorizeDelivery(allowlist: readonly AllowlistEntry[], payload:
 	// unscoped branch and be accepted, which reads as harmless right up until a
 	// handler decides that an accepted delivery is one it may act on.
 	if (subject.installationPresent && subject.installationId === null) {
-		return { allowed: false, reason: "installation_unreadable" };
+		return { allowed: false, reason: 'installation_unreadable' };
 	}
 
 	if (subject.repositoryPresent) {
 		if (subject.repositoryFullName === null) {
-			return { allowed: false, reason: "repository_unnameable" };
+			return { allowed: false, reason: 'repository_unnameable' };
 		}
 
 		// Every delivery from an installed App carries `installation`. One that
@@ -347,7 +347,7 @@ export function authorizeDelivery(allowlist: readonly AllowlistEntry[], payload:
 		// App, whatever its signature says — and there is no installation to scope
 		// the grant to, so there is nothing to authorize it against.
 		if (subject.installationId === null) {
-			return { allowed: false, reason: "repository_without_installation" };
+			return { allowed: false, reason: 'repository_without_installation' };
 		}
 
 		const wanted = subject.repositoryFullName.toLowerCase();
@@ -356,13 +356,13 @@ export function authorizeDelivery(allowlist: readonly AllowlistEntry[], payload:
 		);
 
 		if (grant === undefined) {
-			return { allowed: false, reason: "pair_not_allowed" };
+			return { allowed: false, reason: 'pair_not_allowed' };
 		}
 
 		return {
 			allowed: true,
 			authorization: {
-				scope: "repository",
+				scope: 'repository',
 				installationId: grant.installationId,
 				// The operator's spelling, not `subject.repositoryFullName`. See the
 				// module comment: the payload does not get to name its own subject,
@@ -381,7 +381,7 @@ export function authorizeDelivery(allowlist: readonly AllowlistEntry[], payload:
 		const known = allowlist.some((entry) => entry.installationId === subject.installationId);
 
 		if (!known) {
-			return { allowed: false, reason: "installation_not_allowed" };
+			return { allowed: false, reason: 'installation_not_allowed' };
 		}
 
 		return {
@@ -391,7 +391,7 @@ export function authorizeDelivery(allowlist: readonly AllowlistEntry[], payload:
 			// reachable without a repository would be one an operator granted to a
 			// repository being used outside it.
 			authorization: {
-				scope: "installation",
+				scope: 'installation',
 				installationId: subject.installationId,
 				repository: null,
 				keyId: null,
@@ -405,5 +405,5 @@ export function authorizeDelivery(allowlist: readonly AllowlistEntry[], payload:
 	// answer. It authorizes nothing — there is no installation to mint a token
 	// for and no repository to touch — so accepting it grants the sender exactly
 	// what it named, which is nothing.
-	return { allowed: true, authorization: { scope: "none", installationId: null, repository: null, keyId: null } };
+	return { allowed: true, authorization: { scope: 'none', installationId: null, repository: null, keyId: null } };
 }

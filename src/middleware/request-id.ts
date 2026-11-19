@@ -1,7 +1,7 @@
-import type { MiddlewareHandler } from "hono";
+import type { MiddlewareHandler } from 'hono';
 
-import { RequestIdSchema } from "#schemas";
-import { HEADERS } from "#types";
+import { RequestIdSchema } from '#schemas';
+import { HEADERS } from '#types';
 
 /**
  * Get request ID from header or generate a new one.
@@ -27,7 +27,7 @@ export const requestId: MiddlewareHandler = async (c, next) => {
 	const requestId = getRequestId(c.req.header(HEADERS.REQUEST_ID));
 
 	// Store in context
-	c.set("requestId", requestId);
+	c.set('requestId', requestId);
 
 	// Call next middleware
 	await next();

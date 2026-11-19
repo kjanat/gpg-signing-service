@@ -1,8 +1,8 @@
-import * as openpgp from "openpgp";
-import type { StoredKey } from "#schemas/keys";
-import type { ArmoredPrivateKey, ParsedKeyInfo, SigningResult } from "#types";
-import { createArmoredPrivateKey, createKeyFingerprint, createKeyId } from "#types";
-import { DecryptedKeyCache } from "#utils/key-cache";
+import * as openpgp from 'openpgp';
+import type { StoredKey } from '#schemas/keys';
+import type { ArmoredPrivateKey, ParsedKeyInfo, SigningResult } from '#types';
+import { createArmoredPrivateKey, createKeyFingerprint, createKeyId } from '#types';
+import { DecryptedKeyCache } from '#utils/key-cache';
 
 // Re-export types for convenience
 export type { ParsedKeyInfo, SigningResult };
@@ -58,7 +58,7 @@ export async function signCommitData(
 		message,
 		signingKeys: decryptedKey,
 		detached: true,
-		format: "armored",
+		format: 'armored',
 	});
 
 	return {
@@ -87,21 +87,21 @@ export async function parseAndValidateKey(armoredKey: string, passphrase?: strin
 	 * @link https://datatracker.ietf.org/doc/html/rfc4880#section-9.1
 	 */
 	const algorithmMap: Record<number, string> = {
-		1: "RSA", // RSA Encrypt or Sign
-		2: "RSA-E", // RSA Encrypt-Only
-		3: "RSA-S", // RSA Sign-Only
-		16: "Elgamal", // Encrypt-Only
-		17: "DSA", // Digital Signature Algorithm
-		18: "ECDH", // Reserved for Elliptic Curve
-		19: "ECDSA", // Reserved for ECDSA
-		22: "EdDSA",
+		1: 'RSA', // RSA Encrypt or Sign
+		2: 'RSA-E', // RSA Encrypt-Only
+		3: 'RSA-S', // RSA Sign-Only
+		16: 'Elgamal', // Encrypt-Only
+		17: 'DSA', // Digital Signature Algorithm
+		18: 'ECDH', // Reserved for Elliptic Curve
+		19: 'ECDSA', // Reserved for ECDSA
+		22: 'EdDSA',
 	};
 
 	const algorithm = algorithmMap[keyPacket.algorithm] || `Unknown(${keyPacket.algorithm})`;
 
 	// Get user ID
 	const userIds = privateKey.getUserIDs();
-	const userId = userIds[0] || "Unknown";
+	const userId = userIds[0] || 'Unknown';
 
 	return { keyId, fingerprint, algorithm, userId };
 }

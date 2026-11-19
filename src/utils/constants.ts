@@ -8,7 +8,7 @@
  * - #/types/media-types (MediaType)
  */
 
-import { TIME } from "#types/time";
+import { TIME } from '#types/time';
 
 // =============================================================================
 // Cache TTL (Configurable for performance tuning)

@@ -3,11 +3,11 @@
  * Provides consistent logging with proper levels and context
  */
 
-import type { Context } from "hono";
-import { HEADERS } from "#types";
-import { captureError } from "#utils/sentry";
+import type { Context } from 'hono';
+import { HEADERS } from '#types';
+import { captureError } from '#utils/sentry';
 
-export type LogLevel = "debug" | "info" | "warn" | "error";
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 interface LogContext {
 	requestId?: string;
@@ -17,7 +17,7 @@ interface LogContext {
 }
 
 export class Logger {
-	private isDevelopment = process.env.NODE_ENV === "development";
+	private isDevelopment = process.env.NODE_ENV === 'development';
 
 	private log(level: LogLevel, message: string, context?: LogContext) {
 		const timestamp = new Date().toISOString();
@@ -26,7 +26,7 @@ export class Logger {
 
 		// In production, use structured logging
 		if (this.isDevelopment) {
-			console.log(`[${level.toUpperCase()}]`, message, context || "");
+			console.log(`[${level.toUpperCase()}]`, message, context || '');
 		} else {
 			// In production, emit JSON for log aggregation services
 			console.log(JSON.stringify(logEntry));
@@ -35,16 +35,16 @@ export class Logger {
 
 	debug(message: string, context?: LogContext) {
 		if (this.isDevelopment) {
-			this.log("debug", message, context);
+			this.log('debug', message, context);
 		}
 	}
 
 	info(message: string, context?: LogContext) {
-		this.log("info", message, context);
+		this.log('info', message, context);
 	}
 
 	warn(message: string, context?: LogContext) {
-		this.log("warn", message, context);
+		this.log('warn', message, context);
 	}
 
 	/**
@@ -72,13 +72,13 @@ export class Logger {
 						}
 					: error,
 		};
-		this.log("error", message, errorContext);
+		this.log('error', message, errorContext);
 
 		captureError(message, error, {
 			...context,
 			// `code` is this codebase's name for what Sentry should call
 			// `errorCode`; the tag is what an alert filters on.
-			...(typeof context?.code === "string" && { errorCode: context.code }),
+			...(typeof context?.code === 'string' && { errorCode: context.code }),
 		});
 	}
 
@@ -86,7 +86,7 @@ export class Logger {
 	 * Create a logger instance with request context
 	 */
 	withContext(c: Context): LoggerWithContext {
-		const requestId = c.get("requestId") || c.req.header(HEADERS.REQUEST_ID);
+		const requestId = c.get('requestId') || c.req.header(HEADERS.REQUEST_ID);
 		return new LoggerWithContext(this, { requestId });
 	}
 }

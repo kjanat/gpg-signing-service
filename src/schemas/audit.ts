@@ -1,13 +1,13 @@
-import { z } from "@hono/zod-openapi";
-import { ErrorCodeSchema } from "#schemas/errors";
-import { LIMITS } from "#utils/constants";
+import { z } from '@hono/zod-openapi';
+import { ErrorCodeSchema } from '#schemas/errors';
+import { LIMITS } from '#utils/constants';
 
 /**
  * ISO8601 datetime validation with timezone offset
  */
 export const TimestampSchema = z.iso.datetime({
 	offset: true,
-	message: "Must be valid ISO8601 timestamp with timezone",
+	message: 'Must be valid ISO8601 timestamp with timezone',
 });
 
 /**
@@ -23,7 +23,7 @@ export const DateRangeSchema = z
 			if (!data.startDate || !data.endDate) return true;
 			return new Date(data.startDate) <= new Date(data.endDate);
 		},
-		{ message: "startDate must be before or equal to endDate" },
+		{ message: 'startDate must be before or equal to endDate' },
 	);
 
 /**
@@ -38,7 +38,7 @@ export const AuditQuerySchema = z
 		startDate: TimestampSchema.optional(),
 		endDate: TimestampSchema.optional(),
 	})
-	.openapi("AuditQuery");
+	.openapi('AuditQuery');
 
 /**
  * Audit action types
@@ -76,18 +76,18 @@ export const AuditQuerySchema = z
  */
 export const AuditActionSchema = z
 	.enum([
-		"sign",
-		"key_upload",
-		"key_rotate",
-		"token_create",
-		"token_revoke",
-		"subject_create",
-		"subject_revoke",
-		"push_sign",
-		"check_report",
-		"comment_dispatch",
+		'sign',
+		'key_upload',
+		'key_rotate',
+		'token_create',
+		'token_revoke',
+		'subject_create',
+		'subject_revoke',
+		'push_sign',
+		'check_report',
+		'comment_dispatch',
 	])
-	.openapi("AuditAction");
+	.openapi('AuditAction');
 
 /**
  * Audit log entry schema
@@ -113,7 +113,7 @@ export const AuditLogsResponseSchema = z
 		logs: z.array(AuditLogEntrySchema),
 		count: z.number().int().min(0),
 	})
-	.openapi("AuditLogsResponse");
+	.openapi('AuditLogsResponse');
 
 /** Type inferred from AuditActionSchema */
 export type AuditAction = z.infer<typeof AuditActionSchema>;

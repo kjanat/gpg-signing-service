@@ -29,37 +29,37 @@
  *   carries.
  */
 
-import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { env } from "cloudflare:workers";
-import * as openpgp from "openpgp";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import app from "#gpg-signing-service";
+import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import { env } from 'cloudflare:workers';
+import * as openpgp from 'openpgp';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import app from '#gpg-signing-service';
 import {
 	CHECK_RUN_NAME,
 	checkRunSummary,
 	checkRunsEnabled,
 	conclusionFor,
 	reportSignatureCheck,
-} from "#utils/check-report";
-import type { ReportedVerification, SignatureState } from "#utils/commit-signature";
-import { githubVerdict, inspectCommitSignature } from "#utils/commit-signature";
-import { commitObjectId, commitPayload, signedCommitObject } from "#utils/git-commit";
-import { GITHUB_API_ORIGIN } from "#utils/github-app";
-import type { CheckRunInput, RepositoryClient } from "#utils/github-repo";
-import { RepositoryClient as RepositoryClientClass } from "#utils/github-repo";
-import { SIGNATURE_PREFIX } from "#utils/github-webhook";
-import { PKCS8_PRIVATE_BEGIN, PKCS8_PRIVATE_END } from "./helpers/armor";
+} from '#utils/check-report';
+import type { ReportedVerification, SignatureState } from '#utils/commit-signature';
+import { githubVerdict, inspectCommitSignature } from '#utils/commit-signature';
+import { commitObjectId, commitPayload, signedCommitObject } from '#utils/git-commit';
+import { GITHUB_API_ORIGIN } from '#utils/github-app';
+import type { CheckRunInput, RepositoryClient } from '#utils/github-repo';
+import { RepositoryClient as RepositoryClientClass } from '#utils/github-repo';
+import { SIGNATURE_PREFIX } from '#utils/github-webhook';
+import { PKCS8_PRIVATE_BEGIN, PKCS8_PRIVATE_END } from './helpers/armor';
 
-const SECRET = "test-webhook-secret";
+const SECRET = 'test-webhook-secret';
 const INSTALLATION = 4242;
 const APP_ID = 123456;
-const REPOSITORY = "kjanat/service";
-const KEY = "62E75E54497815DD";
+const REPOSITORY = 'kjanat/service';
+const KEY = '62E75E54497815DD';
 
 /** A commit object's fields, fixed so every fixture differs only where it means to. */
-const IDENTITY = { name: "Kaj Kowalski", email: "info@kajkowalski.nl", date: "2026-08-31T07:00:00Z", offset: "+0200" };
-const TREE = "c93ec7f22ad2cabca76415f3389524a7d43c6435";
-const PARENT = "cd01952d981ed9169dca0167e2a13b611db7de92";
+const IDENTITY = { name: 'Kaj Kowalski', email: 'info@kajkowalski.nl', date: '2026-08-31T07:00:00Z', offset: '+0200' };
+const TREE = 'c93ec7f22ad2cabca76415f3389524a7d43c6435';
+const PARENT = 'cd01952d981ed9169dca0167e2a13b611db7de92';
 
 function payloadFor(message: string): string {
 	return commitPayload({ tree: TREE, parents: [PARENT], author: IDENTITY, committer: IDENTITY, message });
@@ -68,10 +68,10 @@ function payloadFor(message: string): string {
 /** A real key, so the signatures under test are real signatures. */
 async function generateKey(options: { date?: Date; keyExpirationTime?: number } = {}) {
 	const { privateKey } = await openpgp.generateKey({
-		type: "ecc",
-		curve: "ed25519Legacy",
-		userIDs: [{ name: "Check Report", email: "check@test.com" }],
-		format: "armored",
+		type: 'ecc',
+		curve: 'ed25519Legacy',
+		userIDs: [{ name: 'Check Report', email: 'check@test.com' }],
+		format: 'armored',
 		...options,
 	});
 
@@ -92,7 +92,7 @@ async function sign(payload: string, armoredPrivateKey: string, date?: Date): Pr
 		message: await openpgp.createMessage({ binary: new TextEncoder().encode(payload) }),
 		signingKeys: privateKey,
 		detached: true,
-		format: "armored",
+		format: 'armored',
 		...(date === undefined ? {} : { date }),
 	})) as string;
 }
@@ -130,103 +130,103 @@ describe("what a commit's signature is allowed to prove", () => {
 		stranger = await generateKey();
 	});
 
-	it("reports a commit with no signature as unsigned", async () => {
+	it('reports a commit with no signature as unsigned', async () => {
 		const finding = await inspectCommitSignature(
-			reported({ sha: "a".repeat(40), payload: null, signature: null }, { reason: "unsigned" }),
+			reported({ sha: 'a'.repeat(40), payload: null, signature: null }, { reason: 'unsigned' }),
 			key.publicKey,
 		);
 
 		expect(finding).toEqual({
-			state: "unsigned",
-			detail: "no_signature",
-			github: { verified: false, reason: "unsigned" },
+			state: 'unsigned',
+			detail: 'no_signature',
+			github: { verified: false, reason: 'unsigned' },
 		});
 	});
 
-	it("treats an empty signature string as no signature", async () => {
+	it('treats an empty signature string as no signature', async () => {
 		// A `verification.signature` of `""` is not a signature that failed to
 		// parse; there is nothing there. Reading it as a malformed signature would
 		// report an unsigned commit as broken.
 		const finding = await inspectCommitSignature(
-			reported({ sha: "a".repeat(40), payload: "x", signature: "   " }),
+			reported({ sha: 'a'.repeat(40), payload: 'x', signature: '   ' }),
 			key.publicKey,
 		);
 
-		expect(finding.state).toBe("unsigned");
+		expect(finding.state).toBe('unsigned');
 	});
 
-	it("attributes a signature by the bound key to the bound key", async () => {
-		const payload = payloadFor("signed by us\n");
+	it('attributes a signature by the bound key to the bound key', async () => {
+		const payload = payloadFor('signed by us\n');
 		const commit = await signedCommit(payload, await sign(payload, key.armoredPrivateKey));
 
 		// GitHub says it is *not* verified — which is what it says for a key nobody
 		// uploaded to a GitHub account, and is the common case for this service.
 		// The finding is ours, so it disagrees.
 		const finding = await inspectCommitSignature(
-			reported(commit, { verified: false, reason: "unknown_key" }),
+			reported(commit, { verified: false, reason: 'unknown_key' }),
 			key.publicKey,
 		);
 
-		expect(finding.state).toBe("service_key_valid");
-		expect(finding.detail).toBe("verified");
-		expect(finding.github).toEqual({ verified: false, reason: "unknown_key" });
+		expect(finding.state).toBe('service_key_valid');
+		expect(finding.detail).toBe('verified');
+		expect(finding.github).toEqual({ verified: false, reason: 'unknown_key' });
 	});
 
 	it("makes no claim about a signature by somebody else's key", async () => {
-		const payload = payloadFor("signed by a stranger\n");
+		const payload = payloadFor('signed by a stranger\n');
 		const commit = await signedCommit(payload, await sign(payload, stranger.armoredPrivateKey));
 
 		// And GitHub says it *is* verified. A reporter that echoed GitHub would
 		// call this ours.
-		const finding = await inspectCommitSignature(reported(commit, { verified: true, reason: "valid" }), key.publicKey);
+		const finding = await inspectCommitSignature(reported(commit, { verified: true, reason: 'valid' }), key.publicKey);
 
-		expect(finding.state).toBe("other_signer");
-		expect(finding.detail).toBe("different_key");
-		expect(finding.github).toEqual({ verified: true, reason: "valid" });
+		expect(finding.state).toBe('other_signer');
+		expect(finding.detail).toBe('different_key');
+		expect(finding.github).toEqual({ verified: true, reason: 'valid' });
 	});
 
-	it("makes no claim about an SSH signature", async () => {
+	it('makes no claim about an SSH signature', async () => {
 		// Git signs with SSH keys too, and the armor is not PGP's. Somebody else's
 		// signature in a format this service cannot check is `other_signer`, not a
 		// broken signature.
-		const payload = payloadFor("ssh signed\n");
-		const signature = "-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQ==\n-----END SSH SIGNATURE-----";
+		const payload = payloadFor('ssh signed\n');
+		const signature = '-----BEGIN SSH SIGNATURE-----\nU1NIU0lHAAAAAQ==\n-----END SSH SIGNATURE-----';
 		const commit = await signedCommit(payload, signature);
 
-		const finding = await inspectCommitSignature(reported(commit, { verified: true, reason: "valid" }), key.publicKey);
+		const finding = await inspectCommitSignature(reported(commit, { verified: true, reason: 'valid' }), key.publicKey);
 
-		expect(finding.state).toBe("other_signer");
-		expect(finding.detail).toBe("non_pgp_signature");
+		expect(finding.state).toBe('other_signer');
+		expect(finding.detail).toBe('non_pgp_signature');
 	});
 
-	it("reports a signature naming the bound key that does not verify as invalid", async () => {
+	it('reports a signature naming the bound key that does not verify as invalid', async () => {
 		// The one alarming state. Built by signing one payload and folding that
 		// signature into a *different* commit object — so the object id binds, the
 		// key id is ours, and the signature is over bytes this commit does not
 		// have. Which is exactly what a tampered commit looks like.
-		const signed = payloadFor("the message that was signed\n");
-		const actual = payloadFor("the message the commit holds\n");
+		const signed = payloadFor('the message that was signed\n');
+		const actual = payloadFor('the message the commit holds\n');
 		const signature = await sign(signed, key.armoredPrivateKey);
 		const commit = await signedCommit(actual, signature);
 
 		const finding = await inspectCommitSignature(
-			reported(commit, { verified: false, reason: "invalid" }),
+			reported(commit, { verified: false, reason: 'invalid' }),
 			key.publicKey,
 		);
 
-		expect(finding.state).toBe("invalid_signature");
-		expect(finding.detail).toBe("verification_failed");
+		expect(finding.state).toBe('invalid_signature');
+		expect(finding.detail).toBe('verification_failed');
 	});
 
-	it("reports unreadable PGP armor as invalid", async () => {
-		const payload = payloadFor("garbage armor\n");
-		const signature = "-----BEGIN PGP SIGNATURE-----\n\nbm90IGEgc2lnbmF0dXJl\n-----END PGP SIGNATURE-----";
+	it('reports unreadable PGP armor as invalid', async () => {
+		const payload = payloadFor('garbage armor\n');
+		const signature = '-----BEGIN PGP SIGNATURE-----\n\nbm90IGEgc2lnbmF0dXJl\n-----END PGP SIGNATURE-----';
 		const commit = await signedCommit(payload, signature);
 
 		const finding = await inspectCommitSignature(reported(commit), key.publicKey);
 
-		expect(finding.state).toBe("invalid_signature");
-		expect(finding.detail).toBe("unreadable_signature");
+		expect(finding.state).toBe('invalid_signature');
+		expect(finding.detail).toBe('unreadable_signature');
 	});
 
 	it("claims nothing when the reported bytes are not this commit's", async () => {
@@ -235,83 +235,83 @@ describe("what a commit's signature is allowed to prove", () => {
 		// whether that payload is the commit. Here it verifies perfectly — and
 		// belongs to a different object id, so nothing has been shown about the
 		// commit the ref points at.
-		const payload = payloadFor("a genuinely signed commit\n");
+		const payload = payloadFor('a genuinely signed commit\n');
 		const signature = await sign(payload, key.armoredPrivateKey);
 
 		const finding = await inspectCommitSignature(
-			reported({ sha: `${"b".repeat(39)}0`, payload, signature }, { verified: true, reason: "valid" }),
+			reported({ sha: `${'b'.repeat(39)}0`, payload, signature }, { verified: true, reason: 'valid' }),
 			key.publicKey,
 		);
 
-		expect(finding.state).toBe("unverifiable");
-		expect(finding.detail).toBe("object_binding_failed");
+		expect(finding.state).toBe('unverifiable');
+		expect(finding.detail).toBe('object_binding_failed');
 	});
 
-	it("claims nothing when the reported payload is not a commit object at all", async () => {
+	it('claims nothing when the reported payload is not a commit object at all', async () => {
 		// A payload with no header boundary cannot be folded back into an object,
 		// so the binding cannot be attempted — which is the same answer as a
 		// binding that failed, and deliberately not a verdict about the signature.
-		const payload = payloadFor("well formed\n");
+		const payload = payloadFor('well formed\n');
 		const signature = await sign(payload, key.armoredPrivateKey);
 
 		const finding = await inspectCommitSignature(
-			reported({ sha: "d".repeat(40), payload: "not a commit object", signature }),
+			reported({ sha: 'd'.repeat(40), payload: 'not a commit object', signature }),
 			key.publicKey,
 		);
 
-		expect(finding).toMatchObject({ state: "unverifiable", detail: "object_binding_failed" });
+		expect(finding).toMatchObject({ state: 'unverifiable', detail: 'object_binding_failed' });
 	});
 
-	it("refuses a signature that claims to have been made in the future", async () => {
+	it('refuses a signature that claims to have been made in the future', async () => {
 		// The other half of the same pin. Verification happens at read time, so a
 		// signature whose creation date is ahead of now is refused — which is why
 		// no date is passed to `verify`: doing so with the signature's own
 		// timestamp, the obvious way to make an expired key keep working, would
 		// have made exactly this case start passing.
-		const payload = payloadFor("from the future\n");
+		const payload = payloadFor('from the future\n');
 		const future = new Date(Date.now() + 24 * 60 * 60 * 1000);
 		const commit = await signedCommit(payload, await sign(payload, key.armoredPrivateKey, future));
 
 		const finding = await inspectCommitSignature(reported(commit), key.publicKey);
 
-		expect(finding.state).toBe("invalid_signature");
+		expect(finding.state).toBe('invalid_signature');
 	});
 
-	it("claims nothing when a signature arrives with no payload", async () => {
-		const payload = payloadFor("no payload reported\n");
+	it('claims nothing when a signature arrives with no payload', async () => {
+		const payload = payloadFor('no payload reported\n');
 		const signature = await sign(payload, key.armoredPrivateKey);
 
 		const finding = await inspectCommitSignature(
-			reported({ sha: "c".repeat(40), payload: null, signature }),
+			reported({ sha: 'c'.repeat(40), payload: null, signature }),
 			key.publicKey,
 		);
 
-		expect(finding.state).toBe("unverifiable");
-		expect(finding.detail).toBe("no_payload");
+		expect(finding.state).toBe('unverifiable');
+		expect(finding.detail).toBe('no_payload');
 	});
 
 	it("claims nothing when the bound key's own material will not parse", async () => {
-		const payload = payloadFor("unreadable key\n");
+		const payload = payloadFor('unreadable key\n');
 		const commit = await signedCommit(payload, await sign(payload, key.armoredPrivateKey));
 
-		const finding = await inspectCommitSignature(reported(commit), "-----BEGIN PGP PUBLIC KEY BLOCK-----\nnope\n");
+		const finding = await inspectCommitSignature(reported(commit), '-----BEGIN PGP PUBLIC KEY BLOCK-----\nnope\n');
 
-		expect(finding.state).toBe("unverifiable");
-		expect(finding.detail).toBe("unreadable_service_key");
+		expect(finding.state).toBe('unverifiable');
+		expect(finding.detail).toBe('unreadable_service_key');
 	});
 
-	it("attributes a signature made by a signing subkey to the key that holds it", async () => {
+	it('attributes a signature made by a signing subkey to the key that holds it', async () => {
 		// The reason the comparison is against the key's own ids rather than the
 		// configured id string: an OpenPGP key signs with its signing subkey, whose
 		// id is not the primary's. A GnuPG-generated key almost always has one, so
 		// comparing against the allowlist's 16 hex digits would report this
 		// service's own signatures as somebody else's.
 		const rsa = await openpgp.generateKey({
-			type: "ecc",
-			curve: "ed25519Legacy",
-			userIDs: [{ name: "Subkey", email: "subkey@test.com" }],
+			type: 'ecc',
+			curve: 'ed25519Legacy',
+			userIDs: [{ name: 'Subkey', email: 'subkey@test.com' }],
 			subkeys: [{ sign: true }],
-			format: "armored",
+			format: 'armored',
 		});
 		const parsed = await openpgp.readPrivateKey({ armoredKey: rsa.privateKey });
 		const primary = parsed.getKeyID().toHex().toUpperCase();
@@ -319,12 +319,12 @@ describe("what a commit's signature is allowed to prove", () => {
 
 		expect(signingKey.getKeyID().toHex().toUpperCase()).not.toBe(primary);
 
-		const payload = payloadFor("signed by a subkey\n");
+		const payload = payloadFor('signed by a subkey\n');
 		const commit = await signedCommit(payload, await sign(payload, rsa.privateKey));
 
 		const finding = await inspectCommitSignature(reported(commit), parsed.toPublic().armor());
 
-		expect(finding.state).toBe("service_key_valid");
+		expect(finding.state).toBe('service_key_valid');
 	});
 
 	it("still attributes a commit carrying our signature beside a stranger's", async () => {
@@ -333,7 +333,7 @@ describe("what a commit's signature is allowed to prove", () => {
 		// reader that required every packet to verify would publish
 		// `invalid_signature` — the one state that is an accusation — against a
 		// commit this service signed perfectly well.
-		const payload = payloadFor("co-signed");
+		const payload = payloadFor('co-signed');
 		const signature = (await openpgp.sign({
 			message: await openpgp.createMessage({ binary: new TextEncoder().encode(payload) }),
 			signingKeys: [
@@ -341,17 +341,17 @@ describe("what a commit's signature is allowed to prove", () => {
 				await openpgp.readPrivateKey({ armoredKey: stranger.armoredPrivateKey }),
 			],
 			detached: true,
-			format: "armored",
+			format: 'armored',
 		})) as string;
 
 		const commit = await signedCommit(payload, signature);
 		const finding = await inspectCommitSignature(reported(commit), key.publicKey);
 
-		expect(finding.state).toBe("service_key_valid");
-		expect(finding.detail).toBe("verified");
+		expect(finding.state).toBe('service_key_valid');
+		expect(finding.detail).toBe('verified');
 	});
 
-	it("still attributes a signature made before its key expired", async () => {
+	it('still attributes a signature made before its key expired', async () => {
 		// A characterization test, and labelled as one because the property is
 		// openpgp.js's rather than this module's: `verify` looks a key up by id and
 		// does not gate on expiry, so a signature made while a key was live still
@@ -364,108 +364,108 @@ describe("what a commit's signature is allowed to prove", () => {
 		const expiring = await generateKey({ date: created, keyExpirationTime: 60 * 60 });
 		const signedAt = new Date(created.getTime() + 60 * 1000);
 
-		const payload = payloadFor("signed while the key was live\n");
+		const payload = payloadFor('signed while the key was live\n');
 		const commit = await signedCommit(payload, await sign(payload, expiring.armoredPrivateKey, signedAt));
 
 		const finding = await inspectCommitSignature(reported(commit), expiring.publicKey);
 
-		expect(finding.state).toBe("service_key_valid");
+		expect(finding.state).toBe('service_key_valid');
 	});
 });
 
 describe("GitHub's own verdict, repeated rather than adopted", () => {
-	it("passes through a reason GitHub documents", () => {
-		expect(githubVerdict(true, "valid")).toEqual({ verified: true, reason: "valid" });
+	it('passes through a reason GitHub documents', () => {
+		expect(githubVerdict(true, 'valid')).toEqual({ verified: true, reason: 'valid' });
 	});
 
 	it.each([
-		["prose", "Signature made by <script>alert(1)</script>"],
-		["markdown that would break out of the summary", "```\n# Verified\n"],
-		["a value from some future API version", "brand_new_reason"],
-		["a non-string", 42],
-		["null", null],
-	])("replaces %s with `unknown`", (_case, reason) => {
+		['prose', 'Signature made by <script>alert(1)</script>'],
+		['markdown that would break out of the summary', '```\n# Verified\n'],
+		['a value from some future API version', 'brand_new_reason'],
+		['a non-string', 42],
+		['null', null],
+	])('replaces %s with `unknown`', (_case, reason) => {
 		// This string is published under this service's name in a check run. A
 		// remote API does not get to choose it.
-		expect(githubVerdict(false, reason).reason).toBe("unknown");
+		expect(githubVerdict(false, reason).reason).toBe('unknown');
 	});
 
-	it("reads anything but the literal true as not verified", () => {
-		expect(githubVerdict("true", "valid").verified).toBe(false);
-		expect(githubVerdict(1, "valid").verified).toBe(false);
+	it('reads anything but the literal true as not verified', () => {
+		expect(githubVerdict('true', 'valid').verified).toBe(false);
+		expect(githubVerdict(1, 'valid').verified).toBe(false);
 	});
 });
 
-describe("the conclusion each state earns", () => {
+describe('the conclusion each state earns', () => {
 	it.each([
-		["service_key_valid", "success"],
-		["invalid_signature", "failure"],
-		["unsigned", "neutral"],
-		["other_signer", "neutral"],
-		["unverifiable", "neutral"],
-	])("maps %s to %s", (state, conclusion) => {
+		['service_key_valid', 'success'],
+		['invalid_signature', 'failure'],
+		['unsigned', 'neutral'],
+		['other_signer', 'neutral'],
+		['unverifiable', 'neutral'],
+	])('maps %s to %s', (state, conclusion) => {
 		expect(conclusionFor(state as SignatureState)).toBe(conclusion);
 	});
 
-	it("fails a commit only for a signature that claims our key and does not verify", () => {
+	it('fails a commit only for a signature that claims our key and does not verify', () => {
 		// The states this service has no standing to fail a commit over: an
 		// unsigned commit beneath a signed one stays unsigned by design, and
 		// somebody else's signature is somebody else's business. A reporter that
 		// failed those would make the check unusable and say more than it knows.
 		const failing = (
-			["unsigned", "other_signer", "unverifiable", "service_key_valid", "invalid_signature"] as const
-		).filter((state) => conclusionFor(state) === "failure");
+			['unsigned', 'other_signer', 'unverifiable', 'service_key_valid', 'invalid_signature'] as const
+		).filter((state) => conclusionFor(state) === 'failure');
 
-		expect(failing).toEqual(["invalid_signature"]);
+		expect(failing).toEqual(['invalid_signature']);
 	});
 });
 
-describe("what the check run body may contain", () => {
-	it("carries no signature, no payload and no key material", async () => {
+describe('what the check run body may contain', () => {
+	it('carries no signature, no payload and no key material', async () => {
 		const key = await generateKey();
-		const payload = payloadFor("a summary is published text\n");
+		const payload = payloadFor('a summary is published text\n');
 		const signature = await sign(payload, key.armoredPrivateKey);
 		const commit = await signedCommit(payload, signature);
-		const finding = await inspectCommitSignature(reported(commit, { verified: true, reason: "valid" }), key.publicKey);
+		const finding = await inspectCommitSignature(reported(commit, { verified: true, reason: 'valid' }), key.publicKey);
 
 		const summary = checkRunSummary(commit.sha, KEY, finding);
 
-		expect(summary).not.toContain("BEGIN PGP");
+		expect(summary).not.toContain('BEGIN PGP');
 		expect(summary).not.toContain(signature.slice(40, 80));
 		expect(summary).not.toContain(payload);
 		expect(summary).not.toContain(key.armoredPrivateKey.slice(40, 80));
 		// And it does carry the things an operator reads it for.
 		expect(summary).toContain(commit.sha);
 		expect(summary).toContain(KEY);
-		expect(summary).toContain("service_key_valid");
+		expect(summary).toContain('service_key_valid');
 	});
 
 	it.each([
-		["service_key_valid", "verified", "verifies over the commit's own bytes"],
-		["invalid_signature", "verification_failed", "does not verify under it"],
-		["other_signer", "different_key", "No claim is made"],
-		["unsigned", "no_signature", "carries no signature"],
-		["unverifiable", "object_binding_failed", "could not be tied back"],
-	])("says what %s means without overstating it", (state, detail, expected) => {
-		const summary = checkRunSummary("d".repeat(40), KEY, {
+		['service_key_valid', 'verified', "verifies over the commit's own bytes"],
+		['invalid_signature', 'verification_failed', 'does not verify under it'],
+		['other_signer', 'different_key', 'No claim is made'],
+		['unsigned', 'no_signature', 'carries no signature'],
+		['unverifiable', 'object_binding_failed', 'could not be tied back'],
+	])('says what %s means without overstating it', (state, detail, expected) => {
+		const summary = checkRunSummary('d'.repeat(40), KEY, {
 			state: state as SignatureState,
 			detail: detail as never,
-			github: githubVerdict(false, "unsigned"),
+			github: githubVerdict(false, 'unsigned'),
 		});
 
 		expect(summary).toContain(expected);
 		expect(summary).toContain(state);
 	});
 
-	it("never repeats a GitHub reason it does not recognise", () => {
-		const summary = checkRunSummary("a".repeat(40), KEY, {
-			state: "other_signer",
-			detail: "different_key",
-			github: githubVerdict(true, "</details><img src=x onerror=alert(1)>"),
+	it('never repeats a GitHub reason it does not recognise', () => {
+		const summary = checkRunSummary('a'.repeat(40), KEY, {
+			state: 'other_signer',
+			detail: 'different_key',
+			github: githubVerdict(true, '</details><img src=x onerror=alert(1)>'),
 		});
 
-		expect(summary).not.toContain("onerror");
-		expect(summary).toContain("unknown");
+		expect(summary).not.toContain('onerror');
+		expect(summary).toContain('unknown');
 	});
 });
 
@@ -481,7 +481,7 @@ function fakeClient(options: {
 }) {
 	const calls: string[] = [];
 	const written: CheckRunInput[] = [];
-	const sha = options.ref === undefined ? "1".repeat(40) : (options.ref?.sha ?? "");
+	const sha = options.ref === undefined ? '1'.repeat(40) : (options.ref?.sha ?? '');
 
 	const client = {
 		repository: REPOSITORY,
@@ -503,14 +503,14 @@ function fakeClient(options: {
 		listCheckRuns: (asked: string, name: string, appId: number) => {
 			calls.push(`listCheckRuns:${asked}:${name}:${appId}`);
 			if (options.listThrows) {
-				throw new Error("GitHub refused a check run lookup for kjanat/service");
+				throw new Error('GitHub refused a check run lookup for kjanat/service');
 			}
 			return Promise.resolve(options.existing ?? []);
 		},
 		createCheckRun: (input: CheckRunInput) => {
 			calls.push(`createCheckRun:${input.headSha}`);
 			if (options.createThrows) {
-				throw new Error("GitHub refused a check run creation for kjanat/service");
+				throw new Error('GitHub refused a check run creation for kjanat/service');
 			}
 			written.push(input);
 			return Promise.resolve(options.createReturns ?? 7);
@@ -518,7 +518,7 @@ function fakeClient(options: {
 		updateCheckRun: (id: number, input: CheckRunInput) => {
 			calls.push(`updateCheckRun:${id}`);
 			if (options.updateThrows) {
-				throw new Error("GitHub refused a check run update for kjanat/service");
+				throw new Error('GitHub refused a check run update for kjanat/service');
 			}
 			written.push(input);
 			return Promise.resolve();
@@ -528,9 +528,9 @@ function fakeClient(options: {
 	return { client: client as unknown as RepositoryClient, calls, written };
 }
 
-const ON = { GITHUB_APP_CHECK_RUNS: "true", GITHUB_APP_ID: String(APP_ID) };
+const ON = { GITHUB_APP_CHECK_RUNS: 'true', GITHUB_APP_ID: String(APP_ID) };
 
-describe("publishing the report", () => {
+describe('publishing the report', () => {
 	let key: Awaited<ReturnType<typeof generateKey>>;
 	let stored: never;
 
@@ -539,23 +539,23 @@ describe("publishing the report", () => {
 		stored = {
 			keyId: KEY,
 			armoredPrivateKey: key.armoredPrivateKey,
-			algorithm: "eddsa",
-			fingerprint: "f".repeat(40),
+			algorithm: 'eddsa',
+			fingerprint: 'f'.repeat(40),
 			createdAt: new Date().toISOString(),
 		} as never;
 	});
 
-	it("makes no GitHub call at all when the feature is off", async () => {
+	it('makes no GitHub call at all when the feature is off', async () => {
 		const { client, calls } = fakeClient({});
 
-		const result = await reportSignatureCheck({ GITHUB_APP_ID: String(APP_ID) }, client, "main", stored, KEY);
+		const result = await reportSignatureCheck({ GITHUB_APP_ID: String(APP_ID) }, client, 'main', stored, KEY);
 
-		expect(result).toEqual({ outcome: "skipped", reason: "disabled" });
+		expect(result).toEqual({ outcome: 'skipped', reason: 'disabled' });
 		expect(calls).toHaveLength(0);
 	});
 
-	it.each([["1"], ["TRUE"], ["yes"], ["True"], [""], [undefined]])(
-		"stays off for GITHUB_APP_CHECK_RUNS=%s",
+	it.each([['1'], ['TRUE'], ['yes'], ['True'], [''], [undefined]])(
+		'stays off for GITHUB_APP_CHECK_RUNS=%s',
 		async (value) => {
 			// One spelling, the same rule `githubAppEnabled` uses. A flag that
 			// accepted near-misses would turn a typo into calls an installation never
@@ -564,133 +564,133 @@ describe("publishing the report", () => {
 		},
 	);
 
-	it("publishes nothing when the App id is not a number", async () => {
+	it('publishes nothing when the App id is not a number', async () => {
 		// Without it, this App's own check runs cannot be told from another app's,
 		// so the lookup that makes the write converge cannot be trusted — and a
 		// create on top of that is how duplicates start.
 		const { client, calls } = fakeClient({});
 
 		const result = await reportSignatureCheck(
-			{ GITHUB_APP_CHECK_RUNS: "true", GITHUB_APP_ID: "not-a-number" },
+			{ GITHUB_APP_CHECK_RUNS: 'true', GITHUB_APP_ID: 'not-a-number' },
 			client,
-			"main",
+			'main',
 			stored,
 			KEY,
 		);
 
-		expect(result).toEqual({ outcome: "skipped", reason: "app_id_unusable" });
+		expect(result).toEqual({ outcome: 'skipped', reason: 'app_id_unusable' });
 		expect(calls).toHaveLength(0);
 	});
 
-	it("publishes nothing for an X.509 key", async () => {
+	it('publishes nothing for an X.509 key', async () => {
 		const { client, calls } = fakeClient({});
-		const x509 = { type: "x509", keyId: KEY, privateKeyPem: "x", certificatePem: "y", createdAt: "" } as never;
+		const x509 = { type: 'x509', keyId: KEY, privateKeyPem: 'x', certificatePem: 'y', createdAt: '' } as never;
 
-		const result = await reportSignatureCheck(ON, client, "main", x509, KEY);
+		const result = await reportSignatureCheck(ON, client, 'main', x509, KEY);
 
-		expect(result).toEqual({ outcome: "skipped", reason: "unsupported_key" });
+		expect(result).toEqual({ outcome: 'skipped', reason: 'unsupported_key' });
 		expect(calls).toHaveLength(0);
 	});
 
-	it("publishes nothing when the branch is gone", async () => {
+	it('publishes nothing when the branch is gone', async () => {
 		const { client, calls } = fakeClient({ ref: null });
 
-		const result = await reportSignatureCheck(ON, client, "main", stored, KEY);
+		const result = await reportSignatureCheck(ON, client, 'main', stored, KEY);
 
-		expect(result).toEqual({ outcome: "skipped", reason: "branch_missing" });
-		expect(calls.some((call) => call.startsWith("createCheckRun"))).toBe(false);
+		expect(result).toEqual({ outcome: 'skipped', reason: 'branch_missing' });
+		expect(calls.some((call) => call.startsWith('createCheckRun'))).toBe(false);
 	});
 
 	it.each([
-		["an abbreviated one", "1234567"],
-		["upper case", "A".repeat(40)],
-		["something that is not hex at all", "../../../etc/passwd"],
-		["a value carrying markdown", "`a`](https://evil.example)"],
-	])("publishes nothing when the ref names %s", async (_case, sha) => {
+		['an abbreviated one', '1234567'],
+		['upper case', 'A'.repeat(40)],
+		['something that is not hex at all', '../../../etc/passwd'],
+		['a value carrying markdown', '`a`](https://evil.example)'],
+	])('publishes nothing when the ref names %s', async (_case, sha) => {
 		// The sha reaches a URL path and a published markdown summary. A response
 		// that does not carry a commit id is refused rather than rendered.
-		const { client, calls } = fakeClient({ ref: { ref: "refs/heads/main", sha } });
+		const { client, calls } = fakeClient({ ref: { ref: 'refs/heads/main', sha } });
 
-		const result = await reportSignatureCheck(ON, client, "main", stored, KEY);
+		const result = await reportSignatureCheck(ON, client, 'main', stored, KEY);
 
-		expect(result).toEqual({ outcome: "skipped", reason: "unusable_sha" });
-		expect(calls.some((call) => call.startsWith("createCheckRun"))).toBe(false);
+		expect(result).toEqual({ outcome: 'skipped', reason: 'unusable_sha' });
+		expect(calls.some((call) => call.startsWith('createCheckRun'))).toBe(false);
 	});
 
-	it("publishes nothing when GitHub answers about a different commit", async () => {
-		const { client, calls } = fakeClient({ verification: { sha: "9".repeat(40) } });
+	it('publishes nothing when GitHub answers about a different commit', async () => {
+		const { client, calls } = fakeClient({ verification: { sha: '9'.repeat(40) } });
 
-		const result = await reportSignatureCheck(ON, client, "main", stored, KEY);
+		const result = await reportSignatureCheck(ON, client, 'main', stored, KEY);
 
-		expect(result).toEqual({ outcome: "skipped", reason: "unusable_sha" });
-		expect(calls.some((call) => call.startsWith("createCheckRun"))).toBe(false);
+		expect(result).toEqual({ outcome: 'skipped', reason: 'unusable_sha' });
+		expect(calls.some((call) => call.startsWith('createCheckRun'))).toBe(false);
 	});
 
-	it("creates a run for the sha the ref holds, under the constant name", async () => {
+	it('creates a run for the sha the ref holds, under the constant name', async () => {
 		const { client, calls, written } = fakeClient({});
 
-		const result = await reportSignatureCheck(ON, client, "main", stored, KEY);
+		const result = await reportSignatureCheck(ON, client, 'main', stored, KEY);
 
-		expect(result.outcome).toBe("published");
-		expect(calls).toContain(`listCheckRuns:${"1".repeat(40)}:${CHECK_RUN_NAME}:${APP_ID}`);
+		expect(result.outcome).toBe('published');
+		expect(calls).toContain(`listCheckRuns:${'1'.repeat(40)}:${CHECK_RUN_NAME}:${APP_ID}`);
 		expect(written).toHaveLength(1);
-		expect(written[0]?.headSha).toBe("1".repeat(40));
+		expect(written[0]?.headSha).toBe('1'.repeat(40));
 		expect(written[0]?.name).toBe(CHECK_RUN_NAME);
-		expect(written[0]?.conclusion).toBe("neutral");
+		expect(written[0]?.conclusion).toBe('neutral');
 	});
 
-	it("updates the run that already exists rather than adding another", async () => {
+	it('updates the run that already exists rather than adding another', async () => {
 		// The lost-response case, and the redelivery case, and the second event
 		// about the same head: all three are this.
 		const { client, calls } = fakeClient({ existing: [{ id: 41 }] });
 
-		const result = await reportSignatureCheck(ON, client, "main", stored, KEY);
+		const result = await reportSignatureCheck(ON, client, 'main', stored, KEY);
 
-		expect(result).toMatchObject({ outcome: "published", checkRunId: 41, action: "updated" });
-		expect(calls.some((call) => call.startsWith("createCheckRun"))).toBe(false);
+		expect(result).toMatchObject({ outcome: 'published', checkRunId: 41, action: 'updated' });
+		expect(calls.some((call) => call.startsWith('createCheckRun'))).toBe(false);
 	});
 
-	it("converges on the earliest run when a race left two", async () => {
+	it('converges on the earliest run when a race left two', async () => {
 		// Not "the first the API happened to return". Two callers reaching the same
 		// answer independently is what makes convergence a property rather than an
 		// accident of ordering.
 		const { client } = fakeClient({ existing: [{ id: 12 }, { id: 99 }] });
 
-		const result = await reportSignatureCheck(ON, client, "main", stored, KEY);
+		const result = await reportSignatureCheck(ON, client, 'main', stored, KEY);
 
-		expect(result).toMatchObject({ checkRunId: 12, action: "updated" });
+		expect(result).toMatchObject({ checkRunId: 12, action: 'updated' });
 	});
 
-	it("reports a failure when the lookup fails, and publishes nothing", async () => {
+	it('reports a failure when the lookup fails, and publishes nothing', async () => {
 		const { client, calls } = fakeClient({ listThrows: true });
 
-		const result = await reportSignatureCheck(ON, client, "main", stored, KEY);
+		const result = await reportSignatureCheck(ON, client, 'main', stored, KEY);
 
-		expect(result.outcome).toBe("failed");
-		expect(calls.some((call) => call.startsWith("createCheckRun"))).toBe(false);
+		expect(result.outcome).toBe('failed');
+		expect(calls.some((call) => call.startsWith('createCheckRun'))).toBe(false);
 	});
 
-	it("reports a failure when the create fails", async () => {
+	it('reports a failure when the create fails', async () => {
 		// An installation that has not granted `checks: write` lands here on every
 		// delivery, with a 403.
 		const { client } = fakeClient({ createThrows: true });
 
-		const result = await reportSignatureCheck(ON, client, "main", stored, KEY);
+		const result = await reportSignatureCheck(ON, client, 'main', stored, KEY);
 
-		expect(result).toMatchObject({ outcome: "failed" });
-		expect(result.outcome === "failed" && result.reason).toContain("check run creation");
+		expect(result).toMatchObject({ outcome: 'failed' });
+		expect(result.outcome === 'failed' && result.reason).toContain('check run creation');
 	});
 
-	it("reports a failure when the update fails", async () => {
+	it('reports a failure when the update fails', async () => {
 		const { client } = fakeClient({ existing: [{ id: 3 }], updateThrows: true });
 
-		const result = await reportSignatureCheck(ON, client, "main", stored, KEY);
+		const result = await reportSignatureCheck(ON, client, 'main', stored, KEY);
 
-		expect(result.outcome).toBe("failed");
+		expect(result.outcome).toBe('failed');
 	});
 });
 
-describe("the Checks API on the repository-scoped client", () => {
+describe('the Checks API on the repository-scoped client', () => {
 	beforeAll(async () => {
 		APP_PRIVATE_KEY ||= await generateAppKey();
 	});
@@ -702,15 +702,15 @@ describe("the Checks API on the repository-scoped client", () => {
 	/** The real client, bound to the authorized pair, with `fetch` stubbed. */
 	function realClient(respond: (request: Request, url: URL) => Response | Promise<Response>) {
 		const seen: Request[] = [];
-		vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+		vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
 			const request = new Request(input as RequestInfo, init as RequestInit);
 			const url = new URL(request.url);
 			seen.push(request);
 
-			if (url.pathname.endsWith("/access_tokens")) {
+			if (url.pathname.endsWith('/access_tokens')) {
 				return Promise.resolve(
 					Response.json(
-						{ token: "ghs_secret", expires_at: new Date(Date.now() + 3600_000).toISOString() },
+						{ token: 'ghs_secret', expires_at: new Date(Date.now() + 3600_000).toISOString() },
 						{ status: 201 },
 					),
 				);
@@ -721,7 +721,7 @@ describe("the Checks API on the repository-scoped client", () => {
 
 		const client = RepositoryClientClass.forAuthorization(
 			{ ...env, GITHUB_APP_ID: String(APP_ID), GITHUB_APP_PRIVATE_KEY: APP_PRIVATE_KEY } as never,
-			{ scope: "repository", installationId: 7777, repository: REPOSITORY, keyId: KEY },
+			{ scope: 'repository', installationId: 7777, repository: REPOSITORY, keyId: KEY },
 		);
 
 		return { client: client as RepositoryClient, seen };
@@ -734,13 +734,13 @@ describe("the Checks API on the repository-scoped client", () => {
 					{ id: 90, name: CHECK_RUN_NAME, app: { id: APP_ID } },
 					{ id: 12, name: CHECK_RUN_NAME, app: { id: APP_ID } },
 					{ id: 3, name: CHECK_RUN_NAME, app: { id: 999 } },
-					{ id: 4, name: "Another check", app: { id: APP_ID } },
+					{ id: 4, name: 'Another check', app: { id: APP_ID } },
 					{ id: 5, name: CHECK_RUN_NAME, app: null },
 				],
 			}),
 		);
 
-		const runs = await client.listCheckRuns("f".repeat(40), CHECK_RUN_NAME, APP_ID);
+		const runs = await client.listCheckRuns('f'.repeat(40), CHECK_RUN_NAME, APP_ID);
 
 		expect(runs).toEqual([{ id: 12 }, { id: 90 }]);
 		// The name is a query filter as well as a local one; GitHub's filter is not
@@ -750,11 +750,11 @@ describe("the Checks API on the repository-scoped client", () => {
 		// most recent run per name — and so hides exactly the older duplicate the
 		// earliest-wins rule above exists to converge on. Asserted here because a
 		// stub that ignores the query string cannot tell the two apart.
-		expect(seen.at(-1)?.url).toContain("filter=all");
+		expect(seen.at(-1)?.url).toContain('filter=all');
 		expect(seen.at(-1)?.url).toContain(`app_id=${APP_ID}`);
 	});
 
-	it("sends head_sha when creating and never when updating", async () => {
+	it('sends head_sha when creating and never when updating', async () => {
 		// A run's commit is not editable, and an update that carried one would be
 		// the one call able to move a published verdict onto another commit.
 		const bodies: Record<string, unknown>[] = [];
@@ -765,82 +765,82 @@ describe("the Checks API on the repository-scoped client", () => {
 
 		const input = {
 			name: CHECK_RUN_NAME,
-			headSha: "a".repeat(40),
-			conclusion: "success" as const,
-			title: "t",
-			summary: "s",
+			headSha: 'a'.repeat(40),
+			conclusion: 'success' as const,
+			title: 't',
+			summary: 's',
 			completedAt: new Date().toISOString(),
 		};
 
 		await client.createCheckRun(input);
 		await client.updateCheckRun(1, input);
 
-		expect(bodies[0]?.head_sha).toBe("a".repeat(40));
-		expect(bodies[1]).not.toHaveProperty("head_sha");
-		expect(bodies[1]?.conclusion).toBe("success");
+		expect(bodies[0]?.head_sha).toBe('a'.repeat(40));
+		expect(bodies[1]).not.toHaveProperty('head_sha');
+		expect(bodies[1]?.conclusion).toBe('success');
 	});
 
 	it("raises an error carrying a status and none of GitHub's body", async () => {
 		// The body of a GitHub error can quote back the request that produced it,
 		// and that request carried an installation token.
 		const { client } = realClient(() =>
-			Response.json({ message: "Resource not accessible by integration", token_hint: "ghs_secret" }, { status: 403 }),
+			Response.json({ message: 'Resource not accessible by integration', token_hint: 'ghs_secret' }, { status: 403 }),
 		);
 
 		const failure = (await client
 			.updateCheckRun(1, {
 				name: CHECK_RUN_NAME,
-				headSha: "a".repeat(40),
-				conclusion: "neutral",
-				title: "t",
-				summary: "s",
+				headSha: 'a'.repeat(40),
+				conclusion: 'neutral',
+				title: 't',
+				summary: 's',
 				completedAt: new Date().toISOString(),
 			})
 			.catch((error: unknown) => error)) as Error;
 
 		expect(failure).toBeInstanceOf(Error);
 		expect(failure.message).toBe(`GitHub refused a check run update for ${REPOSITORY}`);
-		expect(failure.message).not.toContain("ghs_secret");
-		expect(failure.message).not.toContain("not accessible");
+		expect(failure.message).not.toContain('ghs_secret');
+		expect(failure.message).not.toContain('not accessible');
 	});
 });
 
 /** A real RSA key for the App, so the token exchange mints a real JWT. */
-let APP_PRIVATE_KEY = "";
+let APP_PRIVATE_KEY = '';
 
 async function generateAppKey(): Promise<string> {
 	const pair = (await crypto.subtle.generateKey(
-		{ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+		{ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
 		true,
-		["sign", "verify"],
+		['sign', 'verify'],
 	)) as CryptoKeyPair;
-	const der = new Uint8Array((await crypto.subtle.exportKey("pkcs8", pair.privateKey)) as ArrayBuffer);
-	let binary = "";
+	const der = new Uint8Array((await crypto.subtle.exportKey('pkcs8', pair.privateKey)) as ArrayBuffer);
+	let binary = '';
 	for (const byte of der) {
 		binary += String.fromCharCode(byte);
 	}
 
-	return `${PKCS8_PRIVATE_BEGIN}\n${btoa(binary).replace(/(.{64})/g, "$1\n")}\n${PKCS8_PRIVATE_END}\n`;
+	return `${PKCS8_PRIVATE_BEGIN}\n${btoa(binary).replace(/(.{64})/g, '$1\n')}\n${PKCS8_PRIVATE_END}\n`;
 }
 
 async function hmac(body: string): Promise<string> {
 	const signingKey = await crypto.subtle.importKey(
-		"raw",
+		'raw',
 		new TextEncoder().encode(SECRET),
-		{ name: "HMAC", hash: "SHA-256" },
+		{ name: 'HMAC', hash: 'SHA-256' },
 		false,
-		["sign"],
+		['sign'],
 	);
-	const mac = new Uint8Array(await crypto.subtle.sign("HMAC", signingKey, new TextEncoder().encode(body)));
+	const mac = new Uint8Array(await crypto.subtle.sign('HMAC', signingKey, new TextEncoder().encode(body)));
 
-	return SIGNATURE_PREFIX + [...mac].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+	return SIGNATURE_PREFIX + [...mac].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-describe("through the endpoint", () => {
+describe('through the endpoint', () => {
 	/** The head the branch really points at: signed, so nothing is rewritten. */
-	let HEAD_SHA = "";
-	let HEAD_PAYLOAD = "";
-	let HEAD_SIGNATURE = "";
+	let HEAD_SHA = '';
+	let HEAD_PAYLOAD = '';
+	let HEAD_SIGNATURE = '';
 
 	beforeAll(async () => {
 		APP_PRIVATE_KEY = await generateAppKey();
@@ -865,24 +865,24 @@ describe("through the endpoint", () => {
 				error_code TEXT,
 				metadata TEXT
 			)`,
-			"CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs (action)",
+			'CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs (action)',
 		]) {
 			await env.AUDIT_DB.prepare(statement).run();
 		}
 
 		const { privateKey } = await openpgp.generateKey({
-			type: "ecc",
-			curve: "ed25519Legacy",
-			userIDs: [{ name: "Check Report", email: "check@test.com" }],
+			type: 'ecc',
+			curve: 'ed25519Legacy',
+			userIDs: [{ name: 'Check Report', email: 'check@test.com' }],
 			passphrase: env.KEY_PASSPHRASE,
-			format: "armored",
+			format: 'armored',
 		});
 
 		const ctx = createExecutionContext();
 		const upload = await app.fetch(
-			new Request("https://sign.test/admin/keys", {
-				method: "POST",
-				headers: { Authorization: `Bearer ${env.ADMIN_TOKEN}`, "Content-Type": "application/json" },
+			new Request('https://sign.test/admin/keys', {
+				method: 'POST',
+				headers: { Authorization: `Bearer ${env.ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
 				body: JSON.stringify({ armoredPrivateKey: privateKey, keyId: KEY }),
 			}),
 			env,
@@ -891,7 +891,7 @@ describe("through the endpoint", () => {
 		await waitOnExecutionContext(ctx);
 		expect(upload.status).toBe(201);
 
-		HEAD_PAYLOAD = payloadFor("already signed\n");
+		HEAD_PAYLOAD = payloadFor('already signed\n');
 		HEAD_SIGNATURE = await sign(HEAD_PAYLOAD, privateKey);
 		HEAD_SHA = await commitObjectId(signedCommitObject(HEAD_PAYLOAD, HEAD_SIGNATURE));
 	});
@@ -928,7 +928,7 @@ describe("through the endpoint", () => {
 			announceChecks = resolve;
 		});
 
-		vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
 			const request = new Request(input as RequestInfo, init as RequestInit);
 			const url = new URL(request.url);
 
@@ -940,46 +940,46 @@ describe("through the endpoint", () => {
 			// one is there to read.
 			let body: Record<string, unknown> | undefined;
 			try {
-				body = request.method === "GET" ? undefined : ((await request.json()) as Record<string, unknown>);
+				body = request.method === 'GET' ? undefined : ((await request.json()) as Record<string, unknown>);
 			} catch {
 				body = undefined;
 			}
 			calls.push({ method: request.method, path: url.pathname, body });
 
-			if (url.pathname.endsWith("/access_tokens")) {
+			if (url.pathname.endsWith('/access_tokens')) {
 				return Response.json(
-					{ token: "ghs_secret", expires_at: new Date(Date.now() + 3600_000).toISOString() },
+					{ token: 'ghs_secret', expires_at: new Date(Date.now() + 3600_000).toISOString() },
 					{ status: 201 },
 				);
 			}
 
-			if (url.pathname.includes("/git/ref/heads/")) {
+			if (url.pathname.includes('/git/ref/heads/')) {
 				if (options.refMissing) {
-					return Response.json({ message: "Not Found" }, { status: 404 });
+					return Response.json({ message: 'Not Found' }, { status: 404 });
 				}
-				return Response.json({ ref: "refs/heads/main", object: { sha: HEAD_SHA } });
+				return Response.json({ ref: 'refs/heads/main', object: { sha: HEAD_SHA } });
 			}
 
-			if (url.pathname.includes("/git/commits/")) {
+			if (url.pathname.includes('/git/commits/')) {
 				return Response.json({
 					sha: HEAD_SHA,
-					message: "already signed",
+					message: 'already signed',
 					tree: { sha: TREE },
 					parents: [{ sha: PARENT }],
 					author: { name: IDENTITY.name, email: IDENTITY.email, date: IDENTITY.date },
 					committer: { name: IDENTITY.name, email: IDENTITY.email, date: IDENTITY.date },
-					verification: { verified: false, reason: "unknown_key", signature: HEAD_SIGNATURE, payload: HEAD_PAYLOAD },
+					verification: { verified: false, reason: 'unknown_key', signature: HEAD_SIGNATURE, payload: HEAD_PAYLOAD },
 				});
 			}
 
-			if (url.pathname.includes("/check-runs")) {
+			if (url.pathname.includes('/check-runs')) {
 				// Held here rather than at one verb, so a reporter that reordered its
 				// calls could not slip past the gate.
 				announceChecks();
 				await options.gate;
 			}
 
-			if (url.pathname.endsWith("/check-runs") && request.method === "GET") {
+			if (url.pathname.endsWith('/check-runs') && request.method === 'GET') {
 				return Response.json({
 					check_runs: runs.map((run) => ({
 						id: run.id,
@@ -989,21 +989,21 @@ describe("through the endpoint", () => {
 				});
 			}
 
-			if (url.pathname.endsWith("/check-runs") && request.method === "POST") {
+			if (url.pathname.endsWith('/check-runs') && request.method === 'POST') {
 				if (options.checksForbidden) {
-					return Response.json({ message: "Resource not accessible by integration" }, { status: 403 });
+					return Response.json({ message: 'Resource not accessible by integration' }, { status: 403 });
 				}
 				const id = nextId++;
 				// The run is created whether or not the caller ever learns it was.
 				runs.push({ id });
 				if (options.createLosesResponse) {
-					throw new Error("network dropped the response");
+					throw new Error('network dropped the response');
 				}
 				return Response.json({ id, name: CHECK_RUN_NAME }, { status: 201 });
 			}
 
-			if (url.pathname.includes("/check-runs/") && request.method === "PATCH") {
-				return Response.json({ id: Number(url.pathname.split("/").pop()), name: CHECK_RUN_NAME });
+			if (url.pathname.includes('/check-runs/') && request.method === 'PATCH') {
+				return Response.json({ id: Number(url.pathname.split('/').pop()), name: CHECK_RUN_NAME });
 			}
 
 			throw new Error(`unexpected path ${url.pathname}`);
@@ -1014,14 +1014,14 @@ describe("through the endpoint", () => {
 
 	function pushPayload(installationId: number, repository: string) {
 		return {
-			ref: "refs/heads/main",
+			ref: 'refs/heads/main',
 			deleted: false,
-			before: "0".repeat(40),
+			before: '0'.repeat(40),
 			// A sha the branch does not point at. A reporter that took the head from
 			// the payload would attach the check run to this one.
-			after: "e".repeat(40),
+			after: 'e'.repeat(40),
 			installation: { id: installationId },
-			repository: { full_name: repository, name: repository.split("/")[1] },
+			repository: { full_name: repository, name: repository.split('/')[1] },
 		};
 	}
 
@@ -1041,24 +1041,24 @@ describe("through the endpoint", () => {
 		// and the point of this helper is to hold an unresolved response.
 		const response = Promise.resolve(
 			app.fetch(
-				new Request("https://sign.test/github/webhook", {
-					method: "POST",
+				new Request('https://sign.test/github/webhook', {
+					method: 'POST',
 					body,
 					headers: {
-						"Content-Type": "application/json",
-						"X-Hub-Signature-256": await hmac(body),
-						"X-GitHub-Event": "push",
-						"X-GitHub-Delivery": options.deliveryId ?? crypto.randomUUID(),
+						'Content-Type': 'application/json',
+						'X-Hub-Signature-256': await hmac(body),
+						'X-GitHub-Event': 'push',
+						'X-GitHub-Delivery': options.deliveryId ?? crypto.randomUUID(),
 					},
 				}),
 				{
 					...env,
-					GITHUB_APP_ENABLED: "true",
+					GITHUB_APP_ENABLED: 'true',
 					GITHUB_WEBHOOK_SECRET: SECRET,
 					GITHUB_APP_ALLOWED_REPOSITORIES: options.allowlist,
 					GITHUB_APP_ID: String(APP_ID),
 					GITHUB_APP_PRIVATE_KEY: APP_PRIVATE_KEY,
-					GITHUB_APP_CHECK_RUNS: options.checkRuns ?? "true",
+					GITHUB_APP_CHECK_RUNS: options.checkRuns ?? 'true',
 				},
 				ctx,
 			),
@@ -1075,7 +1075,7 @@ describe("through the endpoint", () => {
 		return { response, body: (await response.json()) as Record<string, unknown> };
 	}
 
-	it("reaches no Checks API path at all with the flag off", async () => {
+	it('reaches no Checks API path at all with the flag off', async () => {
 		// The shipped default. A deployment that has not opted in behaves exactly
 		// as it did before this existed — which is what makes "#132 is preserved"
 		// a property rather than a claim.
@@ -1083,29 +1083,29 @@ describe("through the endpoint", () => {
 
 		const { response, body } = await deliver({
 			allowlist: `${INSTALLATION}:${REPOSITORY}=${KEY}`,
-			checkRuns: "false",
+			checkRuns: 'false',
 		});
 
 		expect(response.status).toBe(202);
-		expect(body.skipped).toBe("nothing_to_sign");
-		expect(calls.some((call) => call.path.includes("check-runs"))).toBe(false);
+		expect(body.skipped).toBe('nothing_to_sign');
+		expect(calls.some((call) => call.path.includes('check-runs'))).toBe(false);
 	});
 
-	it("publishes a check for the sha the ref holds, not the one the payload claims", async () => {
+	it('publishes a check for the sha the ref holds, not the one the payload claims', async () => {
 		const { calls } = stubGitHub();
 
 		const { response } = await deliver({ allowlist: `${INSTALLATION}:${REPOSITORY}=${KEY}` });
 
 		expect(response.status).toBe(202);
 
-		const created = calls.find((call) => call.method === "POST" && call.path.endsWith("/check-runs"));
+		const created = calls.find((call) => call.method === 'POST' && call.path.endsWith('/check-runs'));
 		expect(created?.body?.head_sha).toBe(HEAD_SHA);
-		expect(created?.body?.head_sha).not.toBe("e".repeat(40));
+		expect(created?.body?.head_sha).not.toBe('e'.repeat(40));
 		expect(created?.body?.name).toBe(CHECK_RUN_NAME);
-		expect(created?.body?.conclusion).toBe("success");
+		expect(created?.body?.conclusion).toBe('success');
 	});
 
-	it("makes every Checks API call under the authorized repository and installation", async () => {
+	it('makes every Checks API call under the authorized repository and installation', async () => {
 		// Cross-repository and cross-installation confusion, at the reporting path.
 		// The payload's spelling of the repository differs in case from the
 		// allowlist's, so a reporter that used `payload.repository.full_name` would
@@ -1118,23 +1118,23 @@ describe("through the endpoint", () => {
 
 		await deliver({
 			allowlist: `${installation}:${REPOSITORY}=${KEY}`,
-			payload: pushPayload(installation, "KJANAT/SERVICE"),
+			payload: pushPayload(installation, 'KJANAT/SERVICE'),
 		});
 
-		const checkPaths = calls.filter((call) => call.path.includes("check-runs"));
+		const checkPaths = calls.filter((call) => call.path.includes('check-runs'));
 		expect(checkPaths.length).toBeGreaterThan(0);
 		for (const call of checkPaths) {
 			expect(call.path.startsWith(`/repos/${REPOSITORY}/`)).toBe(true);
 		}
 
-		const tokens = calls.filter((call) => call.path.endsWith("/access_tokens"));
+		const tokens = calls.filter((call) => call.path.endsWith('/access_tokens'));
 		expect(tokens.length).toBeGreaterThan(0);
 		for (const call of tokens) {
 			expect(call.path).toBe(`/app/installations/${installation}/access_tokens`);
 		}
 	});
 
-	it("updates one run instead of creating a second when the same head is reported again", async () => {
+	it('updates one run instead of creating a second when the same head is reported again', async () => {
 		// Two distinct deliveries about the same head — the shape a redelivery
 		// under a fresh id, or a second push landing on the same commit, produces.
 		const { calls } = stubGitHub();
@@ -1143,11 +1143,11 @@ describe("through the endpoint", () => {
 		await deliver({ allowlist });
 		await deliver({ allowlist });
 
-		expect(calls.filter((call) => call.method === "POST" && call.path.endsWith("/check-runs"))).toHaveLength(1);
-		expect(calls.filter((call) => call.method === "PATCH")).toHaveLength(1);
+		expect(calls.filter((call) => call.method === 'POST' && call.path.endsWith('/check-runs'))).toHaveLength(1);
+		expect(calls.filter((call) => call.method === 'PATCH')).toHaveLength(1);
 	});
 
-	it("updates rather than duplicating after a create whose response was lost", async () => {
+	it('updates rather than duplicating after a create whose response was lost', async () => {
 		// The unsafe second effect this design exists to prevent: the run *was*
 		// created, and the caller never learnt its id. A second attempt finds it.
 		const allowlist = `${INSTALLATION}:${REPOSITORY}=${KEY}`;
@@ -1159,10 +1159,10 @@ describe("through the endpoint", () => {
 		const { calls } = stubGitHub({ existing: lost.runs });
 		await deliver({ allowlist });
 
-		expect(calls.filter((call) => call.method === "POST" && call.path.endsWith("/check-runs"))).toHaveLength(0);
-		const patched = calls.filter((call) => call.method === "PATCH");
+		expect(calls.filter((call) => call.method === 'POST' && call.path.endsWith('/check-runs'))).toHaveLength(0);
+		const patched = calls.filter((call) => call.method === 'PATCH');
 		expect(patched).toHaveLength(1);
-		expect(patched[0]?.body?.conclusion).toBe("success");
+		expect(patched[0]?.body?.conclusion).toBe('success');
 	});
 
 	it("creates its own run beside another app's with the same name", async () => {
@@ -1178,19 +1178,19 @@ describe("through the endpoint", () => {
 
 		await deliver({ allowlist: `${INSTALLATION}:${REPOSITORY}=${KEY}` });
 
-		expect(calls.filter((call) => call.method === "POST" && call.path.endsWith("/check-runs"))).toHaveLength(1);
-		expect(calls.filter((call) => call.method === "PATCH")).toHaveLength(0);
+		expect(calls.filter((call) => call.method === 'POST' && call.path.endsWith('/check-runs'))).toHaveLength(1);
+		expect(calls.filter((call) => call.method === 'PATCH')).toHaveLength(0);
 	});
 
-	it("ignores a run of ours under a different name", async () => {
-		const { calls } = stubGitHub({ existing: [{ id: 8, name: "Some other check" }] });
+	it('ignores a run of ours under a different name', async () => {
+		const { calls } = stubGitHub({ existing: [{ id: 8, name: 'Some other check' }] });
 
 		await deliver({ allowlist: `${INSTALLATION}:${REPOSITORY}=${KEY}` });
 
-		expect(calls.filter((call) => call.method === "POST" && call.path.endsWith("/check-runs"))).toHaveLength(1);
+		expect(calls.filter((call) => call.method === 'POST' && call.path.endsWith('/check-runs'))).toHaveLength(1);
 	});
 
-	it("publishes no check when the branch is gone by the time it looks", async () => {
+	it('publishes no check when the branch is gone by the time it looks', async () => {
 		// The delivery is about a branch that no longer exists — deleted between
 		// the push and this request. There is no head, so there is nothing to
 		// report on, and nothing is written.
@@ -1198,22 +1198,22 @@ describe("through the endpoint", () => {
 
 		const { body } = await deliver({ allowlist: `${INSTALLATION}:${REPOSITORY}=${KEY}` });
 
-		expect(body.skipped).toBe("branch_missing");
-		expect(calls.some((call) => call.path.includes("check-runs"))).toBe(false);
+		expect(body.skipped).toBe('branch_missing');
+		expect(calls.some((call) => call.path.includes('check-runs'))).toBe(false);
 	});
 
-	it("publishes no check for a repository the allowlist bound no key to", async () => {
+	it('publishes no check for a repository the allowlist bound no key to', async () => {
 		// Receiving events and causing signatures are separate grants, and so are
 		// receiving events and having a key to attribute a signature to.
 		const { calls } = stubGitHub();
 
 		const { body } = await deliver({ allowlist: `${INSTALLATION}:${REPOSITORY}` });
 
-		expect(body.skipped).toBe("no_key_bound");
+		expect(body.skipped).toBe('no_key_bound');
 		expect(calls).toHaveLength(0);
 	});
 
-	it("leaves the delivery committed when the check cannot be published", async () => {
+	it('leaves the delivery committed when the check cannot be published', async () => {
 		// A reporting failure must not make a *signing* delivery retryable. The
 		// assertion is the redelivery: a committed id comes back `duplicate: true`.
 		const id = crypto.randomUUID();
@@ -1222,13 +1222,13 @@ describe("through the endpoint", () => {
 
 		const first = await deliver({ allowlist, deliveryId: id });
 		expect(first.response.status).toBe(202);
-		expect(first.body.skipped).toBe("nothing_to_sign");
+		expect(first.body.skipped).toBe('nothing_to_sign');
 
 		const second = await deliver({ allowlist, deliveryId: id });
 		expect(second.body.duplicate).toBe(true);
 	});
 
-	it("acknowledges the delivery before the Checks API has answered", async () => {
+	it('acknowledges the delivery before the Checks API has answered', async () => {
 		// The property, stated as a race rather than as a timing: the whole Checks
 		// path is held shut, and the acknowledgement still arrives. A reporter on
 		// the response path would deadlock here instead of failing an assertion,
@@ -1254,29 +1254,29 @@ describe("through the endpoint", () => {
 		// than assumed, so this is not a race the reporter can win by being quick.
 		// Nothing has been written, and the acknowledgement is already sent.
 		await reachedChecks;
-		expect(calls.some((call) => call.method === "POST" && call.path.endsWith("/check-runs"))).toBe(false);
-		expect(calls.some((call) => call.method === "PATCH")).toBe(false);
+		expect(calls.some((call) => call.method === 'POST' && call.path.endsWith('/check-runs'))).toBe(false);
+		expect(calls.some((call) => call.method === 'PATCH')).toBe(false);
 
 		release();
 		await waitOnExecutionContext(ctx);
 
 		// It did run, afterwards. A report that had been dropped rather than
 		// deferred would satisfy every assertion above this line.
-		expect(calls.some((call) => call.method === "POST" && call.path.endsWith("/check-runs"))).toBe(true);
+		expect(calls.some((call) => call.method === 'POST' && call.path.endsWith('/check-runs'))).toBe(true);
 	});
 
-	it("never describes the check run in the acknowledgement", async () => {
+	it('never describes the check run in the acknowledgement', async () => {
 		// The field the response used to carry. It is gone because the response no
 		// longer knows: what was published is in the log line and the audit row.
 		const { calls } = stubGitHub();
 
 		const { body } = await deliver({ allowlist: `${INSTALLATION}:${REPOSITORY}=${KEY}` });
 
-		expect(calls.some((call) => call.method === "POST" && call.path.endsWith("/check-runs"))).toBe(true);
-		expect(body).not.toHaveProperty("check");
+		expect(calls.some((call) => call.method === 'POST' && call.path.endsWith('/check-runs'))).toBe(true);
+		expect(body).not.toHaveProperty('check');
 	});
 
-	it("records what it published, with no signature or token in the row", async () => {
+	it('records what it published, with no signature or token in the row', async () => {
 		stubGitHub();
 
 		await deliver({ allowlist: `${INSTALLATION}:${REPOSITORY}=${KEY}` });
@@ -1289,9 +1289,9 @@ describe("through the endpoint", () => {
 		expect(row?.key_id).toBe(KEY);
 		expect(row?.success).toBe(1);
 
-		const metadata = JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>;
-		expect(metadata).toMatchObject({ sha: HEAD_SHA, state: "service_key_valid", conclusion: "success" });
-		expect(row?.metadata).not.toContain("BEGIN PGP");
-		expect(row?.metadata).not.toContain("ghs_secret");
+		const metadata = JSON.parse(row?.metadata ?? '{}') as Record<string, unknown>;
+		expect(metadata).toMatchObject({ sha: HEAD_SHA, state: 'service_key_valid', conclusion: 'success' });
+		expect(row?.metadata).not.toContain('BEGIN PGP');
+		expect(row?.metadata).not.toContain('ghs_secret');
 	});
 });

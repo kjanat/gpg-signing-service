@@ -52,25 +52,25 @@
  * the right direction to be wrong in.
  */
 
-import * as openpgp from "openpgp";
+import * as openpgp from 'openpgp';
 
-import { commitObjectId, signedCommitObject } from "#utils/git-commit";
+import { commitObjectId, signedCommitObject } from '#utils/git-commit';
 
 /** The armor header a PGP signature begins with, and nothing else does. */
-const PGP_ARMOR = "-----BEGIN PGP SIGNATURE-----";
+const PGP_ARMOR = '-----BEGIN PGP SIGNATURE-----';
 
 /** What this service is willing to say about a commit's signature. */
 export type SignatureState =
 	/** The commit carries no signature at all. */
-	| "unsigned"
+	| 'unsigned'
 	/** A signature naming the bound key, verified here under that key. */
-	| "service_key_valid"
+	| 'service_key_valid'
 	/** A signature by somebody else. No claim is made about whether it is good. */
-	| "other_signer"
+	| 'other_signer'
 	/** A signature naming the bound key that does not verify under it. */
-	| "invalid_signature"
+	| 'invalid_signature'
 	/** The signature could not be tied to this commit, so nothing was shown. */
-	| "unverifiable";
+	| 'unverifiable';
 
 /**
  * Why the state is the state, from a closed set.
@@ -81,23 +81,23 @@ export type SignatureState =
  */
 export type SignatureDetail =
 	/** `verification.signature` was null or empty. */
-	| "no_signature"
+	| 'no_signature'
 	/** A signature was reported and no payload came with it. */
-	| "no_payload"
+	| 'no_payload'
 	/** The payload and signature do not fold back into the commit's own object id. */
-	| "object_binding_failed"
+	| 'object_binding_failed'
 	/** The armor is not an OpenPGP signature — an SSH or S/MIME one, say. */
-	| "non_pgp_signature"
+	| 'non_pgp_signature'
 	/** An OpenPGP armor block this service could not parse. */
-	| "unreadable_signature"
+	| 'unreadable_signature'
 	/** A well-formed OpenPGP signature naming some key other than the bound one. */
-	| "different_key"
+	| 'different_key'
 	/** It names the bound key and does not verify under it. */
-	| "verification_failed"
+	| 'verification_failed'
 	/** It names the bound key and verifies under it. */
-	| "verified"
+	| 'verified'
 	/** The bound key's own material could not be read, so nothing can be attributed. */
-	| "unreadable_service_key";
+	| 'unreadable_service_key';
 
 /**
  * The `reason` values GitHub's verification object is documented to carry.
@@ -108,23 +108,23 @@ export type SignatureDetail =
  * a remote API choose text that this service publishes under its own name.
  */
 const GITHUB_REASONS = new Set([
-	"expired_key",
-	"not_signing_key",
-	"gpgverify_error",
-	"gpgverify_unavailable",
-	"unsigned",
-	"unknown_signature_type",
-	"no_user",
-	"unverified_email",
-	"bad_email",
-	"unknown_key",
-	"malformed_signature",
-	"invalid",
-	"valid",
-	"bad_cert",
-	"ocsp_pending",
-	"ocsp_error",
-	"ocsp_revoked",
+	'expired_key',
+	'not_signing_key',
+	'gpgverify_error',
+	'gpgverify_unavailable',
+	'unsigned',
+	'unknown_signature_type',
+	'no_user',
+	'unverified_email',
+	'bad_email',
+	'unknown_key',
+	'malformed_signature',
+	'invalid',
+	'valid',
+	'bad_cert',
+	'ocsp_pending',
+	'ocsp_error',
+	'ocsp_revoked',
 ]);
 
 /** GitHub's own verdict on the same commit, kept separate from ours. */
@@ -147,7 +147,7 @@ export interface SignatureFinding {
 export function githubVerdict(verified: unknown, reason: unknown): GitHubVerdict {
 	return {
 		verified: verified === true,
-		reason: typeof reason === "string" && GITHUB_REASONS.has(reason) ? reason : "unknown",
+		reason: typeof reason === 'string' && GITHUB_REASONS.has(reason) ? reason : 'unknown',
 	};
 }
 
@@ -179,26 +179,26 @@ export async function inspectCommitSignature(
 	const github = githubVerdict(reported.verified, reported.reason);
 
 	const signature = reported.signature?.trim();
-	if (signature === undefined || signature === "") {
-		return { state: "unsigned", detail: "no_signature", github };
+	if (signature === undefined || signature === '') {
+		return { state: 'unsigned', detail: 'no_signature', github };
 	}
 
 	if (reported.payload === null) {
 		// Signed, with nothing to check the signature against. Not a judgement on
 		// the signature — we were not given the bytes it covers.
-		return { state: "unverifiable", detail: "no_payload", github };
+		return { state: 'unverifiable', detail: 'no_payload', github };
 	}
 
 	// The binding, before anything is parsed. Everything after this point is a
 	// statement about *this commit*, and this is what makes it one.
 	if (!(await bindsToCommit(reported.payload, signature, reported.sha))) {
-		return { state: "unverifiable", detail: "object_binding_failed", github };
+		return { state: 'unverifiable', detail: 'object_binding_failed', github };
 	}
 
 	if (!signature.startsWith(PGP_ARMOR)) {
 		// An SSH or S/MIME signature. Somebody else's, and not one this service
 		// has any means of checking — which is `other_signer`, not `invalid`.
-		return { state: "other_signer", detail: "non_pgp_signature", github };
+		return { state: 'other_signer', detail: 'non_pgp_signature', github };
 	}
 
 	let key: openpgp.Key;
@@ -208,7 +208,7 @@ export async function inspectCommitSignature(
 		// The bound key's own material would not parse. Nothing can be attributed
 		// to a key that cannot be read, and that is a fact about this deployment
 		// rather than about the commit — so it is `unverifiable`, not a verdict.
-		return { state: "unverifiable", detail: "unreadable_service_key", github };
+		return { state: 'unverifiable', detail: 'unreadable_service_key', github };
 	}
 
 	let parsed: openpgp.Signature;
@@ -218,7 +218,7 @@ export async function inspectCommitSignature(
 		// PGP armor that is not a PGP signature. Nothing names a key, so nothing
 		// attributes it to anybody — but it is a broken OpenPGP signature on a
 		// commit, which is a finding rather than a shrug.
-		return { state: "invalid_signature", detail: "unreadable_signature", github };
+		return { state: 'invalid_signature', detail: 'unreadable_signature', github };
 	}
 
 	// Compared against **the key's own ids**, primary and subkeys alike, rather
@@ -234,14 +234,14 @@ export async function inspectCommitSignature(
 	if (!signedBy.some((id) => ours.has(id))) {
 		// Somebody else's key. Verifying it would need their public half, which
 		// this deployment has no reason to hold, so no claim is made either way.
-		return { state: "other_signer", detail: "different_key", github };
+		return { state: 'other_signer', detail: 'different_key', github };
 	}
 
 	const verifies = await verifiesUnder(parsed, reported.payload, key);
 
 	return {
-		state: verifies ? "service_key_valid" : "invalid_signature",
-		detail: verifies ? "verified" : "verification_failed",
+		state: verifies ? 'service_key_valid' : 'invalid_signature',
+		detail: verifies ? 'verified' : 'verification_failed',
 		github,
 	};
 }
@@ -289,7 +289,7 @@ async function verifiesUnder(signature: openpgp.Signature, payload: string, key:
 			message,
 			signature,
 			verificationKeys: key,
-			format: "binary",
+			format: 'binary',
 		});
 
 		// `verified` rejects rather than resolving false, and openpgp builds one of
@@ -306,7 +306,7 @@ async function verifiesUnder(signature: openpgp.Signature, payload: string, key:
 		// no signature at all must not read as a pass.
 		const verdicts = await Promise.allSettled(result.signatures.map((each) => each.verified));
 
-		return verdicts.some((verdict) => verdict.status === "fulfilled" && verdict.value === true);
+		return verdicts.some((verdict) => verdict.status === 'fulfilled' && verdict.value === true);
 	} catch {
 		return false;
 	}

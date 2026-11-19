@@ -1,5 +1,5 @@
-import type * as openpgp from "openpgp";
-import { CACHE_TTL } from "#utils/constants";
+import type * as openpgp from 'openpgp';
+import { CACHE_TTL } from '#utils/constants';
 
 /**
  * Cache entry for a decrypted OpenPGP private key

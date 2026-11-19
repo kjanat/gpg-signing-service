@@ -59,7 +59,7 @@ interface Env {
 // The Workers pool has no filesystem, so inlining the file at build time is the
 // only way a test can check that every code the enum declares has a section to
 // link to.
-declare module "*.md?raw" {
+declare module '*.md?raw' {
 	const content: string;
 	export default content;
 }
@@ -67,7 +67,7 @@ declare module "*.md?raw" {
 // The same suffix on the shell example. `docs-contract.test.ts` holds its `503`
 // branch against the codes the reference sorts onto that status, because two of
 // them land there and they disagree about carrying a `Retry-After`.
-declare module "*.sh?raw" {
+declare module '*.sh?raw' {
 	const content: string;
 	export default content;
 }
@@ -77,5 +77,5 @@ declare module "*.sh?raw" {
 // this directory's tsconfig loads only the Workers pool's types, and pulling in
 // the whole client surface to type one call is a worse trade than six lines.
 interface ImportMeta {
-	glob<T = string>(pattern: string, options: { query: "?raw"; import: "default"; eager: true }): Record<string, T>;
+	glob<T = string>(pattern: string, options: { query: '?raw'; import: 'default'; eager: true }): Record<string, T>;
 }

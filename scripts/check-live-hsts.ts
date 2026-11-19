@@ -33,7 +33,7 @@
  * file is only the transport.
  */
 
-import { auditHstsPolicy, HSTS_POLICY } from "#utils/hsts";
+import { auditHstsPolicy, HSTS_POLICY } from '#utils/hsts';
 
 /**
  * Whether a probe expects the request to be served or refused.
@@ -44,10 +44,10 @@ import { auditHstsPolicy, HSTS_POLICY } from "#utils/hsts";
  * Asserting the shape keeps the claim honest: if `/sign` ever stops refusing an
  * unauthenticated caller, this file stops pretending it tested that it does.
  */
-type ProbeShape = "served" | "refused";
+type ProbeShape = 'served' | 'refused';
 
 interface Probe {
-	method: "GET" | "POST";
+	method: 'GET' | 'POST';
 	path: string;
 	/** What this probe is here to cover, printed so the set explains itself. */
 	covers: string;
@@ -67,25 +67,25 @@ interface Probe {
  * `securityHeaders`.
  */
 const PROBES: readonly Probe[] = [
-	{ method: "GET", path: "/health", covers: "JSON status", expect: "served" },
-	{ method: "GET", path: "/doc", covers: "OpenAPI document", expect: "served" },
-	{ method: "GET", path: "/ui", covers: "HTML page", expect: "served" },
-	{ method: "GET", path: "/public-key", covers: "armoured key body", expect: "served" },
-	{ method: "POST", path: "/sign", covers: "unauthenticated refusal", expect: "refused" },
-	{ method: "GET", path: "/no-such-route", covers: "not-found handler", expect: "refused" },
+	{ method: 'GET', path: '/health', covers: 'JSON status', expect: 'served' },
+	{ method: 'GET', path: '/doc', covers: 'OpenAPI document', expect: 'served' },
+	{ method: 'GET', path: '/ui', covers: 'HTML page', expect: 'served' },
+	{ method: 'GET', path: '/public-key', covers: 'armoured key body', expect: 'served' },
+	{ method: 'POST', path: '/sign', covers: 'unauthenticated refusal', expect: 'refused' },
+	{ method: 'GET', path: '/no-such-route', covers: 'not-found handler', expect: 'refused' },
 ] as const;
 
-const DEFAULT_BASE_URL = "https://gpg.kajkowalski.nl";
+const DEFAULT_BASE_URL = 'https://gpg.kajkowalski.nl';
 
 /** Reads as the response shape a caller got, not as the status class alone. */
-function observedShape(status: number): ProbeShape | "unexpected" {
-	if (status >= 200 && status < 300) return "served";
-	if (status >= 400 && status < 500) return "refused";
-	return "unexpected";
+function observedShape(status: number): ProbeShape | 'unexpected' {
+	if (status >= 200 && status < 300) return 'served';
+	if (status >= 400 && status < 500) return 'refused';
+	return 'unexpected';
 }
 
 async function main(): Promise<number> {
-	const baseUrl = (process.argv[2] ?? process.env.GPG_SIGN_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+	const baseUrl = (process.argv[2] ?? process.env.GPG_SIGN_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
 
 	console.log(`Intended policy: ${HSTS_POLICY}`);
 	console.log(`Probing ${baseUrl}\n`);
@@ -98,7 +98,7 @@ async function main(): Promise<number> {
 		const label = `${probe.method} ${probe.path}`.padEnd(22);
 		let response: Response;
 		try {
-			response = await fetch(`${baseUrl}${probe.path}`, { method: probe.method, redirect: "manual" });
+			response = await fetch(`${baseUrl}${probe.path}`, { method: probe.method, redirect: 'manual' });
 		} catch (error) {
 			console.log(`  ${label} UNREACHABLE  ${error instanceof Error ? error.message : String(error)}`);
 			unusable = true;
@@ -106,16 +106,16 @@ async function main(): Promise<number> {
 		}
 
 		const shape = observedShape(response.status);
-		const audit = auditHstsPolicy(response.headers.get("Strict-Transport-Security"));
+		const audit = auditHstsPolicy(response.headers.get('Strict-Transport-Security'));
 		console.log(
-			`  ${label} ${String(response.status).padEnd(4)} ${audit.ok ? "OK   " : "DRIFT"}  ${audit.observed ?? "(no header)"}`,
+			`  ${label} ${String(response.status).padEnd(4)} ${audit.ok ? 'OK   ' : 'DRIFT'}  ${audit.observed ?? '(no header)'}`,
 		);
 		for (const finding of audit.findings) console.log(`    ${finding.code}: ${finding.message}`);
 
 		if (shape !== probe.expect) {
 			console.log(
 				`    PROBE_SHAPE: this probe covers a ${probe.expect} response (${probe.covers}), but ${probe.path} answered ${response.status}. ` +
-					"The set no longer covers what it claims; fix the probe, not the report.",
+					'The set no longer covers what it claims; fix the probe, not the report.',
 			);
 			unusable = true;
 		}
@@ -124,17 +124,17 @@ async function main(): Promise<number> {
 
 	if (drifted) {
 		console.error(
-			"\nThe delivered policy is not the one this repository sets. Check the" +
+			'\nThe delivered policy is not the one this repository sets. Check the' +
 				"\nzone's setting at SSL/TLS -> Edge Certificates -> HTTP Strict Transport" +
-				"\nSecurity, and any response-header transform rule on the zone. This is an" +
-				"\noperator action in the Cloudflare dashboard, not a code change — see" +
-				"\ndocs/security-model.md#effective-headers-at-the-edge.",
+				'\nSecurity, and any response-header transform rule on the zone. This is an' +
+				'\noperator action in the Cloudflare dashboard, not a code change — see' +
+				'\ndocs/security-model.md#effective-headers-at-the-edge.',
 		);
 		return 1;
 	}
 	if (unusable) {
 		console.error(
-			"\nNo drift found, but at least one probe could not be judged — see above. Nothing here is evidence yet.",
+			'\nNo drift found, but at least one probe could not be judged — see above. Nothing here is evidence yet.',
 		);
 		return 2;
 	}

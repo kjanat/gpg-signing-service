@@ -211,8 +211,8 @@ Use **openpgp.js v6** as the cryptographic library with passphrase-encrypted pri
 
 - No automated key rotation; the procedure is manual and documented in
   [Self-hosting](../self-hosting.md#key-rotation)
-- No key expiration _enforcement_ in the sign path — a key inside the warning
-  window, revoked, or already lapsed is still signed with. Expiry is _detected_
+- No key expiration *enforcement* in the sign path — a key inside the warning
+  window, revoked, or already lapsed is still signed with. Expiry is *detected*
   by a scheduled monitor (below) rather than left to be checked by hand, as is
   PGP revocation; the X.509 path reads `notAfter` only and does no CRL or OCSP
   lookup, so a revoked-but-unexpired certificate is still reported healthy

@@ -24,16 +24,16 @@
  * owns the bindings and the tests stay deterministic.
  */
 
-import { parseCertificatePemOrThrow } from "micro509";
-import * as openpgp from "openpgp";
-import { TIME } from "#types/time";
-import { CERTIFICATE_BEGIN, PGP_PRIVATE_BEGIN, PGP_PUBLIC_BEGIN } from "#utils/armor";
+import { parseCertificatePemOrThrow } from 'micro509';
+import * as openpgp from 'openpgp';
+import { TIME } from '#types/time';
+import { CERTIFICATE_BEGIN, PGP_PRIVATE_BEGIN, PGP_PUBLIC_BEGIN } from '#utils/armor';
 
 /** Days before expiry at which a key starts being reported, absent an override */
 export const DEFAULT_WARN_DAYS = 60;
 
 /** Worker variable that overrides {@link DEFAULT_WARN_DAYS} */
-export const WARN_DAYS_VAR = "KEY_EXPIRY_WARN_DAYS";
+export const WARN_DAYS_VAR = 'KEY_EXPIRY_WARN_DAYS';
 
 /**
  * Rotation procedure the report links to.
@@ -42,11 +42,11 @@ export const WARN_DAYS_VAR = "KEY_EXPIRY_WARN_DAYS";
  * where a relative path resolves against nothing at all.
  */
 export const KEY_ROTATION_DOCS_URL =
-	"https://github.com/kjanat/gpg-signing-service/blob/master/docs/self-hosting.md#key-rotation";
+	'https://github.com/kjanat/gpg-signing-service/blob/master/docs/self-hosting.md#key-rotation';
 
 /** Where the monitor itself is documented, for an alert about the monitor */
 export const KEY_EXPIRY_MONITOR_DOCS_URL =
-	"https://github.com/kjanat/gpg-signing-service/blob/master/docs/self-hosting.md#9-key-expiry-monitoring";
+	'https://github.com/kjanat/gpg-signing-service/blob/master/docs/self-hosting.md#9-key-expiry-monitoring';
 
 /**
  * Parse the warning threshold.
@@ -62,7 +62,7 @@ export const KEY_EXPIRY_MONITOR_DOCS_URL =
  * surrounding whitespace still tolerated because a `.toml` value can carry it.
  */
 export function parseWarnDays(raw: string | undefined): number {
-	if (raw === undefined || raw.trim() === "") return DEFAULT_WARN_DAYS;
+	if (raw === undefined || raw.trim() === '') return DEFAULT_WARN_DAYS;
 
 	const trimmed = raw.trim();
 	const value = /^\d+$/.test(trimmed) ? Number(trimmed) : Number.NaN;
@@ -106,7 +106,7 @@ export interface DeclaredDefaultKey {
 // ---------------------------------------------------------------------------
 
 /** Which credential table a grant came from */
-export type GrantKind = "oidc-subject" | "service-token";
+export type GrantKind = 'oidc-subject' | 'service-token';
 
 /**
  * A credential's signing policy, as the subject and token tables hold it.
@@ -150,17 +150,17 @@ export function isGrantLive(grant: KeyGrant, now: Date): boolean {
 	if (!grant.expiresAt) return true;
 
 	const expiresAt = Date.parse(grant.expiresAt);
-	return grant.kind === "oidc-subject" ? expiresAt >= now.getTime() : !(expiresAt < now.getTime());
+	return grant.kind === 'oidc-subject' ? expiresAt >= now.getTime() : !(expiresAt < now.getTime());
 }
 
 /** Why a key is in the monitored set */
 export type ActivationReason =
 	/** It is this deployment's `KEY_ID` */
-	| "default"
+	| 'default'
 	/** A live grant names it explicitly */
-	| "grant"
+	| 'grant'
 	/** A live grant pins no key ids, so it reaches every stored key */
-	| "unrestricted-grant";
+	| 'unrestricted-grant';
 
 /** One key this deployment can currently sign with */
 export interface ActiveKey {
@@ -252,7 +252,7 @@ export function resolveActiveKeys(input: {
 	for (const grant of unrestricted) {
 		for (const keyId of stored) {
 			const entry = entryFor(keyId);
-			entry.reasons.add("unrestricted-grant");
+			entry.reasons.add('unrestricted-grant');
 			entry.grants.add(label(grant));
 			entry.anyKeyGrants.add(label(grant));
 		}
@@ -261,7 +261,7 @@ export function resolveActiveKeys(input: {
 	for (const grant of live) {
 		for (const keyId of grant.keyIds ?? []) {
 			const entry = entryFor(normalizeKeyId(keyId));
-			entry.reasons.add("grant");
+			entry.reasons.add('grant');
 			entry.grants.add(label(grant));
 		}
 	}
@@ -270,7 +270,7 @@ export function resolveActiveKeys(input: {
 	// grant at all: it is what this deployment is configured to sign with, and
 	// its lapsing is news the moment anyone is trusted again.
 	if (input.defaultKey.keyId) {
-		entryFor(input.defaultKey.keyId).reasons.add("default");
+		entryFor(input.defaultKey.keyId).reasons.add('default');
 	}
 
 	const keys = [...active.entries()]
@@ -305,22 +305,22 @@ export function resolveActiveKeys(input: {
  * kind of "signing is about to break" news as an expiry and belongs in the same
  * report.
  */
-export type KeyExpiryState = "ok" | "warning" | "expired" | "revoked" | "no-expiry" | "unknown" | "missing";
+export type KeyExpiryState = 'ok' | 'warning' | 'expired' | 'revoked' | 'no-expiry' | 'unknown' | 'missing';
 
 /** States that mean a human has to do something */
 const ACTIONABLE_STATES: ReadonlySet<KeyExpiryState> = new Set<KeyExpiryState>([
-	"warning",
-	"expired",
-	"revoked",
-	"unknown",
-	"missing",
+	'warning',
+	'expired',
+	'revoked',
+	'unknown',
+	'missing',
 ]);
 
 /** Expiry as read out of key material */
 export type KeyExpiry =
-	| { kind: "date"; expiresAt: Date }
+	| { kind: 'date'; expiresAt: Date }
 	/** The key carries no expiration date and never lapses */
-	| { kind: "never" }
+	| { kind: 'never' }
 	/**
 	 * The key is revoked, or every subkey it could sign with is. Revocation is
 	 * not expiry, but it stops verifiers accepting the signature just as
@@ -328,9 +328,9 @@ export type KeyExpiry =
 	 * healthy. `detail` names the revoked subkeys when the primary key itself is
 	 * intact, because those two need different fixes.
 	 */
-	| { kind: "revoked"; detail?: string }
+	| { kind: 'revoked'; detail?: string }
 	/** The key material parsed but its expiry could not be established */
-	| { kind: "unknown"; reason: string };
+	| { kind: 'unknown'; reason: string };
 
 /** One row of the expiry report */
 export interface KeyExpiryRow {
@@ -369,7 +369,7 @@ export async function pgpKeyExpiry(armoredKey: string): Promise<KeyExpiry> {
 	try {
 		key = await openpgp.readKey({ armoredKey });
 	} catch (error) {
-		return { kind: "unknown", reason: `could not read PGP key: ${String(error)}` };
+		return { kind: 'unknown', reason: `could not read PGP key: ${String(error)}` };
 	}
 
 	// `getExpirationTime()` reads the self-signature's expiration subpacket and
@@ -377,7 +377,7 @@ export async function pgpKeyExpiry(armoredKey: string): Promise<KeyExpiry> {
 	// its expiry date would otherwise be reported as `ok`. Checked first: a
 	// revoked primary key takes every subkey down with it, so which subkey would
 	// have signed stops mattering.
-	if (await key.isRevoked()) return { kind: "revoked" };
+	if (await key.isRevoked()) return { kind: 'revoked' };
 
 	return signingSubkeyExpiry(
 		await key.getExpirationTime(),
@@ -447,14 +447,14 @@ export function signingSubkeyExpiry(
 	primarySigns: boolean,
 ): KeyExpiry {
 	if (primary === null) {
-		return { kind: "unknown", reason: "PGP primary key has no valid self-certification (malformed)" };
+		return { kind: 'unknown', reason: 'PGP primary key has no valid self-certification (malformed)' };
 	}
 
 	if (signingSubkeys.length === 0) {
 		if (!primarySigns) {
 			return {
-				kind: "unknown",
-				reason: "no signing key: no signing subkey is bound and the primary key may not sign data",
+				kind: 'unknown',
+				reason: 'no signing key: no signing subkey is bound and the primary key may not sign data',
 			};
 		}
 		return effectiveExpiry(primary, primary);
@@ -475,20 +475,20 @@ export function signingSubkeyExpiry(
 /** Verdict for a key whose every signing subkey is unusable */
 function noUsableSigningSubkey(signingSubkeys: readonly SigningSubkey[]): KeyExpiry {
 	const revoked = signingSubkeys.filter((subkey) => subkey.revoked).map((subkey) => subkey.keyId);
-	const listed = (keyIds: readonly string[]) => keyIds.join(", ");
+	const listed = (keyIds: readonly string[]) => keyIds.join(', ');
 
 	// Revocation wins the wording even when other subkeys failed for other
 	// reasons: it is the one cause that names a decision someone can undo or
 	// replace, and it is what the operator needs to read first.
 	if (revoked.length > 0) {
 		return {
-			kind: "revoked",
-			detail: `no usable signing subkey — ${plural(revoked.length, "signing subkey")} revoked (${listed(revoked)})`,
+			kind: 'revoked',
+			detail: `no usable signing subkey — ${plural(revoked.length, 'signing subkey')} revoked (${listed(revoked)})`,
 		};
 	}
 
 	return {
-		kind: "unknown",
+		kind: 'unknown',
 		reason: `no usable signing subkey: openpgp will not sign with ${listed(signingSubkeys.map((s) => s.keyId))}`,
 	};
 }
@@ -570,13 +570,13 @@ async function canSign(key: openpgp.Key, keyId: openpgp.KeyID): Promise<boolean>
  * material.
  */
 const SIGNATURE_CAPABLE_ALGORITHMS: ReadonlySet<string> = new Set([
-	"rsaEncryptSign",
-	"rsaSign",
-	"dsa",
-	"ecdsa",
-	"eddsaLegacy",
-	"ed25519",
-	"ed448",
+	'rsaEncryptSign',
+	'rsaSign',
+	'dsa',
+	'ecdsa',
+	'eddsaLegacy',
+	'ed25519',
+	'ed448',
 ]);
 
 /**
@@ -627,9 +627,9 @@ async function bindsSigningCapability(key: openpgp.Key, subkey: openpgp.Subkey):
  */
 interface DatelessSignature {
 	verify(
-		key: openpgp.PublicKey["keyPacket"],
+		key: openpgp.PublicKey['keyPacket'],
 		signatureType: openpgp.enums.signature,
-		data: { key: openpgp.PublicKey["keyPacket"]; bind: openpgp.Subkey["keyPacket"] },
+		data: { key: openpgp.PublicKey['keyPacket']; bind: openpgp.Subkey['keyPacket'] },
 		date?: Date | null,
 	): Promise<boolean>;
 }
@@ -683,20 +683,20 @@ async function newestVerifiedBinding(
  */
 export function effectiveExpiry(primary: OpenPgpExpiration, signing: OpenPgpExpiration): KeyExpiry {
 	if (primary === null) {
-		return { kind: "unknown", reason: "PGP primary key has no valid self-certification (malformed)" };
+		return { kind: 'unknown', reason: 'PGP primary key has no valid self-certification (malformed)' };
 	}
 
 	const effective = earlier(primary, signing ?? primary);
 
-	return neverExpires(effective) ? { kind: "never" } : { kind: "date", expiresAt: effective };
+	return neverExpires(effective) ? { kind: 'never' } : { kind: 'date', expiresAt: effective };
 }
 
 /** Expiry of a PEM X.509 certificate, taken from its `notAfter` */
 export function x509CertificateExpiry(certificatePem: string): KeyExpiry {
 	try {
-		return { kind: "date", expiresAt: parseCertificatePemOrThrow(certificatePem).notAfter };
+		return { kind: 'date', expiresAt: parseCertificatePemOrThrow(certificatePem).notAfter };
 	} catch (error) {
-		return { kind: "unknown", reason: `could not parse X.509 certificate: ${String(error)}` };
+		return { kind: 'unknown', reason: `could not parse X.509 certificate: ${String(error)}` };
 	}
 }
 
@@ -718,30 +718,30 @@ export function keyMaterialExpiry(material: string): Promise<KeyExpiry> | KeyExp
 		return x509CertificateExpiry(material);
 	}
 
-	return { kind: "unknown", reason: "key material was neither a PGP key block nor a PEM certificate" };
+	return { kind: 'unknown', reason: 'key material was neither a PGP key block nor a PEM certificate' };
 }
 
 /** Turn an expiry into a report row, relative to `now` and the threshold */
 export function classifyExpiry(keyId: string, expiry: KeyExpiry, now: Date, warnDays: number): KeyExpiryRow {
-	if (expiry.kind === "never") {
-		return { keyId, state: "no-expiry", expiresAt: null, daysRemaining: null };
+	if (expiry.kind === 'never') {
+		return { keyId, state: 'no-expiry', expiresAt: null, daysRemaining: null };
 	}
-	if (expiry.kind === "revoked") {
-		return { keyId, state: "revoked", expiresAt: null, daysRemaining: null, detail: expiry.detail ?? "key is revoked" };
+	if (expiry.kind === 'revoked') {
+		return { keyId, state: 'revoked', expiresAt: null, daysRemaining: null, detail: expiry.detail ?? 'key is revoked' };
 	}
-	if (expiry.kind === "unknown") {
-		return { keyId, state: "unknown", expiresAt: null, daysRemaining: null, detail: expiry.reason };
+	if (expiry.kind === 'unknown') {
+		return { keyId, state: 'unknown', expiresAt: null, daysRemaining: null, detail: expiry.reason };
 	}
 
 	const expiresAt = expiry.expiresAt.toISOString();
 	const daysRemaining = daysUntil(expiry.expiresAt, now);
 
 	if (expiry.expiresAt.getTime() <= now.getTime()) {
-		return { keyId, state: "expired", expiresAt, daysRemaining };
+		return { keyId, state: 'expired', expiresAt, daysRemaining };
 	}
 
 	// Inclusive: a key exactly `warnDays` out is already inside the window.
-	return { keyId, state: daysRemaining <= warnDays ? "warning" : "ok", expiresAt, daysRemaining };
+	return { keyId, state: daysRemaining <= warnDays ? 'warning' : 'ok', expiresAt, daysRemaining };
 }
 
 /**
@@ -754,15 +754,15 @@ export function classifyExpiry(keyId: string, expiry: KeyExpiry, now: Date, warn
  */
 export function missingKeyRow(key: ActiveKey): KeyExpiryRow {
 	const causes: string[] = [];
-	if (key.reasons.includes("default")) causes.push("this deployment's KEY_ID");
-	if (key.reasons.includes("grant")) causes.push(`granted to ${key.grants.join(", ")}`);
+	if (key.reasons.includes('default')) causes.push("this deployment's KEY_ID");
+	if (key.reasons.includes('grant')) causes.push(`granted to ${key.grants.join(', ')}`);
 
 	return {
 		keyId: key.keyId,
-		state: "missing",
+		state: 'missing',
 		expiresAt: null,
 		daysRemaining: null,
-		detail: `${causes.join("; ") || "expected"}, but the deployment does not hold it`,
+		detail: `${causes.join('; ') || 'expected'}, but the deployment does not hold it`,
 	};
 }
 
@@ -776,32 +776,32 @@ export function actionableRows(rows: readonly KeyExpiryRow[]): KeyExpiryRow[] {
 // ---------------------------------------------------------------------------
 
 const STATE_LABELS: Record<KeyExpiryState, string> = {
-	ok: "ok",
-	warning: "EXPIRING",
-	expired: "EXPIRED",
-	revoked: "REVOKED",
-	"no-expiry": "no expiry",
-	unknown: "UNKNOWN",
-	missing: "MISSING",
+	ok: 'ok',
+	warning: 'EXPIRING',
+	expired: 'EXPIRED',
+	revoked: 'REVOKED',
+	'no-expiry': 'no expiry',
+	unknown: 'UNKNOWN',
+	missing: 'MISSING',
 };
 
 /** `n` with a unit, pluralised, so no report ever reads `1 days` */
 function plural(count: number, unit: string): string {
-	return `${count} ${unit}${count === 1 ? "" : "s"}`;
+	return `${count} ${unit}${count === 1 ? '' : 's'}`;
 }
 
 /** Human-readable one-liner for a row's remaining lifetime */
 function describeRemaining(row: KeyExpiryRow): string {
-	if (row.daysRemaining === null) return "—";
-	if (row.daysRemaining < 0) return `${plural(Math.abs(row.daysRemaining), "day")} ago`;
-	return plural(row.daysRemaining, "day");
+	if (row.daysRemaining === null) return '—';
+	if (row.daysRemaining < 0) return `${plural(Math.abs(row.daysRemaining), 'day')} ago`;
+	return plural(row.daysRemaining, 'day');
 }
 
 /** At most two names, then a count, so one broad grant cannot flood the table */
 function summarizeGrants(grants: readonly string[]): string {
 	const shown = grants.slice(0, 2);
 	const rest = grants.length - shown.length;
-	return rest > 0 ? `${shown.join(", ")} +${rest} more` : shown.join(", ");
+	return rest > 0 ? `${shown.join(', ')} +${rest} more` : shown.join(', ');
 }
 
 /**
@@ -820,13 +820,13 @@ function summarizeGrants(grants: readonly string[]): string {
  */
 export function describeActivation(key: ActiveKey): string {
 	const parts: string[] = [];
-	if (key.reasons.includes("default")) parts.push("KEY_ID default");
+	if (key.reasons.includes('default')) parts.push('KEY_ID default');
 
 	const scoped = key.grants.filter((grant) => !key.anyKeyGrants.includes(grant));
 	if (scoped.length > 0) parts.push(`granted to ${summarizeGrants(scoped)}`);
 	if (key.anyKeyGrants.length > 0) parts.push(`any-key grant ${summarizeGrants(key.anyKeyGrants)}`);
 
-	return parts.join("; ") || "—";
+	return parts.join('; ') || '—';
 }
 
 /** Report context, kept explicit so the rendered report is reproducible */
@@ -853,11 +853,11 @@ export interface ReportContext {
  * other's.
  */
 export type ReportBlock =
-	| { kind: "heading"; text: string }
-	| { kind: "paragraph"; text: string }
-	| { kind: "table"; headers: readonly string[]; rows: readonly (readonly string[])[] }
-	| { kind: "list"; items: readonly string[] }
-	| { kind: "link"; text: string; href: string };
+	| { kind: 'heading'; text: string }
+	| { kind: 'paragraph'; text: string }
+	| { kind: 'table'; headers: readonly string[]; rows: readonly (readonly string[])[] }
+	| { kind: 'list'; items: readonly string[] }
+	| { kind: 'link'; text: string; href: string };
 
 /** A rendered report, ready to hand to the mail boundary */
 export interface ReportDocument {
@@ -884,16 +884,16 @@ export function reportSubject(rows: readonly KeyExpiryRow[], context: ReportCont
 	if (actionable.length === 0) {
 		return rows.length === 0
 			? `${prefix} No signing key was checked`
-			: `${prefix} ${plural(rows.length, "signing key")} healthy`;
+			: `${prefix} ${plural(rows.length, 'signing key')} healthy`;
 	}
 
 	const worst = actionable[0];
 	if (actionable.length === 1 && worst) {
-		const remaining = worst.state === "warning" ? ` in ${describeRemaining(worst)}` : "";
+		const remaining = worst.state === 'warning' ? ` in ${describeRemaining(worst)}` : '';
 		return `${prefix} Signing key ${worst.keyId} ${STATE_LABELS[worst.state].toLowerCase()}${remaining}`;
 	}
 
-	return `${prefix} ${plural(actionable.length, "signing key")} need attention`;
+	return `${prefix} ${plural(actionable.length, 'signing key')} need attention`;
 }
 
 /** Build the report's blocks, in reading order, worst news first */
@@ -903,25 +903,25 @@ export function reportBlocks(rows: readonly KeyExpiryRow[], context: ReportConte
 	const activations = new Map(context.scope.keys.map((key) => [key.keyId, describeActivation(key)]));
 
 	const blocks: ReportBlock[] = [
-		{ kind: "heading", text: "Signing key expiry" },
+		{ kind: 'heading', text: 'Signing key expiry' },
 		{
-			kind: "paragraph",
+			kind: 'paragraph',
 			text:
-				`Monitored ${plural(sorted.length, "active signing key")} on ${context.service} ` +
-				`at ${context.now.toISOString()}, warning ${plural(context.warnDays, "day")} ahead of expiry.`,
+				`Monitored ${plural(sorted.length, 'active signing key')} on ${context.service} ` +
+				`at ${context.now.toISOString()}, warning ${plural(context.warnDays, 'day')} ahead of expiry.`,
 		},
 	];
 
 	if (sorted.length > 0) {
 		blocks.push({
-			kind: "table",
-			headers: ["Key ID", "Status", "Expires", "Remaining", "Active because"],
+			kind: 'table',
+			headers: ['Key ID', 'Status', 'Expires', 'Remaining', 'Active because'],
 			rows: sorted.map((row) => [
 				row.keyId,
 				STATE_LABELS[row.state],
-				row.expiresAt ?? "—",
+				row.expiresAt ?? '—',
 				describeRemaining(row),
-				activations.get(row.keyId) ?? "—",
+				activations.get(row.keyId) ?? '—',
 			]),
 		});
 	}
@@ -932,30 +932,30 @@ export function reportBlocks(rows: readonly KeyExpiryRow[], context: ReportConte
 		// verified nothing, so saying every key is clear would be a green light
 		// earned by an empty set.
 		blocks.push({
-			kind: "paragraph",
+			kind: 'paragraph',
 			text:
-				"No key was checked. This deployment resolved no active signing key, so nothing about " +
-				"expiry was verified — see the scope note below for why the set came out empty. Until " +
-				"that is fixed this monitor reports on nothing: set KEY_ID on the deployment, or grant a " +
-				"stored key to a live trusted subject or service token.",
+				'No key was checked. This deployment resolved no active signing key, so nothing about ' +
+				'expiry was verified — see the scope note below for why the set came out empty. Until ' +
+				'that is fixed this monitor reports on nothing: set KEY_ID on the deployment, or grant a ' +
+				'stored key to a live trusted subject or service token.',
 		});
 	} else if (actionable.length === 0) {
 		blocks.push({
-			kind: "paragraph",
-			text: `No active signing key expires within ${plural(context.warnDays, "day")}.`,
+			kind: 'paragraph',
+			text: `No active signing key expires within ${plural(context.warnDays, 'day')}.`,
 		});
 	} else {
 		blocks.push(
-			{ kind: "heading", text: "Action required" },
+			{ kind: 'heading', text: 'Action required' },
 			{
-				kind: "list",
+				kind: 'list',
 				items: actionable.map(
 					(row) =>
-						`${row.keyId}: ${STATE_LABELS[row.state]} (${describeRemaining(row)})${row.detail ? ` — ${row.detail}` : ""}`,
+						`${row.keyId}: ${STATE_LABELS[row.state]} (${describeRemaining(row)})${row.detail ? ` — ${row.detail}` : ''}`,
 				),
 			},
-			{ kind: "paragraph", text: "Rotate or extend the affected keys." },
-			{ kind: "link", text: "Key rotation procedure", href: KEY_ROTATION_DOCS_URL },
+			{ kind: 'paragraph', text: 'Rotate or extend the affected keys.' },
+			{ kind: 'link', text: 'Key rotation procedure', href: KEY_ROTATION_DOCS_URL },
 		);
 	}
 
@@ -995,7 +995,7 @@ export function renderReport(rows: readonly KeyExpiryRow[], context: ReportConte
  * invocation, which is where an operator can read it without it having crossed
  * a mail server.
  */
-export type MonitorFailureKind = "threshold" | "key-storage" | "grants" | "report";
+export type MonitorFailureKind = 'threshold' | 'key-storage' | 'grants' | 'report';
 
 /**
  * The whole of what an operator is told about a monitor failure.
@@ -1014,25 +1014,25 @@ const FAILURE_COPY: Record<MonitorFailureKind, { headline: string; detail: strin
 			`variable on this deployment and redeploy. The rejected value is in the Workers logs; it is ` +
 			`not quoted here.`,
 	},
-	"key-storage": {
+	'key-storage': {
 		headline: "the deployment's key storage could not be read",
 		detail:
 			"The KEY_STORAGE Durable Object did not answer the monitor, so no key's expiry could be " +
-			"determined. Keys already stored are unaffected by this failure — it is the check that is " +
-			"blind, not the signing path — but nothing about expiry has been verified since it started.",
+			'determined. Keys already stored are unaffected by this failure — it is the check that is ' +
+			'blind, not the signing path — but nothing about expiry has been verified since it started.',
 	},
 	grants: {
-		headline: "the grant tables could not be read",
+		headline: 'the grant tables could not be read',
 		detail:
-			"The trusted OIDC subject and service token tables in D1 did not answer, so the monitor " +
-			"could not work out which keys this deployment can currently sign with, and checked none " +
-			"of them.",
+			'The trusted OIDC subject and service token tables in D1 did not answer, so the monitor ' +
+			'could not work out which keys this deployment can currently sign with, and checked none ' +
+			'of them.',
 	},
 	report: {
-		headline: "the check failed after reading its state",
+		headline: 'the check failed after reading its state',
 		detail:
-			"The monitor read its configuration and state but could not finish the run, so no verdict " +
-			"was reached for any key.",
+			'The monitor read its configuration and state but could not finish the run, so no verdict ' +
+			'was reached for any key.',
 	},
 };
 
@@ -1057,23 +1057,23 @@ export interface FailureContext {
 export function renderFailureReport(kind: MonitorFailureKind, context: FailureContext): ReportDocument {
 	const { headline, detail } = FAILURE_COPY[kind];
 	const blocks: ReportBlock[] = [
-		{ kind: "heading", text: "Signing key expiry check did not run" },
+		{ kind: 'heading', text: 'Signing key expiry check did not run' },
 		{
-			kind: "paragraph",
+			kind: 'paragraph',
 			text:
 				`The scheduled expiry check on ${context.service} could not complete at ` +
 				`${context.now.toISOString()}: ${headline}. No signing key was checked on this run.`,
 		},
-		{ kind: "paragraph", text: detail },
+		{ kind: 'paragraph', text: detail },
 		{
-			kind: "paragraph",
+			kind: 'paragraph',
 			text:
-				"Until this is fixed the absence of an expiry warning means nothing: a key could lapse " +
-				"between now and the next successful run without this monitor saying so. The failing " +
-				"invocation is recorded as failed in Workers observability, where the underlying error " +
-				"is logged in full.",
+				'Until this is fixed the absence of an expiry warning means nothing: a key could lapse ' +
+				'between now and the next successful run without this monitor saying so. The failing ' +
+				'invocation is recorded as failed in Workers observability, where the underlying error ' +
+				'is logged in full.',
 		},
-		{ kind: "link", text: "Key expiry monitoring", href: KEY_EXPIRY_MONITOR_DOCS_URL },
+		{ kind: 'link', text: 'Key expiry monitoring', href: KEY_EXPIRY_MONITOR_DOCS_URL },
 	];
 
 	return {
@@ -1092,56 +1092,56 @@ export function renderFailureReport(kind: MonitorFailureKind, context: FailureCo
  */
 function scopeBlocks(scope: ActiveKeySet): ReportBlock[] {
 	const blocks: ReportBlock[] = [
-		{ kind: "heading", text: "Which keys count as active" },
+		{ kind: 'heading', text: 'Which keys count as active' },
 		{
-			kind: "paragraph",
+			kind: 'paragraph',
 			text:
-				"A key is monitored when this deployment could sign with it right now: its KEY_ID " +
-				"default, plus every key a live grant — a trusted OIDC subject or a service token — " +
-				"permits. Grants that are revoked or expired are ignored, and stored keys no live grant " +
-				"reaches are deliberately left out, so retaining a superseded key raises nothing.",
+				'A key is monitored when this deployment could sign with it right now: its KEY_ID ' +
+				'default, plus every key a live grant — a trusted OIDC subject or a service token — ' +
+				'permits. Grants that are revoked or expired are ignored, and stored keys no live grant ' +
+				'reaches are deliberately left out, so retaining a superseded key raises nothing.',
 		},
 		{
-			kind: "paragraph",
-			text: `Read ${plural(scope.totalGrantCount, "grant")}, of which ${scope.liveGrantCount} live.`,
+			kind: 'paragraph',
+			text: `Read ${plural(scope.totalGrantCount, 'grant')}, of which ${scope.liveGrantCount} live.`,
 		},
 	];
 
 	if (scope.defaultKey.keyId === null) {
 		blocks.push({
-			kind: "paragraph",
+			kind: 'paragraph',
 			text:
-				`Warning: the ${scope.defaultKey.env ?? "top-level"} deployment declares no KEY_ID, so callers that ` +
-				"name no key cannot sign at all. Only granted keys are monitored.",
+				`Warning: the ${scope.defaultKey.env ?? 'top-level'} deployment declares no KEY_ID, so callers that ` +
+				'name no key cannot sign at all. Only granted keys are monitored.',
 		});
 	}
 
 	if (scope.unrestrictedGrants.length > 0) {
 		blocks.push({
-			kind: "paragraph",
+			kind: 'paragraph',
 			text:
-				`Warning: ${plural(scope.unrestrictedGrants.length, "live grant")} ` +
-				`${scope.unrestrictedGrants.length === 1 ? "pins" : "pin"} no key ids, so every stored key is ` +
+				`Warning: ${plural(scope.unrestrictedGrants.length, 'live grant')} ` +
+				`${scope.unrestrictedGrants.length === 1 ? 'pins' : 'pin'} no key ids, so every stored key is ` +
 				`signable and storage is the activation boundary: ${summarizeGrants(scope.unrestrictedGrants)}. ` +
-				"Scope those grants to key ids to narrow this report.",
+				'Scope those grants to key ids to narrow this report.',
 		});
 	}
 
 	if (scope.retainedInactive.length > 0) {
 		blocks.push({
-			kind: "paragraph",
+			kind: 'paragraph',
 			text:
-				`Not monitored — stored but no live grant reaches ${scope.retainedInactive.length === 1 ? "it" : "them"}: ` +
-				`${scope.retainedInactive.join(", ")}.`,
+				`Not monitored — stored but no live grant reaches ${scope.retainedInactive.length === 1 ? 'it' : 'them'}: ` +
+				`${scope.retainedInactive.join(', ')}.`,
 		});
 	}
 
 	blocks.push({
-		kind: "paragraph",
+		kind: 'paragraph',
 		text:
-			"Known limits: the set is a snapshot, so a grant added after this run is not covered until " +
-			"the next one, and a grant is trusted to mean what it says, so a key id it names that no " +
-			"longer exists is reported missing rather than dropped.",
+			'Known limits: the set is a snapshot, so a grant added after this run is not covered until ' +
+			'the next one, and a grant is trusted to mean what it says, so a key id it names that no ' +
+			'longer exists is reported missing rather than dropped.',
 	});
 
 	return blocks;
@@ -1174,50 +1174,50 @@ function renderText(blocks: readonly ReportBlock[]): string {
 	const lines: string[] = [];
 
 	for (const block of blocks) {
-		if (lines.length > 0) lines.push("");
+		if (lines.length > 0) lines.push('');
 
 		switch (block.kind) {
-			case "heading":
-				lines.push(block.text, "=".repeat(block.text.length));
+			case 'heading':
+				lines.push(block.text, '='.repeat(block.text.length));
 				break;
-			case "paragraph":
+			case 'paragraph':
 				lines.push(block.text);
 				break;
-			case "table":
+			case 'table':
 				lines.push(...textTable(block.headers, block.rows));
 				break;
-			case "list":
+			case 'list':
 				lines.push(...block.items.map((item) => `- ${item}`));
 				break;
-			case "link":
+			case 'link':
 				lines.push(`${block.text}: ${block.href}`);
 				break;
 		}
 	}
 
-	return `${lines.join("\n")}\n`;
+	return `${lines.join('\n')}\n`;
 }
 
 /** Column-aligned table, sized to its widest cell */
 function textTable(headers: readonly string[], rows: readonly (readonly string[])[]): string[] {
 	const widths = headers.map((header, column) =>
-		Math.max(header.length, ...rows.map((row) => (row[column] ?? "").length)),
+		Math.max(header.length, ...rows.map((row) => (row[column] ?? '').length)),
 	);
 	const line = (cells: readonly string[]) =>
 		cells
 			.map((cell, column) => cell.padEnd(widths[column] ?? 0))
-			.join("  ")
+			.join('  ')
 			.trimEnd();
 
-	return [line(headers), widths.map((width) => "-".repeat(width)).join("  "), ...rows.map(line)];
+	return [line(headers), widths.map((width) => '-'.repeat(width)).join('  '), ...rows.map(line)];
 }
 
 /** Characters that would otherwise close a tag or open an entity */
 const HTML_ESCAPES: Record<string, string> = {
-	"&": "&amp;",
-	"<": "&lt;",
-	">": "&gt;",
-	'"': "&quot;",
+	'&': '&amp;',
+	'<': '&lt;',
+	'>': '&gt;',
+	'"': '&quot;',
 };
 
 /**
@@ -1239,34 +1239,34 @@ function renderHtml(blocks: readonly ReportBlock[]): string {
 
 	for (const block of blocks) {
 		switch (block.kind) {
-			case "heading":
+			case 'heading':
 				parts.push(`<h2>${escapeHtml(block.text)}</h2>`);
 				break;
-			case "paragraph":
+			case 'paragraph':
 				parts.push(`<p>${escapeHtml(block.text)}</p>`);
 				break;
-			case "table":
+			case 'table':
 				parts.push(htmlTable(block.headers, block.rows));
 				break;
-			case "list":
-				parts.push(`<ul>${block.items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`);
+			case 'list':
+				parts.push(`<ul>${block.items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`);
 				break;
-			case "link":
+			case 'link':
 				parts.push(`<p><a href="${escapeHtml(block.href)}">${escapeHtml(block.text)}</a></p>`);
 				break;
 		}
 	}
 
-	return `<html><body style="font-family:system-ui,sans-serif">${parts.join("")}</body></html>`;
+	return `<html><body style="font-family:system-ui,sans-serif">${parts.join('')}</body></html>`;
 }
 
 /** Table with borders inlined, since a mail client will not read a stylesheet */
 function htmlTable(headers: readonly string[], rows: readonly (readonly string[])[]): string {
-	const cell = (tag: "th" | "td", text: string) =>
+	const cell = (tag: 'th' | 'td', text: string) =>
 		`<${tag} style="border:1px solid #ccc;padding:4px 8px;text-align:left">${escapeHtml(text)}</${tag}>`;
 
-	const head = `<tr>${headers.map((header) => cell("th", header)).join("")}</tr>`;
-	const body = rows.map((row) => `<tr>${row.map((text) => cell("td", text)).join("")}</tr>`).join("");
+	const head = `<tr>${headers.map((header) => cell('th', header)).join('')}</tr>`;
+	const body = rows.map((row) => `<tr>${row.map((text) => cell('td', text)).join('')}</tr>`).join('');
 
 	return `<table style="border-collapse:collapse">${head}${body}</table>`;
 }

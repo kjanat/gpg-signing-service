@@ -218,13 +218,13 @@ Implement OIDC (OpenID Connect) JWT validation as the primary authentication mec
 - **Cons**: GitHub-specific, requires app installation per org, no GitLab support
 - **Rejected**: Vendor lock-in, doesn't support multi-platform requirements
 
-**Amended.** The rejection above stands _for authenticating `/sign` callers_,
+**Amended.** The rejection above stands *for authenticating `/sign` callers*,
 which is what this ADR decides, and nothing about it has changed: OIDC remains
 the only way a CI job proves who it is, and a GitLab caller must not need a
 GitHub App to sign.
 
 What the rejection does not settle is the opposite direction — GitHub calling
-_us_. A deployment may now opt into `POST /github/webhook`, where a registered
+*us*. A deployment may now opt into `POST /github/webhook`, where a registered
 GitHub App delivers events and this service mints installation tokens to act on
 them. That is a second, narrower integration rather than a second way in:
 

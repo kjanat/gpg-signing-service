@@ -30,7 +30,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259)
 	 */
-	ApplicationJson = "application/json",
+	ApplicationJson = 'application/json',
 
 	/**
 	 * **application/xml**
@@ -39,7 +39,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 7303](https://www.rfc-editor.org/rfc/rfc7303)
 	 */
-	ApplicationXml = "application/xml",
+	ApplicationXml = 'application/xml',
 
 	/**
 	 * **application/octet-stream**
@@ -50,7 +50,7 @@ export enum MediaType {
 	 * @see [RFC 2045](https://www.rfc-editor.org/rfc/rfc2045)
 	 * @see [RFC 2046](https://www.rfc-editor.org/rfc/rfc2046)
 	 */
-	ApplicationOctetStream = "application/octet-stream",
+	ApplicationOctetStream = 'application/octet-stream',
 
 	/**
 	 * **application/pdf**
@@ -59,7 +59,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 8118](https://www.rfc-editor.org/rfc/rfc8118)
 	 */
-	ApplicationPdf = "application/pdf",
+	ApplicationPdf = 'application/pdf',
 
 	/**
 	 * **application/zip**
@@ -67,7 +67,7 @@ export enum MediaType {
 	 * ZIP archive format. Note: Not in IANA registry but widely used.
 	 * Use application/octet-stream for strict IANA compliance.
 	 */
-	ApplicationZip = "application/zip",
+	ApplicationZip = 'application/zip',
 
 	/**
 	 * **application/gzip**
@@ -76,14 +76,14 @@ export enum MediaType {
 	 *
 	 * @see [RFC 6713](https://www.rfc-editor.org/rfc/rfc6713)
 	 */
-	ApplicationGzip = "application/gzip",
+	ApplicationGzip = 'application/gzip',
 
 	/**
 	 * **application/x-www-form-urlencoded**
 	 *
 	 * Form data encoded as key-value pairs. Standard encoding for HTML forms.
 	 */
-	ApplicationFormUrlEncoded = "application/x-www-form-urlencoded",
+	ApplicationFormUrlEncoded = 'application/x-www-form-urlencoded',
 
 	/**
 	 * **application/ld+json**
@@ -92,7 +92,7 @@ export enum MediaType {
 	 *
 	 * @see [W3C JSON-LD](https://www.w3.org/TR/json-ld/)
 	 */
-	ApplicationLdJson = "application/ld+json",
+	ApplicationLdJson = 'application/ld+json',
 
 	/**
 	 * **application/problem+json**
@@ -102,7 +102,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457)
 	 */
-	ApplicationProblemJson = "application/problem+json",
+	ApplicationProblemJson = 'application/problem+json',
 
 	/**
 	 * **application/problem+xml**
@@ -111,7 +111,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457)
 	 */
-	ApplicationProblemXml = "application/problem+xml",
+	ApplicationProblemXml = 'application/problem+xml',
 
 	/**
 	 * **application/cbor**
@@ -121,14 +121,14 @@ export enum MediaType {
 	 *
 	 * @see [RFC 8949](https://www.rfc-editor.org/rfc/rfc8949)
 	 */
-	ApplicationCbor = "application/cbor",
+	ApplicationCbor = 'application/cbor',
 
 	/**
 	 * **application/msgpack**
 	 *
 	 * MessagePack binary serialization format. Note: Not in IANA registry.
 	 */
-	ApplicationMsgpack = "application/msgpack",
+	ApplicationMsgpack = 'application/msgpack',
 
 	/**
 	 * **application/protobuf**
@@ -137,7 +137,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC draft-ietf-dispatch-mime-protobuf](https://datatracker.ietf.org/doc/draft-ietf-dispatch-mime-protobuf/)
 	 */
-	ApplicationProtobuf = "application/protobuf",
+	ApplicationProtobuf = 'application/protobuf',
 
 	// --- Authentication & Security ---
 
@@ -148,7 +148,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 7519](https://www.rfc-editor.org/rfc/rfc7519)
 	 */
-	ApplicationJwt = "application/jwt",
+	ApplicationJwt = 'application/jwt',
 
 	/**
 	 * **application/jwk+json**
@@ -157,7 +157,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517)
 	 */
-	ApplicationJwkJson = "application/jwk+json",
+	ApplicationJwkJson = 'application/jwk+json',
 
 	/**
 	 * **application/jwk-set+json**
@@ -166,7 +166,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517)
 	 */
-	ApplicationJwkSetJson = "application/jwk-set+json",
+	ApplicationJwkSetJson = 'application/jwk-set+json',
 
 	/**
 	 * **application/jose**
@@ -175,7 +175,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515)
 	 */
-	ApplicationJose = "application/jose",
+	ApplicationJose = 'application/jose',
 
 	/**
 	 * **application/jose+json**
@@ -184,7 +184,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515)
 	 */
-	ApplicationJoseJson = "application/jose+json",
+	ApplicationJoseJson = 'application/jose+json',
 
 	/**
 	 * **application/cose**
@@ -193,7 +193,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 9052](https://www.rfc-editor.org/rfc/rfc9052)
 	 */
-	ApplicationCose = "application/cose",
+	ApplicationCose = 'application/cose',
 
 	/**
 	 * **application/cose-key**
@@ -202,7 +202,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 9052](https://www.rfc-editor.org/rfc/rfc9052)
 	 */
-	ApplicationCoseKey = "application/cose-key",
+	ApplicationCoseKey = 'application/cose-key',
 
 	/**
 	 * **application/cose-key-set**
@@ -211,7 +211,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 9052](https://www.rfc-editor.org/rfc/rfc9052)
 	 */
-	ApplicationCoseKeySet = "application/cose-key-set",
+	ApplicationCoseKeySet = 'application/cose-key-set',
 
 	// --- PGP/GPG ---
 
@@ -222,7 +222,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 3156](https://www.rfc-editor.org/rfc/rfc3156)
 	 */
-	ApplicationPgpEncrypted = "application/pgp-encrypted",
+	ApplicationPgpEncrypted = 'application/pgp-encrypted',
 
 	/**
 	 * **application/pgp-signature**
@@ -231,7 +231,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 3156](https://www.rfc-editor.org/rfc/rfc3156)
 	 */
-	ApplicationPgpSignature = "application/pgp-signature",
+	ApplicationPgpSignature = 'application/pgp-signature',
 
 	/**
 	 * **application/pgp-keys**
@@ -240,7 +240,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 3156](https://www.rfc-editor.org/rfc/rfc3156)
 	 */
-	ApplicationPgpKeys = "application/pgp-keys",
+	ApplicationPgpKeys = 'application/pgp-keys',
 
 	// --- PKI/Certificates ---
 
@@ -251,7 +251,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 8551](https://www.rfc-editor.org/rfc/rfc8551)
 	 */
-	ApplicationPkcs7Mime = "application/pkcs7-mime",
+	ApplicationPkcs7Mime = 'application/pkcs7-mime',
 
 	/**
 	 * **application/pkcs7-signature**
@@ -260,7 +260,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 8551](https://www.rfc-editor.org/rfc/rfc8551)
 	 */
-	ApplicationPkcs7Signature = "application/pkcs7-signature",
+	ApplicationPkcs7Signature = 'application/pkcs7-signature',
 
 	/**
 	 * **application/pkcs8**
@@ -269,7 +269,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 5958](https://www.rfc-editor.org/rfc/rfc5958)
 	 */
-	ApplicationPkcs8 = "application/pkcs8",
+	ApplicationPkcs8 = 'application/pkcs8',
 
 	/**
 	 * **application/pkcs10**
@@ -278,14 +278,14 @@ export enum MediaType {
 	 *
 	 * @see [RFC 5967](https://www.rfc-editor.org/rfc/rfc5967)
 	 */
-	ApplicationPkcs10 = "application/pkcs10",
+	ApplicationPkcs10 = 'application/pkcs10',
 
 	/**
 	 * **application/pkcs12**
 	 *
 	 * PKCS#12 personal information exchange format.
 	 */
-	ApplicationPkcs12 = "application/pkcs12",
+	ApplicationPkcs12 = 'application/pkcs12',
 
 	/**
 	 * **application/pkix-cert**
@@ -294,7 +294,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 2585](https://www.rfc-editor.org/rfc/rfc2585)
 	 */
-	ApplicationPkixCert = "application/pkix-cert",
+	ApplicationPkixCert = 'application/pkix-cert',
 
 	/**
 	 * **application/pkix-crl**
@@ -303,7 +303,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 2585](https://www.rfc-editor.org/rfc/rfc2585)
 	 */
-	ApplicationPkixCrl = "application/pkix-crl",
+	ApplicationPkixCrl = 'application/pkix-crl',
 
 	/**
 	 * **application/pem-certificate-chain**
@@ -312,7 +312,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 8555](https://www.rfc-editor.org/rfc/rfc8555)
 	 */
-	ApplicationPemCertificateChain = "application/pem-certificate-chain",
+	ApplicationPemCertificateChain = 'application/pem-certificate-chain',
 
 	// --- Patch Formats ---
 
@@ -323,7 +323,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 6902](https://www.rfc-editor.org/rfc/rfc6902)
 	 */
-	ApplicationJsonPatchJson = "application/json-patch+json",
+	ApplicationJsonPatchJson = 'application/json-patch+json',
 
 	/**
 	 * **application/merge-patch+json**
@@ -332,7 +332,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 7396](https://www.rfc-editor.org/rfc/rfc7396)
 	 */
-	ApplicationMergePatchJson = "application/merge-patch+json",
+	ApplicationMergePatchJson = 'application/merge-patch+json',
 
 	// --- Feed Formats ---
 
@@ -343,14 +343,14 @@ export enum MediaType {
 	 *
 	 * @see [RFC 4287](https://www.rfc-editor.org/rfc/rfc4287)
 	 */
-	ApplicationAtomXml = "application/atom+xml",
+	ApplicationAtomXml = 'application/atom+xml',
 
 	/**
 	 * **application/rss+xml**
 	 *
 	 * RSS feed format. Note: Not officially registered but widely used.
 	 */
-	ApplicationRssXml = "application/rss+xml",
+	ApplicationRssXml = 'application/rss+xml',
 
 	/**
 	 * **application/activity+json**
@@ -359,7 +359,7 @@ export enum MediaType {
 	 *
 	 * @see [W3C ActivityStreams](https://www.w3.org/TR/activitystreams-core/)
 	 */
-	ApplicationActivityJson = "application/activity+json",
+	ApplicationActivityJson = 'application/activity+json',
 
 	// --- Geographic/Geospatial ---
 
@@ -370,14 +370,14 @@ export enum MediaType {
 	 *
 	 * @see [RFC 7946](https://www.rfc-editor.org/rfc/rfc7946)
 	 */
-	ApplicationGeoJson = "application/geo+json",
+	ApplicationGeoJson = 'application/geo+json',
 
 	/**
 	 * **application/gml+xml**
 	 *
 	 * Geography Markup Language (GML) format.
 	 */
-	ApplicationGmlXml = "application/gml+xml",
+	ApplicationGmlXml = 'application/gml+xml',
 
 	// --- API Specification Formats ---
 
@@ -386,35 +386,35 @@ export enum MediaType {
 	 *
 	 * JSON Schema document. Note: Not in IANA registry but commonly used.
 	 */
-	ApplicationSchemaJson = "application/schema+json",
+	ApplicationSchemaJson = 'application/schema+json',
 
 	/**
 	 * **application/openapi+json**
 	 *
 	 * OpenAPI specification in JSON. Note: Not in IANA registry.
 	 */
-	ApplicationOpenapiJson = "application/openapi+json",
+	ApplicationOpenapiJson = 'application/openapi+json',
 
 	/**
 	 * **application/openapi+yaml**
 	 *
 	 * OpenAPI specification in YAML. Note: Not in IANA registry.
 	 */
-	ApplicationOpenapiYaml = "application/openapi+yaml",
+	ApplicationOpenapiYaml = 'application/openapi+yaml',
 
 	/**
 	 * **application/asyncapi+json**
 	 *
 	 * AsyncAPI specification in JSON format.
 	 */
-	ApplicationAsyncapiJson = "application/asyncapi+json",
+	ApplicationAsyncapiJson = 'application/asyncapi+json',
 
 	/**
 	 * **application/asyncapi+yaml**
 	 *
 	 * AsyncAPI specification in YAML format.
 	 */
-	ApplicationAsyncapiYaml = "application/asyncapi+yaml",
+	ApplicationAsyncapiYaml = 'application/asyncapi+yaml',
 
 	// --- Semantic Web / RDF ---
 
@@ -425,21 +425,21 @@ export enum MediaType {
 	 *
 	 * @see [RFC 3870](https://www.rfc-editor.org/rfc/rfc3870)
 	 */
-	ApplicationRdfXml = "application/rdf+xml",
+	ApplicationRdfXml = 'application/rdf+xml',
 
 	/**
 	 * **application/n-quads**
 	 *
 	 * N-Quads RDF format.
 	 */
-	ApplicationNQuads = "application/n-quads",
+	ApplicationNQuads = 'application/n-quads',
 
 	/**
 	 * **application/n-triples**
 	 *
 	 * N-Triples RDF format.
 	 */
-	ApplicationNTriples = "application/n-triples",
+	ApplicationNTriples = 'application/n-triples',
 
 	// --- Calendar & Contact ---
 
@@ -450,7 +450,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 7265](https://www.rfc-editor.org/rfc/rfc7265)
 	 */
-	ApplicationCalendarJson = "application/calendar+json",
+	ApplicationCalendarJson = 'application/calendar+json',
 
 	/**
 	 * **application/calendar+xml**
@@ -459,7 +459,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 6321](https://www.rfc-editor.org/rfc/rfc6321)
 	 */
-	ApplicationCalendarXml = "application/calendar+xml",
+	ApplicationCalendarXml = 'application/calendar+xml',
 
 	// --- Office Formats ---
 
@@ -468,49 +468,49 @@ export enum MediaType {
 	 *
 	 * Microsoft Word document (.doc).
 	 */
-	ApplicationMsword = "application/msword",
+	ApplicationMsword = 'application/msword',
 
 	/**
 	 * **application/vnd.openxmlformats-officedocument.wordprocessingml.document**
 	 *
 	 * Microsoft Word document (.docx) - Office Open XML format.
 	 */
-	ApplicationDocx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	ApplicationDocx = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 
 	/**
 	 * **application/vnd.openxmlformats-officedocument.spreadsheetml.sheet**
 	 *
 	 * Microsoft Excel spreadsheet (.xlsx) - Office Open XML format.
 	 */
-	ApplicationXlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+	ApplicationXlsx = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 
 	/**
 	 * **application/vnd.openxmlformats-officedocument.presentationml.presentation**
 	 *
 	 * Microsoft PowerPoint presentation (.pptx) - Office Open XML format.
 	 */
-	ApplicationPptx = "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+	ApplicationPptx = 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 
 	/**
 	 * **application/vnd.oasis.opendocument.text**
 	 *
 	 * OpenDocument Text document (.odt).
 	 */
-	ApplicationOdt = "application/vnd.oasis.opendocument.text",
+	ApplicationOdt = 'application/vnd.oasis.opendocument.text',
 
 	/**
 	 * **application/vnd.oasis.opendocument.spreadsheet**
 	 *
 	 * OpenDocument Spreadsheet (.ods).
 	 */
-	ApplicationOds = "application/vnd.oasis.opendocument.spreadsheet",
+	ApplicationOds = 'application/vnd.oasis.opendocument.spreadsheet',
 
 	/**
 	 * **application/vnd.oasis.opendocument.presentation**
 	 *
 	 * OpenDocument Presentation (.odp).
 	 */
-	ApplicationOdp = "application/vnd.oasis.opendocument.presentation",
+	ApplicationOdp = 'application/vnd.oasis.opendocument.presentation',
 
 	// --- Container/Archive Formats ---
 
@@ -519,14 +519,14 @@ export enum MediaType {
 	 *
 	 * EPUB electronic publication format.
 	 */
-	ApplicationEpubZip = "application/epub+zip",
+	ApplicationEpubZip = 'application/epub+zip',
 
 	/**
 	 * **application/java-archive**
 	 *
 	 * Java Archive (JAR) file.
 	 */
-	ApplicationJavaArchive = "application/java-archive",
+	ApplicationJavaArchive = 'application/java-archive',
 
 	// --- Streaming/Media Manifests ---
 
@@ -535,14 +535,14 @@ export enum MediaType {
 	 *
 	 * MPEG-DASH Media Presentation Description (MPD).
 	 */
-	ApplicationDashXml = "application/dash+xml",
+	ApplicationDashXml = 'application/dash+xml',
 
 	/**
 	 * **application/vnd.apple.mpegurl**
 	 *
 	 * HTTP Live Streaming (HLS) playlist. Note: Use for .m3u8 files.
 	 */
-	ApplicationMpegurl = "application/vnd.apple.mpegurl",
+	ApplicationMpegurl = 'application/vnd.apple.mpegurl',
 
 	/**
 	 * **application/mp4**
@@ -551,7 +551,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 4337](https://www.rfc-editor.org/rfc/rfc4337)
 	 */
-	ApplicationMp4 = "application/mp4",
+	ApplicationMp4 = 'application/mp4',
 
 	/**
 	 * **application/ogg**
@@ -560,7 +560,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 5334](https://www.rfc-editor.org/rfc/rfc5334)
 	 */
-	ApplicationOgg = "application/ogg",
+	ApplicationOgg = 'application/ogg',
 
 	// --- WebAssembly ---
 
@@ -569,7 +569,7 @@ export enum MediaType {
 	 *
 	 * WebAssembly binary format. Note: Not in IANA registry but standardized by W3C.
 	 */
-	ApplicationWasm = "application/wasm",
+	ApplicationWasm = 'application/wasm',
 
 	// --- DNS ---
 
@@ -580,7 +580,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 4027](https://www.rfc-editor.org/rfc/rfc4027)
 	 */
-	ApplicationDns = "application/dns",
+	ApplicationDns = 'application/dns',
 
 	/**
 	 * **application/dns+json**
@@ -589,7 +589,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 8427](https://www.rfc-editor.org/rfc/rfc8427)
 	 */
-	ApplicationDnsJson = "application/dns+json",
+	ApplicationDnsJson = 'application/dns+json',
 
 	/**
 	 * **application/dns-message**
@@ -598,7 +598,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 8484](https://www.rfc-editor.org/rfc/rfc8484)
 	 */
-	ApplicationDnsMessage = "application/dns-message",
+	ApplicationDnsMessage = 'application/dns-message',
 
 	// --- YAML ---
 
@@ -607,7 +607,7 @@ export enum MediaType {
 	 *
 	 * YAML Ain't Markup Language. Note: Use text/yaml for text-based YAML.
 	 */
-	ApplicationYaml = "application/yaml",
+	ApplicationYaml = 'application/yaml',
 
 	// --- TOML ---
 
@@ -616,7 +616,7 @@ export enum MediaType {
 	 *
 	 * Tom's Obvious, Minimal Language. Note: Not in IANA registry.
 	 */
-	ApplicationToml = "application/toml",
+	ApplicationToml = 'application/toml',
 
 	// --- Other Common Application Types ---
 
@@ -627,49 +627,49 @@ export enum MediaType {
 	 *
 	 * @see [RFC 2045](https://www.rfc-editor.org/rfc/rfc2045)
 	 */
-	ApplicationPostscript = "application/postscript",
+	ApplicationPostscript = 'application/postscript',
 
 	/**
 	 * **application/rtf**
 	 *
 	 * Rich Text Format document. Note: text/rtf is also valid.
 	 */
-	ApplicationRtf = "application/rtf",
+	ApplicationRtf = 'application/rtf',
 
 	/**
 	 * **application/sql**
 	 *
 	 * SQL script/query. Note: Not in IANA registry but commonly used.
 	 */
-	ApplicationSql = "application/sql",
+	ApplicationSql = 'application/sql',
 
 	/**
 	 * **application/graphql**
 	 *
 	 * GraphQL query/schema. Note: Not in IANA registry but commonly used.
 	 */
-	ApplicationGraphql = "application/graphql",
+	ApplicationGraphql = 'application/graphql',
 
 	/**
 	 * **application/graphql+json**
 	 *
 	 * GraphQL response in JSON format. Note: Not in IANA registry.
 	 */
-	ApplicationGraphqlJson = "application/graphql+json",
+	ApplicationGraphqlJson = 'application/graphql+json',
 
 	/**
 	 * **application/manifest+json**
 	 *
 	 * Web App Manifest JSON format.
 	 */
-	ApplicationManifestJson = "application/manifest+json",
+	ApplicationManifestJson = 'application/manifest+json',
 
 	/**
 	 * **application/node**
 	 *
 	 * Node.js executable module.
 	 */
-	ApplicationNode = "application/node",
+	ApplicationNode = 'application/node',
 
 	/**
 	 * **application/http**
@@ -678,7 +678,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112)
 	 */
-	ApplicationHttp = "application/http",
+	ApplicationHttp = 'application/http',
 
 	// ============================================================================
 	// audio/* - Audio content
@@ -691,7 +691,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 3003](https://www.rfc-editor.org/rfc/rfc3003)
 	 */
-	AudioMpeg = "audio/mpeg",
+	AudioMpeg = 'audio/mpeg',
 
 	/**
 	 * **audio/mp4**
@@ -700,14 +700,14 @@ export enum MediaType {
 	 *
 	 * @see [RFC 4337](https://www.rfc-editor.org/rfc/rfc4337)
 	 */
-	AudioMp4 = "audio/mp4",
+	AudioMp4 = 'audio/mp4',
 
 	/**
 	 * **audio/aac**
 	 *
 	 * Advanced Audio Coding (AAC) format.
 	 */
-	AudioAac = "audio/aac",
+	AudioAac = 'audio/aac',
 
 	/**
 	 * **audio/ogg**
@@ -716,7 +716,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 5334](https://www.rfc-editor.org/rfc/rfc5334)
 	 */
-	AudioOgg = "audio/ogg",
+	AudioOgg = 'audio/ogg',
 
 	/**
 	 * **audio/opus**
@@ -725,7 +725,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 7587](https://www.rfc-editor.org/rfc/rfc7587)
 	 */
-	AudioOpus = "audio/opus",
+	AudioOpus = 'audio/opus',
 
 	/**
 	 * **audio/vorbis**
@@ -734,7 +734,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 5215](https://www.rfc-editor.org/rfc/rfc5215)
 	 */
-	AudioVorbis = "audio/vorbis",
+	AudioVorbis = 'audio/vorbis',
 
 	/**
 	 * **audio/flac**
@@ -743,21 +743,21 @@ export enum MediaType {
 	 *
 	 * @see [RFC 9639](https://www.rfc-editor.org/rfc/rfc9639)
 	 */
-	AudioFlac = "audio/flac",
+	AudioFlac = 'audio/flac',
 
 	/**
 	 * **audio/wav**
 	 *
 	 * Waveform Audio File Format. Note: audio/vnd.wave is the registered type.
 	 */
-	AudioWav = "audio/wav",
+	AudioWav = 'audio/wav',
 
 	/**
 	 * **audio/webm**
 	 *
 	 * WebM audio container. Note: Not in IANA registry, use audio/webm.
 	 */
-	AudioWebm = "audio/webm",
+	AudioWebm = 'audio/webm',
 
 	/**
 	 * **audio/basic**
@@ -766,14 +766,14 @@ export enum MediaType {
 	 *
 	 * @see [RFC 2045](https://www.rfc-editor.org/rfc/rfc2045)
 	 */
-	AudioBasic = "audio/basic",
+	AudioBasic = 'audio/basic',
 
 	/**
 	 * **audio/midi**
 	 *
 	 * MIDI audio. Note: audio/midi is commonly used; audio/sp-midi is registered.
 	 */
-	AudioMidi = "audio/midi",
+	AudioMidi = 'audio/midi',
 
 	/**
 	 * **audio/3gpp**
@@ -782,7 +782,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 3839](https://www.rfc-editor.org/rfc/rfc3839)
 	 */
-	Audio3gpp = "audio/3gpp",
+	Audio3gpp = 'audio/3gpp',
 
 	/**
 	 * **audio/3gpp2**
@@ -791,7 +791,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 4393](https://www.rfc-editor.org/rfc/rfc4393)
 	 */
-	Audio3gpp2 = "audio/3gpp2",
+	Audio3gpp2 = 'audio/3gpp2',
 
 	/**
 	 * **audio/matroska**
@@ -800,7 +800,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 9559](https://www.rfc-editor.org/rfc/rfc9559)
 	 */
-	AudioMatroska = "audio/matroska",
+	AudioMatroska = 'audio/matroska',
 
 	// ============================================================================
 	// font/* - Font formats
@@ -813,7 +813,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 8081](https://www.rfc-editor.org/rfc/rfc8081)
 	 */
-	FontOtf = "font/otf",
+	FontOtf = 'font/otf',
 
 	/**
 	 * **font/ttf**
@@ -822,7 +822,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 8081](https://www.rfc-editor.org/rfc/rfc8081)
 	 */
-	FontTtf = "font/ttf",
+	FontTtf = 'font/ttf',
 
 	/**
 	 * **font/woff**
@@ -831,7 +831,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 8081](https://www.rfc-editor.org/rfc/rfc8081)
 	 */
-	FontWoff = "font/woff",
+	FontWoff = 'font/woff',
 
 	/**
 	 * **font/woff2**
@@ -840,7 +840,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 8081](https://www.rfc-editor.org/rfc/rfc8081)
 	 */
-	FontWoff2 = "font/woff2",
+	FontWoff2 = 'font/woff2',
 
 	/**
 	 * **font/sfnt**
@@ -849,7 +849,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 8081](https://www.rfc-editor.org/rfc/rfc8081)
 	 */
-	FontSfnt = "font/sfnt",
+	FontSfnt = 'font/sfnt',
 
 	/**
 	 * **font/collection**
@@ -858,7 +858,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 8081](https://www.rfc-editor.org/rfc/rfc8081)
 	 */
-	FontCollection = "font/collection",
+	FontCollection = 'font/collection',
 
 	// ============================================================================
 	// haptics/* - Haptic feedback data
@@ -871,7 +871,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 9695](https://www.rfc-editor.org/rfc/rfc9695)
 	 */
-	HapticsIvs = "haptics/ivs",
+	HapticsIvs = 'haptics/ivs',
 
 	/**
 	 * **haptics/hjif**
@@ -880,7 +880,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 9695](https://www.rfc-editor.org/rfc/rfc9695)
 	 */
-	HapticsHjif = "haptics/hjif",
+	HapticsHjif = 'haptics/hjif',
 
 	/**
 	 * **haptics/hmpg**
@@ -889,7 +889,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 9695](https://www.rfc-editor.org/rfc/rfc9695)
 	 */
-	HapticsHmpg = "haptics/hmpg",
+	HapticsHmpg = 'haptics/hmpg',
 
 	// ============================================================================
 	// image/* - Image content
@@ -902,7 +902,7 @@ export enum MediaType {
 	 *
 	 * @see [W3C PNG Specification](https://www.w3.org/TR/PNG/)
 	 */
-	ImagePng = "image/png",
+	ImagePng = 'image/png',
 
 	/**
 	 * **image/jpeg**
@@ -911,7 +911,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 2045](https://www.rfc-editor.org/rfc/rfc2045)
 	 */
-	ImageJpeg = "image/jpeg",
+	ImageJpeg = 'image/jpeg',
 
 	/**
 	 * **image/gif**
@@ -920,7 +920,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 2045](https://www.rfc-editor.org/rfc/rfc2045)
 	 */
-	ImageGif = "image/gif",
+	ImageGif = 'image/gif',
 
 	/**
 	 * **image/webp**
@@ -929,7 +929,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 9649](https://www.rfc-editor.org/rfc/rfc9649)
 	 */
-	ImageWebp = "image/webp",
+	ImageWebp = 'image/webp',
 
 	/**
 	 * **image/svg+xml**
@@ -938,21 +938,21 @@ export enum MediaType {
 	 *
 	 * @see [W3C SVG](https://www.w3.org/TR/SVG/)
 	 */
-	ImageSvgXml = "image/svg+xml",
+	ImageSvgXml = 'image/svg+xml',
 
 	/**
 	 * **image/avif**
 	 *
 	 * AV1 Image File Format (AVIF).
 	 */
-	ImageAvif = "image/avif",
+	ImageAvif = 'image/avif',
 
 	/**
 	 * **image/apng**
 	 *
 	 * Animated Portable Network Graphics (APNG).
 	 */
-	ImageApng = "image/apng",
+	ImageApng = 'image/apng',
 
 	/**
 	 * **image/bmp**
@@ -961,7 +961,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 7903](https://www.rfc-editor.org/rfc/rfc7903)
 	 */
-	ImageBmp = "image/bmp",
+	ImageBmp = 'image/bmp',
 
 	/**
 	 * **image/tiff**
@@ -970,42 +970,42 @@ export enum MediaType {
 	 *
 	 * @see [RFC 3302](https://www.rfc-editor.org/rfc/rfc3302)
 	 */
-	ImageTiff = "image/tiff",
+	ImageTiff = 'image/tiff',
 
 	/**
 	 * **image/heic**
 	 *
 	 * High Efficiency Image Container (HEIC) - single image.
 	 */
-	ImageHeic = "image/heic",
+	ImageHeic = 'image/heic',
 
 	/**
 	 * **image/heic-sequence**
 	 *
 	 * High Efficiency Image Container (HEIC) - image sequence.
 	 */
-	ImageHeicSequence = "image/heic-sequence",
+	ImageHeicSequence = 'image/heic-sequence',
 
 	/**
 	 * **image/heif**
 	 *
 	 * High Efficiency Image File Format (HEIF) - single image.
 	 */
-	ImageHeif = "image/heif",
+	ImageHeif = 'image/heif',
 
 	/**
 	 * **image/heif-sequence**
 	 *
 	 * High Efficiency Image File Format (HEIF) - image sequence.
 	 */
-	ImageHeifSequence = "image/heif-sequence",
+	ImageHeifSequence = 'image/heif-sequence',
 
 	/**
 	 * **image/jxl**
 	 *
 	 * JPEG XL image format.
 	 */
-	ImageJxl = "image/jxl",
+	ImageJxl = 'image/jxl',
 
 	/**
 	 * **image/jp2**
@@ -1014,35 +1014,35 @@ export enum MediaType {
 	 *
 	 * @see [RFC 3745](https://www.rfc-editor.org/rfc/rfc3745)
 	 */
-	ImageJp2 = "image/jp2",
+	ImageJp2 = 'image/jp2',
 
 	/**
 	 * **image/vnd.microsoft.icon**
 	 *
 	 * Microsoft ICO icon format.
 	 */
-	ImageIcon = "image/vnd.microsoft.icon",
+	ImageIcon = 'image/vnd.microsoft.icon',
 
 	/**
 	 * **image/vnd.adobe.photoshop**
 	 *
 	 * Adobe Photoshop document (PSD).
 	 */
-	ImagePsd = "image/vnd.adobe.photoshop",
+	ImagePsd = 'image/vnd.adobe.photoshop',
 
 	/**
 	 * **image/ktx**
 	 *
 	 * Khronos Texture (KTX) format.
 	 */
-	ImageKtx = "image/ktx",
+	ImageKtx = 'image/ktx',
 
 	/**
 	 * **image/ktx2**
 	 *
 	 * Khronos Texture (KTX) format version 2.
 	 */
-	ImageKtx2 = "image/ktx2",
+	ImageKtx2 = 'image/ktx2',
 
 	/**
 	 * **image/wmf**
@@ -1051,7 +1051,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 7903](https://www.rfc-editor.org/rfc/rfc7903)
 	 */
-	ImageWmf = "image/wmf",
+	ImageWmf = 'image/wmf',
 
 	/**
 	 * **image/emf**
@@ -1060,7 +1060,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 7903](https://www.rfc-editor.org/rfc/rfc7903)
 	 */
-	ImageEmf = "image/emf",
+	ImageEmf = 'image/emf',
 
 	// ============================================================================
 	// message/* - Message encapsulation formats
@@ -1073,7 +1073,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 2045](https://www.rfc-editor.org/rfc/rfc2045)
 	 */
-	MessageRfc822 = "message/rfc822",
+	MessageRfc822 = 'message/rfc822',
 
 	/**
 	 * **message/http**
@@ -1082,7 +1082,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112)
 	 */
-	MessageHttp = "message/http",
+	MessageHttp = 'message/http',
 
 	/**
 	 * **message/partial**
@@ -1091,7 +1091,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 2045](https://www.rfc-editor.org/rfc/rfc2045)
 	 */
-	MessagePartial = "message/partial",
+	MessagePartial = 'message/partial',
 
 	/**
 	 * **message/external-body**
@@ -1100,7 +1100,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 2045](https://www.rfc-editor.org/rfc/rfc2045)
 	 */
-	MessageExternalBody = "message/external-body",
+	MessageExternalBody = 'message/external-body',
 
 	/**
 	 * **message/delivery-status**
@@ -1109,7 +1109,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 1894](https://www.rfc-editor.org/rfc/rfc1894)
 	 */
-	MessageDeliveryStatus = "message/delivery-status",
+	MessageDeliveryStatus = 'message/delivery-status',
 
 	/**
 	 * **message/disposition-notification**
@@ -1118,7 +1118,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 8098](https://www.rfc-editor.org/rfc/rfc8098)
 	 */
-	MessageDispositionNotification = "message/disposition-notification",
+	MessageDispositionNotification = 'message/disposition-notification',
 
 	/**
 	 * **message/feedback-report**
@@ -1127,7 +1127,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 5965](https://www.rfc-editor.org/rfc/rfc5965)
 	 */
-	MessageFeedbackReport = "message/feedback-report",
+	MessageFeedbackReport = 'message/feedback-report',
 
 	/**
 	 * **message/global**
@@ -1136,7 +1136,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 6532](https://www.rfc-editor.org/rfc/rfc6532)
 	 */
-	MessageGlobal = "message/global",
+	MessageGlobal = 'message/global',
 
 	/**
 	 * **message/sip**
@@ -1145,7 +1145,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 3261](https://www.rfc-editor.org/rfc/rfc3261)
 	 */
-	MessageSip = "message/sip",
+	MessageSip = 'message/sip',
 
 	/**
 	 * **message/bhttp**
@@ -1154,7 +1154,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 9292](https://www.rfc-editor.org/rfc/rfc9292)
 	 */
-	MessageBhttp = "message/bhttp",
+	MessageBhttp = 'message/bhttp',
 
 	// ============================================================================
 	// model/* - 3D model formats
@@ -1165,56 +1165,56 @@ export enum MediaType {
 	 *
 	 * glTF (GL Transmission Format) JSON format.
 	 */
-	ModelGltfJson = "model/gltf+json",
+	ModelGltfJson = 'model/gltf+json',
 
 	/**
 	 * **model/gltf-binary**
 	 *
 	 * glTF binary format (.glb).
 	 */
-	ModelGltfBinary = "model/gltf-binary",
+	ModelGltfBinary = 'model/gltf-binary',
 
 	/**
 	 * **model/stl**
 	 *
 	 * Stereolithography (STL) 3D model format.
 	 */
-	ModelStl = "model/stl",
+	ModelStl = 'model/stl',
 
 	/**
 	 * **model/obj**
 	 *
 	 * Wavefront OBJ 3D model format.
 	 */
-	ModelObj = "model/obj",
+	ModelObj = 'model/obj',
 
 	/**
 	 * **model/mtl**
 	 *
 	 * Wavefront MTL material library format.
 	 */
-	ModelMtl = "model/mtl",
+	ModelMtl = 'model/mtl',
 
 	/**
 	 * **model/3mf**
 	 *
 	 * 3D Manufacturing Format.
 	 */
-	Model3mf = "model/3mf",
+	Model3mf = 'model/3mf',
 
 	/**
 	 * **model/step**
 	 *
 	 * STEP (Standard for the Exchange of Product Data) format.
 	 */
-	ModelStep = "model/step",
+	ModelStep = 'model/step',
 
 	/**
 	 * **model/iges**
 	 *
 	 * Initial Graphics Exchange Specification (IGES) format.
 	 */
-	ModelIges = "model/iges",
+	ModelIges = 'model/iges',
 
 	/**
 	 * **model/vrml**
@@ -1223,35 +1223,35 @@ export enum MediaType {
 	 *
 	 * @see [RFC 2077](https://www.rfc-editor.org/rfc/rfc2077)
 	 */
-	ModelVrml = "model/vrml",
+	ModelVrml = 'model/vrml',
 
 	/**
 	 * **model/x3d+xml**
 	 *
 	 * X3D (Extensible 3D) XML format.
 	 */
-	ModelX3dXml = "model/x3d+xml",
+	ModelX3dXml = 'model/x3d+xml',
 
 	/**
 	 * **model/vnd.usdz+zip**
 	 *
 	 * Universal Scene Description (USD) compressed format.
 	 */
-	ModelUsdzZip = "model/vnd.usdz+zip",
+	ModelUsdzZip = 'model/vnd.usdz+zip',
 
 	/**
 	 * **model/vnd.collada+xml**
 	 *
 	 * COLLADA 3D model format.
 	 */
-	ModelColladaXml = "model/vnd.collada+xml",
+	ModelColladaXml = 'model/vnd.collada+xml',
 
 	/**
 	 * **model/u3d**
 	 *
 	 * Universal 3D format.
 	 */
-	ModelU3d = "model/u3d",
+	ModelU3d = 'model/u3d',
 
 	// ============================================================================
 	// multipart/* - Composite content types
@@ -1264,7 +1264,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 7578](https://www.rfc-editor.org/rfc/rfc7578)
 	 */
-	MultipartFormData = "multipart/form-data",
+	MultipartFormData = 'multipart/form-data',
 
 	/**
 	 * **multipart/mixed**
@@ -1273,7 +1273,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 2046](https://www.rfc-editor.org/rfc/rfc2046)
 	 */
-	MultipartMixed = "multipart/mixed",
+	MultipartMixed = 'multipart/mixed',
 
 	/**
 	 * **multipart/alternative**
@@ -1282,7 +1282,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 2046](https://www.rfc-editor.org/rfc/rfc2046)
 	 */
-	MultipartAlternative = "multipart/alternative",
+	MultipartAlternative = 'multipart/alternative',
 
 	/**
 	 * **multipart/related**
@@ -1291,7 +1291,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 2387](https://www.rfc-editor.org/rfc/rfc2387)
 	 */
-	MultipartRelated = "multipart/related",
+	MultipartRelated = 'multipart/related',
 
 	/**
 	 * **multipart/digest**
@@ -1300,7 +1300,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 2046](https://www.rfc-editor.org/rfc/rfc2046)
 	 */
-	MultipartDigest = "multipart/digest",
+	MultipartDigest = 'multipart/digest',
 
 	/**
 	 * **multipart/parallel**
@@ -1309,7 +1309,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 2046](https://www.rfc-editor.org/rfc/rfc2046)
 	 */
-	MultipartParallel = "multipart/parallel",
+	MultipartParallel = 'multipart/parallel',
 
 	/**
 	 * **multipart/byteranges**
@@ -1318,7 +1318,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110)
 	 */
-	MultipartByteranges = "multipart/byteranges",
+	MultipartByteranges = 'multipart/byteranges',
 
 	/**
 	 * **multipart/encrypted**
@@ -1327,7 +1327,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 1847](https://www.rfc-editor.org/rfc/rfc1847)
 	 */
-	MultipartEncrypted = "multipart/encrypted",
+	MultipartEncrypted = 'multipart/encrypted',
 
 	/**
 	 * **multipart/signed**
@@ -1336,7 +1336,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 1847](https://www.rfc-editor.org/rfc/rfc1847)
 	 */
-	MultipartSigned = "multipart/signed",
+	MultipartSigned = 'multipart/signed',
 
 	/**
 	 * **multipart/report**
@@ -1345,14 +1345,14 @@ export enum MediaType {
 	 *
 	 * @see [RFC 6522](https://www.rfc-editor.org/rfc/rfc6522)
 	 */
-	MultipartReport = "multipart/report",
+	MultipartReport = 'multipart/report',
 
 	/**
 	 * **multipart/x-mixed-replace**
 	 *
 	 * Server push content replacement (streaming).
 	 */
-	MultipartXMixedReplace = "multipart/x-mixed-replace",
+	MultipartXMixedReplace = 'multipart/x-mixed-replace',
 
 	// ============================================================================
 	// text/* - Human-readable text content
@@ -1365,14 +1365,14 @@ export enum MediaType {
 	 *
 	 * @see [RFC 2046](https://www.rfc-editor.org/rfc/rfc2046)
 	 */
-	TextPlain = "text/plain",
+	TextPlain = 'text/plain',
 
 	/**
 	 * **text/html**
 	 *
 	 * HyperText Markup Language (HTML) document.
 	 */
-	TextHtml = "text/html",
+	TextHtml = 'text/html',
 
 	/**
 	 * **text/css**
@@ -1381,7 +1381,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 2318](https://www.rfc-editor.org/rfc/rfc2318)
 	 */
-	TextCss = "text/css",
+	TextCss = 'text/css',
 
 	/**
 	 * **text/javascript**
@@ -1390,7 +1390,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 9239](https://www.rfc-editor.org/rfc/rfc9239)
 	 */
-	TextJavascript = "text/javascript",
+	TextJavascript = 'text/javascript',
 
 	/**
 	 * **text/xml**
@@ -1399,7 +1399,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 7303](https://www.rfc-editor.org/rfc/rfc7303)
 	 */
-	TextXml = "text/xml",
+	TextXml = 'text/xml',
 
 	/**
 	 * **text/csv**
@@ -1408,14 +1408,14 @@ export enum MediaType {
 	 *
 	 * @see [RFC 4180](https://www.rfc-editor.org/rfc/rfc4180)
 	 */
-	TextCsv = "text/csv",
+	TextCsv = 'text/csv',
 
 	/**
 	 * **text/tab-separated-values**
 	 *
 	 * Tab-Separated Values (TSV).
 	 */
-	TextTsv = "text/tab-separated-values",
+	TextTsv = 'text/tab-separated-values',
 
 	/**
 	 * **text/markdown**
@@ -1424,7 +1424,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 7763](https://www.rfc-editor.org/rfc/rfc7763)
 	 */
-	TextMarkdown = "text/markdown",
+	TextMarkdown = 'text/markdown',
 
 	/**
 	 * **text/calendar**
@@ -1433,7 +1433,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 5545](https://www.rfc-editor.org/rfc/rfc5545)
 	 */
-	TextCalendar = "text/calendar",
+	TextCalendar = 'text/calendar',
 
 	/**
 	 * **text/vcard**
@@ -1442,14 +1442,14 @@ export enum MediaType {
 	 *
 	 * @see [RFC 6350](https://www.rfc-editor.org/rfc/rfc6350)
 	 */
-	TextVcard = "text/vcard",
+	TextVcard = 'text/vcard',
 
 	/**
 	 * **text/rtf**
 	 *
 	 * Rich Text Format.
 	 */
-	TextRtf = "text/rtf",
+	TextRtf = 'text/rtf',
 
 	/**
 	 * **text/richtext**
@@ -1458,7 +1458,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 2045](https://www.rfc-editor.org/rfc/rfc2045)
 	 */
-	TextRichtext = "text/richtext",
+	TextRichtext = 'text/richtext',
 
 	/**
 	 * **text/enriched**
@@ -1467,7 +1467,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 1896](https://www.rfc-editor.org/rfc/rfc1896)
 	 */
-	TextEnriched = "text/enriched",
+	TextEnriched = 'text/enriched',
 
 	/**
 	 * **text/uri-list**
@@ -1476,7 +1476,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 2483](https://www.rfc-editor.org/rfc/rfc2483)
 	 */
-	TextUriList = "text/uri-list",
+	TextUriList = 'text/uri-list',
 
 	/**
 	 * **text/dns**
@@ -1485,7 +1485,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 4027](https://www.rfc-editor.org/rfc/rfc4027)
 	 */
-	TextDns = "text/dns",
+	TextDns = 'text/dns',
 
 	/**
 	 * **text/SGML**
@@ -1494,21 +1494,21 @@ export enum MediaType {
 	 *
 	 * @see [RFC 1874](https://www.rfc-editor.org/rfc/rfc1874)
 	 */
-	TextSgml = "text/SGML",
+	TextSgml = 'text/SGML',
 
 	/**
 	 * **text/turtle**
 	 *
 	 * RDF Turtle format.
 	 */
-	TextTurtle = "text/turtle",
+	TextTurtle = 'text/turtle',
 
 	/**
 	 * **text/n3**
 	 *
 	 * RDF N3 (Notation3) format.
 	 */
-	TextN3 = "text/n3",
+	TextN3 = 'text/n3',
 
 	/**
 	 * **text/troff**
@@ -1517,14 +1517,14 @@ export enum MediaType {
 	 *
 	 * @see [RFC 4263](https://www.rfc-editor.org/rfc/rfc4263)
 	 */
-	TextTroff = "text/troff",
+	TextTroff = 'text/troff',
 
 	/**
 	 * **text/vtt**
 	 *
 	 * WebVTT (Web Video Text Tracks) subtitles.
 	 */
-	TextVtt = "text/vtt",
+	TextVtt = 'text/vtt',
 
 	/**
 	 * **text/cache-manifest**
@@ -1533,21 +1533,21 @@ export enum MediaType {
 	 *
 	 * @deprecated Use Service Workers instead.
 	 */
-	TextCacheManifest = "text/cache-manifest",
+	TextCacheManifest = 'text/cache-manifest',
 
 	/**
 	 * **text/event-stream**
 	 *
 	 * Server-Sent Events (SSE) stream. Note: Not in IANA registry but standardized.
 	 */
-	TextEventStream = "text/event-stream",
+	TextEventStream = 'text/event-stream',
 
 	/**
 	 * **text/x-yaml**
 	 *
 	 * YAML format. Note: Not officially registered; use application/yaml for JSON-like data.
 	 */
-	TextYaml = "text/x-yaml",
+	TextYaml = 'text/x-yaml',
 
 	// ============================================================================
 	// video/* - Video content
@@ -1560,7 +1560,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 4337](https://www.rfc-editor.org/rfc/rfc4337)
 	 */
-	VideoMp4 = "video/mp4",
+	VideoMp4 = 'video/mp4',
 
 	/**
 	 * **video/mpeg**
@@ -1569,7 +1569,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 2045](https://www.rfc-editor.org/rfc/rfc2045)
 	 */
-	VideoMpeg = "video/mpeg",
+	VideoMpeg = 'video/mpeg',
 
 	/**
 	 * **video/ogg**
@@ -1578,14 +1578,14 @@ export enum MediaType {
 	 *
 	 * @see [RFC 5334](https://www.rfc-editor.org/rfc/rfc5334)
 	 */
-	VideoOgg = "video/ogg",
+	VideoOgg = 'video/ogg',
 
 	/**
 	 * **video/webm**
 	 *
 	 * WebM video container. Note: Not in IANA registry but widely supported.
 	 */
-	VideoWebm = "video/webm",
+	VideoWebm = 'video/webm',
 
 	/**
 	 * **video/quicktime**
@@ -1594,7 +1594,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 6381](https://www.rfc-editor.org/rfc/rfc6381)
 	 */
-	VideoQuicktime = "video/quicktime",
+	VideoQuicktime = 'video/quicktime',
 
 	/**
 	 * **video/3gpp**
@@ -1603,7 +1603,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 3839](https://www.rfc-editor.org/rfc/rfc3839)
 	 */
-	Video3gpp = "video/3gpp",
+	Video3gpp = 'video/3gpp',
 
 	/**
 	 * **video/3gpp2**
@@ -1612,7 +1612,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 4393](https://www.rfc-editor.org/rfc/rfc4393)
 	 */
-	Video3gpp2 = "video/3gpp2",
+	Video3gpp2 = 'video/3gpp2',
 
 	/**
 	 * **video/H264**
@@ -1621,7 +1621,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 6184](https://www.rfc-editor.org/rfc/rfc6184)
 	 */
-	VideoH264 = "video/H264",
+	VideoH264 = 'video/H264',
 
 	/**
 	 * **video/H265**
@@ -1630,7 +1630,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 7798](https://www.rfc-editor.org/rfc/rfc7798)
 	 */
-	VideoH265 = "video/H265",
+	VideoH265 = 'video/H265',
 
 	/**
 	 * **video/H266**
@@ -1639,28 +1639,28 @@ export enum MediaType {
 	 *
 	 * @see [RFC 9328](https://www.rfc-editor.org/rfc/rfc9328)
 	 */
-	VideoH266 = "video/H266",
+	VideoH266 = 'video/H266',
 
 	/**
 	 * **video/AV1**
 	 *
 	 * AV1 video codec.
 	 */
-	VideoAv1 = "video/AV1",
+	VideoAv1 = 'video/AV1',
 
 	/**
 	 * **video/VP8**
 	 *
 	 * VP8 video codec. Note: Not in IANA registry.
 	 */
-	VideoVp8 = "video/VP8",
+	VideoVp8 = 'video/VP8',
 
 	/**
 	 * **video/VP9**
 	 *
 	 * VP9 video codec. Note: Not in IANA registry.
 	 */
-	VideoVp9 = "video/VP9",
+	VideoVp9 = 'video/VP9',
 
 	/**
 	 * **video/matroska**
@@ -1669,7 +1669,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 9559](https://www.rfc-editor.org/rfc/rfc9559)
 	 */
-	VideoMatroska = "video/matroska",
+	VideoMatroska = 'video/matroska',
 
 	/**
 	 * **video/matroska-3d**
@@ -1678,7 +1678,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 9559](https://www.rfc-editor.org/rfc/rfc9559)
 	 */
-	VideoMatroska3d = "video/matroska-3d",
+	VideoMatroska3d = 'video/matroska-3d',
 
 	/**
 	 * **video/raw**
@@ -1687,7 +1687,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 4175](https://www.rfc-editor.org/rfc/rfc4175)
 	 */
-	VideoRaw = "video/raw",
+	VideoRaw = 'video/raw',
 
 	/**
 	 * **video/JPEG**
@@ -1696,7 +1696,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 3555](https://www.rfc-editor.org/rfc/rfc3555)
 	 */
-	VideoJpeg = "video/JPEG",
+	VideoJpeg = 'video/JPEG',
 
 	/**
 	 * **video/jpeg2000**
@@ -1705,7 +1705,7 @@ export enum MediaType {
 	 *
 	 * @see [RFC 5371](https://www.rfc-editor.org/rfc/rfc5371)
 	 */
-	VideoJpeg2000 = "video/jpeg2000",
+	VideoJpeg2000 = 'video/jpeg2000',
 
 	/**
 	 * **video/FFV1**
@@ -1714,19 +1714,19 @@ export enum MediaType {
 	 *
 	 * @see [RFC 9043](https://www.rfc-editor.org/rfc/rfc9043)
 	 */
-	VideoFfv1 = "video/FFV1",
+	VideoFfv1 = 'video/FFV1',
 
 	/**
 	 * **video/lottie+json**
 	 *
 	 * Lottie animation format (JSON-based).
 	 */
-	VideoLottieJson = "video/lottie+json",
+	VideoLottieJson = 'video/lottie+json',
 
 	/**
 	 * **video/vnd.mpegurl**
 	 *
 	 * M3U/M3U8 playlist format.
 	 */
-	VideoMpegurl = "video/vnd.mpegurl",
+	VideoMpegurl = 'video/vnd.mpegurl',
 }

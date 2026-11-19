@@ -22,7 +22,7 @@
  */
 
 /** The commit's object id, as Git names it. */
-export const FIXTURE_SHA = "b40f148bce8ffce3359d3dd6b5bc4ede5008c653";
+export const FIXTURE_SHA = 'b40f148bce8ffce3359d3dd6b5bc4ede5008c653';
 
 /** `git cat-file commit <sha>`, exactly. */
 export const FIXTURE_OBJECT =
@@ -44,26 +44,26 @@ export const FIXTURE_OBJECT =
  * rewrite built from the JSON alone cannot reproduce the object, and the
  * distance between the two is exactly the bug.
  */
-export const NON_UTC_SHA = "11bf19bd9789cc6ff7a8fb63c55f973cb5420e27";
+export const NON_UTC_SHA = '11bf19bd9789cc6ff7a8fb63c55f973cb5420e27';
 
 /** `git cat-file commit <NON_UTC_SHA>`, exactly. No `gpgsig`, no trailing newline. */
 export const NON_UTC_OBJECT =
-	"tree c93ec7f22ad2cabca76415f3389524a7d43c6435\nparent cd01952d981ed9169dca0167e2a13b611db7de92\nauthor Kaj Kowalski <info@kajkowalski.nl> 1788116700 +0200\ncommitter Kaj Kowalski <info@kajkowalski.nl> 1788116700 +0200\n\nci: remove the spent Dependabot activation patch";
+	'tree c93ec7f22ad2cabca76415f3389524a7d43c6435\nparent cd01952d981ed9169dca0167e2a13b611db7de92\nauthor Kaj Kowalski <info@kajkowalski.nl> 1788116700 +0200\ncommitter Kaj Kowalski <info@kajkowalski.nl> 1788116700 +0200\n\nci: remove the spent Dependabot activation patch';
 
 /** `GET /repos/kjanat/gpg-signing-service/git/commits/<NON_UTC_SHA>`, reduced to the fields read. */
 export const NON_UTC_API = {
 	sha: NON_UTC_SHA,
-	message: "ci: remove the spent Dependabot activation patch",
-	tree: { sha: "c93ec7f22ad2cabca76415f3389524a7d43c6435" },
-	parents: [{ sha: "cd01952d981ed9169dca0167e2a13b611db7de92" }],
-	author: { name: "Kaj Kowalski", email: "info@kajkowalski.nl", date: "2026-08-30T19:05:00Z" },
-	committer: { name: "Kaj Kowalski", email: "info@kajkowalski.nl", date: "2026-08-30T19:05:00Z" },
+	message: 'ci: remove the spent Dependabot activation patch',
+	tree: { sha: 'c93ec7f22ad2cabca76415f3389524a7d43c6435' },
+	parents: [{ sha: 'cd01952d981ed9169dca0167e2a13b611db7de92' }],
+	author: { name: 'Kaj Kowalski', email: 'info@kajkowalski.nl', date: '2026-08-30T19:05:00Z' },
+	committer: { name: 'Kaj Kowalski', email: 'info@kajkowalski.nl', date: '2026-08-30T19:05:00Z' },
 	verification: { signature: null },
 } as const;
 
 /** The first ten lines of `Accept: application/vnd.github.patch` for that commit, verbatim. */
 export const NON_UTC_PATCH =
-	"From 11bf19bd9789cc6ff7a8fb63c55f973cb5420e27 Mon Sep 17 00:00:00 2001\nFrom: Kaj Kowalski <info@kajkowalski.nl>\nDate: Sun, 30 Aug 2026 21:05:00 +0200\nSubject: [PATCH] ci: remove the spent Dependabot activation patch\n\n---\n .github/workflows-pending/activate.patch | 54 ------------------------\n 1 file changed, 54 deletions(-)\n delete mode 100644 .github/workflows-pending/activate.patch\n\n";
+	'From 11bf19bd9789cc6ff7a8fb63c55f973cb5420e27 Mon Sep 17 00:00:00 2001\nFrom: Kaj Kowalski <info@kajkowalski.nl>\nDate: Sun, 30 Aug 2026 21:05:00 +0200\nSubject: [PATCH] ci: remove the spent Dependabot activation patch\n\n---\n .github/workflows-pending/activate.patch | 54 ------------------------\n 1 file changed, 54 deletions(-)\n delete mode 100644 .github/workflows-pending/activate.patch\n\n';
 
 /**
  * A real commit whose author and committer offsets *differ*.
@@ -79,20 +79,20 @@ export const NON_UTC_PATCH =
  * `GET /git/commits/{sha}` strips and the other ambiguity recovery has to
  * resolve. One fixture, both.
  */
-export const SKEWED_SHA = "3d26402438b552e54f84471b198e03f814c18ec5";
+export const SKEWED_SHA = '3d26402438b552e54f84471b198e03f814c18ec5';
 
 /** `git cat-file commit <SKEWED_SHA>`, exactly. */
 export const SKEWED_OBJECT =
-	"tree c93ec7f22ad2cabca76415f3389524a7d43c6435\nparent cd01952d981ed9169dca0167e2a13b611db7de92\nauthor Kaj Kowalski <info@kajkowalski.nl> 1788116700 +0545\ncommitter Kaj Kowalski <info@kajkowalski.nl> 1788116700 -0330\n\nchore: a commit whose author and committer disagree about the clock\n";
+	'tree c93ec7f22ad2cabca76415f3389524a7d43c6435\nparent cd01952d981ed9169dca0167e2a13b611db7de92\nauthor Kaj Kowalski <info@kajkowalski.nl> 1788116700 +0545\ncommitter Kaj Kowalski <info@kajkowalski.nl> 1788116700 -0330\n\nchore: a commit whose author and committer disagree about the clock\n';
 
 /** The same commit as the API would report it: offsets gone, trailing newline gone. */
 export const SKEWED_API = {
 	sha: SKEWED_SHA,
-	message: "chore: a commit whose author and committer disagree about the clock",
-	tree: { sha: "c93ec7f22ad2cabca76415f3389524a7d43c6435" },
-	parents: [{ sha: "cd01952d981ed9169dca0167e2a13b611db7de92" }],
-	author: { name: "Kaj Kowalski", email: "info@kajkowalski.nl", date: "2026-08-30T19:05:00Z" },
-	committer: { name: "Kaj Kowalski", email: "info@kajkowalski.nl", date: "2026-08-30T19:05:00Z" },
+	message: 'chore: a commit whose author and committer disagree about the clock',
+	tree: { sha: 'c93ec7f22ad2cabca76415f3389524a7d43c6435' },
+	parents: [{ sha: 'cd01952d981ed9169dca0167e2a13b611db7de92' }],
+	author: { name: 'Kaj Kowalski', email: 'info@kajkowalski.nl', date: '2026-08-30T19:05:00Z' },
+	committer: { name: 'Kaj Kowalski', email: 'info@kajkowalski.nl', date: '2026-08-30T19:05:00Z' },
 	verification: { signature: null },
 } as const;
 
@@ -104,4 +104,4 @@ export const SKEWED_API = {
  * fixture is that the offset is not recomputed from an instant.
  */
 export const SKEWED_PATCH =
-	"From 3d26402438b552e54f84471b198e03f814c18ec5 Mon Sep 17 00:00:00 2001\nFrom: Kaj Kowalski <info@kajkowalski.nl>\nDate: Mon, 31 Aug 2026 00:50:00 +0545\nSubject: [PATCH] chore: a commit whose author and committer disagree about the\n clock\n\n---\n a | 1 +\n 1 file changed, 1 insertion(+)\n\n";
+	'From 3d26402438b552e54f84471b198e03f814c18ec5 Mon Sep 17 00:00:00 2001\nFrom: Kaj Kowalski <info@kajkowalski.nl>\nDate: Mon, 31 Aug 2026 00:50:00 +0545\nSubject: [PATCH] chore: a commit whose author and committer disagree about the\n clock\n\n---\n a | 1 +\n 1 file changed, 1 insertion(+)\n\n';

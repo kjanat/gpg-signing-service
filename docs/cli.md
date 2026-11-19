@@ -26,11 +26,11 @@ GPG_SIGN_VERSION=v1.2.0
 GPG_SIGN_SHA256='<digest recorded for that release>'
 
 curl --fail --location --remote-name \
-	"https://github.com/kjanat/gpg-signing-service/releases/download/$GPG_SIGN_VERSION/gpg-sign-linux-amd64"
+  "https://github.com/kjanat/gpg-signing-service/releases/download/$GPG_SIGN_VERSION/gpg-sign-linux-amd64"
 printf '%s  %s\n' \
-	"$GPG_SIGN_SHA256" \
-	'gpg-sign-linux-amd64' \
-	| sha256sum --check
+  "$GPG_SIGN_SHA256" \
+  'gpg-sign-linux-amd64' \
+  | sha256sum --check
 mkdir -p "$HOME/.local/bin"
 install -m 0755 gpg-sign-linux-amd64 "$HOME/.local/bin/gpg-sign"
 ```
@@ -132,7 +132,7 @@ reports `built`.
 Run `gpg-sign <command> --help` for all flags.
 
 Key IDs must contain exactly 16 hexadecimal characters, for example
-`AFD5E3EC68371856`, the key this deployment signs with. Examples that _change_
+`AFD5E3EC68371856`, the key this deployment signs with. Examples that *change*
 stored state — uploading a key here, deleting one in
 [Authentication](authentication.md#read-only-admin-token) — use the placeholder
 `A1B2C3D4E5F67890` instead, so a copied command cannot land on a live key.
@@ -159,14 +159,14 @@ export GPG_SIGN_URL="https://your-worker.example"
 export GPG_SIGN_TOKEN="gst_..."
 
 printf 'data to sign' \
-	| gpg-sign sign --key-id AFD5E3EC68371856 >signature.asc
+  | gpg-sign sign --key-id AFD5E3EC68371856 >signature.asc
 ```
 
 For Git:
 
 ```bash
 git cat-file commit HEAD \
-	| gpg-sign sign --key-id AFD5E3EC68371856 >commit.sig
+  | gpg-sign sign --key-id AFD5E3EC68371856 >commit.sig
 ```
 
 `commit.sig` is not yet part of the commit. See
@@ -198,7 +198,7 @@ one here was committed by an identity this key does not cover.
 #### What `--base` is
 
 `--base` is the **exclusive** lower bound of the range to sign: the commit
-_after_ which everything gets rewritten. `--base=X` signs `X..HEAD` and leaves
+*after* which everything gets rewritten. `--base=X` signs `X..HEAD` and leaves
 `X` itself alone. It takes anything `git rev-parse` accepts — a branch
 (`origin/master`), a tag, a SHA, `HEAD~5`.
 
@@ -311,9 +311,7 @@ scrape the progress text:
   "resign": {
     "stale": 2,
     "commits": ["a10ce7bb2f0d4c8e9a1b3d5f7e9c0a2b4d6f8e01"],
-    "report": [
-      "  would re-sign a10ce7bb (signed by a key this service does not carry)"
-    ]
+    "report": ["  would re-sign a10ce7bb (signed by a key this service does not carry)"]
   }
 }
 ```
@@ -349,11 +347,11 @@ without requesting a signature or writing an object:
 
 ```bash
 gpg-sign repair-history --dry-run \
-	--base a1cdfe318686cac582fc955243966d04236afb58 \
-	--expected-tip 42e3400c7b10ee4fbdfc3638801d5776849d1353 \
-	--identity "Kaj Kowalski <info@kajkowalski.nl>" \
-	--expect-identity "209825114+claude[bot]@users.noreply.github.com" \
-	--expect-identity "noreply@github.com"
+  --base a1cdfe318686cac582fc955243966d04236afb58 \
+  --expected-tip 42e3400c7b10ee4fbdfc3638801d5776849d1353 \
+  --identity "Kaj Kowalski <info@kajkowalski.nl>" \
+  --expect-identity "209825114+claude[bot]@users.noreply.github.com" \
+  --expect-identity "noreply@github.com"
 ```
 
 Drop `--dry-run` to perform it. Every commit is rebuilt oldest-to-newest with
@@ -444,8 +442,8 @@ such up front rather than discovered partway through a rewrite:
 ```bash
 task client:build # builds ./client/bin/gpg-sign from this checkout
 GPG_SIGN_BIN=./client/bin/gpg-sign \
-	BASE_REF=... EXPECTED_TIP=... IDENTITY=... EXPECT_IDENTITIES=... BRANCH=... \
-	.github/scripts/repair-history.sh
+  BASE_REF=... EXPECTED_TIP=... IDENTITY=... EXPECT_IDENTITIES=... BRANCH=... \
+  .github/scripts/repair-history.sh
 ```
 
 `.github/scripts/test-repair-history.sh` builds the checked-out command the same
@@ -589,17 +587,17 @@ export GPG_SIGN_URL="https://your-worker.example"
 export GPG_SIGN_ADMIN_TOKEN="..."
 
 gpg-sign admin upload \
-	--key-id A1B2C3D4E5F67890 \
-	--file .keys/private-key.asc
+  --key-id A1B2C3D4E5F67890 \
+  --file .keys/private-key.asc
 ```
 
 ### Query audit records
 
 ```bash
 gpg-sign --json admin audit \
-	--limit 50 \
-	--action sign \
-	--start-date 2026-07-01T00:00:00Z
+  --limit 50 \
+  --action sign \
+  --start-date 2026-07-01T00:00:00Z
 ```
 
 ## Current boundaries

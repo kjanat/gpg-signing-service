@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from 'vitest';
 import {
 	ArmoredPrivateKeySchema,
 	AuditQuerySchema,
@@ -17,151 +17,151 @@ import {
 	SUBJECT_PREFIX_PATTERN,
 	SubjectPrefixSchema,
 	TimestampSchema,
-} from "#schemas";
-import { PGP_PRIVATE_BEGIN, PGP_PRIVATE_END } from "./helpers/armor";
-import { armoredPrivateKeyFixture, VALID_ARMORED_PRIVATE_KEY } from "./helpers/private-key-fixture";
+} from '#schemas';
+import { PGP_PRIVATE_BEGIN, PGP_PRIVATE_END } from './helpers/armor';
+import { armoredPrivateKeyFixture, VALID_ARMORED_PRIVATE_KEY } from './helpers/private-key-fixture';
 
-describe("Schema Validation - Edge Cases", () => {
+describe('Schema Validation - Edge Cases', () => {
 	// Realistically sized for an Ed25519 block, and carrying no key: every case
 	// below reads its shape, never its contents. See the helper for why (#147).
 	const validKey = VALID_ARMORED_PRIVATE_KEY;
 
-	describe("KeyIdSchema", () => {
+	describe('KeyIdSchema', () => {
 		// Happy path
-		it("should accept valid 16-hex KeyId", () => {
-			const result = KeyIdSchema.parse("A1B2C3D4E5F60718");
-			expect(result).toBe("A1B2C3D4E5F60718");
+		it('should accept valid 16-hex KeyId', () => {
+			const result = KeyIdSchema.parse('A1B2C3D4E5F60718');
+			expect(result).toBe('A1B2C3D4E5F60718');
 		});
 
-		it("should normalize to uppercase", () => {
-			const result = KeyIdSchema.parse("a1b2c3d4e5f60718");
-			expect(result).toBe("A1B2C3D4E5F60718");
+		it('should normalize to uppercase', () => {
+			const result = KeyIdSchema.parse('a1b2c3d4e5f60718');
+			expect(result).toBe('A1B2C3D4E5F60718');
 		});
 
-		it("should accept mixed case", () => {
-			const result = KeyIdSchema.parse("AbCdEf0123456789");
-			expect(result).toBe("ABCDEF0123456789");
+		it('should accept mixed case', () => {
+			const result = KeyIdSchema.parse('AbCdEf0123456789');
+			expect(result).toBe('ABCDEF0123456789');
 		});
 
 		// Edge cases - length violations
-		it("should reject 15 characters", () => {
-			expect(() => KeyIdSchema.parse("A1B2C3D4E5F6071")).toThrow("Key ID must be exactly 16 characters");
+		it('should reject 15 characters', () => {
+			expect(() => KeyIdSchema.parse('A1B2C3D4E5F6071')).toThrow('Key ID must be exactly 16 characters');
 		});
 
-		it("should reject 17 characters", () => {
-			expect(() => KeyIdSchema.parse("A1B2C3D4E5F607189")).toThrow("Key ID must be exactly 16 characters");
+		it('should reject 17 characters', () => {
+			expect(() => KeyIdSchema.parse('A1B2C3D4E5F607189')).toThrow('Key ID must be exactly 16 characters');
 		});
 
-		it("should reject empty string", () => {
-			expect(() => KeyIdSchema.parse("")).toThrow();
+		it('should reject empty string', () => {
+			expect(() => KeyIdSchema.parse('')).toThrow();
 		});
 
 		// Edge cases - character violations
-		it("should reject non-hex characters (G-Z)", () => {
-			expect(() => KeyIdSchema.parse("GHIJKLMNOPQRSTUV")).toThrow("Key ID must be 16 hexadecimal characters");
+		it('should reject non-hex characters (G-Z)', () => {
+			expect(() => KeyIdSchema.parse('GHIJKLMNOPQRSTUV')).toThrow('Key ID must be 16 hexadecimal characters');
 		});
 
-		it("should reject special characters", () => {
-			expect(() => KeyIdSchema.parse("A1B2-3D4-E5F6G7H8")).toThrow();
+		it('should reject special characters', () => {
+			expect(() => KeyIdSchema.parse('A1B2-3D4-E5F6G7H8')).toThrow();
 		});
 
-		it("should reject whitespace", () => {
-			expect(() => KeyIdSchema.parse("A1B2C3D4 E5F6G7H8")).toThrow();
+		it('should reject whitespace', () => {
+			expect(() => KeyIdSchema.parse('A1B2C3D4 E5F6G7H8')).toThrow();
 		});
 
-		it("should reject unicode", () => {
-			expect(() => KeyIdSchema.parse("A1B2C3D4E5F6G7测试")).toThrow();
+		it('should reject unicode', () => {
+			expect(() => KeyIdSchema.parse('A1B2C3D4E5F6G7测试')).toThrow();
 		});
 
 		// Boundary - all same character
-		it("should accept all zeros", () => {
-			const result = KeyIdSchema.parse("0000000000000000");
-			expect(result).toBe("0000000000000000");
+		it('should accept all zeros', () => {
+			const result = KeyIdSchema.parse('0000000000000000');
+			expect(result).toBe('0000000000000000');
 		});
 
-		it("should accept all Fs", () => {
-			const result = KeyIdSchema.parse("FFFFFFFFFFFFFFFF");
-			expect(result).toBe("FFFFFFFFFFFFFFFF");
+		it('should accept all Fs', () => {
+			const result = KeyIdSchema.parse('FFFFFFFFFFFFFFFF');
+			expect(result).toBe('FFFFFFFFFFFFFFFF');
 		});
 	});
 
-	describe("FingerprintSchema", () => {
+	describe('FingerprintSchema', () => {
 		// Happy path
-		it("should accept valid 40-hex fingerprint", () => {
-			const result = FingerprintSchema.parse("0123456789ABCDEF0123456789ABCDEF01234567");
-			expect(result).toBe("0123456789ABCDEF0123456789ABCDEF01234567");
+		it('should accept valid 40-hex fingerprint', () => {
+			const result = FingerprintSchema.parse('0123456789ABCDEF0123456789ABCDEF01234567');
+			expect(result).toBe('0123456789ABCDEF0123456789ABCDEF01234567');
 		});
 
-		it("should normalize to uppercase", () => {
-			const result = FingerprintSchema.parse("abcdef0123456789abcdef0123456789abcdef01");
-			expect(result).toBe("ABCDEF0123456789ABCDEF0123456789ABCDEF01");
+		it('should normalize to uppercase', () => {
+			const result = FingerprintSchema.parse('abcdef0123456789abcdef0123456789abcdef01');
+			expect(result).toBe('ABCDEF0123456789ABCDEF0123456789ABCDEF01');
 		});
 
 		// Edge cases - length
-		it("should reject 39 characters", () => {
-			expect(() => FingerprintSchema.parse("0123456789ABCDEF0123456789ABCDEF0123456")).toThrow(
-				"Fingerprint must be exactly 40 characters",
+		it('should reject 39 characters', () => {
+			expect(() => FingerprintSchema.parse('0123456789ABCDEF0123456789ABCDEF0123456')).toThrow(
+				'Fingerprint must be exactly 40 characters',
 			);
 		});
 
-		it("should reject 41 characters", () => {
-			expect(() => FingerprintSchema.parse("0123456789ABCDEF0123456789ABCDEF012345678")).toThrow();
+		it('should reject 41 characters', () => {
+			expect(() => FingerprintSchema.parse('0123456789ABCDEF0123456789ABCDEF012345678')).toThrow();
 		});
 
-		it("should reject empty", () => {
-			expect(() => FingerprintSchema.parse("")).toThrow();
+		it('should reject empty', () => {
+			expect(() => FingerprintSchema.parse('')).toThrow();
 		});
 
 		// Edge cases - invalid chars
-		it("should reject non-hex", () => {
-			expect(() => FingerprintSchema.parse("GHIJKLMNOPQRSTUVWXYZ01234567890123456789")).toThrow(
-				"Fingerprint must be 40 hexadecimal characters",
+		it('should reject non-hex', () => {
+			expect(() => FingerprintSchema.parse('GHIJKLMNOPQRSTUVWXYZ01234567890123456789')).toThrow(
+				'Fingerprint must be 40 hexadecimal characters',
 			);
 		});
 
-		it("should reject with dashes", () => {
-			expect(() => FingerprintSchema.parse("0123-4567-89AB-CDEF-0123-4567-89AB-CDEF-0123")).toThrow();
+		it('should reject with dashes', () => {
+			expect(() => FingerprintSchema.parse('0123-4567-89AB-CDEF-0123-4567-89AB-CDEF-0123')).toThrow();
 		});
 
-		it("should accept all 0s", () => {
-			const result = FingerprintSchema.parse("0000000000000000000000000000000000000000");
-			expect(result).toBe("0000000000000000000000000000000000000000");
+		it('should accept all 0s', () => {
+			const result = FingerprintSchema.parse('0000000000000000000000000000000000000000');
+			expect(result).toBe('0000000000000000000000000000000000000000');
 		});
 
-		it("should accept all Fs", () => {
-			const result = FingerprintSchema.parse("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF");
-			expect(result).toBe("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF");
+		it('should accept all Fs', () => {
+			const result = FingerprintSchema.parse('FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF');
+			expect(result).toBe('FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF');
 		});
 	});
 
-	describe("ArmoredPrivateKeySchema", () => {
+	describe('ArmoredPrivateKeySchema', () => {
 		// Happy path
-		it("should accept valid PGP key", () => {
+		it('should accept valid PGP key', () => {
 			const result = ArmoredPrivateKeySchema.parse(validKey);
 			expect(result).toBeTruthy();
 		});
 
 		// Edge cases - length boundaries
-		it("should reject key < 350 chars", () => {
+		it('should reject key < 350 chars', () => {
 			const shortKey = `${PGP_PRIVATE_BEGIN}\nXX\n=XX\n${PGP_PRIVATE_END}`;
-			expect(() => ArmoredPrivateKeySchema.parse(shortKey)).toThrow("Private key too short - minimum 100 characters");
+			expect(() => ArmoredPrivateKeySchema.parse(shortKey)).toThrow('Private key too short - minimum 100 characters');
 		});
 
-		it("should reject key > 10,000 chars", () => {
+		it('should reject key > 10,000 chars', () => {
 			const header = `${PGP_PRIVATE_BEGIN}\n`;
 			const footer = `\n=XXXX\n${PGP_PRIVATE_END}`;
-			const hugeData = "A".repeat(11000);
+			const hugeData = 'A'.repeat(11000);
 			const hugeKey = header + hugeData + footer;
 
-			expect(() => ArmoredPrivateKeySchema.parse(hugeKey)).toThrow("Private key too large - maximum 10000 characters");
+			expect(() => ArmoredPrivateKeySchema.parse(hugeKey)).toThrow('Private key too large - maximum 10000 characters');
 		});
 
-		it("should accept key exactly 350 chars (boundary)", () => {
+		it('should accept key exactly 350 chars (boundary)', () => {
 			// Minimum valid key: header + blank + 64char base64 + checksum + footer
 			const header = `${PGP_PRIVATE_BEGIN}\n\n`;
 			const footer = `\n=ABCD\n${PGP_PRIVATE_END}`;
 			const base64Lines = Math.ceil((350 - header.length - footer.length) / 65); // 64 chars + newline
-			const data = Array(base64Lines).fill("A".repeat(64)).join("\n");
+			const data = Array(base64Lines).fill('A'.repeat(64)).join('\n');
 
 			const key = header + data + footer;
 			// Adjust to exactly 350
@@ -171,36 +171,36 @@ describe("Schema Validation - Edge Cases", () => {
 			expect(result).toBeTruthy();
 		});
 
-		it("should reject a key without base64 content lines", () => {
-			const bogus = [PGP_PRIVATE_BEGIN, "", "!!!not-base64!!!", "@@@also-not-base64@@@", PGP_PRIVATE_END].join("\n");
+		it('should reject a key without base64 content lines', () => {
+			const bogus = [PGP_PRIVATE_BEGIN, '', '!!!not-base64!!!', '@@@also-not-base64@@@', PGP_PRIVATE_END].join('\n');
 
 			const result = ArmoredPrivateKeySchema.safeParse(bogus);
 			expect(result.success).toBe(false);
 		});
 
 		// Edge cases - missing headers
-		it("should reject without BEGIN marker", () => {
+		it('should reject without BEGIN marker', () => {
 			const noBegin = `
 some data
 =abcd
 ${PGP_PRIVATE_END}`;
 
 			expect(() => ArmoredPrivateKeySchema.parse(noBegin)).toThrow(
-				"Must be a valid PGP armored private key with BEGIN/END markers",
+				'Must be a valid PGP armored private key with BEGIN/END markers',
 			);
 		});
 
-		it("should reject without END marker", () => {
+		it('should reject without END marker', () => {
 			const noEnd = `${PGP_PRIVATE_BEGIN}
 data data data
 =abcd`;
 
 			expect(() => ArmoredPrivateKeySchema.parse(noEnd)).toThrow(
-				"Must be a valid PGP armored private key with BEGIN/END markers",
+				'Must be a valid PGP armored private key with BEGIN/END markers',
 			);
 		});
 
-		it("should reject with wrong key type (PUBLIC)", () => {
+		it('should reject with wrong key type (PUBLIC)', () => {
 			const publicKey = `-----BEGIN PGP PUBLIC KEY BLOCK-----
 data
 =abcd
@@ -210,7 +210,7 @@ data
 		});
 
 		// Edge cases - structure validation
-		it("should reject without base64 data", () => {
+		it('should reject without base64 data', () => {
 			const noData = `${PGP_PRIVATE_BEGIN}
 
 
@@ -221,18 +221,18 @@ ${PGP_PRIVATE_END}`;
 			expect(() => ArmoredPrivateKeySchema.parse(noData)).toThrow();
 		});
 
-		it("should reject without checksum line", () => {
+		it('should reject without checksum line', () => {
 			const noChecksum = `${PGP_PRIVATE_BEGIN}
 
 lQdGBGYiT8YBEADKn8R2JHqQF5Y
 ${PGP_PRIVATE_END}`;
 
 			expect(() => ArmoredPrivateKeySchema.parse(noChecksum)).toThrow(
-				"Invalid PGP armored format - must include base64 data and checksum",
+				'Invalid PGP armored format - must include base64 data and checksum',
 			);
 		});
 
-		it("should reject with only 4 lines (missing structure)", () => {
+		it('should reject with only 4 lines (missing structure)', () => {
 			const tooShort = `${PGP_PRIVATE_BEGIN}
 data
 =XX
@@ -241,15 +241,15 @@ ${PGP_PRIVATE_END}`;
 			expect(() => ArmoredPrivateKeySchema.parse(tooShort)).toThrow();
 		});
 
-		it("should accept key with Version header", () => {
-			const keyWithVersion = armoredPrivateKeyFixture({ headers: ["Version: OpenPGP.js v5.0.0"] });
+		it('should accept key with Version header', () => {
+			const keyWithVersion = armoredPrivateKeyFixture({ headers: ['Version: OpenPGP.js v5.0.0'] });
 
 			const result = ArmoredPrivateKeySchema.parse(keyWithVersion);
 			expect(result).toBeTruthy();
 		});
 
-		it("should accept key with Comment header", () => {
-			const keyWithComment = armoredPrivateKeyFixture({ headers: ["Comment: Automated signing key"] });
+		it('should accept key with Comment header', () => {
+			const keyWithComment = armoredPrivateKeyFixture({ headers: ['Comment: Automated signing key'] });
 
 			const result = ArmoredPrivateKeySchema.parse(keyWithComment);
 			expect(result).toBeTruthy();
@@ -258,24 +258,24 @@ ${PGP_PRIVATE_END}`;
 		// Note: Trailing newlines are handled by footer regex which uses trim()
 
 		// Edge cases for line validation
-		it("should reject when first line is empty (lines[0] undefined)", () => {
+		it('should reject when first line is empty (lines[0] undefined)', () => {
 			const emptyFirstLine = `\n${validKey}`;
 
 			// Actually fails on checksum validation, not BEGIN/END check
 			expect(() => ArmoredPrivateKeySchema.parse(emptyFirstLine)).toThrow(
-				"Invalid PGP armored format - must include base64 data and checksum",
+				'Invalid PGP armored format - must include base64 data and checksum',
 			);
 		});
 
-		it("should reject when last line missing END marker (lastLine undefined)", () => {
-			const noEndMarker = validKey.replace(`\n${PGP_PRIVATE_END}`, "");
+		it('should reject when last line missing END marker (lastLine undefined)', () => {
+			const noEndMarker = validKey.replace(`\n${PGP_PRIVATE_END}`, '');
 
 			expect(() => ArmoredPrivateKeySchema.parse(noEndMarker)).toThrow(
-				"Must be a valid PGP armored private key with BEGIN/END markers",
+				'Must be a valid PGP armored private key with BEGIN/END markers',
 			);
 		});
 
-		it("should reject when all lines after header are empty (no lastLine)", () => {
+		it('should reject when all lines after header are empty (no lastLine)', () => {
 			const allEmpty = `${PGP_PRIVATE_BEGIN}
 
 
@@ -284,7 +284,7 @@ ${PGP_PRIVATE_END}`;
 			expect(() => ArmoredPrivateKeySchema.parse(allEmpty)).toThrow();
 		});
 
-		it("should handle key where second-to-last line is empty", () => {
+		it('should handle key where second-to-last line is empty', () => {
 			const validKeyWithEmptySecondLast = validKey.replace(`\n${PGP_PRIVATE_END}`, `\n\n${PGP_PRIVATE_END}`);
 
 			// Should succeed because it falls back to lines[length-2] which contains footer
@@ -293,205 +293,205 @@ ${PGP_PRIVATE_END}`;
 		});
 	});
 
-	describe("TimestampSchema", () => {
+	describe('TimestampSchema', () => {
 		// Happy path
-		it("should accept valid ISO8601 with offset", () => {
-			const result = TimestampSchema.parse("2025-11-22T14:30:00+01:00");
-			expect(result).toBe("2025-11-22T14:30:00+01:00");
+		it('should accept valid ISO8601 with offset', () => {
+			const result = TimestampSchema.parse('2025-11-22T14:30:00+01:00');
+			expect(result).toBe('2025-11-22T14:30:00+01:00');
 		});
 
-		it("should accept Z timezone", () => {
-			const result = TimestampSchema.parse("2025-11-22T14:30:00Z");
-			expect(result).toBe("2025-11-22T14:30:00Z");
+		it('should accept Z timezone', () => {
+			const result = TimestampSchema.parse('2025-11-22T14:30:00Z');
+			expect(result).toBe('2025-11-22T14:30:00Z');
 		});
 
-		it("should accept negative offset", () => {
-			const result = TimestampSchema.parse("2025-11-22T14:30:00-05:00");
-			expect(result).toBe("2025-11-22T14:30:00-05:00");
+		it('should accept negative offset', () => {
+			const result = TimestampSchema.parse('2025-11-22T14:30:00-05:00');
+			expect(result).toBe('2025-11-22T14:30:00-05:00');
 		});
 
 		// Edge cases
-		it("should accept milliseconds", () => {
-			const result = TimestampSchema.parse("2025-11-22T14:30:00.123Z");
-			expect(result).toBe("2025-11-22T14:30:00.123Z");
+		it('should accept milliseconds', () => {
+			const result = TimestampSchema.parse('2025-11-22T14:30:00.123Z');
+			expect(result).toBe('2025-11-22T14:30:00.123Z');
 		});
 
-		it("should accept microseconds", () => {
-			const result = TimestampSchema.parse("2025-11-22T14:30:00.123456Z");
-			expect(result).toBe("2025-11-22T14:30:00.123456Z");
+		it('should accept microseconds', () => {
+			const result = TimestampSchema.parse('2025-11-22T14:30:00.123456Z');
+			expect(result).toBe('2025-11-22T14:30:00.123456Z');
 		});
 
-		it("should reject without timezone", () => {
-			expect(() => TimestampSchema.parse("2025-11-22T14:30:00")).toThrow();
+		it('should reject without timezone', () => {
+			expect(() => TimestampSchema.parse('2025-11-22T14:30:00')).toThrow();
 		});
 
-		it("should reject invalid date", () => {
-			expect(() => TimestampSchema.parse("2025-13-45T25:70:90Z")).toThrow();
+		it('should reject invalid date', () => {
+			expect(() => TimestampSchema.parse('2025-13-45T25:70:90Z')).toThrow();
 		});
 
-		it("should reject non-ISO format", () => {
-			expect(() => TimestampSchema.parse("Nov 22, 2025 2:30 PM")).toThrow();
+		it('should reject non-ISO format', () => {
+			expect(() => TimestampSchema.parse('Nov 22, 2025 2:30 PM')).toThrow();
 		});
 	});
 
-	describe("DateRangeSchema", () => {
+	describe('DateRangeSchema', () => {
 		// Happy path
-		it("should accept valid date range", () => {
+		it('should accept valid date range', () => {
 			const result = DateRangeSchema.parse({
-				startDate: "2025-01-01T00:00:00Z",
-				endDate: "2025-12-31T23:59:59Z",
+				startDate: '2025-01-01T00:00:00Z',
+				endDate: '2025-12-31T23:59:59Z',
 			});
 
-			expect(result.startDate).toBe("2025-01-01T00:00:00Z");
-			expect(result.endDate).toBe("2025-12-31T23:59:59Z");
+			expect(result.startDate).toBe('2025-01-01T00:00:00Z');
+			expect(result.endDate).toBe('2025-12-31T23:59:59Z');
 		});
 
-		it("should accept same start and end date", () => {
+		it('should accept same start and end date', () => {
 			const result = DateRangeSchema.parse({
-				startDate: "2025-11-22T12:00:00Z",
-				endDate: "2025-11-22T12:00:00Z",
+				startDate: '2025-11-22T12:00:00Z',
+				endDate: '2025-11-22T12:00:00Z',
 			});
 
 			expect(result).toBeTruthy();
 		});
 
-		it("should accept missing startDate", () => {
-			const result = DateRangeSchema.parse({ endDate: "2025-12-31T23:59:59Z" });
+		it('should accept missing startDate', () => {
+			const result = DateRangeSchema.parse({ endDate: '2025-12-31T23:59:59Z' });
 
-			expect(result.endDate).toBe("2025-12-31T23:59:59Z");
+			expect(result.endDate).toBe('2025-12-31T23:59:59Z');
 			expect(result.startDate).toBeUndefined();
 		});
 
-		it("should accept missing endDate", () => {
+		it('should accept missing endDate', () => {
 			const result = DateRangeSchema.parse({
-				startDate: "2025-01-01T00:00:00Z",
+				startDate: '2025-01-01T00:00:00Z',
 			});
 
-			expect(result.startDate).toBe("2025-01-01T00:00:00Z");
+			expect(result.startDate).toBe('2025-01-01T00:00:00Z');
 			expect(result.endDate).toBeUndefined();
 		});
 
-		it("should accept both dates missing", () => {
+		it('should accept both dates missing', () => {
 			const result = DateRangeSchema.parse({});
 			expect(result.startDate).toBeUndefined();
 			expect(result.endDate).toBeUndefined();
 		});
 
 		// Edge case - validation failure
-		it("should reject when startDate > endDate", () => {
+		it('should reject when startDate > endDate', () => {
 			expect(() =>
 				DateRangeSchema.parse({
-					startDate: "2025-12-31T23:59:59Z",
-					endDate: "2025-01-01T00:00:00Z",
+					startDate: '2025-12-31T23:59:59Z',
+					endDate: '2025-01-01T00:00:00Z',
 				}),
-			).toThrow("startDate must be before or equal to endDate");
+			).toThrow('startDate must be before or equal to endDate');
 		});
 
-		it("should reject when startDate 1 second after endDate", () => {
+		it('should reject when startDate 1 second after endDate', () => {
 			expect(() =>
 				DateRangeSchema.parse({
-					startDate: "2025-11-22T12:00:01Z",
-					endDate: "2025-11-22T12:00:00Z",
+					startDate: '2025-11-22T12:00:01Z',
+					endDate: '2025-11-22T12:00:00Z',
 				}),
-			).toThrow("startDate must be before or equal to endDate");
+			).toThrow('startDate must be before or equal to endDate');
 		});
 	});
 
-	describe("AuditQuerySchema", () => {
+	describe('AuditQuerySchema', () => {
 		// Happy path
-		it("should accept valid query with all params", () => {
+		it('should accept valid query with all params', () => {
 			const result = AuditQuerySchema.parse({
 				limit: 50,
 				offset: 10,
-				action: "sign",
-				subject: "repo/name",
-				startDate: "2025-01-01T00:00:00Z",
-				endDate: "2025-12-31T23:59:59Z",
+				action: 'sign',
+				subject: 'repo/name',
+				startDate: '2025-01-01T00:00:00Z',
+				endDate: '2025-12-31T23:59:59Z',
 			});
 
 			expect(result.limit).toBe(50);
 			expect(result.offset).toBe(10);
 		});
 
-		it("should apply default limit (100)", () => {
+		it('should apply default limit (100)', () => {
 			const result = AuditQuerySchema.parse({});
 			expect(result.limit).toBe(100);
 		});
 
-		it("should apply default offset (0)", () => {
+		it('should apply default offset (0)', () => {
 			const result = AuditQuerySchema.parse({});
 			expect(result.offset).toBe(0);
 		});
 
-		it("should coerce string numbers", () => {
-			const result = AuditQuerySchema.parse({ limit: "25", offset: "5" });
+		it('should coerce string numbers', () => {
+			const result = AuditQuerySchema.parse({ limit: '25', offset: '5' });
 			expect(result.limit).toBe(25);
 			expect(result.offset).toBe(5);
 		});
 
 		// Edge cases - limit boundaries
-		it("should accept limit=1 (minimum)", () => {
+		it('should accept limit=1 (minimum)', () => {
 			const result = AuditQuerySchema.parse({ limit: 1 });
 			expect(result.limit).toBe(1);
 		});
 
-		it("should accept limit=1000 (maximum)", () => {
+		it('should accept limit=1000 (maximum)', () => {
 			const result = AuditQuerySchema.parse({ limit: 1000 });
 			expect(result.limit).toBe(1000);
 		});
 
-		it("should reject limit=0", () => {
+		it('should reject limit=0', () => {
 			expect(() => AuditQuerySchema.parse({ limit: 0 })).toThrow();
 		});
 
-		it("should reject limit=1001", () => {
+		it('should reject limit=1001', () => {
 			expect(() => AuditQuerySchema.parse({ limit: 1001 })).toThrow();
 		});
 
-		it("should reject negative limit", () => {
+		it('should reject negative limit', () => {
 			expect(() => AuditQuerySchema.parse({ limit: -5 })).toThrow();
 		});
 
 		// Edge cases - offset boundaries
-		it("should accept offset=0", () => {
+		it('should accept offset=0', () => {
 			const result = AuditQuerySchema.parse({ offset: 0 });
 			expect(result.offset).toBe(0);
 		});
 
-		it("should accept large offset", () => {
+		it('should accept large offset', () => {
 			const result = AuditQuerySchema.parse({ offset: 999999 });
 			expect(result.offset).toBe(999999);
 		});
 
-		it("should reject negative offset", () => {
+		it('should reject negative offset', () => {
 			expect(() => AuditQuerySchema.parse({ offset: -1 })).toThrow();
 		});
 
-		it("should reject float limit", () => {
+		it('should reject float limit', () => {
 			expect(() => AuditQuerySchema.parse({ limit: 50.5 })).toThrow();
 		});
 
-		it("should reject float offset", () => {
+		it('should reject float offset', () => {
 			expect(() => AuditQuerySchema.parse({ offset: 10.7 })).toThrow();
 		});
 	});
 
-	describe("ErrorCodeSchema", () => {
+	describe('ErrorCodeSchema', () => {
 		const validCodes = [
-			"AUTH_MISSING",
-			"AUTH_INVALID",
-			"KEY_NOT_FOUND",
-			"KEY_PROCESSING_ERROR",
-			"KEY_LIST_ERROR",
-			"KEY_UPLOAD_ERROR",
-			"KEY_DELETE_ERROR",
-			"SIGN_ERROR",
-			"RATE_LIMIT_ERROR",
-			"RATE_LIMITED",
-			"INVALID_REQUEST",
-			"AUDIT_ERROR",
-			"NOT_FOUND",
-			"INTERNAL_ERROR",
+			'AUTH_MISSING',
+			'AUTH_INVALID',
+			'KEY_NOT_FOUND',
+			'KEY_PROCESSING_ERROR',
+			'KEY_LIST_ERROR',
+			'KEY_UPLOAD_ERROR',
+			'KEY_DELETE_ERROR',
+			'SIGN_ERROR',
+			'RATE_LIMIT_ERROR',
+			'RATE_LIMITED',
+			'INVALID_REQUEST',
+			'AUDIT_ERROR',
+			'NOT_FOUND',
+			'INTERNAL_ERROR',
 		];
 
 		validCodes.forEach((code) => {
@@ -501,267 +501,267 @@ ${PGP_PRIVATE_END}`;
 			});
 		});
 
-		it("should reject invalid code", () => {
-			expect(() => ErrorCodeSchema.parse("UNKNOWN_ERROR")).toThrow();
+		it('should reject invalid code', () => {
+			expect(() => ErrorCodeSchema.parse('UNKNOWN_ERROR')).toThrow();
 		});
 
-		it("should reject lowercase", () => {
-			expect(() => ErrorCodeSchema.parse("auth_missing")).toThrow();
+		it('should reject lowercase', () => {
+			expect(() => ErrorCodeSchema.parse('auth_missing')).toThrow();
 		});
 
-		it("should reject empty string", () => {
-			expect(() => ErrorCodeSchema.parse("")).toThrow();
+		it('should reject empty string', () => {
+			expect(() => ErrorCodeSchema.parse('')).toThrow();
 		});
 	});
 
-	describe("ErrorResponseSchema", () => {
-		it("should accept valid error response", () => {
+	describe('ErrorResponseSchema', () => {
+		it('should accept valid error response', () => {
 			const result = ErrorResponseSchema.parse({
-				error: "Something went wrong",
-				code: "INTERNAL_ERROR",
-				requestId: "123e4567-e89b-12d3-a456-426614174000",
+				error: 'Something went wrong',
+				code: 'INTERNAL_ERROR',
+				requestId: '123e4567-e89b-12d3-a456-426614174000',
 			});
 
-			expect(result.error).toBe("Something went wrong");
-			expect(result.code).toBe("INTERNAL_ERROR");
+			expect(result.error).toBe('Something went wrong');
+			expect(result.code).toBe('INTERNAL_ERROR');
 		});
 
-		it("should accept without requestId", () => {
+		it('should accept without requestId', () => {
 			const result = ErrorResponseSchema.parse({
-				error: "Error message",
-				code: "NOT_FOUND",
+				error: 'Error message',
+				code: 'NOT_FOUND',
 			});
 
 			expect(result.requestId).toBeUndefined();
 		});
 
-		it("should reject empty error message", () => {
-			expect(() => ErrorResponseSchema.parse({ error: "", code: "INTERNAL_ERROR" })).toThrow(
-				"Error message cannot be empty",
+		it('should reject empty error message', () => {
+			expect(() => ErrorResponseSchema.parse({ error: '', code: 'INTERNAL_ERROR' })).toThrow(
+				'Error message cannot be empty',
 			);
 		});
 
-		it("should reject invalid UUID requestId", () => {
+		it('should reject invalid UUID requestId', () => {
 			expect(() =>
 				ErrorResponseSchema.parse({
-					error: "Test",
-					code: "INTERNAL_ERROR",
-					requestId: "not-a-uuid",
+					error: 'Test',
+					code: 'INTERNAL_ERROR',
+					requestId: 'not-a-uuid',
 				}),
 			).toThrow();
 		});
 	});
 
-	describe("RequestIdSchema", () => {
-		it("should accept valid UUIDv4", () => {
-			const result = RequestIdSchema.parse("123e4567-e89b-12d3-a456-426614174000");
-			expect(result).toBe("123e4567-e89b-12d3-a456-426614174000");
+	describe('RequestIdSchema', () => {
+		it('should accept valid UUIDv4', () => {
+			const result = RequestIdSchema.parse('123e4567-e89b-12d3-a456-426614174000');
+			expect(result).toBe('123e4567-e89b-12d3-a456-426614174000');
 		});
 
-		it("should reject invalid UUID format", () => {
-			expect(() => RequestIdSchema.parse("not-a-uuid")).toThrow();
+		it('should reject invalid UUID format', () => {
+			expect(() => RequestIdSchema.parse('not-a-uuid')).toThrow();
 		});
 
-		it("should reject UUID without dashes", () => {
-			expect(() => RequestIdSchema.parse("123e4567e89b12d3a456426614174000")).toThrow();
+		it('should reject UUID without dashes', () => {
+			expect(() => RequestIdSchema.parse('123e4567e89b12d3a456426614174000')).toThrow();
 		});
 
-		it("should reject empty string", () => {
-			expect(() => RequestIdSchema.parse("")).toThrow();
+		it('should reject empty string', () => {
+			expect(() => RequestIdSchema.parse('')).toThrow();
 		});
 	});
 
-	describe("HealthStatusSchema", () => {
+	describe('HealthStatusSchema', () => {
 		it("should accept 'healthy'", () => {
-			const result = HealthStatusSchema.parse("healthy");
-			expect(result).toBe("healthy");
+			const result = HealthStatusSchema.parse('healthy');
+			expect(result).toBe('healthy');
 		});
 
 		it("should accept 'degraded'", () => {
-			const result = HealthStatusSchema.parse("degraded");
-			expect(result).toBe("degraded");
+			const result = HealthStatusSchema.parse('degraded');
+			expect(result).toBe('degraded');
 		});
 
 		it("should reject 'unhealthy'", () => {
-			expect(() => HealthStatusSchema.parse("unhealthy")).toThrow();
+			expect(() => HealthStatusSchema.parse('unhealthy')).toThrow();
 		});
 
-		it("should reject empty", () => {
-			expect(() => HealthStatusSchema.parse("")).toThrow();
+		it('should reject empty', () => {
+			expect(() => HealthStatusSchema.parse('')).toThrow();
 		});
 
-		it("should reject arbitrary string", () => {
-			expect(() => HealthStatusSchema.parse("ok")).toThrow();
+		it('should reject arbitrary string', () => {
+			expect(() => HealthStatusSchema.parse('ok')).toThrow();
 		});
 	});
 
-	describe("HealthResponseSchema", () => {
-		it("should accept valid health response", () => {
+	describe('HealthResponseSchema', () => {
+		it('should accept valid health response', () => {
 			const result = HealthResponseSchema.parse({
-				status: "healthy",
-				timestamp: "2025-11-22T14:30:00Z",
-				version: "1.0.0",
+				status: 'healthy',
+				timestamp: '2025-11-22T14:30:00Z',
+				version: '1.0.0',
 				checks: { keyStorage: true, database: true },
 			});
 
-			expect(result.status).toBe("healthy");
+			expect(result.status).toBe('healthy');
 		});
 
-		it("should accept degraded status", () => {
+		it('should accept degraded status', () => {
 			const result = HealthResponseSchema.parse({
-				status: "degraded",
-				timestamp: "2025-11-22T14:30:00Z",
-				version: "2.15.3",
+				status: 'degraded',
+				timestamp: '2025-11-22T14:30:00Z',
+				version: '2.15.3',
 				checks: { keyStorage: false, database: true },
 			});
 
-			expect(result.status).toBe("degraded");
+			expect(result.status).toBe('degraded');
 		});
 
-		it("should reject invalid version (non-semver)", () => {
+		it('should reject invalid version (non-semver)', () => {
 			expect(() =>
 				HealthResponseSchema.parse({
-					status: "healthy",
-					timestamp: "2025-11-22T14:30:00Z",
-					version: "v1.0",
+					status: 'healthy',
+					timestamp: '2025-11-22T14:30:00Z',
+					version: 'v1.0',
 					checks: { keyStorage: true, database: true },
 				}),
-			).toThrow("Must be semantic version");
+			).toThrow('Must be semantic version');
 		});
 
-		it("should accept version with prerelease", () => {
+		it('should accept version with prerelease', () => {
 			// Note: Current regex only accepts x.y.z format
 			expect(() =>
 				HealthResponseSchema.parse({
-					status: "healthy",
-					timestamp: "2025-11-22T14:30:00Z",
-					version: "1.0.0-beta.1",
+					status: 'healthy',
+					timestamp: '2025-11-22T14:30:00Z',
+					version: '1.0.0-beta.1',
 					checks: { keyStorage: true, database: true },
 				}),
 			).toThrow();
 		});
 
-		it("should reject invalid timestamp", () => {
+		it('should reject invalid timestamp', () => {
 			expect(() =>
 				HealthResponseSchema.parse({
-					status: "healthy",
-					timestamp: "invalid",
-					version: "1.0.0",
+					status: 'healthy',
+					timestamp: 'invalid',
+					version: '1.0.0',
 					checks: { keyStorage: true, database: true },
 				}),
 			).toThrow();
 		});
 	});
 
-	describe("RequestHeadersSchema", () => {
-		it("should accept valid UUID request ID", () => {
+	describe('RequestHeadersSchema', () => {
+		it('should accept valid UUID request ID', () => {
 			const result = RequestHeadersSchema.parse({
-				"X-Request-ID": "123e4567-e89b-12d3-a456-426614174000",
+				'X-Request-ID': '123e4567-e89b-12d3-a456-426614174000',
 			});
 
-			expect(result["X-Request-ID"]).toBe("123e4567-e89b-12d3-a456-426614174000");
+			expect(result['X-Request-ID']).toBe('123e4567-e89b-12d3-a456-426614174000');
 		});
 
-		it("should accept missing request ID", () => {
+		it('should accept missing request ID', () => {
 			const result = RequestHeadersSchema.parse({});
-			expect(result["X-Request-ID"]).toBeUndefined();
+			expect(result['X-Request-ID']).toBeUndefined();
 		});
 
-		it("should reject invalid UUID", () => {
-			expect(() => RequestHeadersSchema.parse({ "X-Request-ID": "not-uuid" })).toThrow();
+		it('should reject invalid UUID', () => {
+			expect(() => RequestHeadersSchema.parse({ 'X-Request-ID': 'not-uuid' })).toThrow();
 		});
 	});
 
-	describe("KeyUploadSchema", () => {
-		it("should accept valid upload request", () => {
+	describe('KeyUploadSchema', () => {
+		it('should accept valid upload request', () => {
 			const result = KeyUploadSchema.parse({
 				armoredPrivateKey: validKey,
-				keyId: "A1B2C3D4E5F67890",
+				keyId: 'A1B2C3D4E5F67890',
 			});
 
 			expect(result.armoredPrivateKey).toBeTruthy();
 		});
 
-		it("should reject missing armoredPrivateKey", () => {
+		it('should reject missing armoredPrivateKey', () => {
 			expect(() => KeyUploadSchema.parse({})).toThrow();
 		});
 
 		// KeyId is no longer part of the upload schema (it's derived or passed separately)
-		it("should reject invalid armoredPrivateKey", () => {
-			expect(() => KeyUploadSchema.parse({ armoredPrivateKey: "-----BEGIN..." })).toThrow();
+		it('should reject invalid armoredPrivateKey', () => {
+			expect(() => KeyUploadSchema.parse({ armoredPrivateKey: '-----BEGIN...' })).toThrow();
 		});
 	});
 
-	describe("KeyResponseSchema", () => {
-		it("should accept valid key response", () => {
+	describe('KeyResponseSchema', () => {
+		it('should accept valid key response', () => {
 			const result = KeyResponseSchema.parse({
-				keyId: "A1B2C3D4E5F60718",
-				fingerprint: "0123456789ABCDEF0123456789ABCDEF01234567",
-				publicKey: "-----BEGIN PGP PUBLIC KEY BLOCK-----...",
-				createdAt: "2025-01-01T00:00:00Z",
-				algorithm: "RSA",
-				userId: "Test User <test@example.com>",
+				keyId: 'A1B2C3D4E5F60718',
+				fingerprint: '0123456789ABCDEF0123456789ABCDEF01234567',
+				publicKey: '-----BEGIN PGP PUBLIC KEY BLOCK-----...',
+				createdAt: '2025-01-01T00:00:00Z',
+				algorithm: 'RSA',
+				userId: 'Test User <test@example.com>',
 			});
 
-			expect(result.keyId).toBe("A1B2C3D4E5F60718");
+			expect(result.keyId).toBe('A1B2C3D4E5F60718');
 		});
 
-		it("should reject missing fields", () => {
-			expect(() => KeyResponseSchema.parse({ success: true, keyId: "ABC" })).toThrow();
+		it('should reject missing fields', () => {
+			expect(() => KeyResponseSchema.parse({ success: true, keyId: 'ABC' })).toThrow();
 		});
 	});
 
-	describe("SubjectPrefixSchema", () => {
+	describe('SubjectPrefixSchema', () => {
 		// A prefix is compared with startsWith and a delimiter check, never a
 		// pattern match, so a glob is not a wider rule — it is a row that matches
 		// nothing while listing as active. The refusal has to name the form that
 		// does work, or the operator's next guess is another pattern syntax.
-		it.each(["repo:kjanat/*", "repo:kjanat/svc?", "repo:kjanat/[ab]", "project_path:group/*"])(
-			"rejects the glob %s and names the trailing-delimiter form",
+		it.each(['repo:kjanat/*', 'repo:kjanat/svc?', 'repo:kjanat/[ab]', 'project_path:group/*'])(
+			'rejects the glob %s and names the trailing-delimiter form',
 			(prefix) => {
 				const result = SubjectPrefixSchema.safeParse(prefix);
 				expect(result.success).toBe(false);
-				const message = result.error?.issues.map((issue) => issue.message).join(" ");
-				expect(message).toContain("not a glob");
-				expect(message).toContain("repo:owner/");
+				const message = result.error?.issues.map((issue) => issue.message).join(' ');
+				expect(message).toContain('not a glob');
+				expect(message).toContain('repo:owner/');
 			},
 		);
 
-		it("accepts the cut-off a glob was reaching for", () => {
-			for (const prefix of ["repo:kjanat", "repo:kjanat/", "repo:kjanat/kjanat", "repo:kjanat@1/svc@2"]) {
+		it('accepts the cut-off a glob was reaching for', () => {
+			for (const prefix of ['repo:kjanat', 'repo:kjanat/', 'repo:kjanat/kjanat', 'repo:kjanat@1/svc@2']) {
 				expect(SubjectPrefixSchema.safeParse(prefix).success).toBe(true);
 			}
 		});
 
-		it("publishes a pattern that agrees with both checks", () => {
+		it('publishes a pattern that agrees with both checks', () => {
 			// client/openapi.json carries one `pattern` per string, so the two
 			// `.regex()` calls are restated as one there. Nothing keeps them in step
 			// but this: drift means the spec and the generated clients document a
 			// rule the service does not enforce, in whichever direction.
 			const published = new RegExp(SUBJECT_PREFIX_PATTERN);
 			const corpus = [
-				"repo:kjanat",
-				"repo:kjanat/",
-				"repo:kjanat/kjanat",
-				"repo:kjanat@1/svc@2:ref:refs/heads/main",
-				"project_path:group/project",
-				"repo:kjanat/*",
-				"repo:*",
-				"repo:kjanat/svc?",
-				"repo:kjanat/[ab]",
-				"repo:kjanat/svc]",
-				"repo:",
-				"repo",
-				"repo:/",
-				"has spaces",
-				"",
+				'repo:kjanat',
+				'repo:kjanat/',
+				'repo:kjanat/kjanat',
+				'repo:kjanat@1/svc@2:ref:refs/heads/main',
+				'project_path:group/project',
+				'repo:kjanat/*',
+				'repo:*',
+				'repo:kjanat/svc?',
+				'repo:kjanat/[ab]',
+				'repo:kjanat/svc]',
+				'repo:',
+				'repo',
+				'repo:/',
+				'has spaces',
+				'',
 			];
 			for (const prefix of corpus) {
 				expect([prefix, published.test(prefix)]).toEqual([prefix, SubjectPrefixSchema.safeParse(prefix).success]);
 			}
 		});
 
-		it("publishes a pattern every engine that might compile it accepts", () => {
+		it('publishes a pattern every engine that might compile it accepts', () => {
 			// JSON Schema's `pattern` is ECMA-262 without `u` or `v`, so nothing in
 			// this toolchain compiles it in `v` mode today — but a client is free
 			// to, and `v` mode reclassifies `[`, `]` and `/` inside a character
@@ -769,7 +769,7 @@ ${PGP_PRIVATE_END}`;
 			// startup crash in somebody else's client, caused by a character we
 			// only had to escape, so escape it and pin the property here rather
 			// than rediscover it from a bug report.
-			for (const flags of ["", "u", "v"]) {
+			for (const flags of ['', 'u', 'v']) {
 				expect(() => new RegExp(SUBJECT_PREFIX_PATTERN, flags)).not.toThrow();
 			}
 			// The escapes must be inert, not merely legal: `v` mode is stricter
@@ -777,24 +777,24 @@ ${PGP_PRIVATE_END}`;
 			// engine does, or the spec means two different things depending on how
 			// a client chose to compile it.
 			const unflagged = new RegExp(SUBJECT_PREFIX_PATTERN);
-			const unicodeSets = new RegExp(SUBJECT_PREFIX_PATTERN, "v");
-			for (const prefix of ["repo:kjanat/svc", "repo:kjanat/", "repo:kjanat/*", "repo:kjanat/[ab]", "repo:", "a b"]) {
+			const unicodeSets = new RegExp(SUBJECT_PREFIX_PATTERN, 'v');
+			for (const prefix of ['repo:kjanat/svc', 'repo:kjanat/', 'repo:kjanat/*', 'repo:kjanat/[ab]', 'repo:', 'a b']) {
 				expect([prefix, unicodeSets.test(prefix)]).toEqual([prefix, unflagged.test(prefix)]);
 			}
 		});
 
-		it("agrees with both checks on every short string over the interesting alphabet", () => {
+		it('agrees with both checks on every short string over the interesting alphabet', () => {
 			// The corpus above only covers characters somebody thought to list, so it
 			// would stay green if a later rule added, say, `\\` to the glob class and
 			// the published pattern was not updated with it. Enumerating every string
 			// up to length 4 over one representative of each character role — the
 			// delimiters, each refused character, whitespace and an ordinary letter —
 			// makes the round trip exhaustive rather than illustrative.
-			const alphabet = [":", "@", "/", "*", "?", "[", "]", " ", "\t", "a"];
+			const alphabet = [':', '@', '/', '*', '?', '[', ']', ' ', '\t', 'a'];
 			const published = new RegExp(SUBJECT_PREFIX_PATTERN);
 			// Same corpus under `v`, so the escapes stay inert across the whole
 			// enumeration rather than only the handful of strings above.
-			const unicodeSets = new RegExp(SUBJECT_PREFIX_PATTERN, "v");
+			const unicodeSets = new RegExp(SUBJECT_PREFIX_PATTERN, 'v');
 			const disagreements: string[] = [];
 			const walk = (prefix: string, depth: number) => {
 				if (prefix) {
@@ -810,30 +810,30 @@ ${PGP_PRIVATE_END}`;
 					walk(prefix + character, depth - 1);
 				}
 			};
-			walk("", 4);
+			walk('', 4);
 			expect(disagreements).toEqual([]);
 		});
 	});
 
-	describe("StoredSubjectPrefixSchema", () => {
+	describe('StoredSubjectPrefixSchema', () => {
 		// The glob rule is a rule about creates. Rows written before it exist, and
 		// listing them is how an operator finds one to revoke — so the response
 		// schema must not refuse what the table can hold, or a spec-validating
 		// client would be blind to exactly the rows it needs to clean up.
-		it("accepts prefixes the create schema now refuses", () => {
-			for (const prefix of ["repo:kjanat/*", "repo:kjanat/[ab]", "repo:", "repo"]) {
+		it('accepts prefixes the create schema now refuses', () => {
+			for (const prefix of ['repo:kjanat/*', 'repo:kjanat/[ab]', 'repo:', 'repo']) {
 				expect(SubjectPrefixSchema.safeParse(prefix).success).toBe(false);
 				expect(StoredSubjectPrefixSchema.safeParse(prefix).success).toBe(true);
 			}
 		});
 
-		it("keeps the bounds the column has always had", () => {
+		it('keeps the bounds the column has always had', () => {
 			// Dropping the create rule is not dropping every rule: the length bounds
 			// have been enforced for every row ever written, so unlike the glob
 			// class they cannot be violated by anything already in the table.
-			expect(StoredSubjectPrefixSchema.safeParse("").success).toBe(false);
-			expect(StoredSubjectPrefixSchema.safeParse(`repo:kjanat/${"r".repeat(255)}`).success).toBe(false);
-			expect(StoredSubjectPrefixSchema.safeParse("repo:kjanat/svc").success).toBe(true);
+			expect(StoredSubjectPrefixSchema.safeParse('').success).toBe(false);
+			expect(StoredSubjectPrefixSchema.safeParse(`repo:kjanat/${'r'.repeat(255)}`).success).toBe(false);
+			expect(StoredSubjectPrefixSchema.safeParse('repo:kjanat/svc').success).toBe(true);
 		});
 	});
 });

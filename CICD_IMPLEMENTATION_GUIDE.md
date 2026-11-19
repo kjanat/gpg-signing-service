@@ -309,26 +309,26 @@ echo "Setting up Cloudflare Workers monitoring..."
 
 # Option 1: Honeycomb (recommended for simplicity)
 if [[ -z "${HONEYCOMB_API_KEY:-}" ]]; then
-	echo "HONEYCOMB_API_KEY not set"
-	echo "Get key from: https://ui.honeycomb.io/account/api_keys"
-	echo "Then run: wrangler secret put HONEYCOMB_API_KEY"
+  echo "HONEYCOMB_API_KEY not set"
+  echo "Get key from: https://ui.honeycomb.io/account/api_keys"
+  echo "Then run: wrangler secret put HONEYCOMB_API_KEY"
 else
-	echo "Honeycomb API key configured"
+  echo "Honeycomb API key configured"
 fi
 
 # Option 2: Datadog
 if [[ -z "${DATADOG_API_KEY:-}" ]]; then
-	echo "DATADOG_API_KEY not set (optional)"
+  echo "DATADOG_API_KEY not set (optional)"
 else
-	echo "Datadog API key configured"
+  echo "Datadog API key configured"
 fi
 
 # Verify Analytics Engine binding
 echo "Verifying Analytics Engine binding..."
 if wrangler types | grep -q "AnalyticsEngineDataset"; then
-	echo "Analytics Engine binding found"
+  echo "Analytics Engine binding found"
 else
-	echo "Analytics Engine binding not configured"
+  echo "Analytics Engine binding not configured"
 fi
 
 echo "Monitoring setup complete"
@@ -344,7 +344,7 @@ echo "Monitoring setup complete"
 export async function logEvent(
 	c: Context,
 	event: {
-		level: "info" | "warn" | "error" | "debug";
+		level: 'info' | 'warn' | 'error' | 'debug';
 		message: string;
 		context?: Record<string, unknown>;
 	},
@@ -353,7 +353,7 @@ export async function logEvent(
 		timestamp: new Date().toISOString(),
 		level: event.level,
 		message: event.message,
-		requestId: c.get("requestId"),
+		requestId: c.get('requestId'),
 		...event.context,
 	};
 
@@ -363,22 +363,22 @@ export async function logEvent(
 	// Send to Honeycomb if configured
 	if (c.env.HONEYCOMB_API_KEY) {
 		try {
-			await fetch("https://api.honeycomb.io/1/events/gpg-signing", {
-				method: "POST",
+			await fetch('https://api.honeycomb.io/1/events/gpg-signing', {
+				method: 'POST',
 				headers: {
-					"X-Honeycomb-Team": c.env.HONEYCOMB_API_KEY,
-					"Content-Type": "application/json",
+					'X-Honeycomb-Team': c.env.HONEYCOMB_API_KEY,
+					'Content-Type': 'application/json',
 				},
 				body: JSON.stringify(logEntry),
 			});
 		} catch (err) {
-			console.error("Failed to send to Honeycomb:", err);
+			console.error('Failed to send to Honeycomb:', err);
 		}
 	}
 
 	// Send to Analytics Engine for dashboards
 	c.env.ANALYTICS_ENGINE?.writeDataPoint({
-		blobs: [event.level, event.message, c.get("requestId")],
+		blobs: [event.level, event.message, c.get('requestId')],
 		doubles: [Date.now()],
 	});
 }

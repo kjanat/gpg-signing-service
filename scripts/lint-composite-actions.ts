@@ -43,9 +43,9 @@
  * scope is itself detectable.
  */
 
-import { type Dirent, readdirSync, readFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
-import { isMap, isSeq, LineCounter, parseDocument } from "yaml";
+import { type Dirent, readdirSync, readFileSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
+import { isMap, isSeq, LineCounter, parseDocument } from 'yaml';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -80,7 +80,7 @@ interface RunBlock {
 // Discovery
 // ---------------------------------------------------------------------------
 
-const ACTION_FILENAMES = new Set(["action.yml", "action.yaml"]);
+const ACTION_FILENAMES = new Set(['action.yml', 'action.yaml']);
 
 /**
  * Directory names never descended into.
@@ -96,19 +96,19 @@ const ACTION_FILENAMES = new Set(["action.yml", "action.yaml"]);
  * belong to third-party actions and are their authors' to fix.
  */
 const SKIP_DIRS = new Set([
-	".git",
-	".direnv",
-	".venv",
-	"node_modules",
-	"vendor",
-	"dist",
-	"build",
-	"out",
-	"coverage",
-	".wrangler",
-	".turbo",
-	".next",
-	".cache",
+	'.git',
+	'.direnv',
+	'.venv',
+	'node_modules',
+	'vendor',
+	'dist',
+	'build',
+	'out',
+	'coverage',
+	'.wrangler',
+	'.turbo',
+	'.next',
+	'.cache',
 ]);
 
 function discoverActionFiles(root: string): string[] {
@@ -162,7 +162,7 @@ function extractRunBlocks(relPath: string, source: string): { blocks: RunBlock[]
 			file: relPath,
 			line: 1,
 			col: 1,
-			code: "CA000",
+			code: 'CA000',
 			message: `unparseable YAML: ${error instanceof Error ? error.message : String(error)}`,
 		});
 		return { blocks, errors };
@@ -170,14 +170,14 @@ function extractRunBlocks(relPath: string, source: string): { blocks: RunBlock[]
 
 	for (const problem of doc.errors) {
 		const pos = lineCounter.linePos(problem.pos[0]);
-		errors.push({ file: relPath, line: pos.line, col: pos.col, code: "CA000", message: problem.message });
+		errors.push({ file: relPath, line: pos.line, col: pos.col, code: 'CA000', message: problem.message });
 	}
 	if (errors.length > 0) return { blocks, errors };
 
-	const using = doc.getIn(["runs", "using"]);
-	if (typeof using !== "string" || using.toLowerCase() !== "composite") return { blocks, errors };
+	const using = doc.getIn(['runs', 'using']);
+	if (typeof using !== 'string' || using.toLowerCase() !== 'composite') return { blocks, errors };
 
-	const steps = doc.getIn(["runs", "steps"], true);
+	const steps = doc.getIn(['runs', 'steps'], true);
 	if (!isSeq(steps)) return { blocks, errors };
 
 	let stepIndex = 0;
@@ -185,28 +185,28 @@ function extractRunBlocks(relPath: string, source: string): { blocks: RunBlock[]
 		stepIndex += 1;
 		if (!isMap(step)) continue;
 
-		const runNode = step.get("run", true);
+		const runNode = step.get('run', true);
 		if (runNode === undefined || runNode === null) continue;
 		const script = (runNode as { value?: unknown }).value;
-		if (typeof script !== "string") continue;
+		if (typeof script !== 'string') continue;
 
 		const range = (runNode as { range?: [number, number, number] }).range;
 		if (!range) continue;
 
 		const { startLine, indent } = locateScriptStart(source, range[0], lineCounter);
 
-		const shellValue = step.get("shell");
-		const shell = typeof shellValue === "string" ? shellValue : null;
+		const shellValue = step.get('shell');
+		const shell = typeof shellValue === 'string' ? shellValue : null;
 
-		const nameValue = step.get("name") ?? step.get("id");
-		const stepName = typeof nameValue === "string" ? nameValue : `step ${stepIndex}`;
+		const nameValue = step.get('name') ?? step.get('id');
+		const stepName = typeof nameValue === 'string' ? nameValue : `step ${stepIndex}`;
 
 		if (shell === null) {
 			errors.push({
 				file: relPath,
 				line: startLine,
 				col: indent + 1,
-				code: "CA003",
+				code: 'CA003',
 				message:
 					`composite \`run:\` step "${stepName}" has no \`shell:\`; the runner rejects the action with ` +
 					`"Required property is missing: shell"`,
@@ -233,12 +233,12 @@ function locateScriptStart(
 	lineCounter: LineCounter,
 ): { startLine: number; indent: number } {
 	const head = source[nodeStart];
-	if (head !== "|" && head !== ">") {
+	if (head !== '|' && head !== '>') {
 		const pos = lineCounter.linePos(nodeStart);
 		return { startLine: pos.line, indent: pos.col - 1 };
 	}
 
-	const newline = source.indexOf("\n", nodeStart);
+	const newline = source.indexOf('\n', nodeStart);
 	if (newline === -1) {
 		const pos = lineCounter.linePos(nodeStart);
 		return { startLine: pos.line, indent: pos.col - 1 };
@@ -246,7 +246,7 @@ function locateScriptStart(
 
 	const contentStart = newline + 1;
 	const rest = source.slice(contentStart);
-	const indentMatch = /^[ \t]*/.exec(rest.split("\n", 1)[0] ?? "");
+	const indentMatch = /^[ \t]*/.exec(rest.split('\n', 1)[0] ?? '');
 	const pos = lineCounter.linePos(contentStart);
 	return { startLine: pos.line, indent: indentMatch ? indentMatch[0].length : 0 };
 }
@@ -266,7 +266,7 @@ interface Segment {
 	text: string;
 	/** Offset of `text[0]` in the original script. */
 	start: number;
-	op: "" | ";" | "\n" | "&&" | "||" | "|" | "&" | ";;";
+	op: '' | ';' | '\n' | '&&' | '||' | '|' | '&' | ';;';
 }
 
 /**
@@ -278,28 +278,28 @@ interface Segment {
  * know what any command means, only where one stops.
  */
 function tokenize(script: string): { masked: string; segments: Segment[] } {
-	const masked = script.split("");
+	const masked = script.split('');
 	const segments: Segment[] = [];
 
 	let i = 0;
 	let segStart = 0;
-	let pendingOp: Segment["op"] = "";
+	let pendingOp: Segment['op'] = '';
 	const pendingHeredocs: { tag: string; indented: boolean }[] = [];
 
-	const push = (end: number, nextOp: Segment["op"]): void => {
-		segments.push({ text: masked.slice(segStart, end).join(""), start: segStart, op: pendingOp });
+	const push = (end: number, nextOp: Segment['op']): void => {
+		segments.push({ text: masked.slice(segStart, end).join(''), start: segStart, op: pendingOp });
 		pendingOp = nextOp;
 	};
 
 	const blank = (from: number, to: number): void => {
-		for (let k = from; k < to; k += 1) if (masked[k] !== "\n") masked[k] = " ";
+		for (let k = from; k < to; k += 1) if (masked[k] !== '\n') masked[k] = ' ';
 	};
 
 	while (i < script.length) {
 		const ch = script[i] as string;
 
 		// Escapes, including line continuations, are never operators.
-		if (ch === "\\" && i + 1 < script.length) {
+		if (ch === '\\' && i + 1 < script.length) {
 			i += 2;
 			continue;
 		}
@@ -310,19 +310,19 @@ function tokenize(script: string): { masked: string; segments: Segment[] } {
 			continue;
 		}
 
-		if (ch === '"' || ch === "`") {
+		if (ch === '"' || ch === '`') {
 			i = skipDelimited(script, i, ch);
 			continue;
 		}
 
-		if (ch === "$" && script[i + 1] === "(") {
+		if (ch === '$' && script[i + 1] === '(') {
 			i = skipParens(script, i + 1);
 			continue;
 		}
 
 		// `#` only opens a comment at the start of a word.
-		if (ch === "#" && isWordStart(script, i)) {
-			let end = script.indexOf("\n", i);
+		if (ch === '#' && isWordStart(script, i)) {
+			let end = script.indexOf('\n', i);
 			if (end === -1) end = script.length;
 			blank(i, end);
 			i = end;
@@ -330,20 +330,20 @@ function tokenize(script: string): { masked: string; segments: Segment[] } {
 		}
 
 		// Heredocs: everything from the next newline to the tag is data, not code.
-		if (ch === "<" && script[i + 1] === "<" && script[i + 2] !== "<") {
+		if (ch === '<' && script[i + 1] === '<' && script[i + 2] !== '<') {
 			const header = /^<<(-?)\s*(?:'([^']*)'|"([^"]*)"|\\?([A-Za-z_][A-Za-z0-9_]*))/.exec(script.slice(i));
 			if (header) {
 				pendingHeredocs.push({
-					tag: header[2] ?? header[3] ?? header[4] ?? "",
-					indented: header[1] === "-",
+					tag: header[2] ?? header[3] ?? header[4] ?? '',
+					indented: header[1] === '-',
 				});
 				i += header[0].length;
 				continue;
 			}
 		}
 
-		if (ch === "\n") {
-			push(i, "\n");
+		if (ch === '\n') {
+			push(i, '\n');
 			i += 1;
 			if (pendingHeredocs.length > 0) i = skipHeredocs(script, i, pendingHeredocs);
 			segStart = i;
@@ -351,15 +351,15 @@ function tokenize(script: string): { masked: string; segments: Segment[] } {
 		}
 
 		const two = script.slice(i, i + 2);
-		if (two === "&&" || two === "||" || two === ";;") {
+		if (two === '&&' || two === '||' || two === ';;') {
 			push(i, two);
 			i += 2;
 			segStart = i;
 			continue;
 		}
 
-		if (ch === ";" || ch === "|" || ch === "&") {
-			push(i, ch as Segment["op"]);
+		if (ch === ';' || ch === '|' || ch === '&') {
+			push(i, ch as Segment['op']);
 			i += 1;
 			segStart = i;
 			continue;
@@ -368,8 +368,8 @@ function tokenize(script: string): { masked: string; segments: Segment[] } {
 		i += 1;
 	}
 
-	push(script.length, "");
-	return { masked: masked.join(""), segments };
+	push(script.length, '');
+	return { masked: masked.join(''), segments };
 }
 
 function isWordStart(script: string, index: number): boolean {
@@ -383,11 +383,11 @@ function skipDelimited(script: string, start: number, delim: string): number {
 	let i = start + 1;
 	while (i < script.length) {
 		const ch = script[i];
-		if (ch === "\\") {
+		if (ch === '\\') {
 			i += 2;
 			continue;
 		}
-		if (delim === '"' && ch === "$" && script[i + 1] === "(") {
+		if (delim === '"' && ch === '$' && script[i + 1] === '(') {
 			i = skipParens(script, i + 1);
 			continue;
 		}
@@ -403,7 +403,7 @@ function skipParens(script: string, start: number): number {
 	let i = start;
 	while (i < script.length) {
 		const ch = script[i];
-		if (ch === "\\") {
+		if (ch === '\\') {
 			i += 2;
 			continue;
 		}
@@ -416,8 +416,8 @@ function skipParens(script: string, start: number): number {
 			i = skipDelimited(script, i, '"');
 			continue;
 		}
-		if (ch === "(") depth += 1;
-		else if (ch === ")") {
+		if (ch === '(') depth += 1;
+		else if (ch === ')') {
 			depth -= 1;
 			if (depth === 0) return i + 1;
 		}
@@ -429,11 +429,11 @@ function skipParens(script: string, start: number): number {
 function skipHeredocs(script: string, start: number, pending: { tag: string; indented: boolean }[]): number {
 	let i = start;
 	while (pending.length > 0 && i < script.length) {
-		let end = script.indexOf("\n", i);
+		let end = script.indexOf('\n', i);
 		if (end === -1) end = script.length;
 		const line = script.slice(i, end);
 		const doc = pending[0] as { tag: string; indented: boolean };
-		const candidate = doc.indented ? line.replace(/^[\t]+/, "") : line;
+		const candidate = doc.indented ? line.replace(/^[\t]+/, '') : line;
 		i = end < script.length ? end + 1 : script.length;
 		if (candidate === doc.tag) pending.shift();
 	}
@@ -463,15 +463,15 @@ function checkErrexitStatusReads(block: RunBlock, segments: Segment[]): Finding[
 		// A trap body runs *after* the command that tripped errexit, so its `$?`
 		// is the one status errexit guarantees is live -- `trap 'rc=$?; ...' ERR`
 		// is the reporting idiom this rule exists to steer people towards.
-		const statusIndex = /^\s*trap\b/.test(segment.text) ? -1 : segment.text.indexOf("$?");
+		const statusIndex = /^\s*trap\b/.test(segment.text) ? -1 : segment.text.indexOf('$?');
 		if (
 			statusIndex !== -1 &&
 			errexit &&
 			previous !== null &&
-			segment.op !== "&&" &&
-			segment.op !== "||" &&
-			segment.op !== "|" &&
-			segment.op !== ";;" &&
+			segment.op !== '&&' &&
+			segment.op !== '||' &&
+			segment.op !== '|' &&
+			segment.op !== ';;' &&
 			!COMPOUND_TERMINATORS.test(previous.text.trimEnd()) &&
 			!/^\s*(if|while|until|case|elif)\b/.test(previous.text)
 		) {
@@ -480,7 +480,7 @@ function checkErrexitStatusReads(block: RunBlock, segments: Segment[]): Finding[
 				file: block.file,
 				line: 0,
 				col: segment.start + statusIndex,
-				code: "CA001",
+				code: 'CA001',
 				message:
 					`\`$?\` is unreachable here: the runner executes this step with errexit, so \`${previousText}\` ` +
 					`aborts the step on failure and never reaches this read. Guard the command instead, ` +
@@ -494,14 +494,14 @@ function checkErrexitStatusReads(block: RunBlock, segments: Segment[]): Finding[
 			else if (/[+]o\s+errexit/.test(trimmed) || /^set\s+\+[A-Za-z]*e/.test(trimmed)) errexit = false;
 		}
 
-		if (trimmed !== "") previous = segment;
+		if (trimmed !== '') previous = segment;
 	}
 
 	return findings;
 }
 
 function collapse(text: string): string {
-	const flat = text.replace(/\s+/g, " ").trim();
+	const flat = text.replace(/\s+/g, ' ').trim();
 	return flat.length > 60 ? `${flat.slice(0, 57)}...` : flat;
 }
 
@@ -510,21 +510,21 @@ function collapse(text: string): string {
 // ---------------------------------------------------------------------------
 
 const WORKFLOW_COMMANDS = new Set([
-	"add-mask",
-	"add-matcher",
-	"add-path",
-	"debug",
-	"echo",
-	"endgroup",
-	"error",
-	"group",
-	"notice",
-	"remove-matcher",
-	"save-state",
-	"set-env",
-	"set-output",
-	"stop-commands",
-	"warning",
+	'add-mask',
+	'add-matcher',
+	'add-path',
+	'debug',
+	'echo',
+	'endgroup',
+	'error',
+	'group',
+	'notice',
+	'remove-matcher',
+	'save-state',
+	'set-env',
+	'set-output',
+	'stop-commands',
+	'warning',
 ]);
 
 /**
@@ -546,7 +546,7 @@ function checkWorkflowCommands(block: RunBlock, masked: string): Finding[] {
 		const name = match[1] as string;
 		const nameEnd = (match.index ?? 0) + match[0].length;
 		const rest = masked.slice(nameEnd);
-		const lineEnd = rest.indexOf("\n");
+		const lineEnd = rest.indexOf('\n');
 		const tail = lineEnd === -1 ? rest : rest.slice(0, lineEnd);
 		const commandStart = nameEnd - name.length - 2;
 
@@ -555,14 +555,14 @@ function checkWorkflowCommands(block: RunBlock, masked: string): Finding[] {
 				file: block.file,
 				line: 0,
 				col: commandStart,
-				code: "CA002",
+				code: 'CA002',
 				message: `\`::${name}\` is not a GitHub workflow command; it will be printed verbatim instead of acted on.`,
 			});
 			continue;
 		}
 
-		if (tail.startsWith("::")) continue;
-		if (/^\s+\S/.test(tail) && tail.includes("::")) continue;
+		if (tail.startsWith('::')) continue;
+		if (/^\s+\S/.test(tail) && tail.includes('::')) continue;
 
 		// Show only up to the string's closing quote, so the excerpt is the command
 		// as it would be emitted rather than the rest of the shell line.
@@ -572,7 +572,7 @@ function checkWorkflowCommands(block: RunBlock, masked: string): Finding[] {
 			file: block.file,
 			line: 0,
 			col: commandStart,
-			code: "CA002",
+			code: 'CA002',
 			message:
 				`malformed workflow command \`::${name}${excerpt}\`: the name must be closed with \`::\` ` +
 				`(\`::${name}::message\`, or \`::${name} key=value::message\`). As written the runner prints it as text ` +
@@ -596,11 +596,11 @@ interface ShellCheckComment {
 }
 
 /** Composite `shell:` values whose scripts ShellCheck can read. */
-function shellDialect(shell: string | null): "bash" | "sh" | null {
+function shellDialect(shell: string | null): 'bash' | 'sh' | null {
 	if (shell === null) return null;
-	const head = shell.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
-	if (head === "bash") return "bash";
-	if (head === "sh") return "sh";
+	const head = shell.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? '';
+	if (head === 'bash') return 'bash';
+	if (head === 'sh') return 'sh';
 	return null;
 }
 
@@ -610,10 +610,10 @@ function shellDialect(shell: string | null): "bash" | "sh" | null {
  * remaining column still lines up with the source.
  */
 function maskExpressions(script: string): string {
-	return script.replace(/\$\{\{[\s\S]*?\}\}/g, (m) => "x".repeat(m.length));
+	return script.replace(/\$\{\{[\s\S]*?\}\}/g, (m) => 'x'.repeat(m.length));
 }
 
-function runShellCheck(block: RunBlock, dialect: "bash" | "sh"): Finding[] {
+function runShellCheck(block: RunBlock, dialect: 'bash' | 'sh'): Finding[] {
 	// Records the shell the runner picks (ShellCheck reads the shebang) and the
 	// flags it sets, but as comments only, never as a command: ShellCheck honours a file-level
 	// `# shellcheck disable=...` directive only when nothing executable precedes
@@ -622,31 +622,31 @@ function runShellCheck(block: RunBlock, dialect: "bash" | "sh"): Finding[] {
 	// ShellCheck's errexit-sensitive checks (SC2310-SC2312) are opt-in and this
 	// gate does not enable them.
 	const prelude =
-		dialect === "bash"
-			? "#!/usr/bin/env bash\n# runner: bash --noprofile --norc -e -o pipefail {0}\n"
-			: "#!/bin/sh\n# runner: sh -e {0}\n";
-	const preludeLines = prelude.split("\n").length - 1;
+		dialect === 'bash'
+			? '#!/usr/bin/env bash\n# runner: bash --noprofile --norc -e -o pipefail {0}\n'
+			: '#!/bin/sh\n# runner: sh -e {0}\n';
+	const preludeLines = prelude.split('\n').length - 1;
 
 	let stdout: string;
 	let stderr: string;
 	let exitCode: number;
 	try {
 		const proc = Bun.spawnSync({
-			cmd: ["shellcheck", `--shell=${dialect}`, "--format=json1", "--color=never", "-"],
+			cmd: ['shellcheck', `--shell=${dialect}`, '--format=json1', '--color=never', '-'],
 			stdin: Buffer.from(prelude + maskExpressions(block.script)),
-			stdout: "pipe",
-			stderr: "pipe",
+			stdout: 'pipe',
+			stderr: 'pipe',
 		});
-		stdout = proc.stdout?.toString().trim() ?? "";
-		stderr = proc.stderr?.toString().trim() ?? "";
+		stdout = proc.stdout?.toString().trim() ?? '';
+		stderr = proc.stderr?.toString().trim() ?? '';
 		exitCode = proc.exitCode ?? 0;
 	} catch {
 		// Silently skipping would turn this gate into a no-op the day the tool is
 		// missing, which is the failure mode the gate exists to prevent.
-		throw new Error("shellcheck is not on PATH; run this through `task lint:actions:composite` (mise provides it)");
+		throw new Error('shellcheck is not on PATH; run this through `task lint:actions:composite` (mise provides it)');
 	}
 
-	if (stdout === "") {
+	if (stdout === '') {
 		if (exitCode !== 0) {
 			throw new Error(`shellcheck failed on ${block.file} (${block.stepName}): ${stderr}`);
 		}
@@ -670,8 +670,8 @@ function runShellCheck(block: RunBlock, dialect: "bash" | "sh"): Finding[] {
 /** Turns an offset inside a block's script into a source line and column. */
 function resolvePosition(block: RunBlock, offset: number): { line: number; col: number } {
 	const before = block.script.slice(0, offset);
-	const lineOffset = before.split("\n").length - 1;
-	const lastNewline = before.lastIndexOf("\n");
+	const lineOffset = before.split('\n').length - 1;
+	const lastNewline = before.lastIndexOf('\n');
 	const column = offset - (lastNewline + 1);
 	return {
 		line: block.startLine + lineOffset,
@@ -682,7 +682,7 @@ function resolvePosition(block: RunBlock, offset: number): { line: number; col: 
 
 function lintFile(absPath: string, root: string): { findings: Finding[]; blocks: RunBlock[] } {
 	const relPath = relative(root, absPath) || absPath;
-	const source = readFileSync(absPath, "utf8");
+	const source = readFileSync(absPath, 'utf8');
 	const { blocks, errors } = extractRunBlocks(relPath, source);
 	const findings = [...errors];
 
@@ -710,14 +710,14 @@ function lintFile(absPath: string, root: string): { findings: Finding[]; blocks:
 
 function main(): number {
 	const args = process.argv.slice(2);
-	const listOnly = args.includes("--list");
-	const paths = args.filter((a) => !a.startsWith("--"));
+	const listOnly = args.includes('--list');
+	const paths = args.filter((a) => !a.startsWith('--'));
 	const root = process.env.COMPOSITE_ACTION_LINT_ROOT ?? process.cwd();
 
 	const files = paths.length > 0 ? paths.map((p) => resolve(root, p)) : discoverActionFiles(root);
 
 	if (files.length === 0) {
-		process.stderr.write("no composite action files found\n");
+		process.stderr.write('no composite action files found\n');
 		return 1;
 	}
 
@@ -731,9 +731,9 @@ function main(): number {
 
 	if (listOnly) {
 		for (const block of blocks) {
-			const lines = block.script.replace(/\n$/, "").split("\n").length;
+			const lines = block.script.replace(/\n$/, '').split('\n').length;
 			process.stdout.write(
-				`${block.file}:${block.startLine} shell=${block.shell ?? "<missing>"} lines=${lines} step=${block.stepName}\n`,
+				`${block.file}:${block.startLine} shell=${block.shell ?? '<missing>'} lines=${lines} step=${block.stepName}\n`,
 			);
 		}
 		process.stdout.write(`${blocks.length} run block(s) in ${files.length} action file(s)\n`);
@@ -744,9 +744,9 @@ function main(): number {
 
 	for (const f of findings) {
 		process.stdout.write(`${f.file}:${f.line}:${f.col}: [${f.code}] ${f.message}\n`);
-		if (process.env.GITHUB_ACTIONS === "true") {
+		if (process.env.GITHUB_ACTIONS === 'true') {
 			process.stdout.write(
-				`::error file=${f.file},line=${f.line},col=${f.col},title=${f.code}::${f.message.replace(/\n/g, "%0A")}\n`,
+				`::error file=${f.file},line=${f.line},col=${f.col},title=${f.code}::${f.message.replace(/\n/g, '%0A')}\n`,
 			);
 		}
 	}

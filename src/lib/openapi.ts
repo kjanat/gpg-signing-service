@@ -1,8 +1,8 @@
-import { OpenAPIHono } from "@hono/zod-openapi";
+import { OpenAPIHono } from '@hono/zod-openapi';
 
-import { ErrorResponseSchema } from "#schemas/errors";
-import type { Env, Variables } from "#types";
-import { HTTP } from "#types";
+import { ErrorResponseSchema } from '#schemas/errors';
+import type { Env, Variables } from '#types';
+import { HTTP } from '#types';
 
 /**
  * The challenge every 401 carries, and the value the document advertises.
@@ -15,7 +15,7 @@ import { HTTP } from "#types";
 export const WWW_AUTHENTICATE = 'Bearer realm="gpg-signing-service"';
 
 /** What a 403 says when an admin credential authenticated and may not do this. */
-export const INSUFFICIENT_SCOPE_MESSAGE = "This admin credential may only read";
+export const INSUFFICIENT_SCOPE_MESSAGE = 'This admin credential may only read';
 
 /**
  * The challenge a 403 carries when the credential was good and too small.
@@ -38,7 +38,7 @@ export function insufficientScopeChallenge(description: string): string {
 	// terminates or escapes the value and hands the caller a header it cannot
 	// parse. Every message today is a literal in this repo with neither, so this
 	// is about the next one.
-	const quotable = description.replace(/[\\"]/g, "");
+	const quotable = description.replace(/[\\"]/g, '');
 	return `Bearer realm="gpg-signing-service", error="insufficient_scope", error_description="${quotable}"`;
 }
 
@@ -51,29 +51,29 @@ export const WWW_AUTHENTICATE_INSUFFICIENT_SCOPE = insufficientScopeChallenge(IN
 export const openApiConfig = {
 	// OpenAPI 3.1.x is not yet supported by `oapi-codegen`
 	// See https://github.com/oapi-codegen/oapi-codegen/issues/373
-	openapi: "3.0.0",
-	info: { version: "1.0.0", title: "GPG Signing Service API" },
+	openapi: '3.0.0',
+	info: { version: '1.0.0', title: 'GPG Signing Service API' },
 };
 
 export const securitySchemes = {
 	oidcAuth: {
-		type: "http" as const,
-		scheme: "bearer",
-		bearerFormat: "JWT",
-		description: "OIDC token from GitHub Actions or GitLab CI",
+		type: 'http' as const,
+		scheme: 'bearer',
+		bearerFormat: 'JWT',
+		description: 'OIDC token from GitHub Actions or GitLab CI',
 	},
 	bearerAuth: {
-		type: "http" as const,
-		scheme: "bearer",
-		bearerFormat: "JWT",
+		type: 'http' as const,
+		scheme: 'bearer',
+		bearerFormat: 'JWT',
 		description:
-			"Admin bearer for /admin/* endpoints. ADMIN_TOKEN reaches every admin route; the optional ADMIN_READONLY_TOKEN is accepted on GET and HEAD only and answers 403 AUTH_SCOPE_INSUFFICIENT on the rest.",
+			'Admin bearer for /admin/* endpoints. ADMIN_TOKEN reaches every admin route; the optional ADMIN_READONLY_TOKEN is accepted on GET and HEAD only and answers 403 AUTH_SCOPE_INSUFFICIENT on the rest.',
 	},
 	serviceTokenAuth: {
-		type: "http" as const,
-		scheme: "bearer",
-		bearerFormat: "gst_...",
-		description: "Service token minted via POST /admin/tokens",
+		type: 'http' as const,
+		scheme: 'bearer',
+		bearerFormat: 'gst_...',
+		description: 'Service token minted via POST /admin/tokens',
 	},
 };
 
@@ -83,7 +83,7 @@ export const securitySchemes = {
  */
 export function registerSecuritySchemes(app: OpenAPIHono<{ Bindings: Env; Variables: Variables }>): void {
 	for (const [name, scheme] of Object.entries(securitySchemes)) {
-		app.openAPIRegistry.registerComponent("securitySchemes", name, scheme);
+		app.openAPIRegistry.registerComponent('securitySchemes', name, scheme);
 	}
 }
 
@@ -100,12 +100,12 @@ export function registerSecuritySchemes(app: OpenAPIHono<{ Bindings: Env; Variab
  */
 export function unauthorizedResponse(description: string) {
 	return {
-		content: { "application/json": { schema: ErrorResponseSchema } },
+		content: { 'application/json': { schema: ErrorResponseSchema } },
 		description,
 		headers: {
-			"WWW-Authenticate": {
-				description: "Authentication scheme the caller must present.",
-				schema: { type: "string" as const, example: WWW_AUTHENTICATE },
+			'WWW-Authenticate': {
+				description: 'Authentication scheme the caller must present.',
+				schema: { type: 'string' as const, example: WWW_AUTHENTICATE },
 			},
 		},
 	};
@@ -124,12 +124,12 @@ export function unauthorizedResponse(description: string) {
  */
 export function forbiddenResponse(description: string) {
 	return {
-		content: { "application/json": { schema: ErrorResponseSchema } },
+		content: { 'application/json': { schema: ErrorResponseSchema } },
 		description,
 		headers: {
-			"WWW-Authenticate": {
+			'WWW-Authenticate': {
 				description: 'Bearer challenge carrying RFC 6750 `error="insufficient_scope"`.',
-				schema: { type: "string" as const, example: WWW_AUTHENTICATE_INSUFFICIENT_SCOPE },
+				schema: { type: 'string' as const, example: WWW_AUTHENTICATE_INSUFFICIENT_SCOPE },
 			},
 		},
 	};
@@ -141,8 +141,8 @@ export function createOpenAPIApp() {
 			if (!result.success) {
 				return c.json(
 					{
-						error: "Validation failed",
-						code: "INVALID_REQUEST",
+						error: 'Validation failed',
+						code: 'INVALID_REQUEST',
 						issues: result.error.issues,
 					},
 					HTTP.BadRequest,
