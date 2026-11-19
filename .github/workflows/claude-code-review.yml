@@ -23,7 +23,7 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"
           PR_HEAD_REPO: "${{ github.event.pull_request.head.repo.full_name }}"
         run: bash .github/scripts/claude-review-gate.sh
-      - { uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 }
+      - { uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a } # v5.2.10
       - { uses: kjanat/install-dprint@v2 }
       - { uses: $/.github/actions/setup-bun, id: bun }
       - { run: runner install }
@@ -62,7 +62,7 @@ jobs:
       - name: Run Claude Code Review
         id: claude-review
         if: env.HAS_CLAUDE_TOKEN == 'true'
-        uses: anthropics/claude-code-action/base-action@cc98b3ae241b0fcfb6a42a2690751afffecb4452 # v1.0.278
+        uses: anthropics/claude-code-action/base-action@c84e279f859e2591391e95bd309286eb111c345f # v1.0.284
         env:
           NODE_VERSION: 26.x
           GH_TOKEN: ${{ steps.beepboop.outputs.token }}
