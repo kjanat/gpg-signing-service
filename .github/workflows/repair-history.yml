@@ -43,6 +43,7 @@ jobs:
   repair:
     name: Repair Provenance
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       # Pinned to commits, not tags. This job holds `contents: write` and an
       # OIDC token that mints real signatures, and every step below runs after

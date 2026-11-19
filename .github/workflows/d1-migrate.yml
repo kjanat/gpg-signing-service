@@ -18,6 +18,7 @@ jobs:
     environment: ${{ inputs.environment }}
     env: { ENVIRONMENT: "${{ case(inputs.environment != 'production', inputs.environment, '') }}", DB: AUDIT_DB }
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions: { contents: read }
     steps:
       - { uses: actions/checkout@v7, with: { persist-credentials: false } }

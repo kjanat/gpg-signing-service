@@ -6,17 +6,19 @@ jobs:
   verify-api: {
     name: Verify API Generation,
     runs-on: &Ubuntu ubuntu-latest,
+    timeout-minutes: &Timeout 15,
     steps: [
       &Check { uses: &CheckoutAction actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 }, # v7.0.1
       { uses: $/.github/actions/check-api-changes },
     ],
   }
 
-  format: { name: Format check, runs-on: *Ubuntu, steps: [*Check, { uses: $/.github/actions/check-formatting }] }
+  format: { name: Format check, runs-on: *Ubuntu, timeout-minutes: *Timeout, steps: [*Check, { uses: $/.github/actions/check-formatting }] }
 
   typecheck: {
     name: Typecheck,
     runs-on: *Ubuntu,
+    timeout-minutes: *Timeout,
     steps: [
       *Check,
       &Mise { uses: &MiseAction jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a }, # v5.2.10
@@ -28,6 +30,7 @@ jobs:
   lint: {
     name: Lint,
     runs-on: *Ubuntu,
+    timeout-minutes: *Timeout,
     steps: [
       *Check,
       &MiseGo { uses: *MiseAction, with: { working_directory: client } },
@@ -37,13 +40,14 @@ jobs:
     ],
   }
 
-  test: { name: Test, runs-on: *Ubuntu, steps: [*Check, *Mise, *Bun, { run: task test }] }
-  client-test: { name: Go client test, runs-on: *Ubuntu, steps: [*Check, *MiseGo, { run: task c:t }, { run: task c:l }] }
+  test: { name: Test, runs-on: *Ubuntu, timeout-minutes: *Timeout, steps: [*Check, *Mise, *Bun, { run: task test }] }
+  client-test: { name: Go client test, runs-on: *Ubuntu, timeout-minutes: *Timeout, steps: [*Check, *MiseGo, { run: task c:t }, { run: task c:l }] }
 
   provenance:
     name: Commit provenance
     if: github.event_name == 'push' && github.event.deleted == false
     runs-on: *Ubuntu
+    timeout-minutes: 10
     defaults: { run: { shell: bash } }
     steps:
       - { uses: *CheckoutAction, with: { fetch-depth: 0 } }
