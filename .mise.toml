@@ -4,49 +4,54 @@
 monorepo_root = true
 
 [tools]
-biome         = { prefix = "2.6" }
-bun           = { prefix = "1.4" }
-gitleaks      = { prefix = "8" }
-go            = "latest"
-golangci-lint = { prefix = "2.15" }
-lefthook      = "latest"
-node          = "26"
-runner-run    = "latest"
-shellcheck    = "latest"
-task          = "latest"
-tombi         = { prefix = "1" }
-typescript    = { filter_bins = ["tsc"], version = "latest" }
-uv            = { prefix = "0.13" }
-syft          = "latest"
+biome          = "2.6.8"
+bun            = "latest"
+cargo-binstall = "latest"
+gitleaks       = { prefix = "8" }
+go             = "1.27.4"
+golangci-lint  = "2.15.0"
+lefthook       = "latest"
+node           = "26"
+runner-run     = "latest"
+rshellcheck    = { version = "latest", rename_exe = "shellcheck" }
+task           = "latest"
+tombi          = { prefix = "1" }
+typescript     = { filter_bins = ["tsc"], version = "latest" }
+tsrs           = "latest"
+uv             = "0.13.9"
+syft           = "latest"
+oapi-codegen   = "2.8.2"
 
 [tools."http:actionlint"]
-version          = "343"
+version          = "master"
 url              = 'https://pkg.pr.new/kjanat/actionlint/@kjanat-actionlint/actionlint-{{ os(macos="darwin", windows="win32") }}-{{ arch() }}@{{ version }}'
 format           = "tar.gz"
 strip_components = 1
 bin_path         = "bin"
 
 [tools.wrangler]
-version      = "4.163.0"
+version      = "4.165.0"
 allow_builds = ["esbuild", "sharp", "workerd"]
 
-[tools."github:kjanat/shellcheck-rs"]
-version       = "latest"
-asset_pattern = 'rshellcheck-*-{{ arch(x64="x86_64", arm64="aarch64") }}-{{ os(linux="unknown-linux-musl", macos="apple-darwin", windows="pc-windows-msvc") }}.*'
-
 [tool_alias]
-runner-run = "github:kjanat/runner"
-tombi      = "github:tombi-toml/tombi"
-typescript = "github:Microsoft/TypeScript"
-shellcheck = "github:koalaman/shellcheck"
+runner-run   = "github:kjanat/runner"
+tombi        = "aqua:tombi-toml/tombi"
+typescript   = "github:Microsoft/TypeScript"
+rshellcheck  = "cargo:rshellcheck"
+tsrs         = "npm:tsrs"
+oapi-codegen = "go:github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen"
 
 [settings]
-minimum_release_age_excludes        = [
-  "github:Microsoft/TypeScript",
-  "github:kjanat/runner",
-  "github:kjanat/shellcheck-rs",
-]
-idiomatic_version_file_enable_tools = ["go"]
+idiomatic_version_file_enable_tools = ["go", "python", "bun"]
 
 [monorepo]
 config_roots = ["."]
+
+[wrappers.python]
+command = "uv"
+args    = ["run", "python"]
+
+[deps]
+bun = { auto = true, run = "bun install --ignore-scripts" }
+go  = { auto = true, run = "go mod tidy", dir = "client" }
+uv  = { auto = true, run = "uv sync" }

@@ -2,6 +2,8 @@ module github.com/kjanat/gpg-signing-service/client
 
 go 1.27
 
+toolchain go1.27.4
+
 require (
 	github.com/ProtonMail/go-crypto v1.5.2
 	github.com/getkin/kin-openapi v0.153.0
