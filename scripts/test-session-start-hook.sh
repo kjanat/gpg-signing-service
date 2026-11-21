@@ -6,7 +6,7 @@
 # as a wasted or broken one, so they are asserted here rather than trusted:
 #
 #   * it uses the mise tree provisioning filled, not a second one under $HOME
-#   * it trusts this repository's .mise.toml, and only this repository's
+#   * it trusts this repository's mise.toml, and only this repository's
 #   * it does not reinstall tools that are already there, and does not retry an
 #     install the session's network has already refused
 #
@@ -91,7 +91,7 @@ chmod +x "${bin}"/*
 # it probes for a toolchain.
 fake_repo="${tmp_dir}/repo"
 mkdir -p "${fake_repo}/client"
-: >"${fake_repo}/.mise.toml"
+: >"${fake_repo}/mise.toml"
 : >"${fake_repo}/client/.golangci.yml"
 
 # run_hook [VAR=value ...]
@@ -194,7 +194,7 @@ refute_env_file '.local/share/mise'
 grep -q 'skipping install' "${tmp_dir}/out" || fail 'expected the hook to say it skipped the install'
 
 # The trust call names one path — this repository's config — and never --all.
-expect_called mise "trust ${fake_repo}/.mise.toml"
+expect_called mise "trust ${fake_repo}/mise.toml"
 refute_called mise 'trust --all'
 expect_env_file "export MISE_TRUSTED_CONFIG_PATHS=\"${fake_repo}\""
 
@@ -269,7 +269,7 @@ if grep -q 'not writable' "${tmp_dir}/out"; then
 	fail 'the HOME fallback tree was reported unwritable instead of being created'
 fi
 
-# --- .mise.toml and the probe list do not drift ------------------------------
+# --- mise.toml and the probe list do not drift -------------------------------
 #
 # A tool the loop forgets is a tool the hook reports as present, and the session
 # then discovers it is missing halfway through `task format`. Every bin the
@@ -277,7 +277,7 @@ fi
 case_name=probe-list-drift
 for tool in task shellcheck biome wrangler golangci-lint tombi; do
 	grep -qF "${tool}" <<<"${ALL_TOOLS}" \
-		|| fail "the hook does not probe for ${tool}, which .mise.toml provides"
+		|| fail "the hook does not probe for ${tool}, which mise.toml provides"
 	grep -q "for tool in .*\b${tool}\b" "${hook}" \
 		|| fail "the hook's probe loop is missing ${tool}"
 done

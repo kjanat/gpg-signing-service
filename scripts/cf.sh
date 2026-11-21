@@ -10,7 +10,7 @@ if [ "${WORKERS_CI}" = "1" ]; then
 	export CF_MISE_BOOTSTRAPPED=1
 	export MISE_CEILING_PATHS="${PWD}"
 
-	mise trust .mise.toml
+	mise trust mise.toml
 	mise install
 	mise exec -- bun install --frozen-lockfile
 	mise exec -- bun run typegen
@@ -20,7 +20,7 @@ else
 		exit 1
 	fi
 
-	mise trust .mise.toml
+	mise trust mise.toml
 	mise install
 	run -pk lefthook:install typegen
 fi

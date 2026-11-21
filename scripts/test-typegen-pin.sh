@@ -3,12 +3,12 @@
 #
 # There are two wranglers reachable from this repo:
 #
-#   * `.mise.toml`'s, which reaches checkouts that have no node_modules --
+#   * `mise.toml`'s, which reaches checkouts that have no node_modules --
 #     .github/workflows/d1-migrate.yml and scripts/cf.sh's WORKERS_CI branch
 #   * node_modules/.bin/wrangler, pinned by bun.lock and now a *direct*
 #     devDependency rather than a hoisted transitive of vitest-plugin
 #
-# This file does not care what `.mise.toml` says, only that no task regenerates
+# This file does not care what `mise.toml` says, only that no task regenerates
 # the artifact through anything but the lockfile binary.
 #
 # `wrangler types` stamps its own workerd into the header of the generated file,
@@ -111,7 +111,7 @@ fi
 # Comments describe the trap and sources name the inputs; neither is what runs.
 typegen_cmds="$(grep -vE '^[[:space:]]*(#|sources:)' <<<"${typegen_recipe}")"
 if grep -q 'wrangler' <<<"${typegen_cmds}"; then
-	fail "the typegen task invokes wrangler directly -- that resolves .mise.toml's tool rather than the bun.lock pin, and the two are equal only for as long as someone keeps them equal"
+	fail "the typegen task invokes wrangler directly -- that resolves mise.toml's tool rather than the bun.lock pin, and the two are equal only for as long as someone keeps them equal"
 fi
 if ! grep -qE '\brun typegen\b' <<<"${typegen_cmds}"; then
 	fail 'the typegen task no longer runs the package.json "typegen" script, so it can drift from what the prepare hook fires on bun install'

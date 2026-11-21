@@ -17,8 +17,8 @@
 #      kprint shells out to golangci-lint for .go files. A binary being on PATH
 #      says nothing about this, so every check below loads the real config
 #      instead of asking `command -v`.
-#   3. This repo has a checked-in `.mise.toml`, and mise refuses to read an
-#      untrusted config: "Config files in .../.mise.toml are not trusted".
+#   3. This repo has a checked-in `mise.toml`, and mise refuses to read an
+#      untrusted config: "Config files in .../mise.toml are not trusted".
 #      That fires on a fresh clone before anything else here can work.
 #
 # The division of labour with the environment setup script (docs/cloud-sessions.md)
@@ -90,7 +90,7 @@ export GOBIN="${GOBIN:-$HOME/go/bin}"
 export PATH="$GOBIN:$MISE_SHIMS:$HOME/.local/bin:$HOME/.bun/bin:$PATH"
 
 # --- 1. mise: the repo's tool manager ---------------------------------------
-# `.mise.toml` pins task, golangci-lint, biome, shellcheck, wrangler and more,
+# `mise.toml` pins task, golangci-lint, biome, shellcheck, wrangler and more,
 # and the root Taskfile invokes several of them as `mise exec -- <tool>`, so a
 # session without mise cannot run `task lint` or `task typecheck` at all.
 #
@@ -113,10 +113,10 @@ if command -v mise >/dev/null 2>&1; then
 	# Trust is recorded per user under the state directory, so provisioning's
 	# root-side trust does not carry over even with the data directory shared —
 	# this has to run here regardless.
-	if mise trust "$REPO/.mise.toml" >/dev/null 2>&1; then
-		log "trusted $REPO/.mise.toml"
+	if mise trust "$REPO/mise.toml" >/dev/null 2>&1; then
+		log "trusted $REPO/mise.toml"
 	else
-		log "WARN: could not trust $REPO/.mise.toml"
+		log "WARN: could not trust $REPO/mise.toml"
 	fi
 	# Belt and braces for anything that reads the environment instead of the
 	# trust store — scoped to this repository, never a broader path.
@@ -129,7 +129,7 @@ if command -v mise >/dev/null 2>&1; then
 	# already put these in the shared tree, and asking mise to reinstall them
 	# burns a minute to arrive at the same 403 every time.
 	# Bin names, not tool names, because that is what `mise which` resolves.
-	# Keep this in step with .mise.toml: a tool missing from the list is a tool
+	# Keep this in step with mise.toml: a tool missing from the list is a tool
 	# the hook will report as present. `tombi` is here because kprint.toml
 	# shells out to it for TOML, so `task format` fails without it exactly the
 	# way it does without golangci-lint.
@@ -238,7 +238,7 @@ log "go mod download"
 #   MISE_DATA_DIR              the shared tree, so `mise exec --` in the
 #                              Taskfile resolves the provisioned tools
 #   $MISE_DATA_DIR/shims       the same tools on PATH directly
-#   MISE_TRUSTED_CONFIG_PATHS  this repo's config, so mise reads .mise.toml
+#   MISE_TRUSTED_CONFIG_PATHS  this repo's config, so mise reads mise.toml
 #                              without a trust prompt
 #
 # They are written as literal values rather than as $HOME-relative expressions

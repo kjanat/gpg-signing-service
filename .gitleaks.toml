@@ -40,7 +40,7 @@
 # releases document -- it honours only the singular `[allowlist]` table. It also
 # ignores `condition = "AND"`, so a `paths` + `regexes` allowlist degrades there
 # into a blanket path exclusion. This file therefore uses the singular table and
-# `regexes` only: no `paths`, no `commits`, no `condition`. `.mise.toml` and
+# `regexes` only: no `paths`, no `commits`, no `condition`. `mise.toml` and
 # both workflows' `GITLEAKS_VERSION` pin the scanner, and Renovate updates them
 # together.
 #

@@ -26,7 +26,7 @@ Cloud VMs ship Ubuntu 24.04 with `bun`, `go`, `node`, `jq`, and
    `mise exec -- <tool>`, so `task lint` and `task typecheck` fail outright
    without it.
 
-   Installing mise is the whole fix, because `.mise.toml` lists `task` and a
+   Installing mise is the whole fix, because `mise.toml` lists `task` and a
    prebuilt `golangci-lint` alongside everything else — the same mechanism CI
    uses via `jdx/mise-action`. Note the upstream Taskfile
    `install.sh` pulls from GitHub releases via the API, which the session proxy
@@ -60,7 +60,7 @@ Cloud VMs ship Ubuntu 24.04 with `bun`, `go`, `node`, `jq`, and
    config and exits, linting nothing — and it is the same call whose failure
    `task format` would hit later.
 
-   `.mise.toml` asks mise for a prebuilt `golangci-lint`, which today resolves
+   `mise.toml` asks mise for a prebuilt `golangci-lint`, which today resolves
    to a binary compiled with a current Go, so once mise is installed and its
    shims are on `PATH` this resolves itself. Nothing *holds* that, though — the
    entry is `latest` and there is no `mise.lock` — so pin an exact version there
@@ -74,9 +74,9 @@ Cloud VMs ship Ubuntu 24.04 with `bun`, `go`, `node`, `jq`, and
    older than ours — reproducing the same error. The build has to be pinned to
    the toolchain this repo targets.
 
-3. **mise will not read this repo's `.mise.toml` until it is trusted.** The
+3. **mise will not read this repo's `mise.toml` until it is trusted.** The
    config is checked in, so on a fresh clone the first mise command fails with
-   `Config files in .../.mise.toml are not trusted` before any of the above
+   `Config files in .../mise.toml are not trusted` before any of the above
    matters. The setup script and the hook both run `mise trust` on that one
    path — never `mise trust --all`, which would trust whatever else happens to
    be on disk.
@@ -127,7 +127,7 @@ variable is what makes provisioning write there in the first place.
 
 `GOTOOLCHAIN` only matters on the fallback path, where it makes `go install`
 compile golangci-lint with a Go new enough for `client/go.mod`. When mise is
-available it is redundant, because `.mise.toml` supplies a prebuilt binary. You can
+available it is redundant, because `mise.toml` supplies a prebuilt binary. You can
 leave it out entirely; it is listed here for environments where mise cannot be
 installed.
 
@@ -180,7 +180,7 @@ repo="${CLAUDE_PROJECT_DIR:-$PWD}"
 export MISE_DATA_DIR="${MISE_DATA_DIR:-/opt/mise}"
 mkdir -p "$MISE_DATA_DIR"
 
-# mise, which installs everything .mise.toml lists (task, golangci-lint, biome,
+# mise, which installs everything mise.toml lists (task, golangci-lint, biome,
 # shellcheck, wrangler, ...) and is what the root Taskfile's `mise exec --`
 # calls need on PATH. Its installer downloads the release asset directly, which
 # the proxy allows — it is the releases *API* that returns 403.
@@ -188,13 +188,13 @@ curl -fsSL https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh || true
 
 # mise refuses to read a checked-in config it has not been told to trust, and
 # `mise install` below is the first thing that needs it. One path, not --all.
-[ -f "$repo/.mise.toml" ] && mise trust "$repo/.mise.toml" || true
+[ -f "$repo/mise.toml" ] && mise trust "$repo/mise.toml" || true
 
 (cd "$repo" && mise install) || true
 
 # Hand the tree to the session user. Provisioning runs as root and the session
 # does not, so a tree only root can write is one the session cannot repair when
-# .mise.toml later gains a tool. Prefer chown to the account the agent actually
+# mise.toml later gains a tool. Prefer chown to the account the agent actually
 # runs as; widen the mode only when there is no such account to name. (The hook
 # copes with either: an unwritable tree is still fully usable, it just makes the
 # hook report a missing tool instead of installing it.)
