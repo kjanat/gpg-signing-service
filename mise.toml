@@ -17,7 +17,7 @@ rshellcheck    = { version = "latest", rename_exe = "shellcheck" }
 task           = "latest"
 tombi          = { prefix = "1" }
 typescript     = { filter_bins = ["tsc"], version = "latest" }
-tsrs           = "latest"
+tsrs           = "7.1.0-beta.tsrs4"
 uv             = "0.13.9"
 syft           = "latest"
 oapi-codegen   = "2.8.2"
