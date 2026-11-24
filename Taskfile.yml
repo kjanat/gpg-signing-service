@@ -98,7 +98,7 @@ tasks:
 
   test:signing-preflight:
     desc: Test the CI signing preflight, its escape hatch and its failure classes
-    cmd: bash .github/scripts/test-signing-preflight.sh
+    cmd: uv run --locked bash .github/scripts/test-signing-preflight.sh
 
   test:workflow-steps:
     desc: Test the workflow parser the release, signing and provenance assertions rest on
@@ -129,7 +129,7 @@ tasks:
 
   test:review-gate:
     desc: Test the Claude review job's no-token gate and its fork path
-    cmd: bash .github/scripts/test-claude-review-gate.sh
+    cmd: uv run --locked bash .github/scripts/test-claude-review-gate.sh
 
   test:review-post:
     desc: Test that the Claude review step's output posts as one inline review
@@ -138,7 +138,7 @@ tasks:
   test:security-license-policy:
     desc: Test the staged Security workflow exempts only openpgp from the licence deny list
     aliases: [tslp]
-    cmd: bash .github/scripts/test-security-license-policy.sh
+    cmd: uv run --locked bash .github/scripts/test-security-license-policy.sh
 
   test:agent-harness:
     desc: Test the /beep agent-mode harness's owner gate, ref selection and publishing guards

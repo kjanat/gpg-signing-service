@@ -51,11 +51,6 @@
     "typecheck": "run @typescript/native --noEmit",
     "typegen": "wrangler types >/dev/null"
   },
-  "overrides": {
-    "typescript": {
-      ".": "<7"
-    }
-  },
   "dependencies": {
     "@hono/swagger-ui": "0.6.2",
     "@hono/zod-openapi": "1.6.3",
