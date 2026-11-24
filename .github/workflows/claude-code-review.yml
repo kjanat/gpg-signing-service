@@ -62,7 +62,7 @@ jobs:
       - name: Run Claude Code Review
         id: claude-review
         if: env.HAS_CLAUDE_TOKEN == 'true'
-        uses: anthropics/claude-code-action/base-action@c84e279f859e2591391e95bd309286eb111c345f # v1.0.284
+        uses: anthropics/claude-code-action/base-action@acfe7992852970efb4fee683d63d628e3e52df67 # v1.0.286
         env:
           NODE_VERSION: 26.x
           GH_TOKEN: ${{ steps.beepboop.outputs.token }}
