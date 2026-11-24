@@ -45,3 +45,6 @@ ignoreCommentDirective     = "prettier-ignore"
 indentBlockSequenceInMap   = true
 "flowMap.preferSingleLine" = true
 printWidth                 = 300
+
+[exec]
+playWithFire = true
