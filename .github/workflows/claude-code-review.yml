@@ -24,7 +24,7 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"
           PR_HEAD_REPO: "${{ github.event.pull_request.head.repo.full_name }}"
         run: bash .github/scripts/claude-review-gate.sh
-      - { uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a } # v5.2.10
+      - { uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 } # v5.3.0
       - { uses: $/.github/actions/setup-bun, id: bun }
       - { run: runner install }
       # Dogfood: fixes Claude pushes to PR branches get signed by our own service
@@ -62,7 +62,7 @@ jobs:
       - name: Run Claude Code Review
         id: claude-review
         if: env.HAS_CLAUDE_TOKEN == 'true'
-        uses: anthropics/claude-code-action/base-action@acfe7992852970efb4fee683d63d628e3e52df67 # v1.0.286
+        uses: anthropics/claude-code-action/base-action@eb56b6666facdbd501035f4a0269d8caee2e7a8b # v1.0.289
         env:
           NODE_VERSION: 26.x
           GH_TOKEN: ${{ steps.beepboop.outputs.token }}
