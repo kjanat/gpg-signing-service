@@ -150,7 +150,7 @@ done
 # stops finding the one action file this repo has always had, it has gone blind
 # in the same way the old find(1) did and every case using it is vacant.
 new_case "the coverage oracle reaches outside .github/actions/"
-if ! printf '%s\n' "${action_files[@]}" | grep -qxF 'action.yml'; then
+if ! grep -qxF 'action.yml' < <(printf '%s\n' "${action_files[@]}"); then
 	fail "the tracked-file oracle does not see the root action.yml -- it cannot detect an out-of-tree action"
 fi
 
