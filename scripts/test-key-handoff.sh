@@ -377,7 +377,7 @@ new_case 'the wrong replacement key in the handoff is caught'
 # Every file is right except that the secret key is a stranger's: the shape of a
 # handoff assembled from the wrong export.
 wrong_key_handoff="${tmp_dir}/handoff-wrong-key"
-cp -r "${good}" "${wrong_key_handoff}"
+cp -R "${good}" "${wrong_key_handoff}"
 cp "${tmp_dir}/stranger-secret.asc" "${wrong_key_handoff}/replacement-secret.asc"
 rm -f "${wrong_key_handoff}/replacement-public.asc"
 run_handoff validate --handoff "${wrong_key_handoff}"
@@ -387,7 +387,7 @@ grep -q "no secret key for the replacement" <<<"${last_output}" \
 
 new_case 'a revocation certificate for the wrong key is caught'
 mismatched="${tmp_dir}/handoff-mismatched-revocation"
-cp -r "${good}" "${mismatched}"
+cp -R "${good}" "${mismatched}"
 cp "${tmp_dir}/stranger-revocation.asc" "${mismatched}/retired-revocation.asc"
 run_handoff validate --handoff "${mismatched}"
 [ "${last_status}" != 0 ] || fail 'a handoff carrying a revocation for an unrelated key validated'
@@ -396,7 +396,7 @@ grep -q "no revocation certificate for the retired" <<<"${last_output}" \
 
 new_case 'missing preserved material is caught'
 no_preserved="${tmp_dir}/handoff-no-preserved"
-cp -r "${good}" "${no_preserved}"
+cp -R "${good}" "${no_preserved}"
 rm -f "${no_preserved}/preserved-secret.asc"
 run_handoff validate --handoff "${no_preserved}"
 [ "${last_status}" != 0 ] || fail 'a handoff missing the preserved key validated'
@@ -405,7 +405,7 @@ grep -q "no preserved material" <<<"${last_output}" \
 
 new_case 'a missing replacement revocation certificate is caught'
 no_repl_rev="${tmp_dir}/handoff-no-replacement-revocation"
-cp -r "${good}" "${no_repl_rev}"
+cp -R "${good}" "${no_repl_rev}"
 rm -f "${no_repl_rev}/replacement-revocation.asc"
 run_handoff validate --handoff "${no_repl_rev}"
 [ "${last_status}" != 0 ] || fail 'a handoff with no way to ever retire the replacement key validated'
@@ -428,7 +428,7 @@ new_case 'a file gpg cannot decode stops validation instead of being skipped'
 # export, or a passphrase left in the same directory as the key it protects,
 # gets reported as a sound handoff directory.
 with_note="${tmp_dir}/handoff-with-note"
-cp -r "${good}" "${with_note}"
+cp -R "${good}" "${with_note}"
 printf 'remember: the passphrase is in the other vault\n' >"${with_note}/README.txt"
 run_handoff validate --handoff "${with_note}"
 [ "${last_status}" != 0 ] || fail 'a handoff directory holding an undecodable file validated'
@@ -439,7 +439,7 @@ grep -q "README.txt" <<<"${last_output}" \
 
 new_case 'a truncated key is caught by the same refusal, not mistaken for a note'
 truncated="${tmp_dir}/handoff-truncated"
-cp -r "${good}" "${truncated}"
+cp -R "${good}" "${truncated}"
 head -c 200 "${good}/preserved-secret.asc" >"${truncated}/preserved-secret.asc"
 run_handoff validate --handoff "${truncated}"
 [ "${last_status}" != 0 ] || fail 'a handoff holding a truncated secret key validated'
@@ -466,7 +466,7 @@ new_case 'a file that parses and then stops is refused, records and all'
 # looking for. The handoff directory reported sound, and the material the
 # operator would have restored from stops in the middle.
 stops="${tmp_dir}/handoff-stops-short"
-cp -r "${good}" "${stops}"
+cp -R "${good}" "${stops}"
 stops_short "${good}/replacement-secret.asc" "${stops}/replacement-secret.asc"
 run_handoff validate --handoff "${stops}"
 [ "${last_status}" != 0 ] || fail 'a handoff holding a file that stops part way through validated'
@@ -522,7 +522,7 @@ if [ "$(id -u)" = 0 ]; then
 	printf '    -- skipped: running as root, where file modes prove nothing\n'
 else
 	unreadable="${tmp_dir}/handoff-unreadable"
-	cp -r "${good}" "${unreadable}"
+	cp -R "${good}" "${unreadable}"
 	chmod 000 "${unreadable}/replacement-public.asc"
 	run_handoff validate --handoff "${unreadable}"
 	chmod 644 "${unreadable}/replacement-public.asc"
@@ -535,7 +535,7 @@ new_case 'a dangling symlink in the handoff directory is refused'
 # `find -type f` walks straight past one, so the directory would inventory clean
 # while holding a pointer at material that is not there.
 dangling="${tmp_dir}/handoff-dangling"
-cp -r "${good}" "${dangling}"
+cp -R "${good}" "${dangling}"
 ln -s "${dangling}/gone.asc" "${dangling}/replacement-backup.asc"
 run_handoff validate --handoff "${dangling}"
 [ "${last_status}" != 0 ] || fail 'a handoff holding a dangling symlink validated'
@@ -547,14 +547,14 @@ new_case 'a revocation certificate that names the right key but cannot revoke it
 # the packet without checking the signature, so a certificate corrupted in
 # storage reports the expected key id right up until the day it is needed.
 corrupt_cert="${tmp_dir}/handoff-corrupt-replacement-cert"
-cp -r "${good}" "${corrupt_cert}"
+cp -R "${good}" "${corrupt_cert}"
 corrupt_certificate "${good}/replacement-revocation.asc" \
 	"${corrupt_cert}/replacement-revocation.asc"
 # The premise this case rests on: the corrupted certificate still reports the
 # replacement key id, exactly as the good one does. Without that it would only be
 # proving that unreadable files are rejected, which is a different case.
 show_keys_isolated "${corrupt_cert}/replacement-revocation.asc" \
-	| grep -qi "^rvs:.*${REPLACEMENT_ID}" \
+	| grep -i "^rvs:.*${REPLACEMENT_ID}" >/dev/null \
 	|| fail 'the corrupted certificate no longer names the replacement key, so this case proves nothing'
 run_handoff validate --handoff "${corrupt_cert}"
 [ "${last_status}" != 0 ] || fail 'a replacement revocation certificate that cannot revoke anything validated'
@@ -569,7 +569,7 @@ new_case 'a replacement key that already carries a revocation is refused'
 # already reports the key revoked changes nothing observable. The first draft
 # read that as "nothing to do here" and moved on.
 prerevoked_repl="${tmp_dir}/handoff-prerevoked-replacement"
-cp -r "${good}" "${prerevoked_repl}"
+cp -R "${good}" "${prerevoked_repl}"
 revoked_export "${good}/replacement-public.asc" "${good}/replacement-revocation.asc" \
 	"${prerevoked_repl}/replacement-public.asc"
 run_handoff validate --handoff "${prerevoked_repl}"
@@ -587,7 +587,7 @@ new_case 'an already-revoked retired key passes, and the run says what it did no
 # the certificate was not checked in that state either, and the run has to say
 # so rather than print the line that means it was.
 prerevoked_retired="${tmp_dir}/handoff-prerevoked-retired"
-cp -r "${good}" "${prerevoked_retired}"
+cp -R "${good}" "${prerevoked_retired}"
 revoked_export "${good}/retired-public.asc" "${good}/retired-revocation.asc" \
 	"${prerevoked_retired}/retired-public.asc"
 run_handoff validate --handoff "${prerevoked_retired}"
@@ -602,7 +602,7 @@ grep -q "the revocation certificate actually revokes ${RETIRED_ID}" <<<"${last_o
 
 new_case 'the same holds for the retired key certificate'
 corrupt_retired="${tmp_dir}/handoff-corrupt-retired-cert"
-cp -r "${good}" "${corrupt_retired}"
+cp -R "${good}" "${corrupt_retired}"
 corrupt_certificate "${good}/retired-revocation.asc" \
 	"${corrupt_retired}/retired-revocation.asc"
 run_handoff validate --handoff "${corrupt_retired}"
@@ -936,7 +936,7 @@ new_case 'publish-revocation says so too when the key arrives already revoked'
 # is revoked either way -- but the certificate was not what put the revocation
 # there, and the closing sentence is what the operator reads as evidence.
 prepublished="${tmp_dir}/handoff-prepublished"
-cp -r "${good}" "${prepublished}"
+cp -R "${good}" "${prepublished}"
 revoked_export "${good}/retired-public.asc" "${good}/retired-revocation.asc" \
 	"${prepublished}/retired-public.asc"
 state_pre="${tmp_dir}/server-prerevoked"
@@ -976,7 +976,7 @@ grep -q "not ${RETIRED_ID}" <<<"${last_output}" \
 
 new_case 'a handoff with no retired public key refuses rather than guessing'
 no_pub="${tmp_dir}/handoff-no-retired-public"
-cp -r "${good}" "${no_pub}"
+cp -R "${good}" "${no_pub}"
 rm -f "${no_pub}/retired-public.asc"
 run_handoff publish-revocation --handoff "${no_pub}" --keyserver "${url_wrong}" --confirm-publish
 [ "${last_status}" != 0 ] || fail 'publication proceeded with no key to carry the revocation'
@@ -1089,7 +1089,7 @@ new_case 'the script contains no way to generate a key or a revocation'
 # grep over the source rather than over behaviour, because the failure mode is
 # somebody adding a convenient fallback later.
 if grep -nE -- '--(gen|generate)-(revoke|revocation|key)|--quick-gen|--full-gen' "${handoff}" \
-	| grep -vE '^\s*[0-9]+:\s*#' | grep -q .; then
+	| grep -vE '^\s*[0-9]+:\s*#' >/dev/null; then
 	fail 'key-handoff.sh can generate key or revocation material'
 fi
 
@@ -1097,7 +1097,7 @@ new_case 'the script takes no passphrase, key or certificate from the environmen
 # Paths are fine; values are not. An environment variable holding the passphrase
 # is inherited by every child process, including gpg's, and shows up in a core
 # dump and in `ps e`.
-if grep -nE '^\s*(PASSPHRASE|KEY_HANDOFF_PASSPHRASE)=' "${handoff}" | grep -q .; then
+if grep -qE '^\s*(PASSPHRASE|KEY_HANDOFF_PASSPHRASE)=' "${handoff}"; then
 	fail 'key-handoff.sh reads a passphrase value out of the environment'
 fi
 
@@ -1207,7 +1207,7 @@ new_case 'no handoff material is tracked in the repository'
 if git -C "${repo_root}" ls-files --error-unmatch .keys >/dev/null 2>&1; then
 	fail '.keys is tracked in the repository'
 fi
-if git -C "${repo_root}" ls-files | grep -q '^\.keys/'; then
+if git -C "${repo_root}" ls-files | grep '^\.keys/' >/dev/null; then
 	fail 'handoff material is tracked under .keys/'
 fi
 

@@ -43,6 +43,7 @@ tsrs         = "npm:tsrs"
 oapi-codegen = "go:github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen"
 
 [settings]
+experimental                        = true
 idiomatic_version_file_enable_tools = ["go", "python", "bun"]
 
 [monorepo]
