@@ -490,7 +490,7 @@ expect_output 'request-kind=issue body'
 # `claude/` alone would only cover the action's default and would miss the
 # other way branding gets in — the trigger phrase arriving inside the title.
 refute_stdout 'claude/'
-if grep '^work-branch=' "${tmp_dir}/github_output" | grep -qi 'claude'; then
+if grep -qi 'claude' < <(grep '^work-branch=' "${tmp_dir}/github_output"); then
 	fail 'the derived branch name must carry no vendor branding'
 fi
 expect_env_line 'CLAUDE_BRANCH=issue-42-add-a-shiny-new-widget'
@@ -677,6 +677,7 @@ fence="$(grep -m1 '^`\{6,\}$' "${ctx}")" || fail 'no fence found in the context 
 # would otherwise close the quoted region early and put the rest of itself where
 # the instructions are.
 git -C "${tmp_dir}/repo/work" checkout -q master
+# shellcheck disable=SC2016  # Literal backticks exercise the Markdown fence.
 long_fence='/beep do it
 ``````
 ``````````
@@ -955,7 +956,7 @@ mapfile -t normalized < <(
 [[ ${#on_events[@]} -gt 0 ]] || fail 'could not read the workflow triggers'
 [[ ${#normalized[@]} -gt 0 ]] || fail 'could not read the harness case labels'
 for event in "${on_events[@]}"; do
-	printf '%s\n' "${normalized[@]}" | grep -qxF -- "${event}" \
+	grep -qxF -- "${event}" < <(printf '%s\n' "${normalized[@]}") \
 		|| fail "claude.yml triggers on ${event} but claude-agent-harness.sh does not normalize it: the job would start and refuse itself"
 done
 
@@ -965,7 +966,7 @@ done
 # put `issue_comment: { types: [created] }` back, and the native trigger works
 # again with no change to this script. Deleting the case would make that
 # rollback a code change made under whatever pressure caused the rollback.
-printf '%s\n' "${normalized[@]}" | grep -qxF -- 'issue_comment' \
+grep -qxF -- 'issue_comment' < <(printf '%s\n' "${normalized[@]}") \
 	|| fail 'claude-agent-harness.sh no longer normalizes issue_comment, so turning the App dispatch off has no rollback path'
 
 echo 'claude agent harness tests passed'

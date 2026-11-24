@@ -51,16 +51,11 @@
     "typecheck": "run @typescript/native --noEmit",
     "typegen": "wrangler types >/dev/null"
   },
-  "overrides": {
-    "typescript": {
-      ".": "<7"
-    }
-  },
   "dependencies": {
     "@hono/swagger-ui": "0.6.2",
     "@hono/zod-openapi": "1.6.3",
     "@kjanat/fmt": "latest",
-    "@sentry/cloudflare": "11.15.0",
+    "@sentry/cloudflare": "11.16.0",
     "hono": "4.13.19",
     "micro509": "0.19.0",
     "openpgp": "6.3.2",
