@@ -20,7 +20,7 @@ typescript     = { filter_bins = ["tsc"], version = "latest" }
 tsrs           = "7.1.0-beta.tsrs4"
 uv             = "0.13.9"
 syft           = "latest"
-oapi-codegen   = "2.8.2"
+oapi-codegen   = "2.9.0"
 python         = "3.15"
 
 [tools."http:actionlint"]
