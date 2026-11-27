@@ -31,7 +31,7 @@ strip_components = 1
 bin_path         = "bin"
 
 [tools.wrangler]
-version      = "4.166.0"
+version      = "4.167.0"
 allow_builds = ["esbuild", "sharp", "workerd"]
 
 [tool_alias]
