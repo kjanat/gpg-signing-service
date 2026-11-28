@@ -56,7 +56,7 @@
     "@hono/zod-openapi": "1.6.3",
     "@kjanat/fmt": "latest",
     "@sentry/cloudflare": "11.17.0",
-    "hono": "4.13.21",
+    "hono": "4.13.22",
     "micro509": "0.19.0",
     "openpgp": "6.3.3",
     "zod": "4.6.7"
